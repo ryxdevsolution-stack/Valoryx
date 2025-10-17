@@ -13,6 +13,10 @@ class StockEntry(db.Model):
     rate = db.Column(db.Numeric(10, 2), nullable=False)
     unit = db.Column(db.String(20), default='pcs')
     low_stock_alert = db.Column(db.Integer, default=10)
+    item_code = db.Column(db.String(50))
+    barcode = db.Column(db.String(100), unique=True, index=True)
+    gst_percentage = db.Column(db.Numeric(5, 2), default=0)
+    hsn_code = db.Column(db.String(20))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -26,6 +30,10 @@ class StockEntry(db.Model):
             'rate': str(self.rate),
             'unit': self.unit,
             'low_stock_alert': self.low_stock_alert,
+            'item_code': self.item_code,
+            'barcode': self.barcode,
+            'gst_percentage': str(self.gst_percentage) if self.gst_percentage else '0',
+            'hsn_code': self.hsn_code,
             'is_low_stock': self.quantity <= self.low_stock_alert,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None

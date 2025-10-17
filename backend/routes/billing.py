@@ -263,3 +263,232 @@ def get_bill_details(bill_id):
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch bill details', 'message': str(e)}), 500
+
+
+@billing_bp.route('/create', methods=['POST'])
+@authenticate
+def create_unified_bill():
+    """
+    Smart unified billing endpoint
+    - Automatically detects GST or Non-GST based on items
+    - Calculates per-item GST from product's gst_percentage
+    - Routes to appropriate table based on presence of GST
+
+    Request format:
+    {
+        "customer_name": "John Doe",
+        "customer_phone": "9876543210",
+        "items": [
+            {
+                "product_id": "uuid",
+                "product_name": "Laptop",
+                "quantity": 2,
+                "rate": 45000,
+                "item_code": "LP-001",
+                "hsn_code": "8471",
+                "unit": "pcs",
+                "gst_percentage": 18,  // From product or manually set
+                "gst_amount": 16200,    // Auto-calculated
+                "amount": 106200        // rate * qty + gst_amount
+            }
+        ],
+        "payment_type": "uuid"
+    }
+    """
+    try:
+        data = request.get_json()
+        client_id = g.user['client_id']
+
+        # Validate required fields
+        required_fields = ['customer_name', 'items', 'payment_type']
+        for field in required_fields:
+            if field not in data:
+                return jsonify({'error': f'Missing required field: {field}'}), 400
+
+        if not data['items'] or len(data['items']) == 0:
+            return jsonify({'error': 'At least one item is required'}), 400
+
+        # Verify all products and calculate totals
+        subtotal = 0
+        total_gst_amount = 0
+        has_gst_items = False
+        processed_items = []
+
+        new_products_to_create = []
+
+        for item in data['items']:
+            # Check if this is a new product (temp ID from frontend)
+            product_id = item['product_id']
+            is_new_product = product_id.startswith('temp-')
+
+            if not is_new_product:
+                # Verify product belongs to this client
+                product = StockEntry.query.filter_by(
+                    product_id=product_id,
+                    client_id=client_id
+                ).first()
+
+                if not product:
+                    return jsonify({'error': f"Product {item.get('product_name', 'Unknown')} not found"}), 404
+
+                # Check stock availability
+                if product.quantity < item['quantity']:
+                    return jsonify({
+                        'error': f"Insufficient stock for {product.product_name}. Available: {product.quantity}, Requested: {item['quantity']}"
+                    }), 400
+
+                # Calculate item totals
+                item_qty = item['quantity']
+                item_rate = float(item.get('rate', product.rate))
+                item_gst_pct = float(item.get('gst_percentage', product.gst_percentage or 0))
+            else:
+                # New product - use data from frontend and create in stock
+                item_qty = item['quantity']
+                item_rate = float(item.get('rate', 0))
+                item_gst_pct = float(item.get('gst_percentage', 0))
+
+                # Generate real UUID for new product
+                new_product_id = str(uuid.uuid4())
+
+                # Prepare new product data
+                new_product_data = {
+                    'product_id': new_product_id,
+                    'client_id': client_id,
+                    'product_name': item.get('product_name', 'Unnamed Product'),
+                    'item_code': item.get('item_code', ''),
+                    'rate': item_rate,
+                    'quantity': item_qty + 10,  # Start with sold quantity + 10 buffer stock
+                    'unit': item.get('unit', 'pcs'),
+                    'gst_percentage': item_gst_pct,
+                    'hsn_code': item.get('hsn_code', ''),
+                    'created_at': datetime.utcnow(),
+                    'updated_at': datetime.utcnow()
+                }
+                new_products_to_create.append((new_product_data, new_product_id))
+
+                # Update product_id to use real UUID in processed items
+                product_id = new_product_id
+
+            # Calculate amounts
+            item_subtotal = item_qty * item_rate
+            item_gst_amt = (item_subtotal * item_gst_pct) / 100
+            item_total = item_subtotal + item_gst_amt
+
+            if item_gst_pct > 0:
+                has_gst_items = True
+
+            # Build processed item - Convert all values to JSON-serializable types
+            processed_items.append({
+                'product_id': str(product_id) if not is_new_product else product_id,
+                'product_name': item.get('product_name', product.product_name if not is_new_product else 'Unknown'),
+                'item_code': item.get('item_code', product.item_code if not is_new_product else ''),
+                'hsn_code': item.get('hsn_code', product.hsn_code if not is_new_product else ''),
+                'unit': item.get('unit', product.unit if not is_new_product else 'pcs'),
+                'quantity': item_qty,
+                'rate': item_rate,
+                'gst_percentage': item_gst_pct,
+                'gst_amount': round(item_gst_amt, 2),
+                'amount': round(item_total, 2)
+            })
+
+            subtotal += item_subtotal
+            total_gst_amount += item_gst_amt
+
+        final_amount = subtotal + total_gst_amount
+
+        # Create new products in stock_entry table BEFORE creating bill
+        for new_product_data, new_product_id in new_products_to_create:
+            new_stock_entry = StockEntry(
+                product_id=new_product_data['product_id'],
+                client_id=new_product_data['client_id'],
+                product_name=new_product_data['product_name'],
+                item_code=new_product_data['item_code'],
+                rate=new_product_data['rate'],
+                quantity=new_product_data['quantity'],
+                unit=new_product_data['unit'],
+                gst_percentage=new_product_data['gst_percentage'],
+                hsn_code=new_product_data['hsn_code'],
+                created_at=new_product_data['created_at'],
+                updated_at=new_product_data['updated_at']
+            )
+            db.session.add(new_stock_entry)
+
+        # Flush to ensure products are created before bill
+        if new_products_to_create:
+            db.session.flush()
+
+        # Route to appropriate billing table based on GST presence
+        if has_gst_items:
+            # Create GST Bill
+            last_bill = GSTBilling.query.filter_by(client_id=client_id).order_by(GSTBilling.bill_number.desc()).first()
+            bill_number = (last_bill.bill_number + 1) if last_bill else 1
+
+            new_bill = GSTBilling(
+                bill_id=str(uuid.uuid4()),
+                client_id=client_id,
+                bill_number=bill_number,
+                customer_name=data['customer_name'],
+                customer_phone=data.get('customer_phone'),
+                items=processed_items,
+                subtotal=round(subtotal, 2),
+                gst_percentage=0,  # Not applicable for mixed GST rates
+                gst_amount=round(total_gst_amount, 2),
+                final_amount=round(final_amount, 2),
+                payment_type=data['payment_type'],
+                status='final',
+                created_by=g.user['user_id'],
+                created_at=datetime.utcnow()
+            )
+
+            db.session.add(new_bill)
+            db.session.commit()
+
+            log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
+
+            return jsonify({
+                'success': True,
+                'bill_id': new_bill.bill_id,
+                'bill_number': bill_number,
+                'bill_type': 'GST',
+                'subtotal': round(subtotal, 2),
+                'gst_amount': round(total_gst_amount, 2),
+                'final_amount': round(final_amount, 2),
+                'message': 'GST bill created successfully'
+            }), 201
+
+        else:
+            # Create Non-GST Bill
+            last_bill = NonGSTBilling.query.filter_by(client_id=client_id).order_by(NonGSTBilling.bill_number.desc()).first()
+            bill_number = (last_bill.bill_number + 1) if last_bill else 1
+
+            new_bill = NonGSTBilling(
+                bill_id=str(uuid.uuid4()),
+                client_id=client_id,
+                bill_number=bill_number,
+                customer_name=data['customer_name'],
+                customer_phone=data.get('customer_phone'),
+                items=processed_items,
+                total_amount=round(subtotal, 2),
+                payment_type=data['payment_type'],
+                status='final',
+                created_by=g.user['user_id'],
+                created_at=datetime.utcnow()
+            )
+
+            db.session.add(new_bill)
+            db.session.commit()
+
+            log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
+
+            return jsonify({
+                'success': True,
+                'bill_id': new_bill.bill_id,
+                'bill_number': bill_number,
+                'bill_type': 'Non-GST',
+                'total_amount': round(subtotal, 2),
+                'message': 'Non-GST bill created successfully'
+            }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create bill', 'message': str(e)}), 500

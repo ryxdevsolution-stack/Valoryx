@@ -508,3 +508,58 @@ def bulk_export_stock():
 
     except Exception as e:
         return jsonify({'error': 'Failed to export stock', 'message': str(e)}), 500
+
+
+@stock_bp.route('/lookup/<code>', methods=['GET'])
+@authenticate
+def lookup_product(code):
+    """
+    Quick product lookup by barcode or item code
+    Returns product with rate, GST%, HSN, current stock
+    Perfect for barcode scanner integration
+    """
+    try:
+        client_id = g.user['client_id']
+
+        # Search by barcode first (most common for scanner)
+        product = StockEntry.query.filter_by(
+            client_id=client_id,
+            barcode=code
+        ).first()
+
+        # If not found by barcode, try item_code
+        if not product:
+            product = StockEntry.query.filter_by(
+                client_id=client_id,
+                item_code=code
+            ).first()
+
+        # If still not found, try exact product name match
+        if not product:
+            product = StockEntry.query.filter(
+                StockEntry.client_id == client_id,
+                StockEntry.product_name.ilike(code)
+            ).first()
+
+        if not product:
+            return jsonify({
+                'error': 'Product not found',
+                'message': f'No product found with barcode, item code, or name: {code}'
+            }), 404
+
+        # Check stock availability
+        stock_status = 'available'
+        if product.quantity == 0:
+            stock_status = 'out_of_stock'
+        elif product.quantity <= product.low_stock_alert:
+            stock_status = 'low_stock'
+
+        return jsonify({
+            'success': True,
+            'product': product.to_dict(),
+            'stock_status': stock_status,
+            'available_quantity': product.quantity
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to lookup product', 'message': str(e)}), 500

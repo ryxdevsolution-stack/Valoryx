@@ -6,8 +6,7 @@ import { useClient } from '@/contexts/ClientContext'
 
 const navigation = [
   { name: 'Dashboard', href: '/dashboard', icon: '📊' },
-  { name: 'GST Billing', href: '/billing/gst', icon: '🧾' },
-  { name: 'Non-GST Billing', href: '/billing/non-gst', icon: '📝' },
+  { name: 'Create Bill', href: '/billing/create', icon: '✨' },
   { name: 'All Bills', href: '/billing', icon: '📋' },
   { name: 'Stock Management', href: '/stock', icon: '📦' },
   { name: 'Reports', href: '/reports', icon: '📈' },

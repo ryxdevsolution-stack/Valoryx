@@ -12,6 +12,10 @@ interface Stock {
   category: string
   unit: string
   low_stock_alert: number
+  item_code: string
+  barcode: string
+  gst_percentage: number | string
+  hsn_code: string
   is_low_stock: boolean
   created_at: string
   updated_at?: string
@@ -32,6 +36,10 @@ export default function StockManagementPage() {
     category: '',
     unit: 'pcs',
     low_stock_alert: 10,
+    item_code: '',
+    barcode: '',
+    gst_percentage: 0,
+    hsn_code: '',
   })
 
   useEffect(() => {
@@ -63,6 +71,10 @@ export default function StockManagementPage() {
         category: '',
         unit: 'pcs',
         low_stock_alert: 10,
+        item_code: '',
+        barcode: '',
+        gst_percentage: 0,
+        hsn_code: '',
       })
       fetchStocks()
     } catch (error: any) {
@@ -275,6 +287,66 @@ export default function StockManagementPage() {
                     setFormData({ ...formData, low_stock_alert: parseInt(e.target.value) || 0 })
                   }
                   className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Item Code (SKU)
+                </label>
+                <input
+                  type="text"
+                  value={formData.item_code}
+                  onChange={(e) =>
+                    setFormData({ ...formData, item_code: e.target.value })
+                  }
+                  placeholder="e.g., LP-001"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Barcode
+                </label>
+                <input
+                  type="text"
+                  value={formData.barcode}
+                  onChange={(e) =>
+                    setFormData({ ...formData, barcode: e.target.value })
+                  }
+                  placeholder="e.g., 8901234567890"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  GST Percentage
+                </label>
+                <select
+                  value={formData.gst_percentage}
+                  onChange={(e) =>
+                    setFormData({ ...formData, gst_percentage: parseFloat(e.target.value) })
+                  }
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                >
+                  <option value={0}>0% (Non-GST)</option>
+                  <option value={5}>5%</option>
+                  <option value={12}>12%</option>
+                  <option value={18}>18%</option>
+                  <option value={28}>28%</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  HSN/SAC Code
+                </label>
+                <input
+                  type="text"
+                  value={formData.hsn_code}
+                  onChange={(e) =>
+                    setFormData({ ...formData, hsn_code: e.target.value })
+                  }
+                  placeholder="e.g., 8471"
+                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
                 />
               </div>
             </div>
