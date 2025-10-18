@@ -3,8 +3,12 @@ services:
     name: mj-billing-backend-test
     env: python
     buildCommand: |
-      pip install -r backend/requirements.txt
-    startCommand: gunicorn backend.app:app
+      cd backend
+      pip install -r requirements.txt
+      cd ..
+    startCommand: |
+      cd backend
+      gunicorn app:app
     envVars:
       - key: PYTHONPATH
         value: .
