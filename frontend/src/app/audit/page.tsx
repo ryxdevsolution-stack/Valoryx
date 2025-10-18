@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useCallback } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 
@@ -24,11 +24,7 @@ export default function AuditLogsPage() {
   const [page, setPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
 
-  useEffect(() => {
-    fetchLogs()
-  }, [page, filter])
-
-  const fetchLogs = async () => {
+  const fetchLogs = useCallback(async () => {
     try {
       setLoading(true)
       const params: any = { page, limit: 20 }
@@ -44,7 +40,11 @@ export default function AuditLogsPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [page, filter])
+
+  useEffect(() => {
+    fetchLogs()
+  }, [fetchLogs])
 
   const getActionBadge = (action: string) => {
     const colors: any = {

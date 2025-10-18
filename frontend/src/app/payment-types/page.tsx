@@ -188,7 +188,7 @@ export default function PaymentTypesPage() {
             <div className="text-blue-700 text-sm">• Wallet</div>
           </div>
           <p className="text-blue-600 text-sm mt-3">
-            Click "Add Payment Type" to create your first payment method
+            Click &quot;Add Payment Type&quot; to create your first payment method
           </p>
         </div>
       )}

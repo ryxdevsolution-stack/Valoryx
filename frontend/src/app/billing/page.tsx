@@ -5,18 +5,18 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 
 interface Bill {
-  bill_id: string
-  bill_number: string
+  bill_id: any
+  bill_number: any
   type: 'gst' | 'non_gst'
-  customer_name: string
-  customer_phone: string
+  customer_name: any
+  customer_phone: any
   subtotal?: number
   gst_percentage?: number
   gst_amount?: number
   final_amount?: number
   total_amount?: number
-  payment_type: string
-  created_at: string
+  payment_type: any
+  created_at: any
 }
 
 export default function AllBillsPage() {
@@ -47,9 +47,9 @@ export default function AllBillsPage() {
 
   const getAmount = (bill: Bill) => {
     if (bill.type === 'gst') {
-      return parseFloat(bill.final_amount || '0')
+      return parseFloat(String(bill.final_amount || '0'))
     }
-    return parseFloat(bill.total_amount || '0')
+    return parseFloat(String(bill.total_amount || '0'))
   }
 
   return (

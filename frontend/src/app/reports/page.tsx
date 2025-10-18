@@ -228,7 +228,7 @@ export default function ReportsPage() {
         <div className="bg-white rounded-lg shadow p-12 text-center">
           <p className="text-gray-500 text-lg">No report generated yet</p>
           <p className="text-gray-400 mt-2">
-            Select a date range and click "Generate Report" to view sales data
+            Select a date range and click &quot;Generate Report&quot; to view sales data
           </p>
         </div>
       )}

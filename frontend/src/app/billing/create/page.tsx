@@ -712,7 +712,7 @@ export default function UnifiedBillingPage() {
                               </svg>
                               <div>
                                 <div className="text-sm font-semibold text-green-700 dark:text-green-700">
-                                  Create New Product: "{productSearch}"
+                                  Create New Product:  &quot;{productSearch}&quot;
                                 </div>
                                 <div className="text-xs text-green-600 dark:text-green-600">
                                   Click to add as new product to this bill
@@ -731,7 +731,7 @@ export default function UnifiedBillingPage() {
                               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
                             </svg>
                             <div className="text-sm font-semibold text-green-700 dark:text-green-700">
-                              Create New Product: "{productSearch}"
+                              Create New Product: &quot;{productSearch}&quot;
                             </div>
                           </div>
                           <div className="text-xs text-center text-gray-500 dark:text-gray-500 mt-1">
@@ -745,12 +745,12 @@ export default function UnifiedBillingPage() {
                 <div className="md:col-span-2">
                   <label className="block text-xs font-medium text-gray-700 dark:text-gray-700 mb-1">
                     Quantity
-                    {!isNewProduct && currentItem.product_id && availableStock === 0 && (
+                    {!isNewProduct && Boolean(currentItem.product_id) && availableStock === 0 && (
                       <span className="ml-2 text-xs text-red-600 font-bold">
                         (OUT OF STOCK!)
                       </span>
                     )}
-                    {!isNewProduct && currentItem.product_id && availableStock > 0 && (
+                    {!isNewProduct && Boolean(currentItem.product_id) && availableStock > 0 && (
                       <span className="ml-2 text-xs text-blue-600 font-normal">
                         (Available: {availableStock})
                       </span>
@@ -766,16 +766,16 @@ export default function UnifiedBillingPage() {
                       const qty = parseInt(e.target.value) || 1
                       setCurrentItem({ ...currentItem, quantity: qty })
                       // Check stock availability
-                      if (!isNewProduct && currentItem.product_id && availableStock === 0) {
+                      if (!isNewProduct && Boolean(currentItem.product_id) && availableStock === 0) {
                         setStockWarning('🚫 OUT OF STOCK - Cannot add this item!')
-                      } else if (!isNewProduct && currentItem.product_id && qty > availableStock) {
+                      } else if (!isNewProduct && Boolean(currentItem.product_id) && qty > availableStock) {
                         setStockWarning(`⚠️ Only ${availableStock} available in stock!`)
                       } else {
                         setStockWarning('')
                       }
                     }}
                     onKeyDown={(e) => handleKeyPress(e, 'quantity')}
-                    disabled={!isNewProduct && currentItem.product_id && availableStock === 0}
+                    disabled={!isNewProduct && Boolean(currentItem.product_id) && availableStock === 0}
                     className={`w-full px-3 py-2 text-sm border rounded focus:ring-2 focus:ring-blue-500 text-gray-900 ${
                       !isNewProduct && currentItem.product_id && availableStock === 0
                         ? 'bg-red-50 border-red-500 cursor-not-allowed'
