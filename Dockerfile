@@ -26,8 +26,8 @@ RUN pip install --upgrade pip && \
 # Copy the rest of the application
 COPY . .
 
-# Make startup script executable
-RUN chmod +x start.sh
+# Make startup scripts executable
+RUN chmod +x start.sh railway_start.py
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash app && \
@@ -41,5 +41,5 @@ USER app
 # HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
 #     CMD curl -f http://localhost:${PORT:-8000}/api/health || exit 1
 
-# Start the application using the startup script
-CMD ["./start.sh"]
+# Start the application using the Python startup script
+CMD ["python3", "railway_start.py"]
