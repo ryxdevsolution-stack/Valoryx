@@ -1,3 +1,4 @@
+import os
 from flask import Flask
 from flask_cors import CORS
 from config import Config
@@ -10,7 +11,7 @@ def create_app():
 
     # Initialize CORS
     CORS(app,
-         origins=app.config['CORS_ORIGINS'],
+         origins=app.config.get('CORS_ORIGINS', '*'),
          supports_credentials=True,
          methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
          allow_headers=['Content-Type', 'Authorization'])
@@ -35,18 +36,21 @@ def create_app():
     app.register_blueprint(client_bp, url_prefix='/api/client')
     app.register_blueprint(payment_bp, url_prefix='/api/payment')
 
-    # Health check endpoint
+    # Health check
     @app.route('/api/health', methods=['GET'])
     def health_check():
         return {'status': 'healthy', 'message': 'RYX Billing API is running'}, 200
 
     return app
 
-# Create app instance for gunicorn
+
+# Create the app
 app = create_app()
 
 if __name__ == '__main__':
     with app.app_context():
-        # Ensure database tables exist
         db.create_all()
-    app.run(host='0.0.0.0', port=5000, debug=app.config['DEBUG'])
+    
+    # ✅ Use environment PORT if available (Render/Railway sets this)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=app.config.get('DEBUG', False))
