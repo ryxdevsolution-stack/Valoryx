@@ -1,0 +1,2 @@
+# This file redirects to backend requirements for Railway deployment
+-r backend/requirements.txt
