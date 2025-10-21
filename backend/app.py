@@ -124,6 +124,8 @@ def create_app():
         
         config_status = Config.get_configuration_status()
         missing_configs = Config.get_missing_configs()
+        db_url_valid, db_url_message = Config.validate_db_url()
+        db_url_info = Config.get_db_url_info()
         
         status = {
             'status': 'running',
@@ -131,7 +133,10 @@ def create_app():
             'database': {
                 'initialized': db_initialized,
                 'connected': db_connected,
-                'type': 'Supabase PostgreSQL' if config_status['database']['using_supabase'] else 'SQLite (fallback)'
+                'type': 'Supabase PostgreSQL' if config_status['database']['using_supabase'] else 'SQLite (fallback)',
+                'url_valid': db_url_valid,
+                'url_message': db_url_message,
+                'url_info': db_url_info
             },
             'supabase': {
                 'configured': config_status['supabase']['configured'],
@@ -156,6 +161,9 @@ def create_app():
         
         if not db_connected:
             status['warnings'].append("Database connection failed")
+        
+        if not db_url_valid:
+            status['warnings'].append(f"Invalid database URL: {db_url_message}")
         
         return status, 200
 
