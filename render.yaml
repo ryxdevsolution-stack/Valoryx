@@ -1,14 +1,12 @@
 services:
   - type: web
-    name: mj-billing-backend-test
+    name: mj-billing-backend
     env: python
-    buildCommand: |
-      cd backend
-      pip install -r requirements.txt
-      cd ..
-    startCommand: |
-      cd backend
-      gunicorn app:app
+    plan: free
+    buildCommand: pip install -r backend/requirements.txt
+    startCommand: gunicorn backend.app:app
     envVars:
+      - key: PYTHON_VERSION
+        value: 3.11.9
       - key: PYTHONPATH
         value: .
