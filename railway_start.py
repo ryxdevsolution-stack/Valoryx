@@ -12,6 +12,15 @@ def main():
     
     print(f"Starting Railway deployment on port {port}")
     
+    # Test imports first
+    print("Testing imports...")
+    try:
+        import backend.app
+        print("✓ Backend app imports successfully")
+    except ImportError as e:
+        print(f"✗ Import error: {e}")
+        sys.exit(1)
+    
     # Build gunicorn command
     cmd = [
         'gunicorn',

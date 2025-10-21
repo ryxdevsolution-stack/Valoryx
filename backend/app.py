@@ -1,6 +1,11 @@
 import os
+import sys
 from flask import Flask
 from flask_cors import CORS
+
+# Add current directory to Python path
+sys.path.append(os.path.dirname(os.path.abspath(__file__)))
+
 from config import Config
 from extensions import db
 
@@ -20,13 +25,23 @@ def create_app():
     db.init_app(app)
 
     # Register blueprints
-    from routes.auth import auth_bp
-    from routes.billing import billing_bp
-    from routes.stock import stock_bp
-    from routes.report import report_bp
-    from routes.audit import audit_bp
-    from routes.client import client_bp
-    from routes.payment import payment_bp
+    try:
+        from backend.routes.auth import auth_bp
+        from backend.routes.billing import billing_bp
+        from backend.routes.stock import stock_bp
+        from backend.routes.report import report_bp
+        from backend.routes.audit import audit_bp
+        from backend.routes.client import client_bp
+        from backend.routes.payment import payment_bp
+    except ImportError:
+        # Fallback to relative imports if absolute imports fail
+        from routes.auth import auth_bp
+        from routes.billing import billing_bp
+        from routes.stock import stock_bp
+        from routes.report import report_bp
+        from routes.audit import audit_bp
+        from routes.client import client_bp
+        from routes.payment import payment_bp
 
     app.register_blueprint(auth_bp, url_prefix='/api/auth')
     app.register_blueprint(billing_bp, url_prefix='/api/billing')

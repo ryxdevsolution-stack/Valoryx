@@ -7,7 +7,7 @@ WORKDIR /app
 # Set environment variables
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
-    PYTHONPATH=/app \
+    PYTHONPATH=/app:/app/backend \
     PATH="/app/.local/bin:$PATH"
 
 # Install system dependencies
@@ -27,7 +27,10 @@ RUN pip install --upgrade pip && \
 COPY . .
 
 # Make startup scripts executable
-RUN chmod +x start.sh railway_start.py
+RUN chmod +x start.sh railway_start.py test_imports.py
+
+# Test imports to catch any issues early
+RUN python3 test_imports.py
 
 # Create non-root user for security
 RUN useradd --create-home --shell /bin/bash app && \
