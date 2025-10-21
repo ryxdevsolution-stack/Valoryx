@@ -9,6 +9,14 @@ class Config:
     # Database
     SQLALCHEMY_DATABASE_URI = os.getenv('DB_URL', 'sqlite:///app.db')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SQLALCHEMY_ENGINE_OPTIONS = {
+        'pool_pre_ping': True,
+        'pool_recycle': 300,
+        'connect_args': {
+            'connect_timeout': 10,
+            'application_name': 'mj-billing-backend'
+        }
+    }
 
     # Supabase
     SUPABASE_URL = os.getenv('SUPABASE_URL')

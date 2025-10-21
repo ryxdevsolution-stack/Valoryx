@@ -24,8 +24,12 @@ def create_app():
     # Initialize database with error handling
     from extensions import init_db_safely, test_db_connection
     db_initialized = init_db_safely(app)
+    
+    # Store database status for later use
+    app.config['DB_INITIALIZED'] = db_initialized
 
-    # Register blueprints
+    # Register blueprints with error handling
+    blueprints_registered = []
     try:
         from backend.routes.auth import auth_bp
         from backend.routes.billing import billing_bp
@@ -36,21 +40,70 @@ def create_app():
         from backend.routes.payment import payment_bp
     except ImportError:
         # Fallback to relative imports if absolute imports fail
-        from routes.auth import auth_bp
-        from routes.billing import billing_bp
-        from routes.stock import stock_bp
-        from routes.report import report_bp
-        from routes.audit import audit_bp
-        from routes.client import client_bp
-        from routes.payment import payment_bp
+        try:
+            from routes.auth import auth_bp
+            from routes.billing import billing_bp
+            from routes.stock import stock_bp
+            from routes.report import report_bp
+            from routes.audit import audit_bp
+            from routes.client import client_bp
+            from routes.payment import payment_bp
+        except ImportError as e:
+            print(f"Warning: Could not import routes: {e}")
+            auth_bp = billing_bp = stock_bp = report_bp = audit_bp = client_bp = payment_bp = None
 
-    app.register_blueprint(auth_bp, url_prefix='/api/auth')
-    app.register_blueprint(billing_bp, url_prefix='/api/billing')
-    app.register_blueprint(stock_bp, url_prefix='/api/stock')
-    app.register_blueprint(report_bp, url_prefix='/api/report')
-    app.register_blueprint(audit_bp, url_prefix='/api/audit')
-    app.register_blueprint(client_bp, url_prefix='/api/client')
-    app.register_blueprint(payment_bp, url_prefix='/api/payment')
+    # Register blueprints only if they were imported successfully
+    if auth_bp:
+        try:
+            app.register_blueprint(auth_bp, url_prefix='/api/auth')
+            blueprints_registered.append('auth')
+        except Exception as e:
+            print(f"Warning: Could not register auth blueprint: {e}")
+    
+    if billing_bp:
+        try:
+            app.register_blueprint(billing_bp, url_prefix='/api/billing')
+            blueprints_registered.append('billing')
+        except Exception as e:
+            print(f"Warning: Could not register billing blueprint: {e}")
+    
+    if stock_bp:
+        try:
+            app.register_blueprint(stock_bp, url_prefix='/api/stock')
+            blueprints_registered.append('stock')
+        except Exception as e:
+            print(f"Warning: Could not register stock blueprint: {e}")
+    
+    if report_bp:
+        try:
+            app.register_blueprint(report_bp, url_prefix='/api/report')
+            blueprints_registered.append('report')
+        except Exception as e:
+            print(f"Warning: Could not register report blueprint: {e}")
+    
+    if audit_bp:
+        try:
+            app.register_blueprint(audit_bp, url_prefix='/api/audit')
+            blueprints_registered.append('audit')
+        except Exception as e:
+            print(f"Warning: Could not register audit blueprint: {e}")
+    
+    if client_bp:
+        try:
+            app.register_blueprint(client_bp, url_prefix='/api/client')
+            blueprints_registered.append('client')
+        except Exception as e:
+            print(f"Warning: Could not register client blueprint: {e}")
+    
+    if payment_bp:
+        try:
+            app.register_blueprint(payment_bp, url_prefix='/api/payment')
+            blueprints_registered.append('payment')
+        except Exception as e:
+            print(f"Warning: Could not register payment blueprint: {e}")
+    
+    # Store blueprint registration status
+    app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered
 
     # Health check endpoint (basic uptime check)
     @app.route('/api/health', methods=['GET'])
@@ -85,6 +138,10 @@ def create_app():
                 'url_set': config_status['supabase']['url_set'],
                 'key_set': config_status['supabase']['key_set']
             },
+            'blueprints': {
+                'registered': app.config.get('BLUEPRINTS_REGISTERED', []),
+                'count': len(app.config.get('BLUEPRINTS_REGISTERED', []))
+            },
             'configuration': config_status,
             'missing_configs': missing_configs,
             'warnings': []
@@ -101,6 +158,25 @@ def create_app():
             status['warnings'].append("Database connection failed")
         
         return status, 200
+
+    # Global error handler to prevent crashes
+    @app.errorhandler(Exception)
+    def handle_exception(e):
+        return {
+            'error': 'Internal server error',
+            'message': str(e),
+            'type': type(e).__name__
+        }, 500
+
+    # Add a simple test endpoint that doesn't require database
+    @app.route('/api/test', methods=['GET'])
+    def test_endpoint():
+        return {
+            'status': 'success',
+            'message': 'Test endpoint working',
+            'database_available': db_initialized,
+            'blueprints_registered': len(app.config.get('BLUEPRINTS_REGISTERED', []))
+        }, 200
 
     return app
 

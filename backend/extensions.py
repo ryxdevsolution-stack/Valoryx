@@ -30,9 +30,12 @@ def test_db_connection(app):
     """
     try:
         with app.app_context():
-            db.engine.execute('SELECT 1')
-            logging.info("Database connection test successful")
-            return True
+            # Use a simpler test that works with both SQLite and PostgreSQL
+            result = db.session.execute('SELECT 1').fetchone()
+            if result:
+                logging.info("Database connection test successful")
+                return True
+            return False
     except Exception as e:
         logging.error(f"Database connection test failed: {str(e)}")
         return False
