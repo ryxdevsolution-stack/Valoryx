@@ -24,8 +24,11 @@ RUN pip install --upgrade pip && \
 # Copy the rest of the application
 COPY . .
 
+# Make startup script executable
+RUN chmod +x start.sh
+
 # Expose port (Railway will set PORT environment variable)
 EXPOSE 8000
 
-# Start the application
-CMD ["gunicorn", "--bind", "0.0.0.0:8000", "--workers", "4", "backend.app:app"]
+# Start the application using the startup script
+CMD ["./start.sh"]
