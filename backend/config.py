@@ -7,7 +7,7 @@ class Config:
     """Flask configuration from environment variables"""
 
     # Database
-    SQLALCHEMY_DATABASE_URI = os.getenv('DB_URL')
+    SQLALCHEMY_DATABASE_URI = os.getenv('DB_URL', 'sqlite:///app.db')
     SQLALCHEMY_TRACK_MODIFICATIONS = False
 
     # Supabase
