@@ -1,5 +1,4 @@
-# Ignore any Docker files that might exist
-Dockerfile*
+# Ignore Docker Compose files
 docker-compose*
 .dockerignore
 
