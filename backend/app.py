@@ -21,8 +21,9 @@ def create_app():
          methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
          allow_headers=['Content-Type', 'Authorization'])
 
-    # Initialize database
-    db.init_app(app)
+    # Initialize database with error handling
+    from extensions import init_db_safely, test_db_connection
+    db_initialized = init_db_safely(app)
 
     # Register blueprints
     try:
@@ -51,10 +52,55 @@ def create_app():
     app.register_blueprint(client_bp, url_prefix='/api/client')
     app.register_blueprint(payment_bp, url_prefix='/api/payment')
 
-    # Health check
+    # Health check endpoint (basic uptime check)
     @app.route('/api/health', methods=['GET'])
     def health_check():
         return {'status': 'healthy', 'message': 'RYX Billing API is running'}, 200
+
+    # Status endpoint (detailed configuration and status)
+    @app.route('/api/status', methods=['GET'])
+    def status_check():
+        from config import Config
+        
+        # Test database connection
+        db_connected = False
+        try:
+            db_connected = test_db_connection(app)
+        except:
+            pass
+        
+        config_status = Config.get_configuration_status()
+        missing_configs = Config.get_missing_configs()
+        
+        status = {
+            'status': 'running',
+            'message': 'RYX Billing API is running',
+            'database': {
+                'initialized': db_initialized,
+                'connected': db_connected,
+                'type': 'Supabase PostgreSQL' if config_status['database']['using_supabase'] else 'SQLite (fallback)'
+            },
+            'supabase': {
+                'configured': config_status['supabase']['configured'],
+                'url_set': config_status['supabase']['url_set'],
+                'key_set': config_status['supabase']['key_set']
+            },
+            'configuration': config_status,
+            'missing_configs': missing_configs,
+            'warnings': []
+        }
+        
+        # Add warnings for missing configurations
+        if missing_configs:
+            status['warnings'].append(f"Missing environment variables: {', '.join(missing_configs)}")
+        
+        if not config_status['supabase']['configured']:
+            status['warnings'].append("Supabase not configured - using SQLite fallback")
+        
+        if not db_connected:
+            status['warnings'].append("Database connection failed")
+        
+        return status, 200
 
     return app
 
