@@ -42,8 +42,10 @@ def create_app():
 
     return app
 
+# Create app instance for gunicorn
+app = create_app()
+
 if __name__ == '__main__':
-    app = create_app()
     with app.app_context():
         # Ensure database tables exist
         db.create_all()
