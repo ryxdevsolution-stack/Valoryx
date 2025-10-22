@@ -21,6 +21,7 @@ interface ClientContextType {
   client: Client | null
   token: string | null
   isAuthenticated: boolean
+  isLoading: boolean
   login: (email: string, password: string) => Promise<void>
   logout: () => void
   setClientData: (user: User, client: Client, token: string) => void
@@ -33,20 +34,34 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   const [client, setClient] = useState<Client | null>(null)
   const [token, setToken] = useState<string | null>(null)
   const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [isLoading, setIsLoading] = useState(true)
   const router = useRouter()
 
   useEffect(() => {
-    // Check for stored token on mount
-    const storedToken = localStorage.getItem('token')
-    const storedUser = localStorage.getItem('user')
-    const storedClient = localStorage.getItem('client')
+    // Check for stored token on mount - synchronously
+    try {
+      const storedToken = localStorage.getItem('token')
+      const storedUser = localStorage.getItem('user')
+      const storedClient = localStorage.getItem('client')
 
-    if (storedToken && storedUser && storedClient) {
-      setToken(storedToken)
-      setUser(JSON.parse(storedUser))
-      setClient(JSON.parse(storedClient))
-      setIsAuthenticated(true)
-      api.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`
+      if (storedToken && storedUser && storedClient) {
+        const userData = JSON.parse(storedUser)
+        const clientData = JSON.parse(storedClient)
+
+        setToken(storedToken)
+        setUser(userData)
+        setClient(clientData)
+        setIsAuthenticated(true)
+        api.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`
+      }
+    } catch (error) {
+      // Clear invalid data
+      localStorage.removeItem('token')
+      localStorage.removeItem('user')
+      localStorage.removeItem('client')
+      setIsAuthenticated(false)
+    } finally {
+      setIsLoading(false)
     }
   }, [])
 
@@ -127,6 +142,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         client,
         token,
         isAuthenticated,
+        isLoading,
         login,
         logout,
         setClientData,

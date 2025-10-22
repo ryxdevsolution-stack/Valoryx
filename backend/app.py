@@ -38,6 +38,7 @@ def create_app():
         from backend.routes.audit import audit_bp
         from backend.routes.client import client_bp
         from backend.routes.payment import payment_bp
+        from backend.routes.customer import customer_bp
     except ImportError:
         # Fallback to relative imports if absolute imports fail
         try:
@@ -48,9 +49,10 @@ def create_app():
             from routes.audit import audit_bp
             from routes.client import client_bp
             from routes.payment import payment_bp
+            from routes.customer import customer_bp
         except ImportError as e:
             print(f"Warning: Could not import routes: {e}")
-            auth_bp = billing_bp = stock_bp = report_bp = audit_bp = client_bp = payment_bp = None
+            auth_bp = billing_bp = stock_bp = report_bp = audit_bp = client_bp = payment_bp = customer_bp = None
 
     # Register blueprints only if they were imported successfully
     if auth_bp:
@@ -101,7 +103,14 @@ def create_app():
             blueprints_registered.append('payment')
         except Exception as e:
             print(f"Warning: Could not register payment blueprint: {e}")
-    
+
+    if customer_bp:
+        try:
+            app.register_blueprint(customer_bp, url_prefix='/api/customer')
+            blueprints_registered.append('customer')
+        except Exception as e:
+            print(f"Warning: Could not register customer blueprint: {e}")
+
     # Store blueprint registration status
     app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered
 

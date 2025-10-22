@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
+import { TableSkeleton } from '@/components/SkeletonLoader'
 
 interface Stock {
   product_id: string
@@ -487,10 +488,7 @@ export default function StockManagementPage() {
 
       {/* Stock Table */}
       {loading ? (
-        <div className="text-center py-12">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading stock...</p>
-        </div>
+        <TableSkeleton rows={10} />
       ) : stocks.length === 0 ? (
         <div className="bg-white rounded-lg shadow p-12 text-center">
           <p className="text-gray-500 text-lg">No stock items found</p>

@@ -28,7 +28,7 @@ def get_audit_logs():
         query = AuditLog.query.filter_by(client_id=client_id)
 
         if action:
-            query = query.filter_by(action=action)
+            query = query.filter_by(action_type=action)
 
         if date_from:
             query = query.filter(AuditLog.timestamp >= date_from)
@@ -46,8 +46,8 @@ def get_audit_logs():
         log_list = []
         for log in logs:
             log_dict = {
-                'audit_id': log.audit_id,
-                'action': log.action,
+                'log_id': log.log_id,
+                'action_type': log.action_type,
                 'table_name': log.table_name,
                 'record_id': log.record_id,
                 'user_id': log.user_id,
@@ -55,7 +55,7 @@ def get_audit_logs():
                 'new_data': log.new_data,
                 'ip_address': log.ip_address,
                 'user_agent': log.user_agent,
-                'created_at': log.created_at.isoformat() if log.created_at else None
+                'timestamp': log.timestamp.isoformat() if log.timestamp else None
             }
 
             # Get user email

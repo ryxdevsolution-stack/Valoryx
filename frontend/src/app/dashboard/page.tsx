@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
+import { DashboardSkeleton } from '@/components/SkeletonLoader'
 
 interface DashboardStats {
   todaySales: number
@@ -103,10 +104,7 @@ export default function DashboardPage() {
       </div>
 
       {loading ? (
-        <div className="text-center py-8 sm:py-12">
-          <div className="animate-spin rounded-full h-12 w-12 sm:h-16 sm:w-16 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-3 sm:mt-4 text-sm sm:text-base text-gray-600">Loading dashboard...</p>
-        </div>
+        <DashboardSkeleton />
       ) : (
         <>
           {/* Stats Cards */}

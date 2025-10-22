@@ -60,7 +60,7 @@ def generate_report():
 
         # Get payment type names
         payment_types = PaymentType.query.filter_by(client_id=client_id).all()
-        payment_map = {pt.payment_type_id: pt.type_name for pt in payment_types}
+        payment_map = {pt.payment_type_id: pt.payment_name for pt in payment_types}
 
         for bill in gst_bills:
             payment_name = payment_map.get(bill.payment_type, 'Unknown')
@@ -74,7 +74,7 @@ def generate_report():
         new_report = Report(
             report_id=str(uuid.uuid4()),
             client_id=client_id,
-            report_type='sales',
+            report_type='custom',
             date_from=date_from,
             date_to=date_to,
             total_gst_bills=total_gst_bills,

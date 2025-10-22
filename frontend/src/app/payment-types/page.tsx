@@ -3,6 +3,7 @@
 import { useEffect, useState } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
+import { PaymentTypesSkeleton } from '@/components/SkeletonLoader'
 
 interface PaymentType {
   payment_type_id: string
@@ -128,10 +129,7 @@ export default function PaymentTypesPage() {
 
       {/* Payment Types List */}
       {loading ? (
-        <div className="text-center py-12">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading payment types...</p>
-        </div>
+        <PaymentTypesSkeleton count={6} />
       ) : paymentTypes.length === 0 ? (
         <div className="bg-white rounded-lg shadow p-12 text-center">
           <p className="text-gray-500 text-lg">No payment types found</p>
