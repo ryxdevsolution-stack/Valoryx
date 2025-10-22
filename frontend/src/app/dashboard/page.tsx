@@ -95,33 +95,33 @@ export default function DashboardPage() {
 
   return (
     <DashboardLayout>
-      <div className="mb-8">
-        <h1 className="text-3xl font-bold text-gray-900">
+      <div className="mb-4 sm:mb-6 md:mb-8">
+        <h1 className="text-2xl sm:text-3xl md:text-4xl font-bold text-gray-900 break-words">
           Welcome, {client?.client_name}
         </h1>
-        <p className="mt-2 text-gray-600">Here&apos;s an overview of your billing system</p>
+        <p className="mt-1 sm:mt-2 text-sm sm:text-base text-gray-600">Here&apos;s an overview of your billing system</p>
       </div>
 
       {loading ? (
-        <div className="text-center py-12">
-          <div className="animate-spin rounded-full h-16 w-16 border-b-2 border-blue-600 mx-auto"></div>
-          <p className="mt-4 text-gray-600">Loading dashboard...</p>
+        <div className="text-center py-8 sm:py-12">
+          <div className="animate-spin rounded-full h-12 w-12 sm:h-16 sm:w-16 border-b-2 border-blue-600 mx-auto"></div>
+          <p className="mt-3 sm:mt-4 text-sm sm:text-base text-gray-600">Loading dashboard...</p>
         </div>
       ) : (
         <>
           {/* Stats Cards */}
-          <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+          <div className="grid grid-cols-1 xs:grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 md:gap-6 mb-4 sm:mb-6 md:mb-8">
             {statCards.map((card, index) => (
               <div
                 key={index}
-                className="bg-white rounded-lg shadow-md p-6 border border-gray-200"
+                className="bg-white rounded-lg shadow-md p-4 sm:p-5 md:p-6 border border-gray-200 hover:shadow-lg transition-shadow"
               >
                 <div className="flex items-center justify-between">
-                  <div>
-                    <p className="text-sm font-medium text-gray-600">{card.title}</p>
-                    <p className="text-3xl font-bold text-gray-900 mt-2">{card.value}</p>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-xs sm:text-sm font-medium text-gray-600 truncate">{card.title}</p>
+                    <p className="text-xl sm:text-2xl md:text-3xl font-bold text-gray-900 mt-1 sm:mt-2 break-words">{card.value}</p>
                   </div>
-                  <div className={`${card.color} rounded-full p-4 text-3xl`}>
+                  <div className={`${card.color} rounded-full p-2 sm:p-3 md:p-4 text-2xl sm:text-3xl md:text-4xl flex-shrink-0 ml-2`}>
                     {card.icon}
                   </div>
                 </div>
@@ -130,49 +130,49 @@ export default function DashboardPage() {
           </div>
 
           {/* Quick Actions */}
-          <div className="bg-white rounded-lg shadow-md p-6 border border-gray-200 mb-8">
-            <h2 className="text-xl font-semibold text-gray-900 mb-4">Quick Actions</h2>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          <div className="bg-white rounded-lg shadow-md p-4 sm:p-5 md:p-6 border border-gray-200 mb-4 sm:mb-6 md:mb-8">
+            <h2 className="text-lg sm:text-xl font-semibold text-gray-900 mb-3 sm:mb-4">Quick Actions</h2>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-2 sm:gap-3 md:gap-4">
               <a
-                href="/billing/gst"
-                className="flex flex-col items-center justify-center p-6 bg-blue-50 hover:bg-blue-100 rounded-lg transition"
+                href="/billing/create"
+                className="flex flex-col items-center justify-center p-3 sm:p-4 md:p-6 bg-blue-50 hover:bg-blue-100 rounded-lg transition min-h-touch"
               >
-                <span className="text-4xl mb-2">🧾</span>
-                <span className="text-sm font-medium text-gray-700">New GST Bill</span>
+                <span className="text-3xl sm:text-4xl md:text-5xl mb-1 sm:mb-2">🧾</span>
+                <span className="text-xs sm:text-sm font-medium text-gray-700 text-center">New GST Bill</span>
               </a>
               <a
-                href="/billing/non-gst"
-                className="flex flex-col items-center justify-center p-6 bg-green-50 hover:bg-green-100 rounded-lg transition"
+                href="/billing/create"
+                className="flex flex-col items-center justify-center p-3 sm:p-4 md:p-6 bg-green-50 hover:bg-green-100 rounded-lg transition min-h-touch"
               >
-                <span className="text-4xl mb-2">📝</span>
-                <span className="text-sm font-medium text-gray-700">New Non-GST Bill</span>
+                <span className="text-3xl sm:text-4xl md:text-5xl mb-1 sm:mb-2">📝</span>
+                <span className="text-xs sm:text-sm font-medium text-gray-700 text-center">New Non-GST Bill</span>
               </a>
               <a
                 href="/stock"
-                className="flex flex-col items-center justify-center p-6 bg-purple-50 hover:bg-purple-100 rounded-lg transition"
+                className="flex flex-col items-center justify-center p-3 sm:p-4 md:p-6 bg-purple-50 hover:bg-purple-100 rounded-lg transition min-h-touch"
               >
-                <span className="text-4xl mb-2">📦</span>
-                <span className="text-sm font-medium text-gray-700">Add Stock</span>
+                <span className="text-3xl sm:text-4xl md:text-5xl mb-1 sm:mb-2">📦</span>
+                <span className="text-xs sm:text-sm font-medium text-gray-700 text-center">Add Stock</span>
               </a>
               <a
                 href="/reports"
-                className="flex flex-col items-center justify-center p-6 bg-orange-50 hover:bg-orange-100 rounded-lg transition"
+                className="flex flex-col items-center justify-center p-3 sm:p-4 md:p-6 bg-orange-50 hover:bg-orange-100 rounded-lg transition min-h-touch"
               >
-                <span className="text-4xl mb-2">📈</span>
-                <span className="text-sm font-medium text-gray-700">Generate Report</span>
+                <span className="text-3xl sm:text-4xl md:text-5xl mb-1 sm:mb-2">📈</span>
+                <span className="text-xs sm:text-sm font-medium text-gray-700 text-center">Generate Report</span>
               </a>
             </div>
           </div>
 
           {/* Low Stock Alert */}
           {stats.lowStockCount > 0 && (
-            <div className="bg-red-50 border border-red-200 rounded-lg p-6">
-              <h3 className="text-lg font-semibold text-red-800 mb-2">
+            <div className="bg-red-50 border border-red-200 rounded-lg p-4 sm:p-5 md:p-6">
+              <h3 className="text-base sm:text-lg font-semibold text-red-800 mb-1 sm:mb-2">
                 ⚠️ Low Stock Alert
               </h3>
-              <p className="text-red-700">
+              <p className="text-sm sm:text-base text-red-700">
                 You have {stats.lowStockCount} product(s) with low stock.{' '}
-                <a href="/stock" className="underline font-medium">
+                <a href="/stock" className="underline font-medium hover:text-red-900">
                   View stock alerts
                 </a>
               </p>
