@@ -1,13 +1,48 @@
 services:
+  # Backend API Service
   - type: web
-    name: mj-billing-backend
+    name: ryx-billing-backend
     env: python
     plan: free
-    runtime: python
+    runtime: python-3.11
     buildCommand: pip install --upgrade pip && pip install --no-cache-dir -r backend/requirements.txt
-    startCommand: gunicorn --bind 0.0.0.0:$PORT backend.app:app
+    startCommand: gunicorn --workers 4 --bind 0.0.0.0:$PORT --timeout 120 backend.app:app
+    healthCheckPath: /
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: PYTHONPATH
         value: .
+      # Database - Add these in Render dashboard
+      - key: DB_URL
+        sync: false  # Set in dashboard
+      - key: SUPABASE_URL
+        sync: false  # Set in dashboard
+      - key: SUPABASE_KEY
+        sync: false  # Set in dashboard
+      # Security - Add these in Render dashboard
+      - key: JWT_SECRET
+        generateValue: true  # Auto-generate secure secret
+      - key: SECRET_KEY
+        generateValue: true  # Auto-generate secure secret
+      # CORS - Will be auto-set to frontend URL
+      - key: CORS_ORIGINS
+        sync: false  # Set in dashboard after frontend is deployed
+      - key: DEBUG
+        value: "False"
+
+  # Frontend Web Service (Next.js)
+  - type: web
+    name: ryx-billing-frontend
+    env: node
+    plan: free
+    runtime: node-18
+    buildCommand: cd frontend && npm ci && npm run build
+    startCommand: cd frontend && npm start
+    healthCheckPath: /
+    envVars:
+      - key: NODE_ENV
+        value: production
+      # Backend API URL - Set in dashboard after backend is deployed
+      - key: NEXT_PUBLIC_API_URL
+        sync: false  # Set to backend URL in dashboard

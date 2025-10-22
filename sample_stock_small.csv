@@ -1,7 +1,0 @@
-product_name,quantity,rate,category,unit,low_stock_alert
-Laptop,5,50000.00,Electronics,pcs,2
-Mouse,20,500.00,Electronics,pcs,5
-Keyboard,15,1500.00,Electronics,pcs,5
-Monitor,10,15000.00,Electronics,pcs,3
-Pen,100,10.00,Stationery,pcs,20
-Notebook,50,25.00,Stationery,pcs,10
