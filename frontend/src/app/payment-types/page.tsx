@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { PaymentTypesSkeleton } from '@/components/SkeletonLoader'
+import { useData } from '@/contexts/DataContext'
 
 interface PaymentType {
   payment_type_id: string
@@ -12,22 +13,38 @@ interface PaymentType {
 }
 
 export default function PaymentTypesPage() {
+  const { fetchPaymentTypes: fetchCachedPaymentTypes, invalidateCache } = useData()
   const [paymentTypes, setPaymentTypes] = useState<PaymentType[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
   const [typeName, setTypeName] = useState('')
 
   useEffect(() => {
-    fetchPaymentTypes()
+    loadPaymentTypes()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const fetchPaymentTypes = async () => {
+  const loadPaymentTypes = async () => {
     try {
       setLoading(true)
-      const response = await api.get('/payment/list')
-      setPaymentTypes(response.data.payment_types || [])
+      const types = await fetchCachedPaymentTypes()
+      setPaymentTypes(types)
     } catch (error) {
       console.error('Failed to fetch payment types:', error)
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  const refreshPaymentTypes = async () => {
+    try {
+      setLoading(true)
+      // Invalidate cache and fetch fresh data
+      invalidateCache('paymentTypes')
+      const types = await fetchCachedPaymentTypes(true)
+      setPaymentTypes(types)
+    } catch (error) {
+      console.error('Failed to refresh payment types:', error)
     } finally {
       setLoading(false)
     }
@@ -46,7 +63,7 @@ export default function PaymentTypesPage() {
       alert('Payment type added successfully!')
       setTypeName('')
       setShowAddForm(false)
-      fetchPaymentTypes()
+      refreshPaymentTypes()
     } catch (error: any) {
       alert(error.response?.data?.error || 'Failed to add payment type')
     }
@@ -58,7 +75,7 @@ export default function PaymentTypesPage() {
     try {
       await api.delete(`/payment/${paymentTypeId}`)
       alert('Payment type deleted successfully!')
-      fetchPaymentTypes()
+      refreshPaymentTypes()
     } catch (error: any) {
       alert(error.response?.data?.error || 'Failed to delete payment type')
     }

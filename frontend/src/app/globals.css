@@ -80,3 +80,38 @@ html {
 ::-webkit-scrollbar-thumb:hover {
   @apply bg-gray-400;
 }
+
+/* Low Stock Blinking Animations */
+@keyframes blink-red {
+  0%, 100% {
+    background-color: #fee;
+    border-color: #ef4444;
+  }
+  50% {
+    background-color: #fecaca;
+    border-color: #dc2626;
+  }
+}
+
+@keyframes pulse-strong {
+  0%, 100% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 0.8;
+    transform: scale(1.05);
+  }
+}
+
+.low-stock-row {
+  animation: blink-red 2s ease-in-out infinite;
+}
+
+.low-stock-badge {
+  animation: pulse-strong 1.5s ease-in-out infinite;
+}
+
+.low-stock-quantity {
+  animation: pulse-strong 1s ease-in-out infinite;
+}

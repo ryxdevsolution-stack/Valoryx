@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
+import { useData } from '@/contexts/DataContext'
 
 interface Bill {
   bill_id: any
@@ -26,6 +27,7 @@ interface PaymentType {
 }
 
 export default function AllBillsPage() {
+  const { fetchPaymentTypes } = useData()
   const [bills, setBills] = useState<Bill[]>([])
   const [paymentTypes, setPaymentTypes] = useState<PaymentType[]>([])
   const [loading, setLoading] = useState(true)
@@ -35,56 +37,40 @@ export default function AllBillsPage() {
 
   useEffect(() => {
     fetchData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const fetchData = async () => {
     try {
       setLoading(true)
 
-      // Fetch bills
-      const billsRes = await api.get('/billing/list?limit=100')
+      // Fetch both in parallel
+      const [billsRes, cachedPaymentTypes] = await Promise.all([
+        api.get('/billing/list?limit=100'),
+        fetchPaymentTypes()
+      ])
+
       const fetchedBills = billsRes.data.bills || []
       setBills(fetchedBills)
 
-      // Fetch payment types
-      try {
-        const paymentsRes = await api.get('/payment/list')
-        const fetchedPaymentTypes = paymentsRes.data.payment_types || []
-
-        // If we have payment types, use them
-        if (fetchedPaymentTypes.length > 0) {
-          setPaymentTypes(fetchedPaymentTypes)
-        } else if (fetchedBills.length > 0) {
-          // If no payment types but we have bills, create payment types from bill data
-          const uniquePaymentTypes = new Map<string, PaymentType>()
-          fetchedBills.forEach((bill: Bill) => {
-            if (bill.payment_type && !uniquePaymentTypes.has(bill.payment_type)) {
-              uniquePaymentTypes.set(bill.payment_type, {
-                payment_type_id: bill.payment_type,
-                payment_name: bill.payment_type // Use ID as name temporarily
-              })
-            }
-          })
-          setPaymentTypes(Array.from(uniquePaymentTypes.values()))
-        }
-      } catch (paymentError) {
-        console.error('Payment types API error:', paymentError)
-        // Create payment types from bills if API fails
-        if (fetchedBills.length > 0) {
-          const uniquePaymentTypes = new Map<string, PaymentType>()
-          fetchedBills.forEach((bill: Bill) => {
-            if (bill.payment_type && !uniquePaymentTypes.has(bill.payment_type)) {
-              uniquePaymentTypes.set(bill.payment_type, {
-                payment_type_id: bill.payment_type,
-                payment_name: `Payment Method ${bill.payment_type.substring(0, 8)}`
-              })
-            }
-          })
-          setPaymentTypes(Array.from(uniquePaymentTypes.values()))
-        }
+      // Use cached payment types
+      if (cachedPaymentTypes.length > 0) {
+        setPaymentTypes(cachedPaymentTypes)
+      } else if (fetchedBills.length > 0) {
+        // Fallback: create payment types from bill data
+        const uniquePaymentTypes = new Map<string, PaymentType>()
+        fetchedBills.forEach((bill: Bill) => {
+          if (bill.payment_type && !uniquePaymentTypes.has(bill.payment_type)) {
+            uniquePaymentTypes.set(bill.payment_type, {
+              payment_type_id: bill.payment_type,
+              payment_name: bill.payment_type
+            })
+          }
+        })
+        setPaymentTypes(Array.from(uniquePaymentTypes.values()))
       }
     } catch (error: any) {
-      console.error('Bills API error:', error)
+      console.error('Failed to fetch data:', error)
     } finally {
       setLoading(false)
     }

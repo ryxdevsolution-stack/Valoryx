@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { useRouter } from 'next/navigation'
+import { useData } from '@/contexts/DataContext'
 
 interface Product {
   product_id: string
@@ -40,6 +41,7 @@ interface PaymentType {
 
 export default function UnifiedBillingPage() {
   const router = useRouter()
+  const { fetchProducts, fetchPaymentTypes } = useData()
   const barcodeInputRef = useRef<HTMLInputElement>(null)
   const productSearchRef = useRef<HTMLInputElement>(null)
   const quantityInputRef = useRef<HTMLInputElement>(null)
@@ -82,8 +84,7 @@ export default function UnifiedBillingPage() {
   const [billNumberCreated, setBillNumberCreated] = useState<number | null>(null)
 
   useEffect(() => {
-    fetchProducts()
-    fetchPaymentTypes()
+    loadInitialData()
     fetchNextBillNumber()
     // Auto-focus barcode input on mount
     barcodeInputRef.current?.focus()
@@ -117,23 +118,19 @@ export default function UnifiedBillingPage() {
       window.removeEventListener('keydown', handleKeyDown)
       document.removeEventListener('mousedown', handleClickOutside)
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const fetchProducts = async () => {
+  const loadInitialData = async () => {
     try {
-      const response = await api.get('/stock')
-      setProducts(response.data.stock || [])
+      const [productsData, paymentTypesData] = await Promise.all([
+        fetchProducts(),
+        fetchPaymentTypes()
+      ])
+      setProducts(productsData)
+      setPaymentTypes(paymentTypesData)
     } catch (error) {
-      console.error('Failed to fetch products:', error)
-    }
-  }
-
-  const fetchPaymentTypes = async () => {
-    try {
-      const response = await api.get('/payment/list')
-      setPaymentTypes(response.data.payment_types || [])
-    } catch (error) {
-      console.error('Failed to fetch payment types:', error)
+      console.error('Failed to load initial data:', error)
     }
   }
 

@@ -51,7 +51,16 @@ export default function StockManagementPage() {
     try {
       setLoading(true)
       const response = await api.get('/stock')
-      setStocks(response.data.stock || [])
+      const stockData = response.data.stock || []
+
+      // Sort: Low stock items first, then regular stock
+      const sortedStocks = stockData.sort((a: Stock, b: Stock) => {
+        if (a.is_low_stock && !b.is_low_stock) return -1
+        if (!a.is_low_stock && b.is_low_stock) return 1
+        return 0
+      })
+
+      setStocks(sortedStocks)
     } catch (error) {
       console.error('Failed to fetch stocks:', error)
     } finally {
@@ -171,8 +180,34 @@ export default function StockManagementPage() {
     }
   }
 
+  const lowStockCount = stocks.filter(isLowStock).length
+
   return (
     <DashboardLayout>
+      {/* Blinking Low Stock Alert at Top */}
+      {lowStockCount > 0 && (
+        <div className="mb-6 bg-red-50 border-2 border-red-500 rounded-lg p-4 animate-pulse shadow-lg">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-12 h-12 bg-red-500 rounded-full flex items-center justify-center animate-bounce">
+                <span className="text-2xl text-white">⚠️</span>
+              </div>
+              <div>
+                <h3 className="text-xl font-bold text-red-800">
+                  Low Stock Alert!
+                </h3>
+                <p className="text-red-700 font-medium">
+                  {lowStockCount} product(s) running low on stock
+                </p>
+              </div>
+            </div>
+            <div className="text-4xl font-bold text-red-600 animate-pulse">
+              {lowStockCount}
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="mb-6 flex justify-between items-center">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Stock Management</h1>
@@ -526,20 +561,31 @@ export default function StockManagementPage() {
               {stocks.map((stock) => (
                 <tr
                   key={stock.product_id}
-                  className={`hover:bg-gray-50 transition ${
-                    isLowStock(stock) ? 'bg-red-50' : ''
+                  className={`transition ${
+                    isLowStock(stock)
+                      ? 'low-stock-row border-l-4 border-red-500 hover:bg-red-100'
+                      : 'hover:bg-gray-50'
                   }`}
                 >
-                  <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
-                    {stock.product_name}
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    <div className="flex items-center gap-2">
+                      {isLowStock(stock) && (
+                        <span className="text-red-500 animate-bounce text-xl">⚠️</span>
+                      )}
+                      <span className={`font-medium ${
+                        isLowStock(stock) ? 'text-red-900 font-bold' : 'text-gray-900'
+                      }`}>
+                        {stock.product_name}
+                      </span>
+                    </div>
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {stock.category || '-'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <span
-                      className={`font-semibold ${
-                        isLowStock(stock) ? 'text-red-600' : 'text-gray-900'
+                      className={`font-bold text-xl ${
+                        isLowStock(stock) ? 'text-red-600 low-stock-quantity' : 'text-gray-900'
                       }`}
                     >
                       {stock.quantity}
@@ -553,12 +599,12 @@ export default function StockManagementPage() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     {isLowStock(stock) ? (
-                      <span className="px-2 py-1 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                        Low Stock
+                      <span className="low-stock-badge px-3 py-1.5 rounded-full text-xs font-bold bg-red-500 text-white shadow-lg">
+                        🚨 LOW STOCK
                       </span>
                     ) : (
-                      <span className="px-2 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                        In Stock
+                      <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                        ✓ In Stock
                       </span>
                     )}
                   </td>
@@ -574,18 +620,6 @@ export default function StockManagementPage() {
               ))}
             </tbody>
           </table>
-        </div>
-      )}
-
-      {/* Low Stock Alert Summary */}
-      {stocks.filter(isLowStock).length > 0 && (
-        <div className="mt-6 bg-red-50 border border-red-200 rounded-lg p-4">
-          <h3 className="text-lg font-semibold text-red-800 mb-2">
-            ⚠️ Low Stock Alert
-          </h3>
-          <p className="text-red-700">
-            {stocks.filter(isLowStock).length} product(s) are running low on stock.
-          </p>
         </div>
       )}
     </DashboardLayout>

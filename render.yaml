@@ -5,14 +5,14 @@ services:
     env: python
     plan: free
     runtime: python-3.11
-    buildCommand: pip install --upgrade pip && pip install --no-cache-dir -r backend/requirements.txt
-    startCommand: gunicorn --workers 4 --bind 0.0.0.0:$PORT --timeout 120 backend.app:app
-    healthCheckPath: /
+    buildCommand: cd backend && pip install --upgrade pip && pip install --no-cache-dir -r requirements.txt
+    startCommand: cd backend && gunicorn --workers 4 --bind 0.0.0.0:$PORT --timeout 120 --chdir /opt/render/project/src/backend app:app
+    healthCheckPath: /api/health
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.9
       - key: PYTHONPATH
-        value: .
+        value: /opt/render/project/src/backend
       # Database - Add these in Render dashboard
       - key: DB_URL
         sync: false  # Set in dashboard

@@ -15,12 +15,10 @@ def get_customers():
     try:
         client_id = g.user['client_id']
 
-        # Get GST customers
+        # Get all customers from billing tables
         gst_customers = db.session.query(
             GSTBilling.customer_name,
             GSTBilling.customer_phone,
-            GSTBilling.customer_email,
-            GSTBilling.customer_address,
             func.count(GSTBilling.bill_id).label('total_bills'),
             func.sum(GSTBilling.final_amount).label('total_amount'),
             func.max(GSTBilling.created_at).label('last_purchase'),
@@ -29,17 +27,12 @@ def get_customers():
             client_id=client_id
         ).group_by(
             GSTBilling.customer_phone,
-            GSTBilling.customer_name,
-            GSTBilling.customer_email,
-            GSTBilling.customer_address
+            GSTBilling.customer_name
         ).all()
 
-        # Get Non-GST customers
         non_gst_customers = db.session.query(
             NonGSTBilling.customer_name,
             NonGSTBilling.customer_phone,
-            NonGSTBilling.customer_email,
-            NonGSTBilling.customer_address,
             func.count(NonGSTBilling.bill_id).label('total_bills'),
             func.sum(NonGSTBilling.total_amount).label('total_amount'),
             func.max(NonGSTBilling.created_at).label('last_purchase'),
@@ -48,9 +41,7 @@ def get_customers():
             client_id=client_id
         ).group_by(
             NonGSTBilling.customer_phone,
-            NonGSTBilling.customer_name,
-            NonGSTBilling.customer_email,
-            NonGSTBilling.customer_address
+            NonGSTBilling.customer_name
         ).all()
 
         # Merge and aggregate customers by phone
@@ -62,8 +53,8 @@ def get_customers():
                 customer_dict[phone] = {
                     'customer_name': customer.customer_name,
                     'customer_phone': phone,
-                    'customer_email': customer.customer_email or '',
-                    'customer_address': customer.customer_address or '',
+                    'customer_email': '',
+                    'customer_address': '',
                     'total_bills': 0,
                     'total_amount': 0.0,
                     'last_purchase': customer.last_purchase,
@@ -77,11 +68,17 @@ def get_customers():
             customer_dict[phone]['gst_bills'] += customer.total_bills
 
             # Update last purchase if more recent
-            if customer.last_purchase > customer_dict[phone]['last_purchase']:
+            if customer.last_purchase and customer_dict[phone]['last_purchase']:
+                if customer.last_purchase > customer_dict[phone]['last_purchase']:
+                    customer_dict[phone]['last_purchase'] = customer.last_purchase
+            elif customer.last_purchase:
                 customer_dict[phone]['last_purchase'] = customer.last_purchase
 
             # Update first purchase if earlier
-            if customer.first_purchase < customer_dict[phone]['first_purchase']:
+            if customer.first_purchase and customer_dict[phone]['first_purchase']:
+                if customer.first_purchase < customer_dict[phone]['first_purchase']:
+                    customer_dict[phone]['first_purchase'] = customer.first_purchase
+            elif customer.first_purchase:
                 customer_dict[phone]['first_purchase'] = customer.first_purchase
 
         for customer in non_gst_customers:
@@ -90,8 +87,8 @@ def get_customers():
                 customer_dict[phone] = {
                     'customer_name': customer.customer_name,
                     'customer_phone': phone,
-                    'customer_email': customer.customer_email or '',
-                    'customer_address': customer.customer_address or '',
+                    'customer_email': '',
+                    'customer_address': '',
                     'total_bills': 0,
                     'total_amount': 0.0,
                     'last_purchase': customer.last_purchase,
@@ -105,11 +102,17 @@ def get_customers():
             customer_dict[phone]['non_gst_bills'] += customer.total_bills
 
             # Update last purchase if more recent
-            if customer.last_purchase > customer_dict[phone]['last_purchase']:
+            if customer.last_purchase and customer_dict[phone]['last_purchase']:
+                if customer.last_purchase > customer_dict[phone]['last_purchase']:
+                    customer_dict[phone]['last_purchase'] = customer.last_purchase
+            elif customer.last_purchase:
                 customer_dict[phone]['last_purchase'] = customer.last_purchase
 
             # Update first purchase if earlier
-            if customer.first_purchase < customer_dict[phone]['first_purchase']:
+            if customer.first_purchase and customer_dict[phone]['first_purchase']:
+                if customer.first_purchase < customer_dict[phone]['first_purchase']:
+                    customer_dict[phone]['first_purchase'] = customer.first_purchase
+            elif customer.first_purchase:
                 customer_dict[phone]['first_purchase'] = customer.first_purchase
 
         # Convert to list and add status
@@ -117,8 +120,14 @@ def get_customers():
         thirty_days_ago = datetime.utcnow() - timedelta(days=30)
 
         for customer_data in customer_dict.values():
-            customer_data['status'] = 'Active' if customer_data['last_purchase'] >= thirty_days_ago else 'Inactive'
-            customer_data['last_purchase'] = customer_data['last_purchase'].isoformat() if customer_data['last_purchase'] else None
+            # Handle None for last_purchase
+            if customer_data['last_purchase']:
+                customer_data['status'] = 'Active' if customer_data['last_purchase'] >= thirty_days_ago else 'Inactive'
+                customer_data['last_purchase'] = customer_data['last_purchase'].isoformat()
+            else:
+                customer_data['status'] = 'Inactive'
+                customer_data['last_purchase'] = None
+
             customer_data['first_purchase'] = customer_data['first_purchase'].isoformat() if customer_data['first_purchase'] else None
             customers_list.append(customer_data)
 
@@ -176,18 +185,18 @@ def get_customer_details(phone):
             customer_info = {
                 'customer_name': bill.customer_name,
                 'customer_phone': bill.customer_phone,
-                'customer_email': bill.customer_email,
-                'customer_address': bill.customer_address,
-                'customer_gstin': bill.customer_gstin
+                'customer_email': '',
+                'customer_address': '',
+                'customer_gstin': ''
             }
         elif non_gst_bills:
             bill = non_gst_bills[0]
             customer_info = {
                 'customer_name': bill.customer_name,
                 'customer_phone': bill.customer_phone,
-                'customer_email': bill.customer_email,
-                'customer_address': bill.customer_address,
-                'customer_gstin': None
+                'customer_email': '',
+                'customer_address': '',
+                'customer_gstin': ''
             }
 
         # Combine and format bills

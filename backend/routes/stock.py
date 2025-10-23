@@ -125,7 +125,7 @@ def get_stock():
 @stock_bp.route('/alerts', methods=['GET'])
 @authenticate
 def get_low_stock_alerts():
-    """Get low stock alerts filtered by client_id"""
+    """Get low stock alerts filtered by client_id with full product details"""
     try:
         client_id = g.user['client_id']
 
@@ -147,6 +147,7 @@ def get_low_stock_alerts():
                 }
                 for item in low_stock
             ],
+            'low_stock_products': [item.to_dict() for item in low_stock],
             'alert_count': len(low_stock)
         }), 200
 
@@ -563,3 +564,150 @@ def lookup_product(code):
 
     except Exception as e:
         return jsonify({'error': 'Failed to lookup product', 'message': str(e)}), 500
+
+
+@stock_bp.route('/export-low-stock', methods=['POST'])
+@authenticate
+def export_low_stock():
+    """Export low stock items to PDF or Excel for easy ordering"""
+    try:
+        client_id = g.user['client_id']
+        data = request.get_json() or {}
+        file_format = data.get('format', 'xlsx')
+
+        # Get low stock items
+        low_stock = StockEntry.query.filter(
+            StockEntry.client_id == client_id,
+            StockEntry.quantity <= StockEntry.low_stock_alert
+        ).order_by(StockEntry.quantity).all()
+
+        if not low_stock:
+            return jsonify({'error': 'No low stock items to export'}), 404
+
+        # Prepare data for export
+        export_data = []
+        total_cost = 0
+        for item in low_stock:
+            need_to_order = max(0, item.low_stock_alert - item.quantity)
+            estimated_cost = need_to_order * float(item.rate)
+            total_cost += estimated_cost
+
+            export_data.append({
+                'Product Name': item.product_name,
+                'Category': item.category or '-',
+                'Current Stock': f"{item.quantity} {item.unit}",
+                'Min. Required': f"{item.low_stock_alert} {item.unit}",
+                'Need to Order': f"{need_to_order} {item.unit}",
+                'Rate per Unit': f"₹{float(item.rate):.2f}",
+                'Estimated Cost': f"₹{estimated_cost:.2f}"
+            })
+
+        df = pd.DataFrame(export_data)
+
+        # Add total row
+        total_row = {
+            'Product Name': 'TOTAL',
+            'Category': '',
+            'Current Stock': '',
+            'Min. Required': '',
+            'Need to Order': '',
+            'Rate per Unit': '',
+            'Estimated Cost': f"₹{total_cost:.2f}"
+        }
+        df = pd.concat([df, pd.DataFrame([total_row])], ignore_index=True)
+
+        output = io.BytesIO()
+
+        if file_format == 'pdf':
+            # For PDF, we'll create a simple HTML and convert it
+            # You can use libraries like reportlab or weasyprint for better PDF generation
+            html_content = f"""
+            <html>
+            <head>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                    h1 {{ color: #dc2626; }}
+                    table {{ border-collapse: collapse; width: 100%; margin-top: 20px; }}
+                    th, td {{ border: 1px solid #ddd; padding: 12px; text-align: left; }}
+                    th {{ background-color: #fee; color: #991b1b; font-weight: bold; }}
+                    .total-row {{ background-color: #f0f0f0; font-weight: bold; }}
+                    .header {{ margin-bottom: 20px; }}
+                    .alert {{ background-color: #fee; padding: 15px; border-left: 4px solid #dc2626; margin-bottom: 20px; }}
+                </style>
+            </head>
+            <body>
+                <div class="header">
+                    <h1>⚠️ Low Stock Report - Order Required</h1>
+                    <p><strong>Generated on:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
+                    <p><strong>Total Items:</strong> {len(low_stock)}</p>
+                </div>
+                <div class="alert">
+                    <p><strong>Action Required:</strong> These items need immediate restocking to maintain inventory levels.</p>
+                </div>
+                {df.to_html(index=False, classes='table', escape=False)}
+                <p style="margin-top: 20px;"><em>This is an automatically generated report from your billing system.</em></p>
+            </body>
+            </html>
+            """
+
+            # Simple HTML to PDF conversion (basic approach)
+            # For production, use proper PDF libraries
+            output.write(html_content.encode('utf-8'))
+            output.seek(0)
+
+            return send_file(
+                output,
+                mimetype='text/html',  # Change to 'application/pdf' with proper PDF library
+                as_attachment=True,
+                download_name=f'low_stock_report_{datetime.now().strftime("%Y%m%d")}.html'
+            )
+        else:  # Excel
+            with pd.ExcelWriter(output, engine='openpyxl') as writer:
+                df.to_excel(writer, index=False, sheet_name='Low Stock Report')
+
+                # Get workbook and worksheet
+                workbook = writer.book
+                worksheet = writer.sheets['Low Stock Report']
+
+                # Style the header
+                from openpyxl.styles import Font, PatternFill, Alignment
+                header_fill = PatternFill(start_color='FEE2E2', end_color='FEE2E2', fill_type='solid')
+                header_font = Font(bold=True, color='991B1B')
+
+                for cell in worksheet[1]:
+                    cell.fill = header_fill
+                    cell.font = header_font
+                    cell.alignment = Alignment(horizontal='left')
+
+                # Style the total row
+                last_row = worksheet.max_row
+                total_fill = PatternFill(start_color='F3F4F6', end_color='F3F4F6', fill_type='solid')
+                total_font = Font(bold=True)
+
+                for cell in worksheet[last_row]:
+                    cell.fill = total_fill
+                    cell.font = total_font
+
+                # Adjust column widths
+                for column in worksheet.columns:
+                    max_length = 0
+                    column_letter = column[0].column_letter
+                    for cell in column:
+                        try:
+                            if len(str(cell.value)) > max_length:
+                                max_length = len(str(cell.value))
+                        except:
+                            pass
+                    adjusted_width = min(max_length + 2, 50)
+                    worksheet.column_dimensions[column_letter].width = adjusted_width
+
+            output.seek(0)
+            return send_file(
+                output,
+                mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                as_attachment=True,
+                download_name=f'low_stock_report_{datetime.now().strftime("%Y%m%d")}.xlsx'
+            )
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to export low stock report', 'message': str(e)}), 500
