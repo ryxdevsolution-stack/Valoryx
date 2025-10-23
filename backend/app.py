@@ -23,10 +23,23 @@ def create_app():
 
     # Initialize database with error handling
     from extensions import init_db_safely, test_db_connection
+    import logging
+
+    # Configure logging
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+    )
+
     db_initialized = init_db_safely(app)
-    
+
     # Store database status for later use
     app.config['DB_INITIALIZED'] = db_initialized
+
+    if not db_initialized:
+        logging.warning("⚠️  Database initialization failed - API will run with limited functionality")
+    else:
+        logging.info("✅ Database initialized successfully")
 
     # Register blueprints with error handling
     blueprints_registered = []
@@ -173,9 +186,32 @@ def create_app():
         
         return status, 200
 
+    # Middleware to check database connection for critical endpoints
+    @app.before_request
+    def check_database_for_critical_endpoints():
+        from flask import request
+        # Skip database check for health/status endpoints
+        if request.path in ['/api/health', '/api/status', '/api/test']:
+            return None
+
+        # For other endpoints, check if database is available
+        if not app.config.get('DB_INITIALIZED', False):
+            # Try to reconnect if not initialized
+            if not test_db_connection(app):
+                return {
+                    'error': 'Database unavailable',
+                    'message': 'The database is currently unavailable. Please try again later.',
+                    'status': 'service_degraded'
+                }, 503
+
+        return None
+
     # Global error handler to prevent crashes
     @app.errorhandler(Exception)
     def handle_exception(e):
+        import traceback
+        logging.error(f"Unhandled exception: {str(e)}")
+        logging.error(traceback.format_exc())
         return {
             'error': 'Internal server error',
             'message': str(e),

@@ -19,7 +19,14 @@ class Config:
     SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_pre_ping": True,
         "pool_recycle": 300,
-        "connect_args": {"connect_timeout": 10, "application_name": "mj-billing-backend"},
+        "pool_size": 5,
+        "max_overflow": 10,
+        "pool_timeout": 30,
+        "connect_args": {
+            "connect_timeout": 5,
+            "application_name": "mj-billing-backend",
+            "options": "-c statement_timeout=30000"
+        },
     }
 
     # -------------------------------
