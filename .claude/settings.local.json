@@ -10,9 +10,18 @@
       "Bash(curl:*)",
       "Bash(timeout:*)",
       "Bash(npm uninstall:*)",
-      "Bash(npm install:*)"
+      "Bash(npm install:*)",
+      "Bash(cmd /c \"dir /s /b C:\\Users\\admin\\AppData\\Roaming\\Claude 2>nul || echo Not found\")"
     ],
     "deny": [],
-    "ask": []
+    "ask": [],
+    
+     "mcpServers": {
+        "supabase": {
+          "type": "http",
+          "url": "https://mcp.supabase.com/mcp?project_ref=habjhxjutlgnjwjbpkvl"
+        }
+      }
+    
   }
 }
