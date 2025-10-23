@@ -73,8 +73,8 @@ export default function DashboardPage() {
       setLoading(true)
       const response = await api.get(`/analytics/dashboard?range=${timeRange}`)
       setAnalytics(response.data)
-    } catch (error) {
-      console.error('Failed to fetch analytics:', error)
+    } catch (error: any) {
+      setAnalytics(null)
     } finally {
       setLoading(false)
     }
@@ -98,7 +98,6 @@ export default function DashboardPage() {
       window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
     } catch (error: any) {
-      console.error('Export error:', error)
       alert(error.response?.data?.error || 'Failed to export')
     }
   }
@@ -398,7 +397,8 @@ export default function DashboardPage() {
                   {analytics.inventory.lowStock.length} products need restocking •
                   Est. Cost: ₹{analytics.inventory.lowStock.reduce((sum, item) => {
                     const needToOrder = Math.max(0, item.low_stock_alert - item.quantity)
-                    return sum + (needToOrder * item.rate)
+                    const rate = typeof item.rate === 'number' ? item.rate : parseFloat(item.rate) || 0
+                    return sum + (needToOrder * rate)
                   }, 0).toLocaleString('en-IN')}
                 </p>
               </div>
@@ -439,7 +439,8 @@ export default function DashboardPage() {
                 <tbody className="divide-y divide-gray-200">
                   {analytics.inventory.lowStock.map((item, index) => {
                     const needToOrder = Math.max(0, item.low_stock_alert - item.quantity)
-                    const estimatedCost = needToOrder * item.rate
+                    const rate = typeof item.rate === 'number' ? item.rate : parseFloat(item.rate) || 0
+                    const estimatedCost = needToOrder * rate
 
                     return (
                       <tr key={item.product_id} className={`hover:bg-red-50 transition ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
@@ -463,7 +464,7 @@ export default function DashboardPage() {
                           <span className="text-xs text-gray-500 ml-1">{item.unit}</span>
                         </td>
                         <td className="px-6 py-4 font-medium text-gray-900">
-                          ₹{item.rate.toFixed(2)}
+                          ₹{rate.toFixed(2)}
                         </td>
                         <td className="px-6 py-4 font-bold text-green-600 text-lg">
                           ₹{estimatedCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
@@ -480,7 +481,8 @@ export default function DashboardPage() {
                     <td className="px-6 py-4 font-bold text-green-400 text-xl">
                       ₹{analytics.inventory.lowStock.reduce((sum, item) => {
                         const needToOrder = Math.max(0, item.low_stock_alert - item.quantity)
-                        return sum + (needToOrder * item.rate)
+                        const rate = typeof item.rate === 'number' ? item.rate : parseFloat(item.rate) || 0
+                        return sum + (needToOrder * rate)
                       }, 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                     </td>
                   </tr>

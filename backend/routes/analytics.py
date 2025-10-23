@@ -185,21 +185,21 @@ def get_dashboard_analytics():
         payment_stats = defaultdict(lambda: {'count': 0, 'amount': 0.0})
 
         for bill in gst_bills:
-            payment_id = bill.payment_type or 'Unknown'
+            payment_id = str(bill.payment_type) if bill.payment_type else 'Unknown'
             payment_stats[payment_id]['count'] += 1
             payment_stats[payment_id]['amount'] += float(bill.final_amount)
 
         for bill in non_gst_bills:
-            payment_id = bill.payment_type or 'Unknown'
+            payment_id = str(bill.payment_type) if bill.payment_type else 'Unknown'
             payment_stats[payment_id]['count'] += 1
             payment_stats[payment_id]['amount'] += float(bill.total_amount)
 
         # Get payment type names
-        payment_types = {pt.payment_type_id: pt.type_name for pt in PaymentType.query.filter_by(client_id=client_id).all()}
+        payment_types = {str(pt.payment_type_id): pt.payment_name for pt in PaymentType.query.filter_by(client_id=client_id).all()}
 
         payment_preferences = [
             {
-                'method': payment_types.get(payment_id, payment_id[:20]) if payment_id != 'Unknown' else 'Unknown',
+                'method': payment_types.get(payment_id, 'Unknown' if payment_id == 'Unknown' else f'Payment {payment_id[:8]}...'),
                 'count': data['count'],
                 'amount': data['amount']
             }
