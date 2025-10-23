@@ -1,8 +1,22 @@
 import os
+import socket
 from dotenv import load_dotenv
 
 # Load .env file
 load_dotenv()
+
+# Force IPv4 resolution
+def force_ipv4_dns():
+    """Force DNS to resolve to IPv4 only"""
+    original_getaddrinfo = socket.getaddrinfo
+
+    def getaddrinfo_ipv4_only(host, port, family=0, type=0, proto=0, flags=0):
+        return original_getaddrinfo(host, port, socket.AF_INET, type, proto, flags)
+
+    socket.getaddrinfo = getaddrinfo_ipv4_only
+
+# Apply IPv4 fix globally
+force_ipv4_dns()
 
 
 class Config:
@@ -19,13 +33,17 @@ class Config:
     SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_pre_ping": True,
         "pool_recycle": 300,
-        "pool_size": 5,
-        "max_overflow": 10,
+        "pool_size": 10,
+        "max_overflow": 20,
         "pool_timeout": 30,
+        "echo": False,
         "connect_args": {
-            "connect_timeout": 5,
+            "connect_timeout": 10,
+            "keepalives": 1,
+            "keepalives_idle": 30,
+            "keepalives_interval": 10,
+            "keepalives_count": 5,
             "application_name": "mj-billing-backend",
-            "options": "-c statement_timeout=30000"
         },
     }
 

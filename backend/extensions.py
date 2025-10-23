@@ -17,13 +17,19 @@ def init_db_safely(app):
     max_retries = 3
     retry_delay = 2  # seconds
 
+    try:
+        # Initialize Flask-SQLAlchemy ONCE, outside the retry loop
+        db.init_app(app)
+        logging.info("SQLAlchemy initialized")
+    except Exception as e:
+        logging.error(f"Failed to initialize SQLAlchemy: {str(e)}")
+        return False
+
+    # Now retry the connection test
     for attempt in range(max_retries):
         try:
             with app.app_context():
-                # Initialize Flask-SQLAlchemy
-                db.init_app(app)
-
-                # Test connection first with a simple query
+                # Test connection with a simple query
                 with db.engine.connect() as conn:
                     conn.execute(text('SELECT 1'))
                     logging.info(f"Database connection successful on attempt {attempt + 1}")
@@ -34,13 +40,13 @@ def init_db_safely(app):
                 return True
 
         except Exception as e:
-            logging.warning(f"Database initialization attempt {attempt + 1}/{max_retries} failed: {str(e)}")
+            logging.warning(f"Database connection attempt {attempt + 1}/{max_retries} failed: {str(e)}")
 
             if attempt < max_retries - 1:
                 logging.info(f"Retrying in {retry_delay} seconds...")
                 time.sleep(retry_delay)
             else:
-                logging.error(f"Database initialization failed after {max_retries} attempts")
+                logging.error(f"Database connection failed after {max_retries} attempts")
                 # Don't crash the app, just return False
                 return False
 
