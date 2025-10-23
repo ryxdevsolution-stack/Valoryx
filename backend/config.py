@@ -63,6 +63,7 @@ class Config:
                 "using_sqlite": cls.SQLALCHEMY_DATABASE_URI.startswith("sqlite://"),
                 "using_postgresql": cls.SQLALCHEMY_DATABASE_URI.startswith("postgresql://")
                 or cls.SQLALCHEMY_DATABASE_URI.startswith("postgresql+psycopg2://"),
+                "using_supabase": cls.is_supabase_configured(),
             },
             "supabase": {
                 "url_set": bool(cls.SUPABASE_URL),
