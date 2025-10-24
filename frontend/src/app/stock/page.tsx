@@ -10,6 +10,7 @@ interface Stock {
   product_name: string
   quantity: number
   rate: number | string
+  cost_price?: number | string | null
   category: string
   unit: string
   low_stock_alert: number
@@ -34,6 +35,7 @@ export default function StockManagementPage() {
     product_name: '',
     quantity: 0,
     rate: 0,
+    cost_price: 0,
     category: '',
     unit: 'pcs',
     low_stock_alert: 10,
@@ -78,6 +80,7 @@ export default function StockManagementPage() {
         product_name: '',
         quantity: 0,
         rate: 0,
+        cost_price: 0,
         category: '',
         unit: 'pcs',
         low_stock_alert: 10,
@@ -186,22 +189,22 @@ export default function StockManagementPage() {
     <DashboardLayout>
       {/* Blinking Low Stock Alert at Top */}
       {lowStockCount > 0 && (
-        <div className="mb-6 bg-red-50 border-2 border-red-500 rounded-lg p-4 animate-pulse shadow-lg">
+        <div className="mb-6 bg-red-50 dark:bg-red-900/20 border-2 border-red-500 rounded-lg p-4 animate-pulse shadow-lg">
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <div className="w-12 h-12 bg-red-500 rounded-full flex items-center justify-center animate-bounce">
                 <span className="text-2xl text-white">⚠️</span>
               </div>
               <div>
-                <h3 className="text-xl font-bold text-red-800">
+                <h3 className="text-xl font-bold text-red-800 dark:text-red-200">
                   Low Stock Alert!
                 </h3>
-                <p className="text-red-700 font-medium">
+                <p className="text-red-700 dark:text-red-300 font-medium">
                   {lowStockCount} product(s) running low on stock
                 </p>
               </div>
             </div>
-            <div className="text-4xl font-bold text-red-600 animate-pulse">
+            <div className="text-4xl font-bold text-red-600 dark:text-red-400 animate-pulse">
               {lowStockCount}
             </div>
           </div>
@@ -210,19 +213,19 @@ export default function StockManagementPage() {
 
       <div className="mb-6 flex justify-between items-center">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Stock Management</h1>
-          <p className="mt-2 text-gray-600">Manage your inventory and track stock levels</p>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Stock Management</h1>
+          <p className="mt-2 text-gray-600 dark:text-gray-400">Manage your inventory and track stock levels</p>
         </div>
         <div className="flex gap-3">
           <button
             onClick={() => setShowBulkImport(!showBulkImport)}
-            className="px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-medium"
+            className="px-6 py-3 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-800 dark:hover:bg-green-600 transition font-medium"
           >
             📥 Bulk Import
           </button>
           <button
             onClick={() => setShowAddForm(!showAddForm)}
-            className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
+            className="px-6 py-3 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-800 dark:hover:bg-blue-600 transition font-medium"
           >
             {showAddForm ? 'Cancel' : '+ Add Stock'}
           </button>
@@ -231,12 +234,12 @@ export default function StockManagementPage() {
 
       {/* Add Stock Form */}
       {showAddForm && (
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Add New Stock</h2>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900 p-6 mb-6">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Add New Stock</h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Product Name *
                 </label>
                 <input
@@ -246,11 +249,11 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, product_name: e.target.value })
                   }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Quantity *
                 </label>
                 <input
@@ -261,12 +264,12 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, quantity: parseInt(e.target.value) || 0 })
                   }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
-                  Rate (₹) *
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Selling Price (₹) *
                 </label>
                 <input
                   type="number"
@@ -277,11 +280,28 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, rate: parseFloat(e.target.value) || 0 })
                   }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Cost Price (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.cost_price}
+                  onChange={(e) =>
+                    setFormData({ ...formData, cost_price: parseFloat(e.target.value) || 0 })
+                  }
+                  placeholder="Purchase/manufacturing cost"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">For profit calculation</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Category
                 </label>
                 <input
@@ -290,11 +310,11 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, category: e.target.value })
                   }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Unit
                 </label>
                 <select
@@ -302,7 +322,7 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, unit: e.target.value })
                   }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
                   <option value="pcs">Pieces</option>
                   <option value="kg">Kilograms</option>
@@ -312,7 +332,7 @@ export default function StockManagementPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Low Stock Alert
                 </label>
                 <input
@@ -322,11 +342,11 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, low_stock_alert: parseInt(e.target.value) || 0 })
                   }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Item Code (SKU)
                 </label>
                 <input
@@ -336,11 +356,11 @@ export default function StockManagementPage() {
                     setFormData({ ...formData, item_code: e.target.value })
                   }
                   placeholder="e.g., LP-001"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Barcode
                 </label>
                 <input
@@ -350,11 +370,11 @@ export default function StockManagementPage() {
                     setFormData({ ...formData, barcode: e.target.value })
                   }
                   placeholder="e.g., 8901234567890"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
                 />
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   GST Percentage
                 </label>
                 <select
@@ -362,7 +382,7 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, gst_percentage: parseFloat(e.target.value) })
                   }
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
                   <option value={0}>0% (Non-GST)</option>
                   <option value={5}>5%</option>
@@ -372,7 +392,7 @@ export default function StockManagementPage() {
                 </select>
               </div>
               <div>
-                <label className="block text-sm font-medium text-gray-700 mb-2">
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   HSN/SAC Code
                 </label>
                 <input
@@ -382,21 +402,21 @@ export default function StockManagementPage() {
                     setFormData({ ...formData, hsn_code: e.target.value })
                   }
                   placeholder="e.g., 8471"
-                  className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
                 />
               </div>
             </div>
             <div className="flex gap-4">
               <button
                 type="submit"
-                className="px-6 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition"
+                className="px-6 py-2 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-600 transition"
               >
                 Add Stock
               </button>
               <button
                 type="button"
                 onClick={() => setShowAddForm(false)}
-                className="px-6 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700 transition"
+                className="px-6 py-2 bg-gray-600 dark:bg-gray-700 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600 transition"
               >
                 Cancel
               </button>
@@ -407,25 +427,25 @@ export default function StockManagementPage() {
 
       {/* Bulk Import Section */}
       {showBulkImport && (
-        <div className="bg-white rounded-lg shadow p-6 mb-6">
-          <h2 className="text-xl font-semibold text-gray-900 mb-4">Bulk Import Stock</h2>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900 p-6 mb-6">
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Bulk Import Stock</h2>
 
           {/* Download Templates */}
-          <div className="mb-6 p-4 bg-blue-50 rounded-lg">
-            <h3 className="font-semibold text-blue-900 mb-3">📄 Step 1: Download Template</h3>
-            <p className="text-sm text-blue-700 mb-3">
+          <div className="mb-6 p-4 bg-blue-50 dark:bg-blue-900/30 border border-blue-200 dark:border-blue-800 rounded-lg">
+            <h3 className="font-semibold text-blue-900 dark:text-blue-300 mb-3">📄 Step 1: Download Template</h3>
+            <p className="text-sm text-blue-700 dark:text-blue-400 mb-3">
               Download a template file with the correct format
             </p>
             <div className="flex gap-3">
               <button
                 onClick={() => downloadTemplate('csv')}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm"
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-800 dark:hover:bg-blue-600 transition text-sm"
               >
                 Download CSV Template
               </button>
               <button
                 onClick={() => downloadTemplate('xlsx')}
-                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition text-sm"
+                className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-800 dark:hover:bg-blue-600 transition text-sm"
               >
                 Download Excel Template
               </button>
@@ -433,9 +453,9 @@ export default function StockManagementPage() {
           </div>
 
           {/* Upload File */}
-          <div className="mb-6 p-4 bg-green-50 rounded-lg">
-            <h3 className="font-semibold text-green-900 mb-3">📤 Step 2: Upload Filled File</h3>
-            <p className="text-sm text-green-700 mb-3">
+          <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/30 border border-green-200 dark:border-green-800 rounded-lg">
+            <h3 className="font-semibold text-green-900 dark:text-green-300 mb-3">📤 Step 2: Upload Filled File</h3>
+            <p className="text-sm text-green-700 dark:text-green-400 mb-3">
               Fill the template with your data and upload (CSV, XLSX, or XLS)
             </p>
             <input
@@ -443,39 +463,39 @@ export default function StockManagementPage() {
               accept=".csv,.xlsx,.xls"
               onChange={handleFileUpload}
               disabled={uploadProgress}
-              className="block w-full text-sm text-gray-900 border border-gray-300 rounded-lg cursor-pointer bg-white focus:outline-none file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-green-600 file:text-white hover:file:bg-green-700"
+              className="block w-full text-sm text-gray-900 dark:text-gray-300 border border-gray-300 dark:border-gray-600 rounded-lg cursor-pointer bg-white dark:bg-gray-700 focus:outline-none file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-semibold file:bg-green-600 file:text-white hover:file:bg-green-700"
             />
             {uploadProgress && (
-              <p className="mt-2 text-sm text-green-600">Uploading and processing file...</p>
+              <p className="mt-2 text-sm text-green-600 dark:text-green-400">Uploading and processing file...</p>
             )}
           </div>
 
           {/* Import Result */}
           {importResult && (
-            <div className="p-4 bg-gray-50 rounded-lg">
-              <h3 className="font-semibold text-gray-900 mb-3">📊 Import Summary</h3>
+            <div className="p-4 bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600 rounded-lg">
+              <h3 className="font-semibold text-gray-900 dark:text-white mb-3">📊 Import Summary</h3>
               <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-blue-600">{importResult.total_rows}</p>
-                  <p className="text-sm text-gray-600">Total Rows</p>
+                  <p className="text-2xl font-bold text-blue-600 dark:text-blue-400">{importResult.total_rows}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">Total Rows</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-green-600">{importResult.created_count}</p>
-                  <p className="text-sm text-gray-600">Created</p>
+                  <p className="text-2xl font-bold text-green-600 dark:text-green-400">{importResult.created_count}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">Created</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-yellow-600">{importResult.updated_count}</p>
-                  <p className="text-sm text-gray-600">Updated</p>
+                  <p className="text-2xl font-bold text-yellow-600 dark:text-yellow-400">{importResult.updated_count}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">Updated</p>
                 </div>
                 <div className="text-center">
-                  <p className="text-2xl font-bold text-red-600">{importResult.error_count}</p>
-                  <p className="text-sm text-gray-600">Errors</p>
+                  <p className="text-2xl font-bold text-red-600 dark:text-red-400">{importResult.error_count}</p>
+                  <p className="text-sm text-gray-600 dark:text-gray-400">Errors</p>
                 </div>
               </div>
               {importResult.errors && importResult.errors.length > 0 && (
                 <div className="mt-3">
-                  <p className="font-semibold text-red-800 mb-2">Errors:</p>
-                  <ul className="text-sm text-red-700 space-y-1">
+                  <p className="font-semibold text-red-800 dark:text-red-300 mb-2">Errors:</p>
+                  <ul className="text-sm text-red-700 dark:text-red-400 space-y-1">
                     {importResult.errors.map((error: string, index: number) => (
                       <li key={index}>• {error}</li>
                     ))}
@@ -486,9 +506,9 @@ export default function StockManagementPage() {
           )}
 
           {/* Export Options */}
-          <div className="mt-6 p-4 bg-purple-50 rounded-lg">
-            <h3 className="font-semibold text-purple-900 mb-3">📥 Export Current Stock</h3>
-            <p className="text-sm text-purple-700 mb-3">
+          <div className="mt-6 p-4 bg-purple-50 dark:bg-purple-900/30 border border-purple-200 dark:border-purple-800 rounded-lg">
+            <h3 className="font-semibold text-purple-900 dark:text-purple-300 mb-3">📥 Export Current Stock</h3>
+            <p className="text-sm text-purple-700 dark:text-purple-400 mb-3">
               Download all current stock data
             </p>
             <div className="flex gap-3">
@@ -508,9 +528,9 @@ export default function StockManagementPage() {
           </div>
 
           {/* Instructions */}
-          <div className="mt-6 p-4 bg-yellow-50 rounded-lg">
-            <h3 className="font-semibold text-yellow-900 mb-2">ℹ️ Important Notes</h3>
-            <ul className="text-sm text-yellow-800 space-y-1">
+          <div className="mt-6 p-4 bg-yellow-50 dark:bg-yellow-900/30 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+            <h3 className="font-semibold text-yellow-900 dark:text-yellow-300 mb-2">ℹ️ Important Notes</h3>
+            <ul className="text-sm text-yellow-800 dark:text-yellow-400 space-y-1">
               <li>• Required columns: <strong>product_name, quantity, rate</strong></li>
               <li>• Optional columns: category, unit, low_stock_alert</li>
               <li>• If product exists, quantity will be <strong>added</strong> (not replaced)</li>
@@ -525,85 +545,85 @@ export default function StockManagementPage() {
       {loading ? (
         <TableSkeleton rows={10} />
       ) : stocks.length === 0 ? (
-        <div className="bg-white rounded-lg shadow p-12 text-center">
-          <p className="text-gray-500 text-lg">No stock items found</p>
-          <p className="text-gray-400 mt-2">Add your first stock item to get started</p>
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900 p-12 text-center">
+          <p className="text-gray-500 dark:text-gray-400 text-lg">No stock items found</p>
+          <p className="text-gray-400 dark:text-gray-500 mt-2">Add your first stock item to get started</p>
         </div>
       ) : (
-        <div className="bg-white rounded-lg shadow overflow-hidden">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900 overflow-hidden">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-900">
               <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Product Name
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Category
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Quantity
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Unit
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Rate
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Status
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
+            <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
               {stocks.map((stock) => (
                 <tr
                   key={stock.product_id}
                   className={`transition ${
                     isLowStock(stock)
-                      ? 'low-stock-row border-l-4 border-red-500 hover:bg-red-100'
-                      : 'hover:bg-gray-50'
+                      ? 'low-stock-row border-l-4 border-red-500 dark:border-red-600 hover:bg-red-100 dark:hover:bg-red-900/20'
+                      : 'hover:bg-gray-50 dark:hover:bg-gray-700'
                   }`}
                 >
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <div className="flex items-center gap-2">
                       {isLowStock(stock) && (
-                        <span className="text-red-500 animate-bounce text-xl">⚠️</span>
+                        <span className="text-red-500 dark:text-red-400 animate-bounce text-xl">⚠️</span>
                       )}
                       <span className={`font-medium ${
-                        isLowStock(stock) ? 'text-red-900 font-bold' : 'text-gray-900'
+                        isLowStock(stock) ? 'text-red-900 dark:text-red-300 font-bold' : 'text-gray-900 dark:text-white'
                       }`}>
                         {stock.product_name}
                       </span>
                     </div>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {stock.category || '-'}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <span
                       className={`font-bold text-xl ${
-                        isLowStock(stock) ? 'text-red-600 low-stock-quantity' : 'text-gray-900'
+                        isLowStock(stock) ? 'text-red-600 dark:text-red-400 low-stock-quantity' : 'text-gray-900 dark:text-white'
                       }`}
                     >
                       {stock.quantity}
                     </span>
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
                     {stock.unit}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900">
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
                     ₹{Number(stock.rate).toFixed(2)}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     {isLowStock(stock) ? (
-                      <span className="low-stock-badge px-3 py-1.5 rounded-full text-xs font-bold bg-red-500 text-white shadow-lg">
+                      <span className="low-stock-badge px-3 py-1.5 rounded-full text-xs font-bold bg-red-500 dark:bg-red-600 text-white shadow-lg">
                         🚨 LOW STOCK
                       </span>
                     ) : (
-                      <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 text-green-800">
+                      <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-300 border border-green-200 dark:border-green-700">
                         ✓ In Stock
                       </span>
                     )}
@@ -611,7 +631,7 @@ export default function StockManagementPage() {
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <button
                       onClick={() => handleDelete(stock.product_id)}
-                      className="text-red-600 hover:text-red-800 font-medium"
+                      className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 font-medium"
                     >
                       Delete
                     </button>

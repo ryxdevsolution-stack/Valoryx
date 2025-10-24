@@ -1,10 +1,18 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import dynamic from 'next/dynamic'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
 import { DashboardSkeleton } from '@/components/SkeletonLoader'
+import { motion } from 'framer-motion'
+
+const RevenueAreaChart = dynamic(() => import('@/components/charts/RevenueAreaChart'), { ssr: false })
+const PeakHoursChart = dynamic(() => import('@/components/charts/PeakHoursChart'), { ssr: false })
+const TopProductsPieChart = dynamic(() => import('@/components/charts/TopProductsPieChart'), { ssr: false })
+const ProductPerformanceChart = dynamic(() => import('@/components/charts/ProductPerformanceChart'), { ssr: false })
+const ProfitabilityGauge = dynamic(() => import('@/components/charts/ProfitabilityGauge'), { ssr: false })
 
 interface AnalyticsDashboard {
   revenue: {
@@ -37,6 +45,17 @@ interface AnalyticsDashboard {
       growth_rate: number
       category: string
     }>
+    topProductsFiltered: Array<{
+      product_name: string
+      revenue: number
+      quantity: number
+      category: string
+    }>
+    performanceTiers: {
+      mostSelling: Array<{ name: string; quantity: number }>
+      lessSelling: Array<{ name: string; quantity: number }>
+      nonSelling: Array<{ name: string; quantity: number }>
+    }
   }
   inventory: {
     lowStock: Array<{
@@ -52,9 +71,13 @@ interface AnalyticsDashboard {
     criticalCount: number
   }
   insights: {
-    peakHours: Array<{ hour: number; sales: number }>
+    peakHours: Array<{ hour: number; sales: number; count: number }>
     paymentPreferences: Array<{ method: string; count: number; amount: number }>
     categoryPerformance: Array<{ category: string; revenue: number; items_sold: number }>
+    revenueTrend: Array<{ date: string; revenue: number; bills: number }>
+    topCustomers: Array<{ name: string; total_spend: number; visit_count: number; avg_spend: number }>
+    profitMargin: number
+    totalProfit: number
   }
 }
 
@@ -63,6 +86,7 @@ export default function DashboardPage() {
   const [analytics, setAnalytics] = useState<AnalyticsDashboard | null>(null)
   const [loading, setLoading] = useState(true)
   const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month'>('today')
+  const [showPredictions, setShowPredictions] = useState(false)
 
   useEffect(() => {
     fetchAnalytics()
@@ -111,157 +135,311 @@ export default function DashboardPage() {
   if (!analytics) return (
     <DashboardLayout>
       <div className="text-center py-12">
-        <p className="text-gray-500">No analytics data available</p>
+        <p className="text-gray-500 dark:text-gray-400">No analytics data available</p>
       </div>
     </DashboardLayout>
   )
 
   return (
     <DashboardLayout>
-      {/* Header Section */}
-      <div className="mb-8">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+      {/* Header Section - Compact */}
+      <div className="mb-3">
+        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
           <div>
-            <h1 className="text-3xl md:text-4xl font-bold text-gray-900">
-              Business Analytics
-            </h1>
-            <p className="text-gray-600 mt-2">
-              Welcome back, {client?.client_name} • Real-time insights for data-driven decisions
+            <h1 className="text-lg font-semibold text-gray-900 dark:text-white">Analytics</h1>
+            <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
+              {client?.client_name} • {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
             </p>
           </div>
 
-          {/* Time Range Selector */}
-          <div className="flex gap-2 bg-white rounded-lg p-1 shadow-sm border">
-            {(['today', 'week', 'month'] as const).map((range) => (
-              <button
-                key={range}
-                onClick={() => setTimeRange(range)}
-                className={`px-4 py-2 rounded-md text-sm font-medium transition ${
-                  timeRange === range
-                    ? 'bg-blue-600 text-white shadow-md'
-                    : 'text-gray-600 hover:bg-gray-100'
-                }`}
-              >
-                {range === 'today' ? 'Today' : range === 'week' ? 'This Week' : 'This Month'}
-              </button>
-            ))}
+          <div className="flex items-center gap-2">
+            {/* Time Range Selector - Compact */}
+            <div className="inline-flex items-center bg-gray-100 dark:bg-gray-800 rounded p-0.5">
+              {(['today', 'week', 'month'] as const).map((range) => (
+                <button
+                  key={range}
+                  type="button"
+                  onClick={() => setTimeRange(range)}
+                  className={`px-2 py-1 rounded text-[10px] font-medium transition-all ${
+                    timeRange === range
+                      ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                      : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+                  }`}
+                >
+                  {range === 'today' ? 'Today' : range === 'week' ? 'Week' : 'Month'}
+                </button>
+              ))}
+            </div>
+
+            {/* Predictions Toggle - Compact */}
+            <button
+              type="button"
+              onClick={() => setShowPredictions(!showPredictions)}
+              className={`px-2 py-1 rounded text-[10px] font-medium transition-all ${
+                showPredictions
+                  ? 'bg-indigo-600 dark:bg-indigo-500 text-white'
+                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600'
+              }`}
+            >
+              {showPredictions ? 'Hide' : 'Show'} Forecast
+            </button>
           </div>
         </div>
       </div>
 
-      {/* Key Metrics Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      {/* Key Metrics - Compact Cards */}
+      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
         {/* Revenue Card */}
-        <div className="bg-gradient-to-br from-blue-500 to-blue-600 rounded-xl shadow-lg p-6 text-white">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-white bg-opacity-20 rounded-lg flex items-center justify-center">
-              <span className="text-2xl">💰</span>
-            </div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3 }}
+          className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 hover:shadow-md transition-shadow"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Revenue</span>
             {analytics.revenue.growth > 0 && (
-              <span className="text-xs bg-green-400 px-2 py-1 rounded-full font-bold">
-                +{analytics.revenue.growth.toFixed(1)}%
+              <span className="text-[10px] text-green-600 font-medium">
+                ↑ {analytics.revenue.growth.toFixed(1)}%
               </span>
             )}
           </div>
-          <div className="mb-2">
-            <p className="text-blue-100 text-sm font-medium">Total Revenue</p>
-            <p className="text-3xl font-bold">
-              ₹{(timeRange === 'today' ? analytics.revenue.today :
-                 timeRange === 'week' ? analytics.revenue.thisWeek :
-                 analytics.revenue.thisMonth).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-            </p>
-          </div>
-          <p className="text-blue-100 text-xs">
-            {timeRange === 'today' ? "Today's performance" :
-             timeRange === 'week' ? 'Last 7 days' :
-             'Last 30 days'}
+          <p className="text-lg font-bold text-gray-900 dark:text-white mb-0.5">
+            ₹{(timeRange === 'today' ? analytics.revenue.today :
+               timeRange === 'week' ? analytics.revenue.thisWeek :
+               analytics.revenue.thisMonth).toLocaleString('en-IN')}
           </p>
-        </div>
+          <p className="text-[10px] text-gray-500 dark:text-gray-400">
+            {timeRange === 'today' ? 'Today' : timeRange === 'week' ? 'This week' : 'This month'}
+          </p>
+        </motion.div>
 
         {/* Bills Card */}
-        <div className="bg-gradient-to-br from-green-500 to-green-600 rounded-xl shadow-lg p-6 text-white">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-white bg-opacity-20 rounded-lg flex items-center justify-center">
-              <span className="text-2xl">📄</span>
-            </div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.1 }}
+          className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 hover:shadow-md transition-shadow"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Transactions</span>
           </div>
-          <div className="mb-2">
-            <p className="text-green-100 text-sm font-medium">Total Bills</p>
-            <p className="text-3xl font-bold">
-              {analytics.bills.totalGST + analytics.bills.totalNonGST}
-            </p>
-          </div>
-          <p className="text-green-100 text-xs">
-            GST: {analytics.bills.totalGST} • Non-GST: {analytics.bills.totalNonGST}
+          <p className="text-lg font-bold text-gray-900 dark:text-white mb-0.5">
+            {analytics.bills.totalGST + analytics.bills.totalNonGST}
           </p>
-        </div>
+          <p className="text-[10px] text-gray-500 dark:text-gray-400">
+            {analytics.bills.totalGST} GST · {analytics.bills.totalNonGST} Non-GST
+          </p>
+        </motion.div>
 
         {/* Avg Bill Value Card */}
-        <div className="bg-gradient-to-br from-purple-500 to-purple-600 rounded-xl shadow-lg p-6 text-white">
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-white bg-opacity-20 rounded-lg flex items-center justify-center">
-              <span className="text-2xl">📊</span>
-            </div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.2 }}
+          className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 hover:shadow-md transition-shadow"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Avg Transaction</span>
           </div>
-          <div className="mb-2">
-            <p className="text-purple-100 text-sm font-medium">Avg Bill Value</p>
-            <p className="text-3xl font-bold">
-              ₹{analytics.bills.avgBillValue.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
-            </p>
-          </div>
-          <p className="text-purple-100 text-xs">
-            Per transaction average
+          <p className="text-lg font-bold text-gray-900 dark:text-white mb-0.5">
+            ₹{analytics.bills.avgBillValue.toLocaleString('en-IN')}
           </p>
-        </div>
+          <p className="text-[10px] text-gray-500 dark:text-gray-400">Per bill average</p>
+        </motion.div>
 
         {/* Inventory Alert Card */}
-        <div className={`rounded-xl shadow-lg p-6 text-white ${
-          analytics.inventory.criticalCount > 0
-            ? 'bg-gradient-to-br from-red-500 to-red-600 animate-pulse'
-            : 'bg-gradient-to-br from-orange-500 to-orange-600'
-        }`}>
-          <div className="flex items-center justify-between mb-4">
-            <div className="w-12 h-12 bg-white bg-opacity-20 rounded-lg flex items-center justify-center">
-              <span className="text-2xl">⚠️</span>
-            </div>
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.3, delay: 0.3 }}
+          className={`border rounded p-3 hover:shadow-md transition-shadow ${
+            analytics.inventory.criticalCount > 0
+              ? 'bg-red-50 border-red-200'
+              : 'bg-white border-gray-200'
+          }`}
+        >
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-[10px] font-medium text-gray-500 uppercase tracking-wide">Low Stock</span>
           </div>
-          <div className="mb-2">
-            <p className="text-red-100 text-sm font-medium">Critical Stock</p>
-            <p className="text-3xl font-bold">
-              {analytics.inventory.criticalCount}
-            </p>
-          </div>
-          <p className="text-red-100 text-xs">
-            Items need immediate attention
+          <p className={`text-lg font-bold mb-0.5 ${
+            analytics.inventory.criticalCount > 0 ? 'text-red-600' : 'text-gray-900'
+          }`}>
+            {analytics.inventory.criticalCount}
           </p>
-        </div>
+          <p className="text-[10px] text-gray-500 dark:text-gray-400">
+            {analytics.inventory.criticalCount > 0 ? 'Items need attention' : 'All stock healthy'}
+          </p>
+        </motion.div>
       </div>
 
-      {/* Product Performance Section */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-        {/* Top Selling Products */}
-        <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold text-gray-900">🏆 Top Performers</h3>
-            <span className="text-xs bg-green-100 text-green-800 px-2 py-1 rounded-full font-medium">
-              High Demand
-            </span>
+      {/* Analytics Charts - Compact Layout */}
+      <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 mb-3">
+        {/* Revenue Trend Chart */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4 }}
+          className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"
+        >
+          <RevenueAreaChart data={analytics.insights.revenueTrend} />
+        </motion.div>
+
+        {/* Peak Hours Chart */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.1 }}
+          className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"
+        >
+          <PeakHoursChart data={analytics.insights.peakHours} />
+        </motion.div>
+
+        {/* Top Products Pie Chart - Filtered by Time Range */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.2 }}
+          className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"
+        >
+          <TopProductsPieChart
+            data={analytics.products.topProductsFiltered}
+            timeRange={timeRange}
+          />
+        </motion.div>
+
+        {/* Product Performance Tiers Chart */}
+        <motion.div
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.3 }}
+          className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"
+        >
+          <ProductPerformanceChart
+            mostSelling={analytics.products.performanceTiers.mostSelling}
+            lessSelling={analytics.products.performanceTiers.lessSelling}
+            nonSelling={analytics.products.performanceTiers.nonSelling}
+          />
+        </motion.div>
+      </div>
+
+      {/* Predictive Analytics Section - Compact */}
+      {showPredictions && analytics.insights.revenueTrend.length > 0 && (
+        <motion.div
+          initial={{ opacity: 0, height: 0 }}
+          animate={{ opacity: 1, height: 'auto' }}
+          exit={{ opacity: 0, height: 0 }}
+          className="mb-3 bg-indigo-50 dark:bg-indigo-900/30 border border-indigo-200 dark:border-indigo-800 rounded p-3"
+        >
+          <div className="flex items-center justify-between mb-3">
+            <div>
+              <h3 className="text-xs font-semibold text-gray-900 dark:text-white">Forecast & Predictions</h3>
+              <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">Based on historical trends</p>
+            </div>
           </div>
-          <div className="space-y-3">
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-2">
+            {/* Revenue Prediction */}
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2">
+              <div className="mb-2">
+                <h4 className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Next Period Revenue</h4>
+              </div>
+              {(() => {
+                const recentRevenue = analytics.insights.revenueTrend.slice(-7)
+                const avgGrowth = recentRevenue.length > 1
+                  ? recentRevenue.reduce((sum, d, i) => {
+                      if (i === 0) return 0
+                      return sum + ((d.revenue - recentRevenue[i - 1].revenue) / Math.max(recentRevenue[i - 1].revenue, 1))
+                    }, 0) / (recentRevenue.length - 1)
+                  : 0
+                const lastRevenue = recentRevenue[recentRevenue.length - 1]?.revenue || 0
+                const predictedRevenue = lastRevenue * (1 + avgGrowth)
+
+                return (
+                  <>
+                    <p className="text-lg font-bold text-gray-900 dark:text-white mb-1">
+                      ₹{predictedRevenue.toFixed(2)}
+                    </p>
+                    <div className="flex items-center gap-1">
+                      <span className={`text-[10px] font-medium ${avgGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {avgGrowth >= 0 ? '↑' : '↓'} {Math.abs(avgGrowth * 100).toFixed(1)}%
+                      </span>
+                      <span className="text-[10px] text-gray-500 dark:text-gray-400">growth trend</span>
+                    </div>
+                  </>
+                )
+              })()}
+            </div>
+
+            {/* Stock Alert Prediction */}
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2">
+              <div className="mb-2">
+                <h4 className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Stock Depletion Rate</h4>
+              </div>
+              {(() => {
+                const topProducts = analytics.products.topSelling.slice(0, 3)
+                const avgDailySales = topProducts.reduce((sum, p) => sum + p.quantity_sold, 0) / Math.max(analytics.insights.revenueTrend.length, 1)
+
+                return (
+                  <>
+                    <p className="text-lg font-bold text-gray-900 dark:text-white mb-1">
+                      {Math.ceil(avgDailySales)} units/day
+                    </p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                      Restock needed in ~{Math.ceil(30 / Math.max(avgDailySales, 1))} days
+                    </p>
+                  </>
+                )
+              })()}
+            </div>
+
+            {/* Customer Growth */}
+            <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-2">
+              <div className="mb-2">
+                <h4 className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Customer Retention</h4>
+              </div>
+              {(() => {
+                const totalCustomers = analytics.insights.topCustomers.length
+                const repeatCustomers = analytics.insights.topCustomers.filter(c => c.visit_count > 1).length
+                const retentionRate = totalCustomers > 0 ? (repeatCustomers / totalCustomers) * 100 : 0
+
+                return (
+                  <>
+                    <p className="text-lg font-bold text-gray-900 dark:text-white mb-1">
+                      {retentionRate.toFixed(0)}%
+                    </p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                      {repeatCustomers} of {totalCustomers} repeat customers
+                    </p>
+                  </>
+                )
+              })()}
+            </div>
+          </div>
+        </motion.div>
+      )}
+
+      {/* Product Performance Section - Compact */}
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-2 mb-3">
+        {/* Top Selling Products */}
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-gray-900 dark:text-white">Top Products</h3>
+            <span className="text-[10px] text-green-600 font-medium">High Sales</span>
+          </div>
+          <div className="space-y-1">
             {analytics.products.topSelling.slice(0, 5).map((product, index) => (
-              <div key={index} className="flex items-center justify-between p-3 bg-green-50 rounded-lg hover:bg-green-100 transition">
-                <div className="flex items-center gap-3">
-                  <div className="w-8 h-8 bg-green-600 rounded-full flex items-center justify-center text-white font-bold text-sm">
-                    {index + 1}
-                  </div>
-                  <div>
-                    <p className="font-medium text-gray-900 text-sm">{product.product_name}</p>
-                    <p className="text-xs text-gray-500">{product.category}</p>
+              <div key={index} className="flex items-center justify-between py-1 border-b border-gray-100 last:border-0">
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <span className="text-[10px] font-medium text-gray-400 w-3">{index + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 text-xs truncate">{product.product_name}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">{product.category}</p>
                   </div>
                 </div>
-                <div className="text-right">
-                  <p className="font-bold text-green-600 text-sm">{product.quantity_sold} sold</p>
-                  <p className="text-xs text-gray-600">₹{product.revenue.toFixed(2)}</p>
+                <div className="text-right ml-2">
+                  <p className="font-semibold text-gray-900 text-xs">{product.quantity_sold}</p>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400">₹{product.revenue.toFixed(0)}</p>
                 </div>
               </div>
             ))}
@@ -269,26 +447,20 @@ export default function DashboardPage() {
         </div>
 
         {/* Trending Products */}
-        <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold text-gray-900">📈 Trending Now</h3>
-            <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded-full font-medium">
-              Growth
-            </span>
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-gray-900 dark:text-white">Trending</h3>
+            <span className="text-[10px] text-blue-600 font-medium">Growing</span>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-1">
             {analytics.products.trending.slice(0, 5).map((product, index) => (
-              <div key={index} className="flex items-center justify-between p-3 bg-blue-50 rounded-lg hover:bg-blue-100 transition">
-                <div>
-                  <p className="font-medium text-gray-900 text-sm">{product.product_name}</p>
-                  <p className="text-xs text-gray-500">{product.category}</p>
+              <div key={index} className="flex items-center justify-between py-1 border-b border-gray-100 last:border-0">
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-gray-900 text-xs truncate">{product.product_name}</p>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400">{product.category}</p>
                 </div>
-                <div className="flex items-center gap-2">
-                  <div className="text-right">
-                    <p className="font-bold text-blue-600 text-sm">+{product.growth_rate.toFixed(1)}%</p>
-                    <p className="text-xs text-gray-600">growth</p>
-                  </div>
-                  <span className="text-blue-600 text-xl">📊</span>
+                <div className="text-right ml-2">
+                  <p className="font-semibold text-blue-600 text-xs">+{product.growth_rate.toFixed(1)}%</p>
                 </div>
               </div>
             ))}
@@ -296,23 +468,21 @@ export default function DashboardPage() {
         </div>
 
         {/* Low Performing Products */}
-        <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
-          <div className="flex items-center justify-between mb-4">
-            <h3 className="text-lg font-bold text-gray-900">📉 Need Attention</h3>
-            <span className="text-xs bg-orange-100 text-orange-800 px-2 py-1 rounded-full font-medium">
-              Low Sales
-            </span>
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-gray-900 dark:text-white">Slow Movers</h3>
+            <span className="text-[10px] text-orange-600 font-medium">Low Sales</span>
           </div>
-          <div className="space-y-3">
+          <div className="space-y-1">
             {analytics.products.lowPerforming.slice(0, 5).map((product, index) => (
-              <div key={index} className="flex items-center justify-between p-3 bg-orange-50 rounded-lg hover:bg-orange-100 transition">
-                <div>
-                  <p className="font-medium text-gray-900 text-sm">{product.product_name}</p>
-                  <p className="text-xs text-gray-500">{product.category}</p>
+              <div key={index} className="flex items-center justify-between py-1 border-b border-gray-100 last:border-0">
+                <div className="flex-1 min-w-0">
+                  <p className="font-medium text-gray-900 text-xs truncate">{product.product_name}</p>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400">{product.category}</p>
                 </div>
-                <div className="text-right">
-                  <p className="font-bold text-orange-600 text-sm">{product.quantity_sold} sold</p>
-                  <p className="text-xs text-gray-600">₹{product.revenue.toFixed(2)}</p>
+                <div className="text-right ml-2">
+                  <p className="font-semibold text-gray-900 text-xs">{product.quantity_sold}</p>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400">₹{product.revenue.toFixed(0)}</p>
                 </div>
               </div>
             ))}
@@ -320,225 +490,131 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Business Insights */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-        {/* Category Performance */}
-        <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
-          <h3 className="text-lg font-bold text-gray-900 mb-4">📦 Category Performance</h3>
-          <div className="space-y-4">
-            {analytics.insights.categoryPerformance.map((cat, index) => {
-              const maxRevenue = Math.max(...analytics.insights.categoryPerformance.map(c => c.revenue))
-              const percentage = (cat.revenue / maxRevenue) * 100
-
-              return (
-                <div key={index}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium text-gray-900">{cat.category || 'Uncategorized'}</span>
-                    <span className="text-sm font-bold text-gray-700">₹{cat.revenue.toLocaleString('en-IN')}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 bg-gray-200 rounded-full h-3 overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-blue-500 to-blue-600 rounded-full transition-all duration-500"
-                        style={{ width: `${percentage}%` }}
-                      />
-                    </div>
-                    <span className="text-xs text-gray-600 min-w-[3rem]">{cat.items_sold} sold</span>
-                  </div>
-                </div>
-              )
-            })}
-          </div>
+      {/* Insights Section - Profit & Customers */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
+        {/* Profit Analysis - Gauge Chart */}
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3" style={{ minHeight: '280px' }}>
+          <ProfitabilityGauge
+            profitMargin={analytics.insights.profitMargin}
+            totalProfit={analytics.insights.totalProfit}
+          />
         </div>
 
-        {/* Payment Methods */}
-        <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
-          <h3 className="text-lg font-bold text-gray-900 mb-4">💳 Payment Preferences</h3>
-          <div className="space-y-4">
-            {analytics.insights.paymentPreferences.map((payment, index) => {
-              const maxAmount = Math.max(...analytics.insights.paymentPreferences.map(p => p.amount))
-              const percentage = (payment.amount / maxAmount) * 100
-
-              return (
-                <div key={index}>
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="font-medium text-gray-900">{payment.method}</span>
-                    <span className="text-sm font-bold text-gray-700">₹{payment.amount.toLocaleString('en-IN')}</span>
-                  </div>
-                  <div className="flex items-center gap-3">
-                    <div className="flex-1 bg-gray-200 rounded-full h-3 overflow-hidden">
-                      <div
-                        className="h-full bg-gradient-to-r from-green-500 to-green-600 rounded-full transition-all duration-500"
-                        style={{ width: `${percentage}%` }}
-                      />
-                    </div>
-                    <span className="text-xs text-gray-600 min-w-[3rem]">{payment.count} txns</span>
+        {/* Top Customers */}
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3">
+          <div className="flex items-center justify-between mb-2">
+            <h3 className="text-xs font-semibold text-gray-900 dark:text-white">Top Customers</h3>
+            <span className="text-[10px] text-blue-600 font-medium">By revenue</span>
+          </div>
+          <div className="space-y-1">
+            {analytics.insights.topCustomers.slice(0, 5).map((customer, index) => (
+              <div key={index} className="flex items-center justify-between py-1 border-b border-gray-100 last:border-0">
+                <div className="flex items-center gap-2 flex-1 min-w-0">
+                  <span className="text-[10px] font-medium text-gray-400 w-3">{index + 1}</span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-medium text-gray-900 text-xs truncate">{customer.name}</p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400">{customer.visit_count} visits</p>
                   </div>
                 </div>
-              )
-            })}
+                <div className="text-right ml-2">
+                  <p className="font-semibold text-gray-900 text-xs">₹{customer.total_spend.toLocaleString('en-IN')}</p>
+                </div>
+              </div>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* Critical Inventory Management */}
+      {/* Low Stock Alert - Compact Design */}
       {analytics.inventory.lowStock.length > 0 && (
-        <div className="bg-gradient-to-br from-red-50 to-orange-50 rounded-xl shadow-lg border-2 border-red-300 p-6 mb-8">
-          <div className="flex items-center justify-between mb-6">
-            <div className="flex items-center gap-4">
-              <div className="w-14 h-14 bg-red-500 rounded-full flex items-center justify-center animate-bounce shadow-lg">
-                <span className="text-3xl">⚠️</span>
-              </div>
-              <div>
-                <h3 className="text-2xl font-bold text-red-900">
-                  Critical Stock Alert - Immediate Action Required
-                </h3>
-                <p className="text-red-700 font-medium">
-                  {analytics.inventory.lowStock.length} products need restocking •
-                  Est. Cost: ₹{analytics.inventory.lowStock.reduce((sum, item) => {
-                    const needToOrder = Math.max(0, item.low_stock_alert - item.quantity)
-                    const rate = typeof item.rate === 'number' ? item.rate : parseFloat(item.rate) || 0
-                    return sum + (needToOrder * rate)
-                  }, 0).toLocaleString('en-IN')}
-                </p>
-              </div>
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded p-3 mb-3">
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h3 className="text-xs font-semibold text-gray-900 dark:text-white">
+                Low Stock Alert
+              </h3>
+              <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-0.5">
+                {analytics.inventory.lowStock.length} items need restocking
+              </p>
             </div>
-            <div className="flex gap-3">
+            <div className="flex gap-1">
               <button
+                type="button"
                 onClick={() => exportLowStock('xlsx')}
-                className="px-5 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition font-bold shadow-lg hover:shadow-xl flex items-center gap-2"
+                className="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 text-[10px] rounded hover:bg-gray-50 dark:hover:bg-gray-700 transition font-medium"
               >
-                <span className="text-xl">📊</span>
                 Export Excel
               </button>
               <button
+                type="button"
                 onClick={() => exportLowStock('pdf')}
-                className="px-5 py-3 bg-red-600 text-white rounded-lg hover:bg-red-700 transition font-bold shadow-lg hover:shadow-xl flex items-center gap-2"
+                className="px-2 py-1 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 text-[10px] rounded hover:bg-gray-50 dark:hover:bg-gray-700 transition font-medium"
               >
-                <span className="text-xl">📄</span>
                 Export PDF
               </button>
             </div>
           </div>
 
-          {/* Low Stock Table */}
-          <div className="bg-white rounded-lg overflow-hidden shadow-md">
+          {/* Low Stock Table - Compact */}
+          <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded overflow-hidden">
             <div className="overflow-x-auto">
-              <table className="min-w-full">
-                <thead className="bg-red-600 text-white">
+              <table className="min-w-full text-xs">
+                <thead className="bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
                   <tr>
-                    <th className="px-6 py-4 text-left text-sm font-bold">Product</th>
-                    <th className="px-6 py-4 text-left text-sm font-bold">Category</th>
-                    <th className="px-6 py-4 text-left text-sm font-bold">Current</th>
-                    <th className="px-6 py-4 text-left text-sm font-bold">Required</th>
-                    <th className="px-6 py-4 text-left text-sm font-bold">Order Qty</th>
-                    <th className="px-6 py-4 text-left text-sm font-bold">Rate</th>
-                    <th className="px-6 py-4 text-left text-sm font-bold">Est. Cost</th>
+                    <th className="px-2 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Product</th>
+                    <th className="px-2 py-1.5 text-left text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Category</th>
+                    <th className="px-2 py-1.5 text-right text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Stock</th>
+                    <th className="px-2 py-1.5 text-right text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Need</th>
+                    <th className="px-2 py-1.5 text-right text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Cost</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-gray-200">
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                   {analytics.inventory.lowStock.map((item, index) => {
                     const needToOrder = Math.max(0, item.low_stock_alert - item.quantity)
                     const rate = typeof item.rate === 'number' ? item.rate : parseFloat(item.rate) || 0
                     const estimatedCost = needToOrder * rate
 
                     return (
-                      <tr key={item.product_id} className={`hover:bg-red-50 transition ${index % 2 === 0 ? 'bg-white' : 'bg-gray-50'}`}>
-                        <td className="px-6 py-4">
-                          <div className="flex items-center gap-2">
-                            <span className="text-red-500 animate-pulse font-bold">🔴</span>
-                            <span className="font-medium text-gray-900">{item.product_name}</span>
-                          </div>
+                      <tr key={item.product_id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                        <td className="px-2 py-1.5">
+                          <p className="font-medium text-gray-900 dark:text-white">{item.product_name}</p>
                         </td>
-                        <td className="px-6 py-4 text-sm text-gray-600">{item.category || '-'}</td>
-                        <td className="px-6 py-4">
-                          <span className="font-bold text-red-600 text-lg">{item.quantity}</span>
-                          <span className="text-xs text-gray-500 ml-1">{item.unit}</span>
+                        <td className="px-2 py-1.5 text-gray-600 dark:text-gray-300">{item.category || '-'}</td>
+                        <td className="px-2 py-1.5 text-right">
+                          <span className="font-semibold text-red-600 dark:text-red-400">{item.quantity}</span>
+                          <span className="text-gray-500 dark:text-gray-400 ml-1">{item.unit}</span>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className="font-medium text-gray-900">{item.low_stock_alert}</span>
-                          <span className="text-xs text-gray-500 ml-1">{item.unit}</span>
+                        <td className="px-2 py-1.5 text-right">
+                          <span className="font-semibold text-gray-900 dark:text-white">{needToOrder}</span>
+                          <span className="text-gray-500 dark:text-gray-400 ml-1">{item.unit}</span>
                         </td>
-                        <td className="px-6 py-4">
-                          <span className="font-bold text-orange-600 text-lg">{needToOrder}</span>
-                          <span className="text-xs text-gray-500 ml-1">{item.unit}</span>
-                        </td>
-                        <td className="px-6 py-4 font-medium text-gray-900">
-                          ₹{rate.toFixed(2)}
-                        </td>
-                        <td className="px-6 py-4 font-bold text-green-600 text-lg">
-                          ₹{estimatedCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        <td className="px-2 py-1.5 text-right font-semibold text-gray-900 dark:text-white">
+                          ₹{estimatedCost.toLocaleString('en-IN')}
                         </td>
                       </tr>
                     )
                   })}
                 </tbody>
-                <tfoot className="bg-gray-800 text-white">
+                <tfoot className="bg-gray-50 dark:bg-gray-700 border-t border-gray-200 dark:border-gray-600">
                   <tr>
-                    <td colSpan={6} className="px-6 py-4 text-right font-bold text-lg">
-                      Total Estimated Investment:
+                    <td colSpan={4} className="px-2 py-1.5 text-right font-semibold text-gray-900 dark:text-white">
+                      Total:
                     </td>
-                    <td className="px-6 py-4 font-bold text-green-400 text-xl">
+                    <td className="px-2 py-1.5 text-right font-bold text-gray-900 dark:text-white">
                       ₹{analytics.inventory.lowStock.reduce((sum, item) => {
                         const needToOrder = Math.max(0, item.low_stock_alert - item.quantity)
                         const rate = typeof item.rate === 'number' ? item.rate : parseFloat(item.rate) || 0
                         return sum + (needToOrder * rate)
-                      }, 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      }, 0).toLocaleString('en-IN')}
                     </td>
                   </tr>
                 </tfoot>
               </table>
             </div>
           </div>
-
-          <div className="mt-4 flex items-center justify-between bg-yellow-50 border border-yellow-200 rounded-lg p-4">
-            <p className="text-sm font-medium text-yellow-900">
-              💡 <strong>Pro Tip:</strong> Download this report and share directly with your supplier for quick restocking
-            </p>
-            <a
-              href="/stock"
-              className="text-sm font-bold text-blue-600 hover:text-blue-800 underline flex items-center gap-1"
-            >
-              Manage Full Inventory →
-            </a>
-          </div>
         </div>
       )}
 
-      {/* Quick Actions */}
-      <div className="bg-white rounded-xl shadow-md border border-gray-200 p-6">
-        <h3 className="text-lg font-bold text-gray-900 mb-4">⚡ Quick Actions</h3>
-        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-          <a
-            href="/billing/create"
-            className="flex flex-col items-center justify-center p-6 bg-blue-50 hover:bg-blue-100 rounded-lg transition group"
-          >
-            <span className="text-4xl mb-2 group-hover:scale-110 transition">🧾</span>
-            <span className="text-sm font-medium text-gray-700">New Bill</span>
-          </a>
-          <a
-            href="/stock"
-            className="flex flex-col items-center justify-center p-6 bg-purple-50 hover:bg-purple-100 rounded-lg transition group"
-          >
-            <span className="text-4xl mb-2 group-hover:scale-110 transition">📦</span>
-            <span className="text-sm font-medium text-gray-700">Manage Stock</span>
-          </a>
-          <a
-            href="/customers"
-            className="flex flex-col items-center justify-center p-6 bg-green-50 hover:bg-green-100 rounded-lg transition group"
-          >
-            <span className="text-4xl mb-2 group-hover:scale-110 transition">👥</span>
-            <span className="text-sm font-medium text-gray-700">Customers</span>
-          </a>
-          <a
-            href="/reports"
-            className="flex flex-col items-center justify-center p-6 bg-orange-50 hover:bg-orange-100 rounded-lg transition group"
-          >
-            <span className="text-4xl mb-2 group-hover:scale-110 transition">📊</span>
-            <span className="text-sm font-medium text-gray-700">Reports</span>
-          </a>
-        </div>
-      </div>
     </DashboardLayout>
   )
 }

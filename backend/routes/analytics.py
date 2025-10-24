@@ -75,8 +75,11 @@ def get_dashboard_analytics():
         total_bills = len(gst_bills) + len(non_gst_bills)
         avg_bill_value = (revenue_month / total_bills) if total_bills > 0 else 0
 
-        # Product performance analysis
+        # Product performance analysis (ALL TIME)
         product_sales = defaultdict(lambda: {'quantity': 0, 'revenue': 0.0, 'category': '', 'recent_sales': 0, 'old_sales': 0})
+
+        # Product performance for selected time range
+        product_sales_filtered = defaultdict(lambda: {'quantity': 0, 'revenue': 0.0, 'category': ''})
 
         # Analyze GST bills
         for bill in gst_bills:
@@ -92,6 +95,12 @@ def get_dashboard_analytics():
                 product_sales[product_name]['quantity'] += quantity
                 product_sales[product_name]['revenue'] += quantity * rate
                 product_sales[product_name]['category'] = category
+
+                # Track for filtered time range
+                if bill.created_at >= start_date:
+                    product_sales_filtered[product_name]['quantity'] += quantity
+                    product_sales_filtered[product_name]['revenue'] += quantity * rate
+                    product_sales_filtered[product_name]['category'] = category
 
                 # Track recent vs old sales for trending
                 if bill.created_at >= week_start:
@@ -112,6 +121,12 @@ def get_dashboard_analytics():
                 product_sales[product_name]['quantity'] += quantity
                 product_sales[product_name]['revenue'] += quantity * rate
                 product_sales[product_name]['category'] = category
+
+                # Track for filtered time range
+                if bill.created_at >= start_date:
+                    product_sales_filtered[product_name]['quantity'] += quantity
+                    product_sales_filtered[product_name]['revenue'] += quantity * rate
+                    product_sales_filtered[product_name]['category'] = category
 
                 if bill.created_at >= week_start:
                     product_sales[product_name]['recent_sales'] += quantity
@@ -156,6 +171,65 @@ def get_dashboard_analytics():
                     })
 
         trending = sorted(trending, key=lambda x: x['growth_rate'], reverse=True)[:10]
+
+        # Top products for filtered time range (for pie chart)
+        sorted_products_filtered = sorted(product_sales_filtered.items(), key=lambda x: x[1]['revenue'], reverse=True)
+
+        # Determine limit based on time range: day=7, week=15, month=25
+        product_limit = 7 if time_range == 'today' else (15 if time_range == 'week' else 25)
+
+        top_products_filtered = [
+            {
+                'product_name': name,
+                'revenue': round(data['revenue'], 2),
+                'quantity': data['quantity'],
+                'category': data['category']
+            }
+            for name, data in sorted_products_filtered[:product_limit] if data['revenue'] > 0
+        ]
+
+        # Product performance tiers (for column chart with product names)
+        # Get all products from stock
+        all_stock_products = StockEntry.query.filter_by(client_id=client_id).all()
+        stock_product_names = {item.product_name for item in all_stock_products}
+
+        # Categorize products by performance
+        products_sold_set = {name for name, data in product_sales_filtered.items() if data['quantity'] > 0}
+
+        # Get top 5 most selling products
+        most_selling_products = [
+            {
+                'name': name,
+                'quantity': data['quantity']
+            }
+            for name, data in sorted_products_filtered[:5]
+        ]
+
+        # Get 5 less selling products (from bottom of sold products)
+        less_selling_start = max(5, len(sorted_products_filtered) - 5)
+        less_selling_products = [
+            {
+                'name': name,
+                'quantity': data['quantity']
+            }
+            for name, data in sorted_products_filtered[less_selling_start:] if data['quantity'] > 0
+        ]
+
+        # Get 5 non-selling products (in stock but not sold)
+        non_selling_product_names = list(stock_product_names - products_sold_set)[:5]
+        non_selling_products = [
+            {
+                'name': name,
+                'quantity': 0  # Will be shown as negative in chart
+            }
+            for name in non_selling_product_names
+        ]
+
+        product_performance_tiers = {
+            'mostSelling': most_selling_products,
+            'lessSelling': less_selling_products,
+            'nonSelling': non_selling_products
+        }
 
         # Inventory analysis
         low_stock_items = StockEntry.query.filter(
@@ -206,11 +280,113 @@ def get_dashboard_analytics():
             for payment_id, data in sorted(payment_stats.items(), key=lambda x: x[1]['amount'], reverse=True)
         ]
 
-        # Peak hours analysis (placeholder - can be enhanced)
+        # Peak hours analysis - REAL DATA
+        peak_hours_data = defaultdict(lambda: {'sales': 0.0, 'count': 0})
+
+        for bill in gst_bills:
+            hour = bill.created_at.hour
+            peak_hours_data[hour]['sales'] += float(bill.final_amount)
+            peak_hours_data[hour]['count'] += 1
+
+        for bill in non_gst_bills:
+            hour = bill.created_at.hour
+            peak_hours_data[hour]['sales'] += float(bill.total_amount)
+            peak_hours_data[hour]['count'] += 1
+
         peak_hours = [
-            {'hour': hour, 'sales': 0}
-            for hour in range(9, 21)  # 9 AM to 9 PM
+            {
+                'hour': hour,
+                'sales': round(peak_hours_data[hour]['sales'], 2),
+                'count': peak_hours_data[hour]['count']
+            }
+            for hour in sorted(peak_hours_data.keys())
         ]
+
+        # Revenue trend (daily breakdown for charts)
+        revenue_trend = defaultdict(lambda: {'date': '', 'revenue': 0.0, 'bills': 0})
+
+        for bill in gst_bills:
+            if bill.created_at >= start_date:
+                date_key = bill.created_at.strftime('%Y-%m-%d')
+                revenue_trend[date_key]['date'] = date_key
+                revenue_trend[date_key]['revenue'] += float(bill.final_amount)
+                revenue_trend[date_key]['bills'] += 1
+
+        for bill in non_gst_bills:
+            if bill.created_at >= start_date:
+                date_key = bill.created_at.strftime('%Y-%m-%d')
+                revenue_trend[date_key]['date'] = date_key
+                revenue_trend[date_key]['revenue'] += float(bill.total_amount)
+                revenue_trend[date_key]['bills'] += 1
+
+        revenue_trend_list = sorted(
+            [{'date': data['date'], 'revenue': round(data['revenue'], 2), 'bills': data['bills']}
+             for data in revenue_trend.values()],
+            key=lambda x: x['date']
+        )
+
+        # Customer insights
+        customer_frequency = defaultdict(int)
+        customer_spend = defaultdict(float)
+
+        for bill in gst_bills:
+            customer = bill.customer_name or 'Walk-in'
+            customer_frequency[customer] += 1
+            customer_spend[customer] += float(bill.final_amount)
+
+        for bill in non_gst_bills:
+            customer = bill.customer_name or 'Walk-in'
+            customer_frequency[customer] += 1
+            customer_spend[customer] += float(bill.total_amount)
+
+        # Top customers by spend
+        top_customers = [
+            {
+                'name': customer,
+                'total_spend': round(spend, 2),
+                'visit_count': customer_frequency[customer],
+                'avg_spend': round(spend / customer_frequency[customer], 2)
+            }
+            for customer, spend in sorted(customer_spend.items(), key=lambda x: x[1], reverse=True)[:10]
+        ]
+
+        # Profit margin analysis (based on cost_price vs selling price)
+        total_cost = 0
+        total_revenue_for_margin = 0
+
+        # Get all stock with cost prices (use cost_price if available, otherwise estimate 70% of selling price)
+        all_stock = {
+            item.product_name: float(item.cost_price) if item.cost_price else float(item.rate) * 0.7
+            for item in StockEntry.query.filter_by(client_id=client_id).all()
+        }
+
+        for bill in gst_bills:
+            items = bill.items if isinstance(bill.items, list) else []
+            for item in items:
+                product_name = item.get('product_name', '')
+                quantity = item.get('quantity', 0)
+                selling_rate = float(item.get('rate', 0))
+                # Use cost_price from stock if available, otherwise estimate
+                cost_rate = all_stock.get(product_name, selling_rate * 0.7)
+
+                total_cost += quantity * cost_rate
+                total_revenue_for_margin += quantity * selling_rate
+
+        for bill in non_gst_bills:
+            items = bill.items if isinstance(bill.items, list) else []
+            for item in items:
+                product_name = item.get('product_name', '')
+                quantity = item.get('quantity', 0)
+                selling_rate = float(item.get('rate', 0))
+                # Use cost_price from stock if available, otherwise estimate
+                cost_rate = all_stock.get(product_name, selling_rate * 0.7)
+
+                total_cost += quantity * cost_rate
+                total_revenue_for_margin += quantity * selling_rate
+
+        profit_margin = 0
+        if total_revenue_for_margin > 0:
+            profit_margin = ((total_revenue_for_margin - total_cost) / total_revenue_for_margin) * 100
 
         return jsonify({
             'revenue': {
@@ -228,7 +404,9 @@ def get_dashboard_analytics():
             'products': {
                 'topSelling': top_selling,
                 'lowPerforming': low_performing,
-                'trending': trending
+                'trending': trending,
+                'topProductsFiltered': top_products_filtered,
+                'performanceTiers': product_performance_tiers
             },
             'inventory': {
                 'lowStock': [item.to_dict() for item in low_stock_items],
@@ -238,7 +416,11 @@ def get_dashboard_analytics():
             'insights': {
                 'peakHours': peak_hours,
                 'paymentPreferences': payment_preferences,
-                'categoryPerformance': category_list
+                'categoryPerformance': category_list,
+                'revenueTrend': revenue_trend_list,
+                'topCustomers': top_customers,
+                'profitMargin': round(profit_margin, 2),
+                'totalProfit': round(total_revenue_for_margin - total_cost, 2)
             }
         }), 200
 

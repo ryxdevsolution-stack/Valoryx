@@ -120,8 +120,8 @@ export default function AllBillsPage() {
       <div className="flex flex-col h-[calc(100vh-8rem)]">
         {/* Header */}
         <div className="flex-shrink-0 mb-4">
-          <h1 className="text-2xl font-bold text-slate-800">All Bills</h1>
-          <p className="text-sm text-slate-500 mt-1">Filter and view billing records by payment method</p>
+          <h1 className="text-2xl font-bold text-gray-900 dark:text-white">All Bills</h1>
+          <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Filter and view billing records by payment method</p>
         </div>
 
         {loading ? (
@@ -130,10 +130,10 @@ export default function AllBillsPage() {
             <TableSkeleton rows={10} />
           </div>
         ) : bills.length === 0 ? (
-          <div className="flex-1 flex items-center justify-center bg-white rounded-xl border border-slate-200 shadow">
+          <div className="flex-1 flex items-center justify-center bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 shadow">
             <div className="text-center">
-              <p className="text-slate-500 text-base">No bills found</p>
-              <p className="text-slate-400 text-sm mt-1">Create your first bill to get started</p>
+              <p className="text-gray-600 dark:text-gray-400 text-base">No bills found</p>
+              <p className="text-gray-500 dark:text-gray-500 text-sm mt-1">Create your first bill to get started</p>
             </div>
           </div>
         ) : (
@@ -147,17 +147,17 @@ export default function AllBillsPage() {
                   className={`flex-shrink-0 px-6 py-4 rounded-xl border-2 transition-all ${
                     selectedPaymentType === 'all'
                       ? 'bg-gradient-to-br from-slate-700 to-slate-600 border-slate-600 shadow-lg'
-                      : 'bg-white border-slate-200 hover:border-slate-400'
+                      : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-slate-400 dark:hover:border-gray-500'
                   }`}
                 >
                   <div className="text-left">
-                    <p className={`text-xs font-medium ${selectedPaymentType === 'all' ? 'text-slate-200' : 'text-slate-500'}`}>
+                    <p className={`text-xs font-medium ${selectedPaymentType === 'all' ? 'text-slate-200' : 'text-gray-600 dark:text-gray-400'}`}>
                       All Bills
                     </p>
-                    <p className={`text-lg font-bold ${selectedPaymentType === 'all' ? 'text-white' : 'text-slate-800'}`}>
+                    <p className={`text-lg font-bold ${selectedPaymentType === 'all' ? 'text-white' : 'text-gray-900 dark:text-white'}`}>
                       {bills.length}
                     </p>
-                    <p className={`text-sm font-semibold ${selectedPaymentType === 'all' ? 'text-white' : 'text-slate-600'}`}>
+                    <p className={`text-sm font-semibold ${selectedPaymentType === 'all' ? 'text-white' : 'text-gray-700 dark:text-gray-300'}`}>
                       ₹{grandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
                   </div>
@@ -171,22 +171,22 @@ export default function AllBillsPage() {
                     className={`flex-shrink-0 px-6 py-4 rounded-xl border-2 transition-all ${
                       selectedPaymentType === stat.payment_type_id
                         ? 'bg-gradient-to-br from-slate-700 to-slate-600 border-slate-600 shadow-lg'
-                        : 'bg-white border-slate-200 hover:border-slate-400'
+                        : 'bg-white dark:bg-gray-800 border-gray-200 dark:border-gray-700 hover:border-slate-400 dark:hover:border-gray-500'
                     }`}
                   >
                     <div className="text-left">
                       <p className={`text-xs font-medium uppercase ${
-                        selectedPaymentType === stat.payment_type_id ? 'text-slate-200' : 'text-slate-500'
+                        selectedPaymentType === stat.payment_type_id ? 'text-slate-200' : 'text-gray-600 dark:text-gray-400'
                       }`}>
                         {stat.payment_name}
                       </p>
                       <p className={`text-lg font-bold ${
-                        selectedPaymentType === stat.payment_type_id ? 'text-white' : 'text-slate-800'
+                        selectedPaymentType === stat.payment_type_id ? 'text-white' : 'text-gray-900 dark:text-white'
                       }`}>
                         {stat.count}
                       </p>
                       <p className={`text-sm font-semibold ${
-                        selectedPaymentType === stat.payment_type_id ? 'text-white' : 'text-slate-600'
+                        selectedPaymentType === stat.payment_type_id ? 'text-white' : 'text-gray-700 dark:text-gray-300'
                       }`}>
                         ₹{stat.total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                       </p>
@@ -197,9 +197,9 @@ export default function AllBillsPage() {
             </div>
 
             {/* Scrollable Bills Table */}
-            <div className="flex-1 overflow-auto bg-white rounded-xl border-2 border-slate-200 shadow-md">
+            <div className="flex-1 overflow-auto bg-white dark:bg-gray-800 rounded-xl border-2 border-gray-200 dark:border-gray-700 shadow-md">
               <table className="w-full">
-                <thead className="bg-gradient-to-r from-slate-700 to-slate-600 sticky top-0 z-10">
+                <thead className="bg-gradient-to-r from-slate-700 to-slate-600 dark:from-gray-700 dark:to-gray-600 sticky top-0 z-10">
                   <tr>
                     <th className="px-4 py-4 text-left text-xs font-bold text-white uppercase">Bill #</th>
                     <th className="px-4 py-4 text-left text-xs font-bold text-white uppercase">Date</th>
@@ -209,19 +209,19 @@ export default function AllBillsPage() {
                     <th className="px-4 py-4 text-right text-xs font-bold text-white uppercase">Amount</th>
                   </tr>
                 </thead>
-                <tbody className="divide-y divide-slate-200">
+                <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                   {paginatedBills.map((bill, index) => {
                     // Calculate sequential display number based on filtered list position
                     const displayNumber = filteredBills.findIndex(b => b.bill_id === bill.bill_id) + 1
                     // Get payment type name
                     const paymentTypeName = paymentTypes.find(pt => pt.payment_type_id === bill.payment_type)?.payment_name || 'Unknown'
                     return (
-                      <tr key={bill.bill_id} className="hover:bg-slate-50 transition-colors">
+                      <tr key={bill.bill_id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                         <td className="px-4 py-4 whitespace-nowrap">
-                          <span className="text-sm font-semibold text-slate-700">{displayNumber}</span>
+                          <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">{displayNumber}</span>
                         </td>
                       <td className="px-4 py-4 whitespace-nowrap">
-                        <span className="text-sm text-slate-600">
+                        <span className="text-sm text-gray-600 dark:text-gray-400">
                           {new Date(bill.created_at).toLocaleDateString('en-IN', {
                             day: '2-digit',
                             month: '2-digit',
@@ -230,18 +230,18 @@ export default function AllBillsPage() {
                         </span>
                       </td>
                       <td className="px-4 py-4">
-                        <span className="text-sm text-slate-700">{bill.customer_name}</span>
+                        <span className="text-sm text-gray-700 dark:text-gray-300">{bill.customer_name}</span>
                       </td>
                       <td className="px-4 py-4">
-                        <span className="text-sm text-slate-600">{bill.customer_phone}</span>
+                        <span className="text-sm text-gray-600 dark:text-gray-400">{bill.customer_phone}</span>
                       </td>
                       <td className="px-4 py-4 whitespace-nowrap">
-                        <span className="inline-block px-3 py-1 text-xs font-bold text-white bg-gradient-to-r from-slate-600 to-slate-500 rounded-full uppercase">
+                        <span className="inline-block px-3 py-1 text-xs font-bold text-white bg-gradient-to-r from-slate-600 to-slate-500 dark:from-gray-600 dark:to-gray-500 rounded-full uppercase">
                           {paymentTypeName}
                         </span>
                       </td>
                       <td className="px-4 py-4 text-right whitespace-nowrap">
-                        <span className="text-sm font-bold text-slate-800">
+                        <span className="text-sm font-bold text-gray-900 dark:text-white">
                           ₹{getAmount(bill).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </td>
@@ -258,7 +258,7 @@ export default function AllBillsPage() {
                 <button
                   onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
                   disabled={currentPage === 1}
-                  className="px-4 py-2 rounded-lg bg-white border-2 border-slate-300 text-slate-700 font-medium hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-lg bg-white dark:bg-gray-800 border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Previous
                 </button>
@@ -270,7 +270,7 @@ export default function AllBillsPage() {
                       className={`w-10 h-10 rounded-lg font-bold transition-all ${
                         currentPage === page
                           ? 'bg-gradient-to-br from-slate-700 to-slate-600 text-white shadow-lg'
-                          : 'bg-white border-2 border-slate-300 text-slate-700 hover:bg-slate-50'
+                          : 'bg-white dark:bg-gray-800 border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
                       }`}
                     >
                       {page}
@@ -280,7 +280,7 @@ export default function AllBillsPage() {
                 <button
                   onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
                   disabled={currentPage === totalPages}
-                  className="px-4 py-2 rounded-lg bg-white border-2 border-slate-300 text-slate-700 font-medium hover:bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-4 py-2 rounded-lg bg-white dark:bg-gray-800 border-2 border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 font-medium hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   Next
                 </button>
@@ -288,11 +288,11 @@ export default function AllBillsPage() {
             )}
 
             {/* Fixed Grand Total at Bottom */}
-            <div className="flex-shrink-0 mt-4 bg-gradient-to-r from-slate-800 to-slate-700 rounded-xl border-2 border-slate-600 shadow-xl px-6 py-4">
+            <div className="flex-shrink-0 mt-4 bg-gradient-to-r from-slate-800 to-slate-700 dark:from-gray-800 dark:to-gray-700 rounded-xl border-2 border-slate-600 dark:border-gray-600 shadow-xl px-6 py-4">
               <div className="flex justify-between items-center">
                 <div>
                   <h2 className="text-xl font-bold text-white">GRAND TOTAL</h2>
-                  <p className="text-slate-300 text-sm">
+                  <p className="text-slate-300 dark:text-gray-300 text-sm">
                     {selectedPaymentType === 'all'
                       ? `All Bills (${bills.length})`
                       : `${paymentTypes.find(pt => pt.payment_type_id === selectedPaymentType)?.payment_name} (${filteredBills.length})`

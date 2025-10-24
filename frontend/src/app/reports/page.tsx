@@ -109,6 +109,9 @@ export default function ReportsPage() {
     const gstAmount = parseFloat(String(report.gst_sales)) || 0
     const nonGstAmount = parseFloat(String(report.non_gst_sales)) || 0
 
+    // Check if dark mode is active
+    const isDark = document.documentElement.classList.contains('dark')
+
     return {
       chart: {
         type: 'pie',
@@ -120,13 +123,18 @@ export default function ReportsPage() {
         style: {
           fontSize: '16px',
           fontWeight: 'bold',
-          color: '#334155',
+          color: isDark ? '#ffffff' : '#334155',
         },
       },
       tooltip: {
         pointFormat: '<b>{point.percentage:.1f}%</b><br/>₹{point.y:,.2f}',
         style: {
           fontSize: '14px',
+        },
+        backgroundColor: isDark ? '#374151' : '#ffffff',
+        borderColor: isDark ? '#4b5563' : '#e5e7eb',
+        style: {
+          color: isDark ? '#ffffff' : '#000000',
         },
       },
       plotOptions: {
@@ -140,6 +148,7 @@ export default function ReportsPage() {
               fontSize: '13px',
               fontWeight: '600',
               textOutline: 'none',
+              color: isDark ? '#ffffff' : '#000000',
             },
             distance: 20,
           },
@@ -173,6 +182,9 @@ export default function ReportsPage() {
     const categories = Object.keys(report.payment_breakdown)
     const data = Object.values(report.payment_breakdown).map((val: any) => parseFloat(val) || 0)
 
+    // Check if dark mode is active
+    const isDark = document.documentElement.classList.contains('dark')
+
     return {
       chart: {
         type: 'column',
@@ -184,7 +196,7 @@ export default function ReportsPage() {
         style: {
           fontSize: '16px',
           fontWeight: 'bold',
-          color: '#334155',
+          color: isDark ? '#ffffff' : '#334155',
         },
       },
       xAxis: {
@@ -193,8 +205,11 @@ export default function ReportsPage() {
           style: {
             fontSize: '13px',
             fontWeight: '500',
+            color: isDark ? '#d1d5db' : '#374151',
           },
         },
+        lineColor: isDark ? '#4b5563' : '#e5e7eb',
+        tickColor: isDark ? '#4b5563' : '#e5e7eb',
       },
       yAxis: {
         title: {
@@ -202,6 +217,7 @@ export default function ReportsPage() {
           style: {
             fontSize: '14px',
             fontWeight: '600',
+            color: isDark ? '#d1d5db' : '#374151',
           },
         },
         labels: {
@@ -210,14 +226,19 @@ export default function ReportsPage() {
           },
           style: {
             fontSize: '12px',
+            color: isDark ? '#d1d5db' : '#374151',
           },
         },
+        gridLineColor: isDark ? '#374151' : '#e5e7eb',
       },
       tooltip: {
         formatter: function(this: any) {
           return '<b>' + this.x + '</b><br/>₹' + this.y.toLocaleString('en-IN', { minimumFractionDigits: 2 })
         },
+        backgroundColor: isDark ? '#374151' : '#ffffff',
+        borderColor: isDark ? '#4b5563' : '#e5e7eb',
         style: {
+          color: isDark ? '#ffffff' : '#000000',
           fontSize: '14px',
         },
       },
@@ -235,6 +256,7 @@ export default function ReportsPage() {
               fontSize: '12px',
               fontWeight: 'bold',
               textOutline: 'none',
+              color: isDark ? '#ffffff' : '#000000',
             },
           },
         },
@@ -257,16 +279,16 @@ export default function ReportsPage() {
         <div className="flex-none mb-4">
           <div className="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3">
             <div>
-              <h1 className="text-2xl font-semibold bg-gradient-to-r from-slate-700 to-slate-500 bg-clip-text text-transparent">
+              <h1 className="text-2xl font-semibold text-gray-900 dark:text-white">
                 Reports
               </h1>
-              <p className="text-sm text-slate-500 mt-1">Generate sales and financial reports</p>
+              <p className="text-sm text-gray-600 dark:text-gray-400 mt-1">Generate sales and financial reports</p>
             </div>
-            <div className="bg-gradient-to-br from-slate-100 to-slate-50 rounded-xl border border-white/50 px-4 py-2.5 shadow-lg">
-              <p className="text-xs text-slate-500 font-medium uppercase tracking-wide">Viewing Period</p>
-              <p className="text-base text-slate-700 font-bold mt-1">Last 20 Days</p>
+            <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 px-4 py-2.5 shadow-lg">
+              <p className="text-xs text-gray-600 dark:text-gray-400 font-medium uppercase tracking-wide">Viewing Period</p>
+              <p className="text-base text-gray-900 dark:text-white font-bold mt-1">Last 20 Days</p>
               {dateRange.start_date && dateRange.end_date && (
-                <p className="text-xs text-slate-500 mt-1">
+                <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
                   {formatDate(dateRange.start_date)} - {formatDate(dateRange.end_date)}
                 </p>
               )}
@@ -275,12 +297,12 @@ export default function ReportsPage() {
         </div>
 
         {/* Report Generation Form - Compact */}
-        <div className="flex-none mb-4 bg-white/60 backdrop-blur-md rounded-2xl border border-white/50 shadow-xl p-4">
-          <h2 className="text-base font-semibold text-slate-700 mb-3">Generate New Report</h2>
+        <div className="flex-none mb-4 bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-xl p-4">
+          <h2 className="text-base font-semibold text-gray-900 dark:text-white mb-3">Generate New Report</h2>
           <form onSubmit={handleGenerateReport}>
             <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
                   Start Date *
                 </label>
                 <input
@@ -290,11 +312,11 @@ export default function ReportsPage() {
                   onChange={(e) =>
                     setDateRange({ ...dateRange, start_date: e.target.value })
                   }
-                  className="w-full px-3 py-2.5 text-sm font-medium text-slate-700 border-2 border-slate-300 rounded-xl focus:ring-2 focus:ring-slate-400 focus:border-slate-400 bg-white transition-all"
+                  className="w-full px-3 py-2.5 text-sm font-medium text-gray-900 dark:text-white border-2 border-gray-300 dark:border-gray-600 rounded-xl focus:ring-2 focus:ring-gray-400 dark:focus:ring-gray-500 focus:border-gray-400 dark:focus:border-gray-500 bg-white dark:bg-gray-700 transition-all"
                 />
               </div>
               <div>
-                <label className="block text-xs font-medium text-slate-600 mb-1">
+                <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">
                   End Date *
                 </label>
                 <input
@@ -304,14 +326,14 @@ export default function ReportsPage() {
                   onChange={(e) =>
                     setDateRange({ ...dateRange, end_date: e.target.value })
                   }
-                  className="w-full px-3 py-2.5 text-sm font-medium text-slate-700 border-2 border-slate-300 rounded-xl focus:ring-2 focus:ring-slate-400 focus:border-slate-400 bg-white transition-all"
+                  className="w-full px-3 py-2.5 text-sm font-medium text-gray-900 dark:text-white border-2 border-gray-300 dark:border-gray-600 rounded-xl focus:ring-2 focus:ring-gray-400 dark:focus:ring-gray-500 focus:border-gray-400 dark:focus:border-gray-500 bg-white dark:bg-gray-700 transition-all"
                 />
               </div>
               <div className="flex items-end">
                 <button
                   type="submit"
                   disabled={loading}
-                  className="w-full px-4 py-2 bg-gradient-to-r from-slate-600 to-slate-500 text-white text-sm font-medium rounded-xl hover:from-slate-700 hover:to-slate-600 transition-all disabled:opacity-50 shadow-lg disabled:shadow-none"
+                  className="w-full px-4 py-2 bg-gradient-to-r from-gray-600 to-gray-500 dark:from-gray-700 dark:to-gray-600 text-white text-sm font-medium rounded-xl hover:from-gray-700 hover:to-gray-600 dark:hover:from-gray-800 dark:hover:to-gray-700 transition-all disabled:opacity-50 shadow-lg disabled:shadow-none"
                 >
                   {loading ? 'Generating...' : 'Generate Report'}
                 </button>
@@ -327,14 +349,14 @@ export default function ReportsPage() {
           )}
 
           {!loading && !report && (
-            <div className="h-full flex items-center justify-center bg-white/40 backdrop-blur-sm rounded-2xl border border-white/50 shadow-xl">
+            <div className="h-full flex items-center justify-center bg-white dark:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 shadow-xl">
               <div className="text-center px-4">
                 <div className="text-6xl mb-4">📊</div>
-                <p className="text-slate-600 text-lg font-semibold">No Data Available</p>
-                <p className="text-slate-500 text-sm mt-2 max-w-md mx-auto">
+                <p className="text-gray-900 dark:text-white text-lg font-semibold">No Data Available</p>
+                <p className="text-gray-600 dark:text-gray-400 text-sm mt-2 max-w-md mx-auto">
                   There are no sales records for the last 20 days. Try a different date range or create some bills first.
                 </p>
-                <div className="mt-4 text-xs text-slate-400">
+                <div className="mt-4 text-xs text-gray-500 dark:text-gray-500">
                   Current range: {dateRange.start_date && formatDate(dateRange.start_date)} - {dateRange.end_date && formatDate(dateRange.end_date)}
                 </div>
               </div>
@@ -344,18 +366,18 @@ export default function ReportsPage() {
           {!loading && report && (
             <div className="space-y-4 pb-4">
               {/* Professional Report Card */}
-              <div className="bg-white rounded-2xl shadow-xl border border-slate-200 overflow-hidden">
+              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                 {/* Report Header with Dark Banner */}
-                <div className="bg-gradient-to-r from-slate-800 to-slate-700 px-6 py-5">
+                <div className="bg-gradient-to-r from-gray-800 to-gray-700 dark:from-gray-900 dark:to-gray-800 px-6 py-5">
                   <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
                     <div>
                       <h2 className="text-2xl font-bold text-white">Sales Report</h2>
-                      <p className="text-slate-200 text-sm mt-1">
+                      <p className="text-gray-200 dark:text-gray-300 text-sm mt-1">
                         Period: {formatDate(report.start_date)} - {formatDate(report.end_date)}
                       </p>
                     </div>
                     <div className="text-left sm:text-right">
-                      <p className="text-slate-300 text-xs uppercase tracking-wide">Generated On</p>
+                      <p className="text-gray-300 dark:text-gray-400 text-xs uppercase tracking-wide">Generated On</p>
                       <p className="text-white font-semibold text-lg mt-1">
                         {formatDate(report.created_at)}
                       </p>
@@ -364,37 +386,37 @@ export default function ReportsPage() {
                 </div>
 
                 {/* Key Metrics Section */}
-                <div className="p-6 bg-gradient-to-br from-slate-50 to-white">
-                  <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center">
-                    <span className="bg-slate-700 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm mr-3">1</span>
+                <div className="p-6 bg-gray-50 dark:bg-gray-900/50">
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center">
+                    <span className="bg-gray-700 dark:bg-gray-600 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm mr-3">1</span>
                     Financial Summary
                   </h3>
                   <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-                    <div className="bg-white rounded-xl border-2 border-slate-200 p-5 hover:border-slate-300 transition-all hover:shadow-md">
+                    <div className="bg-white dark:bg-gray-800 rounded-xl border-2 border-gray-200 dark:border-gray-700 p-5 hover:border-gray-300 dark:hover:border-gray-600 transition-all hover:shadow-md">
                       <div className="flex items-center justify-between mb-2">
-                        <p className="text-slate-500 text-xs font-semibold uppercase tracking-wider">Total Revenue</p>
+                        <p className="text-gray-600 dark:text-gray-400 text-xs font-semibold uppercase tracking-wider">Total Revenue</p>
                         <span className="text-2xl">💰</span>
                       </div>
-                      <p className="text-3xl font-bold text-slate-800">{formatCurrency(report.total_sales)}</p>
-                      <p className="text-xs text-slate-500 mt-2">Combined GST + Non-GST</p>
+                      <p className="text-3xl font-bold text-gray-900 dark:text-white">{formatCurrency(report.total_sales)}</p>
+                      <p className="text-xs text-gray-600 dark:text-gray-400 mt-2">Combined GST + Non-GST</p>
                     </div>
-                    <div className="bg-white rounded-xl border-2 border-emerald-300 p-5 hover:border-emerald-400 transition-all hover:shadow-md">
+                    <div className="bg-white dark:bg-gray-800 rounded-xl border-2 border-emerald-300 dark:border-emerald-700 p-5 hover:border-emerald-400 dark:hover:border-emerald-600 transition-all hover:shadow-md">
                       <div className="flex items-center justify-between mb-2">
-                        <p className="text-emerald-700 text-xs font-semibold uppercase tracking-wider">GST Sales</p>
+                        <p className="text-emerald-700 dark:text-emerald-400 text-xs font-semibold uppercase tracking-wider">GST Sales</p>
                         <span className="text-2xl">📊</span>
                       </div>
-                      <p className="text-3xl font-bold text-emerald-800">{formatCurrency(report.gst_sales)}</p>
-                      <p className="text-xs text-emerald-700 mt-2">
+                      <p className="text-3xl font-bold text-emerald-800 dark:text-emerald-300">{formatCurrency(report.gst_sales)}</p>
+                      <p className="text-xs text-emerald-700 dark:text-emerald-400 mt-2">
                         {((parseFloat(String(report.gst_sales)) / parseFloat(String(report.total_sales))) * 100).toFixed(1)}% of total
                       </p>
                     </div>
-                    <div className="bg-white rounded-xl border-2 border-violet-300 p-5 hover:border-violet-400 transition-all hover:shadow-md">
+                    <div className="bg-white dark:bg-gray-800 rounded-xl border-2 border-violet-300 dark:border-violet-700 p-5 hover:border-violet-400 dark:hover:border-violet-600 transition-all hover:shadow-md">
                       <div className="flex items-center justify-between mb-2">
-                        <p className="text-violet-700 text-xs font-semibold uppercase tracking-wider">Non-GST Sales</p>
+                        <p className="text-violet-700 dark:text-violet-400 text-xs font-semibold uppercase tracking-wider">Non-GST Sales</p>
                         <span className="text-2xl">📈</span>
                       </div>
-                      <p className="text-3xl font-bold text-violet-800">{formatCurrency(report.non_gst_sales)}</p>
-                      <p className="text-xs text-violet-700 mt-2">
+                      <p className="text-3xl font-bold text-violet-800 dark:text-violet-300">{formatCurrency(report.non_gst_sales)}</p>
+                      <p className="text-xs text-violet-700 dark:text-violet-400 mt-2">
                         {((parseFloat(String(report.non_gst_sales)) / parseFloat(String(report.total_sales))) * 100).toFixed(1)}% of total
                       </p>
                     </div>
@@ -402,14 +424,14 @@ export default function ReportsPage() {
                 </div>
 
                 {/* Charts Section */}
-                <div className="p-6 border-t border-slate-200">
-                  <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center">
-                    <span className="bg-slate-700 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm mr-3">2</span>
+                <div className="p-6 border-t border-gray-200 dark:border-gray-700">
+                  <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center">
+                    <span className="bg-gray-700 dark:bg-gray-600 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm mr-3">2</span>
                     Sales Analytics
                   </h3>
                   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                     {/* Pie Chart */}
-                    <div className="bg-white rounded-xl border-2 border-slate-200 p-5 shadow-sm min-h-[350px]">
+                    <div className="bg-white dark:bg-gray-800 rounded-xl border-2 border-gray-200 dark:border-gray-700 p-5 shadow-sm min-h-[350px]">
                       <HighchartsReact
                         highcharts={Highcharts}
                         options={getPieChartOptions()}
@@ -417,7 +439,7 @@ export default function ReportsPage() {
                     </div>
 
                     {/* Bar Chart */}
-                    <div className="bg-white rounded-xl border-2 border-slate-200 p-5 shadow-sm min-h-[350px]">
+                    <div className="bg-white dark:bg-gray-800 rounded-xl border-2 border-gray-200 dark:border-gray-700 p-5 shadow-sm min-h-[350px]">
                       {report.payment_breakdown && Object.keys(report.payment_breakdown).length > 0 ? (
                         <HighchartsReact
                           highcharts={Highcharts}
@@ -425,7 +447,7 @@ export default function ReportsPage() {
                         />
                       ) : (
                         <div className="flex items-center justify-center h-full">
-                          <p className="text-slate-400">No payment data</p>
+                          <p className="text-gray-500 dark:text-gray-400">No payment data</p>
                         </div>
                       )}
                     </div>
@@ -434,35 +456,35 @@ export default function ReportsPage() {
 
                 {/* Payment Breakdown Table */}
                 {report.payment_breakdown && Object.keys(report.payment_breakdown).length > 0 && (
-                  <div className="p-6 border-t border-slate-200 bg-slate-50">
-                    <h3 className="text-lg font-bold text-slate-800 mb-4 flex items-center">
-                      <span className="bg-slate-700 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm mr-3">3</span>
+                  <div className="p-6 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50">
+                    <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-4 flex items-center">
+                      <span className="bg-gray-700 dark:bg-gray-600 text-white w-8 h-8 rounded-full flex items-center justify-center text-sm mr-3">3</span>
                       Payment Method Breakdown
                     </h3>
-                    <div className="bg-white rounded-xl border border-slate-200 overflow-hidden">
+                    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
                       <table className="w-full">
-                        <thead className="bg-slate-100 border-b border-slate-200">
+                        <thead className="bg-gray-50 dark:bg-gray-700 border-b border-gray-200 dark:border-gray-600">
                           <tr>
-                            <th className="px-6 py-3 text-left text-xs font-bold text-slate-600 uppercase tracking-wider">Payment Method</th>
-                            <th className="px-6 py-3 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">Amount</th>
-                            <th className="px-6 py-3 text-right text-xs font-bold text-slate-600 uppercase tracking-wider">Percentage</th>
+                            <th className="px-6 py-3 text-left text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Payment Method</th>
+                            <th className="px-6 py-3 text-right text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Amount</th>
+                            <th className="px-6 py-3 text-right text-xs font-bold text-gray-600 dark:text-gray-300 uppercase tracking-wider">Percentage</th>
                           </tr>
                         </thead>
-                        <tbody className="divide-y divide-slate-200">
+                        <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                           {Object.entries(report.payment_breakdown).map(([method, amount]: [string, any]) => {
                             const percentage = (parseFloat(amount) / parseFloat(String(report.total_sales))) * 100
                             return (
-                              <tr key={method} className="hover:bg-slate-50 transition-colors">
+                              <tr key={method} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                                 <td className="px-6 py-4 whitespace-nowrap">
-                                  <span className="text-slate-700 font-semibold capitalize text-base">{method}</span>
+                                  <span className="text-gray-900 dark:text-white font-semibold capitalize text-base">{method}</span>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-right">
-                                  <span className="text-slate-900 font-bold text-lg">
+                                  <span className="text-gray-900 dark:text-white font-bold text-lg">
                                     {formatCurrency(parseFloat(amount))}
                                   </span>
                                 </td>
                                 <td className="px-6 py-4 whitespace-nowrap text-right">
-                                  <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-slate-100 text-slate-700">
+                                  <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-semibold bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300">
                                     {percentage.toFixed(1)}%
                                   </span>
                                 </td>
@@ -470,14 +492,14 @@ export default function ReportsPage() {
                             )
                           })}
                         </tbody>
-                        <tfoot className="bg-slate-100 border-t-2 border-slate-300">
+                        <tfoot className="bg-gray-50 dark:bg-gray-700 border-t-2 border-gray-300 dark:border-gray-600">
                           <tr>
-                            <td className="px-6 py-4 font-bold text-slate-700">Total</td>
-                            <td className="px-6 py-4 text-right font-bold text-slate-900 text-lg">
+                            <td className="px-6 py-4 font-bold text-gray-900 dark:text-white">Total</td>
+                            <td className="px-6 py-4 text-right font-bold text-gray-900 dark:text-white text-lg">
                               {formatCurrency(report.total_sales)}
                             </td>
                             <td className="px-6 py-4 text-right">
-                              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-bold bg-slate-600 text-white">
+                              <span className="inline-flex items-center px-3 py-1 rounded-full text-sm font-bold bg-gray-600 dark:bg-gray-500 text-white">
                                 100%
                               </span>
                             </td>
@@ -489,13 +511,13 @@ export default function ReportsPage() {
                 )}
 
                 {/* Report Footer */}
-                <div className="px-6 py-4 bg-slate-100 border-t border-slate-200 flex flex-col sm:flex-row justify-between items-center gap-3">
-                  <p className="text-xs text-slate-500">
+                <div className="px-6 py-4 bg-gray-100 dark:bg-gray-700 border-t border-gray-200 dark:border-gray-600 flex flex-col sm:flex-row justify-between items-center gap-3">
+                  <p className="text-xs text-gray-600 dark:text-gray-400">
                     Report ID: {report.report_id.slice(0, 8).toUpperCase()}
                   </p>
                   <button
                     onClick={() => window.print()}
-                    className="px-6 py-2.5 bg-gradient-to-r from-slate-800 to-slate-700 text-white text-sm font-semibold rounded-lg hover:from-slate-900 hover:to-slate-800 transition-all shadow-md hover:shadow-lg flex items-center gap-2"
+                    className="px-6 py-2.5 bg-gradient-to-r from-gray-800 to-gray-700 dark:from-gray-900 dark:to-gray-800 text-white text-sm font-semibold rounded-lg hover:from-gray-900 hover:to-gray-800 dark:hover:from-black dark:hover:to-gray-900 transition-all shadow-md hover:shadow-lg flex items-center gap-2"
                   >
                     <span>🖨️</span>
                     Print / Export PDF
