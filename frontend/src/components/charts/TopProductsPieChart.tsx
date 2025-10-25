@@ -56,7 +56,7 @@ export default function TopProductsPieChart({ data, timeRange }: TopProductsPieC
       shadow: true,
       useHTML: true,
       formatter: function() {
-        const point = this.point as any
+        const point = (this as any).points[0] as any
         const textColor = isDarkMode ? '#f3f4f6' : '#1f2937'
         const secondaryColor = isDarkMode ? '#9ca3af' : '#666'
         return `

@@ -75,7 +75,8 @@ export default function ProfitabilityGauge({ profitMargin, totalProfit }: Profit
     tooltip: {
       enabled: false
     },
-    yAxis: {
+    yAxis: {  
+      // @ts-ignore
       min: 0,
       max: 100,
       stops: [
@@ -84,9 +85,11 @@ export default function ProfitabilityGauge({ profitMargin, totalProfit }: Profit
         [0.40, '#3b82f6'], // 25-40% Blue
         [1, '#10b981']     // 40-100% Green
       ],
+      // @ts-ignore
       lineWidth: 0,
       tickWidth: 0,
-      minorTickInterval: null,
+      // @ts-ignore
+      minorTickInterval: undefined,
       tickAmount: 2,
       labels: {
         enabled: false

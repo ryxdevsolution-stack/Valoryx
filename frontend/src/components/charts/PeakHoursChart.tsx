@@ -28,7 +28,8 @@ export default function PeakHoursChart({ data }: PeakHoursChartProps) {
       }, animation, callback)
     }
 
-    Highcharts.seriesTypes.line.prototype.animate = function (init) {
+    // @ts-ignore
+    (Highcharts.seriesTypes.line.prototype as any).animate = function (init) {
       const series = this
       const animation = Highcharts.animObject(series.options.animation)
       if (!init && series.graph) {
@@ -37,13 +38,14 @@ export default function PeakHoursChart({ data }: PeakHoursChartProps) {
     }
 
     // Axis animation
+    // @ts-ignore
     Highcharts.addEvent(Highcharts.Axis, 'afterRender', function () {
       const axis = this
       const chart = axis.chart
-      const animation = Highcharts.animObject(chart.renderer.globalAnimation)
+      const animation = Highcharts.animObject((chart.renderer as any).globalAnimation)
 
-      if (axis.axisGroup) {
-        axis.axisGroup
+      if ((axis as any).axisGroup) {
+        (axis as any).axisGroup
           .attr({
             opacity: 0,
             rotation: -3,
@@ -56,8 +58,8 @@ export default function PeakHoursChart({ data }: PeakHoursChartProps) {
           }, animation)
       }
 
-      if (axis.horiz && axis.labelGroup) {
-        axis.labelGroup
+      if (axis.horiz && (axis as any).labelGroup) {
+        (axis as any).labelGroup
           .attr({
             opacity: 0,
             rotation: 3,
@@ -68,8 +70,8 @@ export default function PeakHoursChart({ data }: PeakHoursChartProps) {
             rotation: 0,
             scaleY: 1
           }, animation)
-      } else if (axis.labelGroup) {
-        axis.labelGroup
+      } else if ((axis as any).labelGroup) {
+        (axis as any).labelGroup
           .attr({
             opacity: 0,
             rotation: 3,
@@ -83,8 +85,8 @@ export default function PeakHoursChart({ data }: PeakHoursChartProps) {
       }
 
       // Plot lines animation
-      if (axis.plotLinesAndBands) {
-        axis.plotLinesAndBands.forEach((plotLine: any) => {
+      if ((axis as any).plotLinesAndBands) {
+        (axis as any).plotLinesAndBands.forEach((plotLine: any) => {
           const animation = Highcharts.animObject(plotLine.options.animation)
 
           if (plotLine.label) {
@@ -154,7 +156,12 @@ export default function PeakHoursChart({ data }: PeakHoursChartProps) {
     },
     tooltip: {
       split: true,
-      crosshairs: true,
+      // @ts-ignore
+      crosshair: {
+        width: 1,
+        color: isDarkMode ? '#374151' : '#e5e7eb',
+        dashStyle: 'solid'
+      },
       backgroundColor: isDarkMode ? '#1f2937' : '#ffffff',
       borderColor: isDarkMode ? '#374151' : '#e5e7eb',
       style: {

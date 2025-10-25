@@ -130,12 +130,10 @@ export default function ReportsPage() {
         pointFormat: '<b>{point.percentage:.1f}%</b><br/>₹{point.y:,.2f}',
         style: {
           fontSize: '14px',
+          color: isDark ? '#ffffff' : '#000000',
         },
         backgroundColor: isDark ? '#374151' : '#ffffff',
         borderColor: isDark ? '#4b5563' : '#e5e7eb',
-        style: {
-          color: isDark ? '#ffffff' : '#000000',
-        },
       },
       plotOptions: {
         pie: {

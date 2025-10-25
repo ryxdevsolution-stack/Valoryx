@@ -28,7 +28,7 @@ export default function PaymentTypesPage() {
     try {
       setLoading(true)
       const types = await fetchCachedPaymentTypes()
-      setPaymentTypes(types)
+      setPaymentTypes(types as unknown as PaymentType[])
     } catch (error) {
       console.error('Failed to fetch payment types:', error)
     } finally {
@@ -42,7 +42,7 @@ export default function PaymentTypesPage() {
       // Invalidate cache and fetch fresh data
       invalidateCache('paymentTypes')
       const types = await fetchCachedPaymentTypes(true)
-      setPaymentTypes(types)
+      setPaymentTypes(types as unknown as PaymentType[])
     } catch (error) {
       console.error('Failed to refresh payment types:', error)
     } finally {

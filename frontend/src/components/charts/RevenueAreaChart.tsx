@@ -17,12 +17,12 @@ export default function RevenueAreaChart({ data }: RevenueAreaChartProps) {
   useEffect(() => {
     // Axis animation
     Highcharts.addEvent(Highcharts.Axis, 'afterRender', function () {
-      const axis = this
+      const axis = this as any  
       const chart = axis.chart
-      const animation = Highcharts.animObject(chart.renderer.globalAnimation)
+      const animation = Highcharts.animObject((chart.renderer as any).globalAnimation)
 
-      if (axis.axisGroup) {
-        axis.axisGroup
+      if ((axis as any).axisGroup) {
+        (axis as any).axisGroup
           .attr({
             opacity: 0,
             rotation: -3,
@@ -35,8 +35,8 @@ export default function RevenueAreaChart({ data }: RevenueAreaChartProps) {
           }, animation)
       }
 
-      if (axis.horiz && axis.labelGroup) {
-        axis.labelGroup
+      if (axis.horiz && (axis as any).labelGroup) {
+        (axis as any).labelGroup
           .attr({
             opacity: 0,
             rotation: 3,
@@ -47,8 +47,8 @@ export default function RevenueAreaChart({ data }: RevenueAreaChartProps) {
             rotation: 0,
             scaleY: 1
           }, animation)
-      } else if (axis.labelGroup) {
-        axis.labelGroup
+      } else if ((axis as any).labelGroup) {
+        (axis as any).labelGroup
           .attr({
             opacity: 0,
             rotation: 3,
@@ -143,8 +143,8 @@ export default function RevenueAreaChart({ data }: RevenueAreaChartProps) {
       },
       formatter: function() {
         const point = this.points?.[0]
-        const dataIndex = point?.point.index
-        const bills = data[dataIndex as number]?.bills || 0
+        const dataIndex = (point as any).index
+        const bills = data[dataIndex as unknown as number]?.bills || 0
         return `
           <div style="padding: 8px;">
             <strong style="font-size: 13px; color: ${isDarkMode ? '#f3f4f6' : '#1f2937'};">${this.x}</strong><br/>

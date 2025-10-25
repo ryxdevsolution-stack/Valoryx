@@ -14,6 +14,10 @@ interface Client {
   client_id: string
   client_name: string
   logo_url?: string
+  address?: string
+  phone?: string
+  email?: string
+  gstin?: string
 }
 
 interface ClientContextType {

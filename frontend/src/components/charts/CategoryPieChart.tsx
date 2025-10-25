@@ -48,7 +48,7 @@ export default function CategoryPieChart({ data }: CategoryPieChartProps) {
         color: isDarkMode ? '#f3f4f6' : undefined
       },
       formatter: function() {
-        const point = this.point as any
+        const point = (this as any).points[0] as any
         const textColor = isDarkMode ? '#f3f4f6' : '#000'
         const metaColor = isDarkMode ? '#9ca3af' : '#666'
         return `
