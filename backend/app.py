@@ -16,10 +16,11 @@ def create_app():
 
     # Initialize CORS
     CORS(app,
-         origins=app.config.get('CORS_ORIGINS', '*'),
-         supports_credentials=True,
-         methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-         allow_headers=['Content-Type', 'Authorization'])
+     origins=["https://mj-billing.vercel.app"],
+     supports_credentials=True,
+     methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+     allow_headers=['Content-Type', 'Authorization'])
+
 
     # Initialize database with error handling
     from extensions import init_db_safely, test_db_connection
