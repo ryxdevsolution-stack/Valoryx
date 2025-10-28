@@ -8,6 +8,8 @@ interface User {
   user_id: string
   email: string
   role: string
+  is_super_admin?: boolean
+  permissions?: string[]
 }
 
 interface Client {
@@ -29,6 +31,8 @@ interface ClientContextType {
   login: (email: string, password: string) => Promise<void>
   logout: () => void
   setClientData: (user: User, client: Client, token: string) => void
+  hasPermission: (permission: string) => boolean
+  isSuperAdmin: () => boolean
 }
 
 const ClientContext = createContext<ClientContextType | undefined>(undefined)
@@ -78,6 +82,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         user_id: user.user_id,
         email: user.email,
         role: user.role,
+        is_super_admin: user.is_super_admin,
+        permissions: user.permissions
       }
 
       const clientData: Client = {
@@ -139,6 +145,16 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     api.defaults.headers.common['Authorization'] = `Bearer ${tokenData}`
   }
 
+  const hasPermission = (permission: string): boolean => {
+    if (!user) return false
+    if (user.is_super_admin) return true
+    return user.permissions?.includes(permission) || false
+  }
+
+  const isSuperAdmin = (): boolean => {
+    return user?.is_super_admin || false
+  }
+
   return (
     <ClientContext.Provider
       value={{
@@ -150,6 +166,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         login,
         logout,
         setClientData,
+        hasPermission,
+        isSuperAdmin,
       }}
     >
       {children}

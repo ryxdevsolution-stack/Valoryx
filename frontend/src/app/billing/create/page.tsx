@@ -42,15 +42,20 @@ interface PaymentType {
 
 export default function UnifiedBillingPage() {
   const router = useRouter()
-  const { fetchProducts, fetchPaymentTypes } = useData()
+  const { fetchProducts } = useData()
   const { client } = useClient()
   const barcodeInputRef = useRef<HTMLInputElement>(null)
   const productSearchRef = useRef<HTMLInputElement>(null)
   const quantityInputRef = useRef<HTMLInputElement>(null)
   const gstInputRef = useRef<HTMLInputElement>(null)
 
+  // Track initialization to prevent duplicate calls in React Strict Mode
+  const hasInitialized = useRef(false)
+
+  // Hardcoded payment types - no need to fetch from DB
+  const paymentTypes = ['Cash', 'Card', 'UPI', 'Net Banking', 'Cheque', 'Credit', 'Wallet', 'Other']
+
   const [products, setProducts] = useState<Product[]>([])
-  const [paymentTypes, setPaymentTypes] = useState<PaymentType[]>([])
   const [loading, setLoading] = useState(false)
 
   const [formData, setFormData] = useState({
@@ -88,10 +93,13 @@ export default function UnifiedBillingPage() {
   const [billNumberCreated, setBillNumberCreated] = useState<number | null>(null)
 
   useEffect(() => {
-    loadInitialData()
-    fetchNextBillNumber()
-    // Auto-focus barcode input on mount
-    barcodeInputRef.current?.focus()
+    // Prevent duplicate initialization in React Strict Mode
+    if (!hasInitialized.current) {
+      hasInitialized.current = true
+      loadInitialData()
+      // Auto-focus barcode input on mount
+      barcodeInputRef.current?.focus()
+    }
 
     // Keyboard shortcuts
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -125,31 +133,21 @@ export default function UnifiedBillingPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Consolidated initial data loading - single API call batch
   const loadInitialData = async () => {
     try {
-      const [productsData, paymentTypesData] = await Promise.all([
+      const [productsData, billsResponse] = await Promise.all([
         fetchProducts(),
-        fetchPaymentTypes()
+        api.get('/billing/list?limit=1')
       ])
       setProducts(productsData)
-      setPaymentTypes(paymentTypesData)
+
+      // Calculate next bill number from response
+      const bills = billsResponse.data.bills || []
+      setNextBillNumber(bills.length > 0 ? bills[0].bill_number + 1 : 1)
     } catch (error) {
       console.error('Failed to load initial data:', error)
-    }
-  }
-
-  const fetchNextBillNumber = async () => {
-    try {
-      const response = await api.get('/billing/list?limit=1')
-      const bills = response.data.bills || []
-      if (bills.length > 0) {
-        setNextBillNumber(bills[0].bill_number + 1)
-      } else {
-        setNextBillNumber(1)
-      }
-    } catch (error) {
-      console.error('Failed to fetch bill number:', error)
-      setNextBillNumber(1)
+      setNextBillNumber(1) // Fallback to 1 if error
     }
   }
 
@@ -624,12 +622,9 @@ export default function UnifiedBillingPage() {
                   className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 >
                   <option value="">Select Payment</option>
-                  <option value="cash">Cash</option>
-                  <option value="upi">UPI</option>
-                  <option value="card">Card</option>
-                  {paymentTypes.length > 0 && paymentTypes.map((pt) => (
-                    <option key={pt.payment_type_id} value={pt.payment_type_id}>
-                      {pt.payment_name}
+                  {paymentTypes.map((pt) => (
+                    <option key={pt} value={pt}>
+                      {pt}
                     </option>
                   ))}
                 </select>

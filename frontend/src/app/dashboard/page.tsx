@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import dynamic from 'next/dynamic'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useClient } from '@/contexts/ClientContext'
@@ -88,20 +88,34 @@ export default function DashboardPage() {
   const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month'>('today')
   const [showPredictions, setShowPredictions] = useState(false)
 
+  // Track ongoing request to prevent duplicates (for React Strict Mode)
+  const ongoingRequest = useRef<Promise<void> | null>(null)
+
   useEffect(() => {
     fetchAnalytics()
   }, [timeRange])
 
   const fetchAnalytics = async () => {
-    try {
-      setLoading(true)
-      const response = await api.get(`/analytics/dashboard?range=${timeRange}`)
-      setAnalytics(response.data)
-    } catch (error: any) {
-      setAnalytics(null)
-    } finally {
-      setLoading(false)
+    // If a request is already ongoing, return that promise
+    if (ongoingRequest.current) {
+      return ongoingRequest.current
     }
+
+    const request = (async () => {
+      try {
+        setLoading(true)
+        const response = await api.get(`/analytics/dashboard?range=${timeRange}`)
+        setAnalytics(response.data)
+      } catch (error: any) {
+        setAnalytics(null)
+      } finally {
+        setLoading(false)
+        ongoingRequest.current = null
+      }
+    })()
+
+    ongoingRequest.current = request
+    return request
   }
 
   const exportLowStock = async (format: 'pdf' | 'xlsx') => {

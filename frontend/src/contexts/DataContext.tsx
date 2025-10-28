@@ -66,12 +66,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
   const fetchProducts = useCallback(async (forceRefresh = false): Promise<Product[]> => {
     const now = Date.now()
 
+    // Use ref to get current cache state without dependencies
+    const currentCache = cache
+
     // Check if we have valid cached data
     if (!forceRefresh &&
-        cache.lastFetchTime.products &&
-        now - cache.lastFetchTime.products < CACHE_DURATION &&
-        cache.products.length > 0) {
-      return cache.products
+        currentCache.lastFetchTime.products &&
+        now - currentCache.lastFetchTime.products < CACHE_DURATION &&
+        currentCache.products.length > 0) {
+      return currentCache.products
     }
 
     // If a request is already ongoing, return that promise
@@ -97,7 +100,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         return products
       } catch (error) {
         console.error('Failed to fetch products:', error)
-        return cache.products
+        // Return current cache or empty array
+        const fallbackCache = cache
+        return fallbackCache.products.length > 0 ? fallbackCache.products : []
       } finally {
         ongoingRequests.current.products = null
       }
@@ -105,18 +110,21 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     ongoingRequests.current.products = request
     return request
-  }, [cache.products, cache.lastFetchTime.products])
+  }, [])
 
   // Fetch payment types with caching and request deduplication
   const fetchPaymentTypes = useCallback(async (forceRefresh = false): Promise<PaymentType[]> => {
     const now = Date.now()
 
+    // Use ref to get current cache state without dependencies
+    const currentCache = cache
+
     // Check if we have valid cached data
     if (!forceRefresh &&
-        cache.lastFetchTime.paymentTypes &&
-        now - cache.lastFetchTime.paymentTypes < CACHE_DURATION &&
-        cache.paymentTypes.length > 0) {
-      return cache.paymentTypes
+        currentCache.lastFetchTime.paymentTypes &&
+        now - currentCache.lastFetchTime.paymentTypes < CACHE_DURATION &&
+        currentCache.paymentTypes.length > 0) {
+      return currentCache.paymentTypes
     }
 
     // If a request is already ongoing, return that promise
@@ -142,7 +150,9 @@ export function DataProvider({ children }: { children: ReactNode }) {
         return paymentTypes
       } catch (error) {
         console.error('Failed to fetch payment types:', error)
-        return cache.paymentTypes
+        // Return current cache or empty array
+        const fallbackCache = cache
+        return fallbackCache.paymentTypes.length > 0 ? fallbackCache.paymentTypes : []
       } finally {
         ongoingRequests.current.paymentTypes = null
       }
@@ -150,7 +160,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     ongoingRequests.current.paymentTypes = request
     return request
-  }, [cache.paymentTypes, cache.lastFetchTime.paymentTypes])
+  }, [])
 
   // Invalidate cache manually
   const invalidateCache = useCallback((key?: 'products' | 'paymentTypes') => {

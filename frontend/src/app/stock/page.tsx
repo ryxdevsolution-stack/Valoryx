@@ -1,9 +1,10 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useRef } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton } from '@/components/SkeletonLoader'
+import { useData } from '@/contexts/DataContext'
 
 interface Stock {
   product_id: string
@@ -25,6 +26,7 @@ interface Stock {
 }
 
 export default function StockManagementPage() {
+  const { fetchProducts } = useData()
   const [stocks, setStocks] = useState<Stock[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
@@ -45,18 +47,26 @@ export default function StockManagementPage() {
     hsn_code: '',
   })
 
+  // Track initialization to prevent duplicate calls in React Strict Mode
+  const hasInitialized = useRef(false)
+
   useEffect(() => {
+    // Prevent duplicate initialization in React Strict Mode
+    if (hasInitialized.current) return
+    hasInitialized.current = true
+
     fetchStocks()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Use DataContext to fetch stocks (cached, prevents duplicate API calls)
   const fetchStocks = async () => {
     try {
       setLoading(true)
-      const response = await api.get('/stock')
-      const stockData = response.data.stock || []
+      const stockData = await fetchProducts()
 
       // Sort: Low stock items first, then regular stock
-      const sortedStocks = stockData.sort((a: Stock, b: Stock) => {
+      const sortedStocks = stockData.sort((a: any, b: any) => {
         if (a.is_low_stock && !b.is_low_stock) return -1
         if (!a.is_low_stock && b.is_low_stock) return 1
         return 0
@@ -73,9 +83,14 @@ export default function StockManagementPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      await api.post('/stock', formData)
+      const response = await api.post('/stock', formData)
       alert('Stock added successfully!')
       setShowAddForm(false)
+
+      // Optimistic update - add new stock to list without refetching
+      const newStock = response.data.stock
+      setStocks(prev => [newStock, ...prev])
+
       setFormData({
         product_name: '',
         quantity: 0,
@@ -89,7 +104,6 @@ export default function StockManagementPage() {
         gst_percentage: 0,
         hsn_code: '',
       })
-      fetchStocks()
     } catch (error: any) {
       alert(error.response?.data?.error || 'Failed to add stock')
     }
@@ -101,9 +115,13 @@ export default function StockManagementPage() {
     try {
       await api.delete(`/stock/${productId}`)
       alert('Product deleted successfully!')
-      fetchStocks()
+
+      // Optimistic update - remove from list without refetching
+      setStocks(prev => prev.filter(stock => stock.product_id !== productId))
     } catch (error: any) {
       alert(error.response?.data?.error || 'Failed to delete product')
+      // Revert optimistic update on error
+      fetchStocks()
     }
   }
 
@@ -130,6 +148,7 @@ export default function StockManagementPage() {
 
       setImportResult(response.data.summary)
       alert(response.data.message)
+      // Only refetch for bulk import since we don't have all new items in response
       fetchStocks()
     } catch (error: any) {
       alert(error.response?.data?.error || 'Failed to import file')

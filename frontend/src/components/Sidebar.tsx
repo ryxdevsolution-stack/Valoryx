@@ -1,10 +1,11 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import { useClient } from '@/contexts/ClientContext'
 import { useTheme } from '@/contexts/ThemeContext'
+import { usePermissions } from '@/hooks/usePermissions'
 import {
   LayoutDashboard,
   FileText,
@@ -15,25 +16,45 @@ import {
   Search,
   LogOut,
   Sun,
-  Moon
+  Moon,
+  Shield
 } from 'lucide-react'
 
-const navigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard },
-  { name: 'Create Bill', href: '/billing/create', icon: PlusSquare },
-  { name: 'All Bills', href: '/billing', icon: FileText },
-  { name: 'Customers', href: '/customers', icon: Users },
-  { name: 'Stock Management', href: '/stock', icon: Package },
-  { name: 'Reports', href: '/reports', icon: TrendingUp },
-  { name: 'Audit Logs', href: '/audit', icon: Search },
+// Define navigation items with required permissions
+const allNavigation = [
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, permission: 'view_dashboard' },
+  { name: 'Create Bill', href: '/billing/create', icon: PlusSquare, permission: 'create_bill' },
+  { name: 'All Bills', href: '/billing', icon: FileText, permission: 'view_billing' },
+  { name: 'Customers', href: '/customers', icon: Users, permission: 'view_customers' },
+  { name: 'Stock Management', href: '/stock', icon: Package, permission: 'view_stock' },
+  { name: 'Reports', href: '/reports', icon: TrendingUp, permission: 'view_reports' },
+  { name: 'Audit Logs', href: '/audit', icon: Search, permission: 'view_audit' },
+]
+
+// Admin-only navigation items
+const adminNavigation = [
+  { name: 'User Permissions', href: '/admin/permissions', icon: Shield, requireSuperAdmin: true },
 ]
 
 export default function Sidebar() {
   const pathname = usePathname()
   const { client, user, logout } = useClient()
   const { isDarkMode, toggleTheme } = useTheme()
+  const { hasPermission, isSuperAdmin } = usePermissions()
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
   const [isAnimating, setIsAnimating] = useState(false)
+
+  // Filter navigation items based on permissions
+  const navigation = useMemo(() => {
+    if (!user) return []
+    return allNavigation.filter(item => hasPermission(item.permission))
+  }, [user, hasPermission])
+
+  // Get admin navigation items if user is super admin
+  const adminNav = useMemo(() => {
+    if (!user || !isSuperAdmin()) return []
+    return adminNavigation
+  }, [user, isSuperAdmin])
 
   const closeMobileMenu = () => {
     setIsAnimating(true)
@@ -167,6 +188,46 @@ export default function Sidebar() {
                   </Link>
                 )
               })}
+
+              {/* Admin Navigation Section */}
+              {adminNav.length > 0 && (
+                <>
+                  <div className="mx-3 my-3 border-t border-slate-200/50 dark:border-gray-700/50"></div>
+                  <div className="px-3 mb-2">
+                    <p className="text-xs font-semibold text-slate-500 dark:text-gray-400 uppercase tracking-wider">Admin</p>
+                  </div>
+                  {adminNav.map((item, index) => {
+                    const isActive = pathname === item.href
+                    const Icon = item.icon
+                    return (
+                      <Link
+                        key={item.name}
+                        href={item.href}
+                        onClick={closeMobileMenu}
+                        style={{ animationDelay: `${(navigation.length + index) * 50}ms` }}
+                        className={`
+                          group flex items-center gap-3 px-3 xs:px-4 py-2.5 xs:py-3 text-sm xs:text-base font-medium rounded-xl xs:rounded-2xl transition-all duration-300 touch-manipulation animate-[slideIn_0.3s_ease-out_forwards] opacity-0
+                          ${
+                            isActive
+                              ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 shadow-lg scale-[1.02]'
+                              : 'text-slate-600 dark:text-gray-300 hover:bg-white/60 dark:hover:bg-gray-700/60 hover:text-slate-800 dark:hover:text-white active:scale-95 backdrop-blur-sm'
+                          }
+                        `}
+                      >
+                        <div className={`flex items-center justify-center w-8 h-8 xs:w-9 xs:h-9 rounded-lg xs:rounded-xl transition-all duration-300 ${
+                          isActive ? 'bg-white/20 dark:bg-gray-900/20 scale-110' : 'bg-slate-200/50 dark:bg-gray-700/50 group-hover:bg-slate-300/50 dark:group-hover:bg-gray-600/50'
+                        }`}>
+                          <Icon className="w-4 h-4 xs:w-5 xs:h-5" strokeWidth={2.5} />
+                        </div>
+                        <span className="flex-1 font-semibold">{item.name}</span>
+                        {isActive && (
+                          <div className="w-1.5 h-1.5 rounded-full bg-white animate-pulse"></div>
+                        )}
+                      </Link>
+                    )
+                  })}
+                </>
+              )}
             </nav>
           </div>
 
@@ -270,6 +331,45 @@ export default function Sidebar() {
               )
             })}
           </nav>
+
+          {/* Admin Navigation Section */}
+          {adminNav.length > 0 && (
+            <>
+              <div className="py-2 border-t border-gray-200/60 dark:border-gray-700/60">
+                <nav className="flex flex-col items-center gap-2">
+                  {adminNav.map((item) => {
+                    const isActive = pathname === item.href
+                    const Icon = item.icon
+                    return (
+                      <div key={item.name} className="relative group">
+                        <Link
+                          href={item.href}
+                          className={`
+                            w-11 h-11 rounded-full transition-all duration-300 flex items-center justify-center shadow-sm hover:shadow-md
+                            ${
+                              isActive
+                                ? 'bg-purple-600 dark:bg-purple-500 text-white scale-105'
+                                : 'bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-800/50 hover:scale-105'
+                            }
+                          `}
+                          aria-label={item.name}
+                        >
+                          <Icon className="w-5 h-5" strokeWidth={2.5} />
+                        </Link>
+
+                        {/* Tooltip */}
+                        <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-50">
+                          <div className="bg-purple-600 dark:bg-purple-700 text-white px-4 py-2 rounded-full text-xs font-semibold whitespace-nowrap shadow-xl">
+                            {item.name}
+                          </div>
+                        </div>
+                      </div>
+                    )
+                  })}
+                </nav>
+              </div>
+            </>
+          )}
 
           {/* Logout Button at Bottom */}
           <div className="pt-2 border-t border-gray-200/60 dark:border-gray-700/60">

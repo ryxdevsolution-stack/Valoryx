@@ -63,7 +63,9 @@ def authenticate(f):
                 'user_id': user_id,
                 'client_id': client_id,
                 'email': user.email,
-                'role': user.role
+                'role': user.role,
+                'is_super_admin': decoded.get('is_super_admin', False),
+                'permissions': decoded.get('permissions', [])
             }
 
             g.client = {

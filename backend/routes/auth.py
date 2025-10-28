@@ -6,6 +6,7 @@ from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.user_model import User
 from models.client_model import ClientEntry
+from models.permission_model import get_user_permissions
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
 from config import Config
@@ -53,12 +54,17 @@ def login():
         user.last_login = datetime.utcnow()
         db.session.commit()
 
-        # Generate JWT token with client_id (convert UUIDs to strings)
+        # Get user permissions
+        user_permissions = get_user_permissions(str(user.user_id))
+
+        # Generate JWT token with client_id and permissions (convert UUIDs to strings)
         token_payload = {
             'user_id': str(user.user_id),
             'email': user.email,
             'client_id': str(user.client_id),
             'role': user.role,
+            'is_super_admin': user.is_super_admin,
+            'permissions': user_permissions,
             'exp': datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS)
         }
 
@@ -68,7 +74,7 @@ def login():
         g.user = {'user_id': str(user.user_id), 'client_id': str(user.client_id)}
         log_action('LOGIN', 'users', str(user.user_id))
 
-        # Return token with client info (convert all UUIDs to strings)
+        # Return token with client info and permissions (convert all UUIDs to strings)
         return jsonify({
             'success': True,
             'token': token,
@@ -78,7 +84,9 @@ def login():
             'user': {
                 'user_id': str(user.user_id),
                 'email': user.email,
-                'role': user.role
+                'role': user.role,
+                'is_super_admin': user.is_super_admin,
+                'permissions': user_permissions
             }
         }), 200
 
@@ -160,8 +168,13 @@ def logout():
 @authenticate
 def verify_token():
     """Verify JWT token is valid"""
+    # Add permissions to the response if not already in g.user
+    user_data = dict(g.user)
+    if 'permissions' not in user_data:
+        user_data['permissions'] = get_user_permissions(g.user['user_id'])
+
     return jsonify({
         'success': True,
-        'user': g.user,
+        'user': user_data,
         'client': g.client
     }), 200

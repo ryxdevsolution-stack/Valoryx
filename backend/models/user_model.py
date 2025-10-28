@@ -11,6 +11,7 @@ class User(db.Model):
     password_hash = db.Column(db.String(255), nullable=False)
     client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     role = db.Column(db.String(50), default='staff')
+    is_super_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_login = db.Column(db.DateTime)
     is_active = db.Column(db.Boolean, default=True)
@@ -21,6 +22,7 @@ class User(db.Model):
             'email': self.email,
             'client_id': self.client_id,
             'role': self.role,
+            'is_super_admin': self.is_super_admin,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_login': self.last_login.isoformat() if self.last_login else None,
             'is_active': self.is_active
