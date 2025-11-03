@@ -12,6 +12,7 @@ interface Stock {
   quantity: number
   rate: number | string
   cost_price?: number | string | null
+  mrp?: number | string | null
   category: string
   unit: string
   low_stock_alert: number
@@ -38,6 +39,7 @@ export default function StockManagementPage() {
     quantity: 0,
     rate: 0,
     cost_price: 0,
+    mrp: 0,
     category: '',
     unit: 'pcs',
     low_stock_alert: 10,
@@ -96,6 +98,7 @@ export default function StockManagementPage() {
         quantity: 0,
         rate: 0,
         cost_price: 0,
+        mrp: 0,
         category: '',
         unit: 'pcs',
         low_stock_alert: 10,
@@ -318,6 +321,23 @@ export default function StockManagementPage() {
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">For profit calculation</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  MRP (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.mrp}
+                  onChange={(e) =>
+                    setFormData({ ...formData, mrp: parseFloat(e.target.value) || 0 })
+                  }
+                  placeholder="Maximum Retail Price"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Shown on print, not in billing</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">

@@ -9,6 +9,8 @@ interface BillItem {
   gst_percentage?: number
   amount: number
   item_code?: string
+  mrp?: number
+  cost_price?: number
 }
 
 interface BillData {
@@ -183,7 +185,9 @@ export default function BillPrintPreview({ bill, clientInfo, onClose }: BillPrin
                   <div style={{ fontSize: '7pt', display: 'flex', justifyContent: 'space-between', paddingLeft: '5mm' }}>
                     <span style={{ flex: '1' }}></span>
                     <span style={{ width: '8mm', textAlign: 'center' }}>{item.quantity}</span>
-                    <span style={{ width: '13mm', textAlign: 'right' }}>{parseFloat(String(item.rate)).toFixed(2)}</span>
+                    <span style={{ width: '13mm', textAlign: 'right' }}>
+                      {item.mrp ? parseFloat(String(item.mrp)).toFixed(2) : '-'}
+                    </span>
                     <span style={{ width: '13mm', textAlign: 'right' }}>{parseFloat(String(item.rate)).toFixed(2)}</span>
                     <span style={{ width: '15mm', textAlign: 'right', fontWeight: 'bold' }}>{item.amount.toFixed(2)}</span>
                   </div>

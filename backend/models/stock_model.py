@@ -12,6 +12,7 @@ class StockEntry(db.Model):
     quantity = db.Column(db.Integer, nullable=False, default=0)
     rate = db.Column(db.Numeric(10, 2), nullable=False)
     cost_price = db.Column(db.Numeric(10, 2), nullable=True)  # Cost price for profit calculation
+    # mrp = db.Column(db.Numeric(10, 2), nullable=True)  # TEMPORARY: Commented until migration runs
     unit = db.Column(db.String(20), default='pcs')
     low_stock_alert = db.Column(db.Integer, default=10)
     item_code = db.Column(db.String(50))
@@ -30,6 +31,7 @@ class StockEntry(db.Model):
             'quantity': self.quantity,
             'rate': float(self.rate),
             'cost_price': float(self.cost_price) if self.cost_price else None,
+            'mrp': None,  # TEMPORARY: Return None until migration runs
             'unit': self.unit,
             'low_stock_alert': self.low_stock_alert,
             'item_code': self.item_code,

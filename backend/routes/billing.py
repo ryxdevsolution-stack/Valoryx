@@ -273,11 +273,13 @@ def create_unified_bill():
     - Automatically detects GST or Non-GST based on items
     - Calculates per-item GST from product's gst_percentage
     - Routes to appropriate table based on presence of GST
+    - Supports multi-payment splits, customer GSTIN, received amount, and discount
 
     Request format:
     {
-        "customer_name": "John Doe",
-        "customer_phone": "9876543210",
+        "customer_name": "John Doe" (optional - defaults to 'Walk-in Customer'),
+        "customer_phone": "9876543210" (optional),
+        "customer_gstin": "22AAAAA0000A1Z5" (optional),
         "items": [
             {
                 "product_id": "uuid",
@@ -287,20 +289,22 @@ def create_unified_bill():
                 "item_code": "LP-001",
                 "hsn_code": "8471",
                 "unit": "pcs",
-                "gst_percentage": 18,  // From product or manually set
-                "gst_amount": 16200,    // Auto-calculated
-                "amount": 106200        // rate * qty + gst_amount
+                "gst_percentage": 18,
+                "gst_amount": 16200,
+                "amount": 106200
             }
         ],
-        "payment_type": "uuid"
+        "payment_type": JSON string of payment splits array,
+        "amount_received": 100000 (optional),
+        "discount_percentage": 5 (optional)
     }
     """
     try:
         data = request.get_json()
         client_id = g.user['client_id']
 
-        # Validate required fields
-        required_fields = ['customer_name', 'items', 'payment_type']
+        # Validate required fields - customer_name is now optional
+        required_fields = ['items', 'payment_type']
         for field in required_fields:
             if field not in data:
                 return jsonify({'error': f'Missing required field: {field}'}), 400
@@ -427,14 +431,17 @@ def create_unified_bill():
                 bill_id=str(uuid.uuid4()),
                 client_id=client_id,
                 bill_number=bill_number,
-                customer_name=data['customer_name'],
+                customer_name=data.get('customer_name', 'Walk-in Customer'),
                 customer_phone=data.get('customer_phone'),
+                customer_gstin=data.get('customer_gstin'),
                 items=processed_items,
                 subtotal=round(subtotal, 2),
                 gst_percentage=0,  # Not applicable for mixed GST rates
                 gst_amount=round(total_gst_amount, 2),
                 final_amount=round(final_amount, 2),
                 payment_type=data['payment_type'],
+                amount_received=data.get('amount_received'),
+                discount_percentage=data.get('discount_percentage'),
                 status='final',
                 created_by=g.user['user_id'],
                 created_at=datetime.utcnow()
@@ -465,11 +472,14 @@ def create_unified_bill():
                 bill_id=str(uuid.uuid4()),
                 client_id=client_id,
                 bill_number=bill_number,
-                customer_name=data['customer_name'],
+                customer_name=data.get('customer_name', 'Walk-in Customer'),
                 customer_phone=data.get('customer_phone'),
+                customer_gstin=data.get('customer_gstin'),
                 items=processed_items,
                 total_amount=round(subtotal, 2),
                 payment_type=data['payment_type'],
+                amount_received=data.get('amount_received'),
+                discount_percentage=data.get('discount_percentage'),
                 status='final',
                 created_by=g.user['user_id'],
                 created_at=datetime.utcnow()
