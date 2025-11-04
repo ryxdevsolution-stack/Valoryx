@@ -21,7 +21,8 @@
       "Bash(netstat:*)",
       "Bash(findstr:*)",
       "Bash(taskkill:*)",
-      "Bash(nul)"
+      "Bash(nul)",
+      "Bash(del c:UsersadminDesktopmj-billingbackendfix_admin_indent.py)"
     ],
     "deny": [],
     "ask": [],

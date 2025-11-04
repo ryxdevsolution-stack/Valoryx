@@ -106,8 +106,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       // Set axios default header
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`
 
-      // Redirect to dashboard
-      router.push('/dashboard')
+      // Redirect to create bill
+      router.push('/billing/create')
     } catch (error: any) {
       throw new Error(error.response?.data?.error || 'Login failed')
     }
