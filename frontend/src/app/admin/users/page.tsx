@@ -46,7 +46,7 @@ interface UsersResponse {
 }
 
 export default function UserManagement() {
-  const { user, loading: authLoading, isSuperAdmin } = useClient();
+  const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const router = useRouter();
 
   const [users, setUsers] = useState<User[]>([]);
@@ -366,7 +366,7 @@ export default function UserManagement() {
                     <div className="flex items-center gap-2">
                       <span className="text-sm text-gray-900 capitalize">{user.role}</span>
                       {user.is_super_admin && (
-                        <Shield className="h-4 w-4 text-purple-600" title="Super Admin" />
+                        <Shield className="h-4 w-4 text-purple-600" aria-label="Super Admin" />
                       )}
                     </div>
                   </td>

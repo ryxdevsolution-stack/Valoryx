@@ -67,8 +67,29 @@ export default function StockManagementPage() {
       setLoading(true)
       const stockData = await fetchProducts()
 
+      // Transform Product[] to Stock[] with required fields
+      const transformedStocks: Stock[] = stockData.map((product: any): Stock => ({
+        product_id: product.product_id || '',
+        product_name: product.product_name || '',
+        quantity: product.quantity || product.available_quantity || 0,
+        rate: product.rate || 0,
+        cost_price: product.cost_price ?? null,
+        mrp: product.mrp ?? null,
+        category: product.category || '',
+        unit: product.unit || 'pcs',
+        low_stock_alert: product.low_stock_alert || 10,
+        item_code: product.item_code || '',
+        barcode: product.barcode || '',
+        gst_percentage: product.gst_percentage || 0,
+        hsn_code: product.hsn_code || '',
+        is_low_stock: product.is_low_stock ?? false,
+        created_at: product.created_at || new Date().toISOString(),
+        updated_at: product.updated_at,
+        client_id: product.client_id || ''
+      }))
+
       // Sort: Low stock items first, then regular stock
-      const sortedStocks = stockData.sort((a: any, b: any) => {
+      const sortedStocks = transformedStocks.sort((a, b) => {
         if (a.is_low_stock && !b.is_low_stock) return -1
         if (!a.is_low_stock && b.is_low_stock) return 1
         return 0

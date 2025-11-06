@@ -10,25 +10,25 @@ export default function AdminLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const { user, loading, isSuperAdmin } = useClient();
+  const { user, isLoading, isSuperAdmin } = useClient();
   const router = useRouter();
 
   useEffect(() => {
     // Redirect non-authenticated users to login
-    if (!loading && !user) {
+    if (!isLoading && !user) {
       router.push('/auth/login');
       return;
     }
 
     // Redirect non-super-admin users to regular dashboard
-    if (!loading && user && !isSuperAdmin()) {
+    if (!isLoading && user && !isSuperAdmin()) {
       router.push('/dashboard');
       return;
     }
-  }, [user, loading, isSuperAdmin, router]);
+  }, [user, isLoading, isSuperAdmin, router]);
 
   // Show loading state while checking authentication
-  if (loading) {
+  if (isLoading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>

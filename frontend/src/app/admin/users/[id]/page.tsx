@@ -51,7 +51,7 @@ interface UserDetails {
 }
 
 export default function UserDetailPage() {
-  const { user: currentUser, loading: authLoading, isSuperAdmin } = useClient();
+  const { user: currentUser, isLoading: authLoading, isSuperAdmin } = useClient();
   const router = useRouter();
   const params = useParams();
   const userId = params.id as string;
@@ -451,7 +451,7 @@ export default function UserDetailPage() {
                   <div key={category}>
                     <h3 className="text-sm font-medium text-gray-900 capitalize mb-2">{category}</h3>
                     <div className="space-y-1">
-                      {perms.map((perm: any) => (
+                      {(perms as any[]).map((perm: any) => (
                         <label key={perm.permission_name} className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"

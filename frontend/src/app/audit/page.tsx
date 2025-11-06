@@ -246,7 +246,7 @@ export default function AuditorReportsPage() {
             <div className="flex items-end">
               <button
                 type="button"
-                onClick={fetchGSTBills}
+                onClick={() => fetchGSTBills()}
                 disabled={loading}
                 className="w-full px-3 py-1.5 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 dark:from-blue-700 dark:to-blue-600 text-white text-xs font-bold shadow-md hover:shadow-lg transition-all disabled:opacity-50"
               >

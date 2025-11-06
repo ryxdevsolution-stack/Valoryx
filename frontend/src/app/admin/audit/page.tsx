@@ -36,7 +36,7 @@ interface AuditLog {
 }
 
 export default function AuditLogViewer() {
-  const { user, loading: authLoading, isSuperAdmin } = useClient();
+  const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const router = useRouter();
 
   const [logs, setLogs] = useState<AuditLog[]>([]);

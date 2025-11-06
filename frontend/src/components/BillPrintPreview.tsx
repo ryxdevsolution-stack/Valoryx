@@ -308,7 +308,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose }: BillPrin
               {/* Footer */}
               <div style={{ textAlign: 'center', marginTop: '3mm' }}>
                 <div style={{ fontSize: '7pt', marginBottom: '2mm' }}>
-                  Today's Savings :
+                  Today&apos;s Savings :
                 </div>
                 <div style={{ fontSize: '9pt', fontWeight: 'bold', letterSpacing: '1px' }}>
                   ★★★ THANK YOU VISIT AGAIN ★★★

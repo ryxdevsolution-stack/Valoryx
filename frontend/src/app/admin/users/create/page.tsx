@@ -30,7 +30,7 @@ interface PermissionTemplates {
 }
 
 export default function CreateUser() {
-  const { user, loading: authLoading, isSuperAdmin } = useClient();
+  const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const router = useRouter();
 
   // Form state
@@ -382,7 +382,7 @@ export default function CreateUser() {
                       {category}
                     </h4>
                     <div className="space-y-1">
-                      {perms.map((perm: any) => (
+                      {(perms as any[]).map((perm: any) => (
                         <label key={perm.permission_name} className="flex items-center gap-2 cursor-pointer">
                           <input
                             type="checkbox"

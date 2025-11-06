@@ -373,9 +373,26 @@ export default function AllBillsPage() {
       </div>
 
       {/* Bill Print Preview Modal */}
-      {selectedBillForPrint && client && (
+      {selectedBillForPrint && client && selectedBillForPrint.items && (
         <BillPrintPreview
-          bill={selectedBillForPrint}
+          bill={{
+            bill_number: Number(selectedBillForPrint.bill_number) || 0,
+            customer_name: selectedBillForPrint.customer_name,
+            customer_phone: selectedBillForPrint.customer_phone,
+            items: selectedBillForPrint.items,
+            subtotal: selectedBillForPrint.subtotal || 0,
+            discount_percentage: selectedBillForPrint.discount_percentage,
+            discount_amount: selectedBillForPrint.discount_amount,
+            gst_amount: selectedBillForPrint.gst_amount,
+            final_amount: selectedBillForPrint.final_amount || 0,
+            total_amount: selectedBillForPrint.total_amount || 0,
+            payment_type: String(selectedBillForPrint.payment_type || ''),
+            created_at: String(selectedBillForPrint.created_at || ''),
+            type: selectedBillForPrint.type === 'non_gst' ? 'non-gst' : 'gst',
+            cgst: selectedBillForPrint.cgst,
+            sgst: selectedBillForPrint.sgst,
+            igst: selectedBillForPrint.igst
+          }}
           clientInfo={{
             client_name: client.client_name,
             address: client.address,

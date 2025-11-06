@@ -55,9 +55,7 @@ def create_app():
         from routes.customer import customer_bp
         from routes.analytics import analytics_bp
         from routes.permissions import permissions_bp
-        # Temporarily disable admin routes due to syntax issues
-        # from routes.admin import admin_bp
-        admin_bp = None
+        from routes.admin import admin_bp
     except ImportError as e:
         print(f"Warning: Could not import routes: {e}")
         auth_bp = billing_bp = stock_bp = report_bp = audit_bp = client_bp = payment_bp = customer_bp = analytics_bp = permissions_bp = admin_bp = None

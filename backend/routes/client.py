@@ -4,15 +4,19 @@ from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.client_model import ClientEntry
 from utils.auth_middleware import authenticate, require_role
+from utils.permission_middleware import require_super_admin
 from utils.audit_logger import log_action
 
 client_bp = Blueprint('client', __name__)
 
 
 @client_bp.route('', methods=['POST'])
+@authenticate
+@require_super_admin
 def create_client():
     """
-    Register new client (admin only)
+    Register new client (super admin only)
+    NOTE: This endpoint is deprecated. Use /api/admin/clients instead which also creates the user.
     Returns client_id for user registration
     """
     try:

@@ -17,7 +17,8 @@ import {
   LogOut,
   Sun,
   Moon,
-  Shield
+  Shield,
+  Building2
 } from 'lucide-react'
 
 // Define navigation items with required permissions
@@ -33,6 +34,7 @@ const allNavigation = [
 
 // Admin-only navigation items
 const adminNavigation = [
+  { name: 'Client Management', href: '/admin/clients', icon: Building2, requireSuperAdmin: true },
   { name: 'User Permissions', href: '/admin/permissions', icon: Shield, requireSuperAdmin: true },
 ]
 
