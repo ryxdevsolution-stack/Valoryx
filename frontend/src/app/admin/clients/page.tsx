@@ -21,7 +21,9 @@ import {
   X,
   Phone,
   Mail,
-  MapPin
+  MapPin,
+  Trash2,
+  AlertTriangle
 } from 'lucide-react';
 
 interface Client {
@@ -59,6 +61,9 @@ export default function ClientManagement() {
   const [currentPage, setCurrentPage] = useState(1);
   const [totalPages, setTotalPages] = useState(1);
   const [totalClients, setTotalClients] = useState(0);
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
+  const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
+  const [deleting, setDeleting] = useState(false);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -129,6 +134,59 @@ export default function ClientManagement() {
 
   const handleViewUsers = (clientId: string) => {
     router.push(`/admin/users?client_id=${clientId}`);
+  };
+
+  const handleDeleteClick = (client: Client) => {
+    setClientToDelete(client);
+    setDeleteConfirmOpen(true);
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!clientToDelete) return;
+
+    try {
+      setDeleting(true);
+      const token = localStorage.getItem('token');
+      const response = await axios.delete(
+        `${apiUrl}/admin/clients/${clientToDelete.client_id}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+
+      // Show success message with deletion summary
+      const summary = response.data.summary;
+      const summaryMessage = `
+Client deleted successfully!
+
+Summary:
+- Users: ${summary.users}
+- Total Bills: ${summary.total_bills} (GST: ${summary.gst_bills}, Non-GST: ${summary.non_gst_bills})
+- Stock Entries: ${summary.stock_entries}
+- Customers: ${summary.customers}
+- Payment Types: ${summary.payment_types}
+- Reports: ${summary.reports}
+- Audit Logs: ${summary.audit_logs}
+      `.trim();
+
+      alert(summaryMessage);
+
+      setDeleteConfirmOpen(false);
+      setClientToDelete(null);
+      fetchClients();
+    } catch (error: any) {
+      console.error('Error deleting client:', error);
+      alert(error.response?.data?.error || 'Failed to delete client');
+    } finally {
+      setDeleting(false);
+    }
+  };
+
+  const handleDeleteCancel = () => {
+    setDeleteConfirmOpen(false);
+    setClientToDelete(null);
   };
 
   if (authLoading || loading) {
@@ -337,6 +395,13 @@ export default function ClientManagement() {
                       >
                         {client.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
                       </button>
+                      <button
+                        onClick={() => handleDeleteClick(client)}
+                        className="text-red-600 hover:text-red-900"
+                        title="Delete Client"
+                      >
+                        <Trash2 className="h-4 w-4" />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -371,6 +436,82 @@ export default function ClientManagement() {
           </div>
         </div>
       </div>
+
+      {/* Delete Confirmation Modal */}
+      {deleteConfirmOpen && clientToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+            <div className="flex items-center gap-3 mb-4">
+              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
+                <AlertTriangle className="h-6 w-6 text-red-600" />
+              </div>
+              <div>
+                <h3 className="text-lg font-semibold text-gray-900">Delete Client</h3>
+                <p className="text-sm text-gray-500">This action cannot be undone</p>
+              </div>
+            </div>
+
+            <div className="mb-6">
+              <p className="text-sm text-gray-700 mb-2">
+                Are you sure you want to delete the following client?
+              </p>
+              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
+                <div className="flex items-center gap-3 mb-2">
+                  {clientToDelete.logo_url ? (
+                    <img
+                      src={clientToDelete.logo_url}
+                      alt={clientToDelete.client_name}
+                      className="h-10 w-10 rounded-full"
+                    />
+                  ) : (
+                    <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
+                      <Building2 className="h-5 w-5 text-blue-600" />
+                    </div>
+                  )}
+                  <div>
+                    <p className="font-semibold text-gray-900">{clientToDelete.client_name}</p>
+                    <p className="text-xs text-gray-500">{clientToDelete.email}</p>
+                  </div>
+                </div>
+                {clientToDelete.user_count > 0 && (
+                  <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
+                    <p className="text-xs text-yellow-800">
+                      <strong>Warning:</strong> This client has {clientToDelete.user_count} user(s). All associated data will be permanently deleted.
+                    </p>
+                  </div>
+                )}
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-3">
+              <button
+                onClick={handleDeleteCancel}
+                disabled={deleting}
+                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={handleDeleteConfirm}
+                disabled={deleting}
+                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center gap-2"
+              >
+                {deleting ? (
+                  <>
+                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                    Deleting...
+                  </>
+                ) : (
+                  <>
+                    <Trash2 className="h-4 w-4" />
+                    Delete Client
+                  </>
+                )}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

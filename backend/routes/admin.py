@@ -4,6 +4,11 @@ from models.user_model import User
 from models.client_model import ClientEntry
 from models.permission_model import Permission, UserPermission, has_permission, get_user_permissions
 from models.audit_model import AuditLog
+from models.billing_model import GSTBilling, NonGSTBilling
+from models.stock_model import StockEntry
+from models.customer_model import Customer
+from models.payment_model import PaymentType
+from models.report_model import Report
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_super_admin, require_permission
 import bcrypt
@@ -664,39 +669,323 @@ def get_available_roles():
 @authenticate
 @require_super_admin
 def get_permission_templates():
-    """Get permission templates/presets"""
+    """Get permission templates/presets for different business types"""
     try:
         templates = {
-        'full_access': {
-        'name': 'Full Access',
-        'description': 'All permissions granted',
-        'permissions': [p.permission_name for p in Permission.query.all()]
-        },
-        'billing_manager': {
-        'name': 'Billing Manager',
-        'description': 'Full billing and customer access',
-        'permissions': [
-        'view_dashboard', 'view_billing', 'create_bill',
-        'edit_bill', 'delete_bill', 'view_customers',
-        'manage_customers', 'view_reports'
-        ]
-        },
-        'stock_manager': {
-        'name': 'Stock Manager',
-        'description': 'Full stock management access',
-        'permissions': [
-        'view_dashboard', 'view_stock', 'manage_stock',
-        'view_reports'
-        ]
-        },
-        'view_only': {
-        'name': 'View Only',
-        'description': 'Read-only access to all modules',
-        'permissions': [
-        'view_dashboard', 'view_billing', 'view_customers',
-        'view_stock', 'view_reports', 'view_audit'
-        ]
-        }
+            'full_access': {
+                'name': 'Full Access (All Permissions)',
+                'description': 'Complete access to all features - for owners/managers',
+                'business_type': 'all',
+                'permissions': [p.permission_name for p in Permission.query.all()]
+            },
+
+            # Dress Shop / Fashion Boutique
+            'dress_shop': {
+                'name': 'Dress Shop / Fashion Boutique',
+                'description': 'Perfect for clothing stores, boutiques, and fashion retail',
+                'business_type': 'retail',
+                'permissions': [
+                    # Dashboard
+                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
+                    # Billing - Full access for sales
+                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
+                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
+                    'billing.set_discount', 'billing.set_tax', 'billing.print', 'billing.download_pdf',
+                    # Customers - Full management
+                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.search',
+                    'customers.view_history', 'customers.create', 'customers.edit', 'customers.export',
+                    # Stock - Full inventory management
+                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
+                    'stock.view_levels', 'stock.view_low_stock', 'stock.create', 'stock.edit',
+                    'stock.edit_price', 'stock.edit_mrp', 'stock.adjust_quantity', 'stock.import', 'stock.export',
+                    # Reports
+                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_inventory',
+                    'reports.generate', 'reports.export', 'reports.print',
+                    # Payment types
+                    'payment_types.view', 'payment_types.view_all'
+                ]
+            },
+
+            # Supermarket / Grocery Store
+            'supermarket': {
+                'name': 'Supermarket / Grocery Store',
+                'description': 'Ideal for supermarkets, grocery stores, and convenience stores',
+                'business_type': 'retail',
+                'permissions': [
+                    # Dashboard
+                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
+                    # Billing - Fast checkout focused
+                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
+                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
+                    'billing.set_discount', 'billing.set_tax', 'billing.print', 'billing.mark_paid',
+                    # Customers - Basic management
+                    'customers.view', 'customers.view_all', 'customers.search', 'customers.create',
+                    # Stock - Comprehensive inventory
+                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
+                    'stock.view_levels', 'stock.view_low_stock', 'stock.create', 'stock.edit',
+                    'stock.edit_price', 'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity',
+                    'stock.import', 'stock.export',
+                    # Reports
+                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
+                    'reports.view_inventory', 'reports.generate', 'reports.export',
+                    # Payment types
+                    'payment_types.view', 'payment_types.view_all', 'payment_types.create'
+                ]
+            },
+
+            # General Store / Kirana Shop
+            'general_store': {
+                'name': 'General Store / Kirana Shop',
+                'description': 'For neighborhood stores, kirana shops, and small retail',
+                'business_type': 'retail',
+                'permissions': [
+                    # Dashboard
+                    'dashboard.view', 'dashboard.view_sales',
+                    # Billing - Simple billing
+                    'billing.view', 'billing.view_all', 'billing.create', 'billing.create_bill',
+                    'billing.add_products', 'billing.set_discount', 'billing.print',
+                    # Customers - Basic
+                    'customers.view', 'customers.view_all', 'customers.create',
+                    # Stock - Essential management
+                    'stock.view', 'stock.view_all', 'stock.view_levels', 'stock.view_low_stock',
+                    'stock.create', 'stock.edit', 'stock.edit_price', 'stock.edit_mrp',
+                    'stock.adjust_quantity',
+                    # Reports - Basic
+                    'reports.view', 'reports.view_sales', 'reports.view_inventory',
+                    # Payment types
+                    'payment_types.view', 'payment_types.view_all'
+                ]
+            },
+
+            # Food Store / Bakery / Confectionery
+            'food_store': {
+                'name': 'Food Store / Bakery / Confectionery',
+                'description': 'For bakeries, sweet shops, cafes, and food retail',
+                'business_type': 'food_retail',
+                'permissions': [
+                    # Dashboard
+                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_sales',
+                    # Billing - Quick service
+                    'billing.view', 'billing.view_all', 'billing.create', 'billing.create_bill',
+                    'billing.add_products', 'billing.set_discount', 'billing.print', 'billing.download_pdf',
+                    # Customers
+                    'customers.view', 'customers.view_all', 'customers.create', 'customers.view_history',
+                    # Stock - Perishable inventory
+                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.view_levels',
+                    'stock.view_low_stock', 'stock.create', 'stock.edit', 'stock.edit_price',
+                    'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity',
+                    # Reports
+                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_inventory',
+                    'reports.generate', 'reports.export',
+                    # Payment types
+                    'payment_types.view', 'payment_types.view_all'
+                ]
+            },
+
+            # Restaurant / Hotel / Food Service
+            'restaurant_hotel': {
+                'name': 'Restaurant / Hotel / Food Service',
+                'description': 'For restaurants, hotels, cafes, and food service businesses',
+                'business_type': 'hospitality',
+                'permissions': [
+                    # Dashboard
+                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
+                    # Billing - Table service
+                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
+                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
+                    'billing.set_discount', 'billing.set_tax', 'billing.edit', 'billing.edit_details',
+                    'billing.edit_products', 'billing.print', 'billing.download_pdf', 'billing.send_email',
+                    # Customers - Guest management
+                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.view_history',
+                    'customers.create', 'customers.edit',
+                    # Stock - Kitchen inventory
+                    'stock.view', 'stock.view_all', 'stock.view_levels', 'stock.view_low_stock',
+                    'stock.edit', 'stock.edit_price', 'stock.adjust_quantity',
+                    # Reports
+                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
+                    'reports.generate', 'reports.export', 'reports.custom_filters',
+                    # Payment types
+                    'payment_types.view', 'payment_types.view_all', 'payment_types.create'
+                ]
+            },
+
+            # Fruit & Vegetable Stall / Market
+            'fruit_vegetable_stall': {
+                'name': 'Fruit & Vegetable Stall / Market',
+                'description': 'For fruit stalls, vegetable markets, and fresh produce vendors',
+                'business_type': 'market',
+                'permissions': [
+                    # Dashboard
+                    'dashboard.view', 'dashboard.view_sales',
+                    # Billing - Quick weighing & billing
+                    'billing.view', 'billing.view_all', 'billing.create', 'billing.create_bill',
+                    'billing.add_products', 'billing.print',
+                    # Customers - Simple
+                    'customers.view', 'customers.create',
+                    # Stock - Daily fresh stock
+                    'stock.view', 'stock.view_all', 'stock.view_levels', 'stock.create',
+                    'stock.edit', 'stock.edit_price', 'stock.adjust_quantity',
+                    # Reports - Basic sales
+                    'reports.view', 'reports.view_sales', 'reports.view_inventory',
+                    # Payment types
+                    'payment_types.view', 'payment_types.view_all'
+                ]
+            },
+
+            # Medical Store / Pharmacy
+            'medical_pharmacy': {
+                'name': 'Medical Store / Pharmacy',
+                'description': 'For pharmacies, medical stores, and healthcare retail',
+                'business_type': 'healthcare',
+                'permissions': [
+                    # Dashboard
+                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_sales',
+                    # Billing - Prescription based
+                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
+                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
+                    'billing.set_discount', 'billing.set_tax', 'billing.print', 'billing.download_pdf',
+                    # Customers - Patient records
+                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.view_history',
+                    'customers.create', 'customers.edit', 'customers.search',
+                    # Stock - Expiry tracking important
+                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
+                    'stock.view_levels', 'stock.view_low_stock', 'stock.create', 'stock.edit',
+                    'stock.edit_price', 'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity',
+                    'stock.import', 'stock.export',
+                    # Reports
+                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_inventory',
+                    'reports.generate', 'reports.export',
+                    # Audit - Important for compliance
+                    'audit.view', 'audit.view_all', 'audit.search',
+                    # Payment types
+                    'payment_types.view', 'payment_types.view_all'
+                ]
+            },
+
+            # Electronics Store / Mobile Shop
+            'electronics_store': {
+                'name': 'Electronics Store / Mobile Shop',
+                'description': 'For electronics, mobile phones, and gadget stores',
+                'business_type': 'retail',
+                'permissions': [
+                    # Dashboard
+                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
+                    # Billing - Warranty & GST focused
+                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
+                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
+                    'billing.set_discount', 'billing.set_tax', 'billing.print', 'billing.download_pdf',
+                    'billing.send_email',
+                    # Customers - Warranty tracking
+                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.view_history',
+                    'customers.create', 'customers.edit', 'customers.export',
+                    # Stock - Serial number tracking
+                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
+                    'stock.view_levels', 'stock.view_low_stock', 'stock.create', 'stock.edit',
+                    'stock.edit_price', 'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity',
+                    'stock.import', 'stock.export',
+                    # Reports
+                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
+                    'reports.view_inventory', 'reports.generate', 'reports.export',
+                    # Payment types
+                    'payment_types.view', 'payment_types.view_all', 'payment_types.create'
+                ]
+            },
+
+            # Hardware / Building Materials
+            'hardware_store': {
+                'name': 'Hardware / Building Materials',
+                'description': 'For hardware stores, building materials, and construction supplies',
+                'business_type': 'retail',
+                'permissions': [
+                    # Dashboard
+                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_sales',
+                    # Billing - Bulk orders
+                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
+                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
+                    'billing.set_discount', 'billing.set_tax', 'billing.print', 'billing.download_pdf',
+                    'billing.duplicate',
+                    # Customers - Contractor management
+                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.view_history',
+                    'customers.create', 'customers.edit', 'customers.export',
+                    # Stock - Heavy inventory
+                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
+                    'stock.view_levels', 'stock.view_low_stock', 'stock.create', 'stock.edit',
+                    'stock.edit_price', 'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity',
+                    'stock.import', 'stock.export',
+                    # Reports
+                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
+                    'reports.view_inventory', 'reports.generate', 'reports.export',
+                    # Payment types
+                    'payment_types.view', 'payment_types.view_all', 'payment_types.create'
+                ]
+            },
+
+            # Jewelry Store
+            'jewelry_store': {
+                'name': 'Jewelry Store',
+                'description': 'For jewelry shops, gold stores, and precious items retail',
+                'business_type': 'luxury_retail',
+                'permissions': [
+                    # Dashboard
+                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
+                    # Billing - High value transactions
+                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
+                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
+                    'billing.set_discount', 'billing.set_tax', 'billing.edit', 'billing.print',
+                    'billing.download_pdf', 'billing.send_email',
+                    # Customers - Premium customer management
+                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.view_history',
+                    'customers.create', 'customers.edit', 'customers.export',
+                    # Stock - Precious inventory
+                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
+                    'stock.view_levels', 'stock.create', 'stock.edit', 'stock.edit_price',
+                    'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity', 'stock.export',
+                    # Reports - Detailed analytics
+                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
+                    'reports.view_inventory', 'reports.view_customer', 'reports.generate',
+                    'reports.export', 'reports.custom_filters',
+                    # Audit - Critical for high value
+                    'audit.view', 'audit.view_all', 'audit.search', 'audit.export',
+                    # Payment types
+                    'payment_types.view', 'payment_types.view_all', 'payment_types.create'
+                ]
+            },
+
+            # Basic Staff / Cashier
+            'staff_cashier': {
+                'name': 'Staff / Cashier (Limited Access)',
+                'description': 'Basic billing access for cashiers and sales staff',
+                'business_type': 'all',
+                'permissions': [
+                    # Dashboard - View only
+                    'dashboard.view',
+                    # Billing - Create and print only
+                    'billing.view', 'billing.create', 'billing.create_bill', 'billing.add_products',
+                    'billing.print',
+                    # Customers - Basic view
+                    'customers.view', 'customers.create',
+                    # Stock - View only
+                    'stock.view', 'stock.view_all', 'stock.search',
+                    # Payment types
+                    'payment_types.view', 'payment_types.view_all'
+                ]
+            },
+
+            # View Only Access
+            'view_only': {
+                'name': 'View Only (Read-Only Access)',
+                'description': 'Read-only access to all modules - for auditors/viewers',
+                'business_type': 'all',
+                'permissions': [
+                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
+                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
+                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.search',
+                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
+                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_inventory',
+                    'audit.view', 'audit.view_all',
+                    'payment_types.view', 'payment_types.view_all'
+                ]
+            }
         }
 
         return jsonify({'templates': templates}), 200
@@ -1044,6 +1333,98 @@ def toggle_client_status(client_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to toggle client status: {str(e)}'}), 500
+
+@admin_bp.route('/clients/<client_id>', methods=['DELETE'])
+@authenticate
+@require_super_admin
+def delete_client(client_id):
+    """Delete a client and all associated data (comprehensive cascade delete)"""
+    try:
+        # Find the client
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+
+        client_name = client.client_name
+
+        # Get all users for logging before deletion
+        users = User.query.filter_by(client_id=client_id).all()
+        user_count = len(users)
+
+        # Count all data before deletion for logging
+        gst_bills_count = GSTBilling.query.filter_by(client_id=client_id).count()
+        non_gst_bills_count = NonGSTBilling.query.filter_by(client_id=client_id).count()
+        stock_count = StockEntry.query.filter_by(client_id=client_id).count()
+        customer_count = Customer.query.filter_by(client_id=client_id).count()
+        payment_types_count = PaymentType.query.filter_by(client_id=client_id).count()
+        reports_count = Report.query.filter_by(client_id=client_id).count()
+        audit_logs_count = AuditLog.query.filter_by(client_id=client_id).count()
+
+        # Delete all associated data in correct order (respecting foreign keys)
+
+        # 1. Delete user permissions first (depends on users)
+        for user in users:
+            UserPermission.query.filter_by(user_id=user.user_id).delete()
+
+        # 2. Delete reports (may depend on other tables)
+        Report.query.filter_by(client_id=client_id).delete()
+
+        # 3. Delete bills (both GST and Non-GST)
+        GSTBilling.query.filter_by(client_id=client_id).delete()
+        NonGSTBilling.query.filter_by(client_id=client_id).delete()
+
+        # 4. Delete stock entries
+        StockEntry.query.filter_by(client_id=client_id).delete()
+
+        # 5. Delete customers
+        Customer.query.filter_by(client_id=client_id).delete()
+
+        # 6. Delete payment types
+        PaymentType.query.filter_by(client_id=client_id).delete()
+
+        # 7. Delete audit logs
+        AuditLog.query.filter_by(client_id=client_id).delete()
+
+        # 8. Delete users
+        User.query.filter_by(client_id=client_id).delete()
+
+        # 9. Finally, delete the client
+        db.session.delete(client)
+
+        # Commit all deletions
+        db.session.commit()
+
+        # Prepare deletion summary
+        deletion_summary = {
+            'client_name': client_name,
+            'users': user_count,
+            'gst_bills': gst_bills_count,
+            'non_gst_bills': non_gst_bills_count,
+            'total_bills': gst_bills_count + non_gst_bills_count,
+            'stock_entries': stock_count,
+            'customers': customer_count,
+            'payment_types': payment_types_count,
+            'reports': reports_count,
+            'audit_logs': audit_logs_count
+        }
+
+        # Log the deletion action (using current super admin's context)
+        log_admin_action(
+            action_type='DELETE',
+            table_name='client_entry',
+            record_id=client_id,
+            old_data=deletion_summary,
+            new_data=None
+        )
+
+        return jsonify({
+            'message': f"Client '{client_name}' and all associated data deleted successfully",
+            'summary': deletion_summary
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to delete client: {str(e)}'}), 500
 
 @admin_bp.route('/clients/<client_id>/users', methods=['GET'])
 @authenticate

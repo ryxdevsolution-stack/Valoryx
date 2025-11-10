@@ -20,7 +20,18 @@ import {
   Shield,
   RefreshCw,
   Check,
-  Plus
+  Plus,
+  Store,
+  ShoppingCart,
+  Utensils,
+  Coffee,
+  Apple,
+  Pill,
+  Smartphone,
+  Hammer,
+  Gem,
+  Users,
+  Eye
 } from 'lucide-react';
 
 interface ClientFormData {
@@ -697,36 +708,110 @@ export default function CreateClient() {
             </div>
           </div>
 
-          {/* Permission Template */}
-          <div className="mt-4">
-            <label className="block text-sm font-medium text-gray-700 mb-2">
-              Permission Template
+          {/* Business Type Selection */}
+          <div className="mt-6">
+            <label className="block text-sm font-medium text-gray-700 mb-3">
+              Select Business Type & Permissions
             </label>
-            <select
-              value={selectedTemplate}
-              onChange={(e) => handleTemplateChange(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-            >
-              <option value="">Select a template (optional)</option>
-              {Object.entries(permissionTemplates).map(([key, template]) => (
-                <option key={key} value={key}>
-                  {template.name} - {template.description}
-                </option>
-              ))}
-            </select>
+            <p className="text-xs text-gray-500 mb-4">
+              Choose a business template that matches your client's industry. This will automatically assign appropriate permissions.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+              {Object.entries(permissionTemplates).map(([key, template]) => {
+                const getIcon = () => {
+                  if (key === 'dress_shop') return Store;
+                  if (key === 'supermarket') return ShoppingCart;
+                  if (key === 'general_store') return Store;
+                  if (key === 'food_store') return Coffee;
+                  if (key === 'restaurant_hotel') return Utensils;
+                  if (key === 'fruit_vegetable_stall') return Apple;
+                  if (key === 'medical_pharmacy') return Pill;
+                  if (key === 'electronics_store') return Smartphone;
+                  if (key === 'hardware_store') return Hammer;
+                  if (key === 'jewelry_store') return Gem;
+                  if (key === 'staff_cashier') return Users;
+                  if (key === 'view_only') return Eye;
+                  return Shield;
+                };
+                const Icon = getIcon();
+                const isSelected = selectedTemplate === key;
+
+                return (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => handleTemplateChange(key)}
+                    className={`p-4 rounded-lg border-2 text-left transition-all ${
+                      isSelected
+                        ? 'border-blue-600 bg-blue-50 shadow-md'
+                        : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <div className={`p-2 rounded-lg ${
+                        isSelected ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
+                      }`}>
+                        <Icon className="w-5 h-5" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <h4 className={`text-sm font-semibold ${
+                          isSelected ? 'text-blue-900' : 'text-gray-900'
+                        }`}>
+                          {template.name}
+                        </h4>
+                        <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                          {template.description}
+                        </p>
+                        {isSelected && (
+                          <div className="mt-2 flex items-center gap-1 text-xs text-blue-600">
+                            <Check className="w-3 h-3" />
+                            <span>{template.permissions.length} permissions</span>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+
+            {selectedTemplate && (
+              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                <div className="flex items-start gap-2">
+                  <Check className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
+                  <div className="flex-1">
+                    <p className="text-sm font-medium text-blue-900">
+                      Selected: {permissionTemplates[selectedTemplate]?.name}
+                    </p>
+                    <p className="text-xs text-blue-700 mt-1">
+                      {permissionTemplates[selectedTemplate]?.permissions.length} permissions will be assigned to the admin user
+                    </p>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
 
-          {/* Individual Permissions */}
+          {/* Individual Permissions - Advanced */}
           {Object.keys(groupedPermissions).length > 0 && (
-            <div className="mt-6">
-              <h3 className="text-sm font-medium text-gray-700 mb-3">Individual Permissions</h3>
-              <div className="space-y-4">
+            <details className="mt-6">
+              <summary className="cursor-pointer text-sm font-medium text-gray-700 hover:text-blue-600 flex items-center gap-2">
+                <span>Advanced: Customize Individual Permissions</span>
+                <span className="text-xs text-gray-500">(Optional - for fine-tuning)</span>
+              </summary>
+              <div className="mt-4 space-y-4">
+                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
+                  <p className="text-xs text-yellow-800">
+                    <strong>Note:</strong> Selecting a business type template is recommended. Only customize individual permissions if you need specific control beyond the template.
+                  </p>
+                </div>
                 {Object.entries(groupedPermissions).map(([category, permissions]) => (
                   <div key={category} className="border border-gray-200 rounded-lg p-4">
                     <h4 className="font-medium text-gray-900 mb-2 capitalize">{category}</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                       {(permissions as any[]).map((perm: any) => (
-                        <label key={perm.permission_name} className="flex items-center gap-2">
+                        <label key={perm.permission_name} className="flex items-center gap-2 hover:bg-gray-50 p-1 rounded">
                           <input
                             type="checkbox"
                             checked={selectedPermissions.includes(perm.permission_name)}
@@ -740,7 +825,7 @@ export default function CreateClient() {
                   </div>
                 ))}
               </div>
-            </div>
+            </details>
           )}
         </div>
 
