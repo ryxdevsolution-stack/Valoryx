@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef } from 'react'
+import { useRef, useEffect } from 'react'
 
 interface BillItem {
   product_name: string
@@ -45,14 +45,38 @@ interface BillPrintPreviewProps {
   bill: BillData
   clientInfo: ClientInfo
   onClose: () => void
+  autoPrint?: boolean
 }
 
-export default function BillPrintPreview({ bill, clientInfo, onClose }: BillPrintPreviewProps) {
+export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint = false }: BillPrintPreviewProps) {
   const printRef = useRef<HTMLDivElement>(null)
+  const hasAutoPrinted = useRef(false)
+
+  // Provide default values if clientInfo is undefined
+  const safeClientInfo: ClientInfo = clientInfo || {
+    client_name: 'Business Name',
+    address: '',
+    phone: '',
+    email: '',
+    gstin: '',
+    logo_url: ''
+  }
 
   const handlePrint = () => {
     window.print()
   }
+
+  // Auto-trigger print when component mounts
+  useEffect(() => {
+    if (autoPrint && !hasAutoPrinted.current) {
+      hasAutoPrinted.current = true
+      // Small delay to ensure the component is fully rendered
+      const timer = setTimeout(() => {
+        window.print()
+      }, 500)
+      return () => clearTimeout(timer)
+    }
+  }, [autoPrint])
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
@@ -114,26 +138,26 @@ export default function BillPrintPreview({ bill, clientInfo, onClose }: BillPrin
 
               {/* Header */}
               <div className="text-center" style={{ marginTop: '3mm', marginBottom: '3mm' }}>
-                {clientInfo.logo_url && (
+                {safeClientInfo.logo_url && (
                   <div style={{ margin: '0 auto 2mm', width: '20mm', height: '20mm' }}>
                     <img
-                      src={clientInfo.logo_url}
-                      alt={clientInfo.client_name}
+                      src={safeClientInfo.logo_url}
+                      alt={safeClientInfo.client_name}
                       style={{ width: '100%', height: '100%', objectFit: 'contain' }}
                     />
                   </div>
                 )}
                 <div style={{ fontSize: '12pt', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1mm' }}>
-                  {clientInfo.client_name}
+                  {safeClientInfo.client_name}
                 </div>
-                {clientInfo.address && (
+                {safeClientInfo.address && (
                   <div style={{ fontSize: '7pt', lineHeight: '1.2', marginBottom: '1mm', whiteSpace: 'pre-wrap' }}>
-                    {clientInfo.address}
+                    {safeClientInfo.address}
                   </div>
                 )}
                 <div style={{ fontSize: '7pt', lineHeight: '1.3' }}>
-                  {clientInfo.phone && <div>Ph: {clientInfo.phone}</div>}
-                  {clientInfo.gstin && <div>GSTIN: {clientInfo.gstin}</div>}
+                  {safeClientInfo.phone && <div>Ph: {safeClientInfo.phone}</div>}
+                  {safeClientInfo.gstin && <div>GSTIN: {safeClientInfo.gstin}</div>}
                 </div>
                 <div style={{ fontSize: '9pt', fontWeight: 'bold', marginTop: '2mm', textTransform: 'uppercase' }}>
                   {bill.type === 'gst' ? 'TAX INVOICE' : 'CASH BILL'}
@@ -200,7 +224,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose }: BillPrin
               {/* Items summary */}
               <div style={{ fontSize: '7pt', display: 'flex', justifyContent: 'space-between', marginBottom: '2mm' }}>
                 <span>Items :{totalItems}  Total Qty : {totalQuantity}</span>
-                <span style={{ fontWeight: 'bold' }}>{bill.subtotal.toFixed(2)}</span>
+                <span style={{ fontWeight: 'bold' }}>{(bill?.subtotal ?? 0).toFixed(2)}</span>
               </div>
 
               {/* Dashed line */}
@@ -210,7 +234,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose }: BillPrin
               <div style={{ fontSize: '7pt', marginBottom: '2mm' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5mm' }}>
                   <span>Sub Total :</span>
-                  <span>{bill.subtotal.toFixed(2)}</span>
+                  <span>{(bill?.subtotal ?? 0).toFixed(2)}</span>
                 </div>
 
                 {bill.discount_amount && bill.discount_amount > 0 && (
@@ -220,12 +244,16 @@ export default function BillPrintPreview({ bill, clientInfo, onClose }: BillPrin
                   </div>
                 )}
 
-                {bill.type === 'gst' && bill.gst_amount && bill.gst_amount > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
-                    <span>Round :</span>
-                    <span>{(Math.round(bill.final_amount) - bill.final_amount).toFixed(2)}</span>
-                  </div>
-                )}
+                {(() => {
+                  const totalAmount = bill.type === 'gst' ? bill.final_amount : bill.total_amount
+                  const roundOff = Math.round(totalAmount) - totalAmount
+                  return roundOff !== 0 && (
+                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
+                      <span>Round Off :</span>
+                      <span>{roundOff > 0 ? '+' : ''}{roundOff.toFixed(2)}</span>
+                    </div>
+                  )
+                })()}
               </div>
 
               {/* Grand Total */}
@@ -281,7 +309,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose }: BillPrin
                     {/* Total row */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', paddingTop: '1mm', borderTop: '1px solid #000', marginTop: '1mm' }}>
                       <div style={{ width: '15mm', textAlign: 'center' }}></div>
-                      <div style={{ width: '18mm', textAlign: 'right' }}>{bill.subtotal.toFixed(2)}</div>
+                      <div style={{ width: '18mm', textAlign: 'right' }}>{(bill?.subtotal ?? 0).toFixed(2)}</div>
                       <div style={{ width: '18mm', textAlign: 'right' }}>{(bill.gst_amount / 2).toFixed(2)}</div>
                       <div style={{ width: '15mm', textAlign: 'right' }}>{(bill.gst_amount / 2).toFixed(2)}</div>
                     </div>
@@ -298,8 +326,29 @@ export default function BillPrintPreview({ bill, clientInfo, onClose }: BillPrin
               <div style={{ borderBottom: '2px dashed #000', margin: '2mm 0' }}></div>
 
               {/* Payment Info */}
-              <div style={{ fontSize: '7pt', marginBottom: '2mm', textAlign: 'center' }}>
-                <div><strong>Payment Mode:</strong> {bill.payment_type.toUpperCase()}</div>
+              <div style={{ fontSize: '7pt', marginBottom: '2mm' }}>
+                <div style={{ textAlign: 'center', marginBottom: '1mm' }}><strong>Payment Mode:</strong></div>
+                {(() => {
+                  try {
+                    // Try to parse as JSON (split payment)
+                    const payments = JSON.parse(bill.payment_type)
+                    if (Array.isArray(payments) && payments.length > 0) {
+                      return payments.map((payment: any, index: number) => (
+                        <div key={index} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '5mm', paddingRight: '5mm', marginBottom: '0.5mm' }}>
+                          <span>{payment.payment_type}</span>
+                          <span>₹{parseFloat(payment.amount).toFixed(2)}</span>
+                        </div>
+                      ))
+                    }
+                  } catch (e) {
+                    // If not JSON, display as plain text
+                    return (
+                      <div style={{ textAlign: 'center' }}>
+                        {bill.payment_type}
+                      </div>
+                    )
+                  }
+                })()}
               </div>
 
               {/* Dashed line */}
@@ -307,9 +356,46 @@ export default function BillPrintPreview({ bill, clientInfo, onClose }: BillPrin
 
               {/* Footer */}
               <div style={{ textAlign: 'center', marginTop: '3mm' }}>
-                <div style={{ fontSize: '7pt', marginBottom: '2mm' }}>
-                  Today&apos;s Savings :
-                </div>
+                {/* Savings Section - Made bigger and more prominent */}
+                {(() => {
+                  const totalSavings = bill.items.reduce((sum, item) => {
+                    const mrpAmount = item.mrp ? item.mrp * item.quantity : 0
+                    const actualAmount = item.rate * item.quantity
+                    return sum + (mrpAmount - actualAmount)
+                  }, 0)
+
+                  return totalSavings > 0 && (
+                    <div style={{
+                      border: '3px double #000',
+                      padding: '3mm 2mm',
+                      marginBottom: '3mm',
+                      background: '#f9f9f9'
+                    }}>
+                      <div style={{
+                        fontSize: '9pt',
+                        fontWeight: 'bold',
+                        marginBottom: '1mm',
+                        letterSpacing: '0.5px'
+                      }}>
+                        🎉 TODAY&apos;S SAVINGS 🎉
+                      </div>
+                      <div style={{
+                        fontSize: '16pt',
+                        fontWeight: 'bold',
+                        letterSpacing: '1px'
+                      }}>
+                        ₹{totalSavings.toFixed(2)}
+                      </div>
+                      <div style={{
+                        fontSize: '6pt',
+                        marginTop: '1mm',
+                        fontStyle: 'italic'
+                      }}>
+                        You saved compared to MRP!
+                      </div>
+                    </div>
+                  )
+                })()}
                 <div style={{ fontSize: '9pt', fontWeight: 'bold', letterSpacing: '1px' }}>
                   ★★★ THANK YOU VISIT AGAIN ★★★
                 </div>

@@ -6,6 +6,7 @@ import api from '@/lib/api'
 import { useRouter } from 'next/navigation'
 import { useData } from '@/contexts/DataContext'
 import { useClient } from '@/contexts/ClientContext'
+import BillPrintPreview from '@/components/BillPrintPreview'
 
 interface Product {
   product_id: string
@@ -111,9 +112,7 @@ export default function UnifiedBillingPage() {
 
   // Modal states
   const [showPrintConfirm, setShowPrintConfirm] = useState(false)
-  const [showPreview, setShowPreview] = useState(false)
-  const [showSuccessModal, setShowSuccessModal] = useState(false)
-  const [successMessage, setSuccessMessage] = useState('')
+  const [createdBillForPrint, setCreatedBillForPrint] = useState<any>(null)
 
   // Get current active tab
   const activeTab = billTabs.find((tab) => tab.id === activeTabId) || billTabs[0]
@@ -520,13 +519,24 @@ export default function UnifiedBillingPage() {
     return Math.max(0, subtotalWithGST - calculatedDiscountAmount)
   }
 
+  const getRoundedGrandTotal = () => {
+    const grandTotal = calculateGrandTotal()
+    return Math.round(grandTotal) // Rounds to nearest whole number (0.5 and above rounds up)
+  }
+
+  const getRoundOffAmount = () => {
+    const grandTotal = calculateGrandTotal()
+    const rounded = getRoundedGrandTotal()
+    return rounded - grandTotal // Positive if rounded up, negative if rounded down
+  }
+
   const getDiscountAmount = () => {
     const subtotalWithGST = calculateSubtotal() + calculateTotalGST()
     return (subtotalWithGST * activeTab.discountPercentage) / 100
   }
 
   const getBalanceAmount = () => {
-    const grandTotal = calculateGrandTotal()
+    const grandTotal = getRoundedGrandTotal() // Use rounded total for balance
     return activeTab.amountReceived - grandTotal
   }
 
@@ -552,7 +562,7 @@ export default function UnifiedBillingPage() {
     }
 
     const totalSplits = getTotalPaymentSplits()
-    const grandTotal = calculateGrandTotal()
+    const grandTotal = getRoundedGrandTotal()
 
     if (Math.abs(totalSplits - grandTotal) > 0.01) {
       alert(`Payment splits total (₹${totalSplits.toFixed(2)}) must equal bill total (₹${grandTotal.toFixed(2)})`)
@@ -582,10 +592,13 @@ export default function UnifiedBillingPage() {
         discount_percentage: activeTab.discountPercentage,
       })
 
-      setSuccessMessage(
-        `${response.data.bill_type} created successfully! Bill #${response.data.bill_number}`
-      )
-      setShowSuccessModal(true)
+      // Fetch the created bill details for printing
+      const billId = response.data.bill_id
+      const billDetailsResponse = await api.get(`/billing/${billId}`)
+      const billData = billDetailsResponse.data.bill
+
+      // Store bill data for printing
+      setCreatedBillForPrint(billData)
 
       // Remove completed tab
       closeTab(activeTabId)
@@ -596,10 +609,6 @@ export default function UnifiedBillingPage() {
     }
   }
 
-  const handleSuccessClose = () => {
-    setShowSuccessModal(false)
-    router.push('/billing')
-  }
 
   return (
     <DashboardLayout>
@@ -1259,7 +1268,7 @@ export default function UnifiedBillingPage() {
                     <span className="text-gray-700 dark:text-gray-300">Total Payment Splits:</span>
                     <span
                       className={`${
-                        Math.abs(getTotalPaymentSplits() - calculateGrandTotal()) < 0.01
+                        Math.abs(getTotalPaymentSplits() - getRoundedGrandTotal()) < 0.01
                           ? 'text-green-600 dark:text-green-400'
                           : 'text-red-600 dark:text-red-400'
                       }`}
@@ -1326,12 +1335,22 @@ export default function UnifiedBillingPage() {
                       </span>
                     </div>
                   )}
+                  {getRoundOffAmount() !== 0 && (
+                    <div className="flex justify-between items-center border-t border-gray-300 dark:border-gray-600 pt-1">
+                      <span className="text-xs text-gray-700 dark:text-gray-300 font-medium">
+                        Round Off:
+                      </span>
+                      <span className={`text-xs font-semibold ${getRoundOffAmount() > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                        {getRoundOffAmount() > 0 ? '+' : ''}{getRoundOffAmount().toFixed(2)}
+                      </span>
+                    </div>
+                  )}
                   <div className="flex justify-between items-center border-t border-gray-400 dark:border-gray-600 pt-1 mt-1">
                     <span className="text-sm text-gray-900 dark:text-white font-bold">
                       Grand Total:
                     </span>
                     <span className="text-lg font-bold text-green-700 dark:text-green-400">
-                      ₹{calculateGrandTotal().toFixed(2)}
+                      ₹{getRoundedGrandTotal().toFixed(2)}
                     </span>
                   </div>
                   {activeTab.amountReceived > 0 && (
@@ -1433,38 +1452,41 @@ export default function UnifiedBillingPage() {
           </div>
         )}
 
-        {/* Success Modal */}
-        {showSuccessModal && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
-              <div className="text-center">
-                <div className="mx-auto flex items-center justify-center h-16 w-16 rounded-full bg-green-100 mb-4">
-                  <svg
-                    className="h-10 w-10 text-green-600"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M5 13l4 4L19 7"
-                    />
-                  </svg>
-                </div>
-                <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Success!</h3>
-                <p className="text-base text-gray-700 dark:text-gray-300 mb-6">{successMessage}</p>
-                <button
-                  type="button"
-                  onClick={handleSuccessClose}
-                  className="w-full px-6 py-3 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-700 dark:hover:bg-blue-800 transition font-semibold text-lg"
-                >
-                  OK
-                </button>
-              </div>
-            </div>
-          </div>
+        {/* Bill Print Preview Modal */}
+        {createdBillForPrint && client && createdBillForPrint.items && (
+          <BillPrintPreview
+            bill={{
+              bill_number: Number(createdBillForPrint.bill_number) || 0,
+              customer_name: createdBillForPrint.customer_name,
+              customer_phone: createdBillForPrint.customer_phone,
+              items: createdBillForPrint.items,
+              subtotal: createdBillForPrint.subtotal || 0,
+              discount_percentage: createdBillForPrint.discount_percentage,
+              discount_amount: createdBillForPrint.discount_amount,
+              gst_amount: createdBillForPrint.gst_amount,
+              final_amount: createdBillForPrint.final_amount || 0,
+              total_amount: createdBillForPrint.total_amount || 0,
+              payment_type: String(createdBillForPrint.payment_type || ''),
+              created_at: String(createdBillForPrint.created_at || ''),
+              type: createdBillForPrint.type === 'non_gst' ? 'non-gst' : 'gst',
+              cgst: createdBillForPrint.cgst,
+              sgst: createdBillForPrint.sgst,
+              igst: createdBillForPrint.igst
+            }}
+            clientInfo={{
+              client_name: client.client_name,
+              address: client.address,
+              phone: client.phone,
+              email: client.email,
+              gstin: client.gstin,
+              logo_url: client.logo_url
+            }}
+            autoPrint={true}
+            onClose={() => {
+              setCreatedBillForPrint(null)
+              // Stay on create bill page for next bill
+            }}
+          />
         )}
       </div>
     </DashboardLayout>

@@ -21,21 +21,21 @@ import {
   Building2
 } from 'lucide-react'
 
-// Define navigation items with required permissions
+// Define navigation items with granular permissions
 const allNavigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, permission: 'view_dashboard' },
-  { name: 'Create Bill', href: '/billing/create', icon: PlusSquare, permission: 'create_bill' },
-  { name: 'All Bills', href: '/billing', icon: FileText, permission: 'view_billing' },
-  { name: 'Customers', href: '/customers', icon: Users, permission: 'view_customers' },
-  { name: 'Stock Management', href: '/stock', icon: Package, permission: 'view_stock' },
-  { name: 'Reports', href: '/reports', icon: TrendingUp, permission: 'view_reports' },
-  { name: 'Audit Logs', href: '/audit', icon: Search, permission: 'view_audit' },
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, permission: 'dashboard.view' },
+  { name: 'Create Bill', href: '/billing/create', icon: PlusSquare, permission: 'billing.create' },
+  { name: 'All Bills', href: '/billing', icon: FileText, permission: 'billing.view' },
+  { name: 'Customers', href: '/customers', icon: Users, permission: 'customers.view' },
+  { name: 'Stock Management', href: '/stock', icon: Package, permission: 'stock.view' },
+  { name: 'Reports', href: '/reports', icon: TrendingUp, permission: 'reports.view' },
+  { name: 'Audit Logs', href: '/audit', icon: Search, permission: 'audit.view' },
 ]
 
 // Admin-only navigation items
 const adminNavigation = [
   { name: 'Client Management', href: '/admin/clients', icon: Building2, requireSuperAdmin: true },
-  { name: 'User Permissions', href: '/admin/permissions', icon: Shield, requireSuperAdmin: true },
+  { name: 'User Permissions', href: '/admin/permissions', icon: Shield, permission: 'permissions.view' },
 ]
 
 export default function Sidebar() {
@@ -52,11 +52,18 @@ export default function Sidebar() {
     return allNavigation.filter(item => hasPermission(item.permission))
   }, [user, hasPermission])
 
-  // Get admin navigation items if user is super admin
+  // Get admin navigation items based on permissions
   const adminNav = useMemo(() => {
-    if (!user || !isSuperAdmin()) return []
-    return adminNavigation
-  }, [user, isSuperAdmin])
+    if (!user) return []
+    return adminNavigation.filter(item => {
+      // Super admin check
+      if (item.requireSuperAdmin && !isSuperAdmin()) return false
+      // Permission check
+      if (item.permission && !hasPermission(item.permission)) return false
+      // If no specific checks, allow super admins
+      return isSuperAdmin()
+    })
+  }, [user, hasPermission, isSuperAdmin])
 
   const closeMobileMenu = () => {
     setIsAnimating(true)

@@ -22,7 +22,10 @@
       "Bash(findstr:*)",
       "Bash(taskkill:*)",
       "Bash(nul)",
-      "Bash(del c:UsersadminDesktopmj-billingbackendfix_admin_indent.py)"
+      "Bash(del c:UsersadminDesktopmj-billingbackendfix_admin_indent.py)",
+      "Bash(pip install:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)"
     ],
     "deny": [],
     "ask": [],

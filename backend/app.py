@@ -56,9 +56,10 @@ def create_app():
         from routes.analytics import analytics_bp
         from routes.permissions import permissions_bp
         from routes.admin import admin_bp
+        from routes.notes import notes_bp
     except ImportError as e:
         print(f"Warning: Could not import routes: {e}")
-        auth_bp = billing_bp = stock_bp = report_bp = audit_bp = client_bp = payment_bp = customer_bp = analytics_bp = permissions_bp = admin_bp = None
+        auth_bp = billing_bp = stock_bp = report_bp = audit_bp = client_bp = payment_bp = customer_bp = analytics_bp = permissions_bp = admin_bp = notes_bp = None
 
     # Register blueprints only if they were imported successfully
     if auth_bp:
@@ -137,6 +138,13 @@ def create_app():
             blueprints_registered.append('admin')
         except Exception as e:
             print(f"Warning: Could not register admin blueprint: {e}")
+
+    if notes_bp:
+        try:
+            app.register_blueprint(notes_bp, url_prefix='/api')
+            blueprints_registered.append('notes')
+        except Exception as e:
+            print(f"Warning: Could not register notes blueprint: {e}")
 
     # Store blueprint registration status
     app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered

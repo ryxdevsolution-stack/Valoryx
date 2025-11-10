@@ -1382,17 +1382,8 @@ def delete_client(client_id):
         # 6. Delete payment types
         PaymentType.query.filter_by(client_id=client_id).delete()
 
-        # 7. Delete audit logs
-        AuditLog.query.filter_by(client_id=client_id).delete()
-
-        # 8. Delete users
+        # 7. Delete users
         User.query.filter_by(client_id=client_id).delete()
-
-        # 9. Finally, delete the client
-        db.session.delete(client)
-
-        # Commit all deletions
-        db.session.commit()
 
         # Prepare deletion summary
         deletion_summary = {
@@ -1408,14 +1399,33 @@ def delete_client(client_id):
             'audit_logs': audit_logs_count
         }
 
-        # Log the deletion action (using current super admin's context)
-        log_admin_action(
-            action_type='DELETE',
-            table_name='client_entry',
-            record_id=client_id,
-            old_data=deletion_summary,
-            new_data=None
-        )
+        # 8. Create audit log for this deletion (will be committed with the delete transaction)
+        # Do NOT delete audit logs for this client yet - we need to log this action first
+        try:
+            audit_log = AuditLog(
+                log_id=str(uuid.uuid4()),
+                user_id=g.user['user_id'],
+                client_id=g.user['client_id'],  # Use super admin's client_id, not the one being deleted
+                action_type='DELETE',
+                table_name='client_entry',
+                record_id=client_id,
+                old_data=deletion_summary,
+                new_data=None,
+                ip_address=request.remote_addr,
+                user_agent=request.headers.get('User-Agent', '')
+            )
+            db.session.add(audit_log)
+        except Exception as log_error:
+            print(f"Warning: Failed to create audit log: {str(log_error)}")
+
+        # 9. NOW delete the client's audit logs (except the one we just created)
+        AuditLog.query.filter_by(client_id=client_id).delete()
+
+        # 10. Finally, delete the client
+        db.session.delete(client)
+
+        # Commit all deletions
+        db.session.commit()
 
         return jsonify({
             'message': f"Client '{client_name}' and all associated data deleted successfully",

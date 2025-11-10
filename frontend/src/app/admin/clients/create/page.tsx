@@ -714,7 +714,7 @@ export default function CreateClient() {
               Select Business Type & Permissions
             </label>
             <p className="text-xs text-gray-500 mb-4">
-              Choose a business template that matches your client's industry. This will automatically assign appropriate permissions.
+              Choose a business template that matches your client&apos;s industry. This will automatically assign appropriate permissions.
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">

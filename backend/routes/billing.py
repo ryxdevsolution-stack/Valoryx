@@ -502,3 +502,284 @@ def create_unified_bill():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to create bill', 'message': str(e)}), 500
+
+
+@billing_bp.route('/<bill_id>', methods=['PUT'])
+@authenticate
+def update_bill(bill_id):
+    """
+    Update an existing bill (GST or Non-GST)
+    Handles stock adjustments when quantities change
+    """
+    try:
+        data = request.get_json()
+        client_id = g.user['client_id']
+        user_id = g.user['user_id']
+
+        # Find the bill in either GST or Non-GST table
+        gst_bill = GSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
+        non_gst_bill = NonGSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
+
+        if not gst_bill and not non_gst_bill:
+            return jsonify({'error': 'Bill not found'}), 404
+
+        # Determine bill type
+        is_gst = gst_bill is not None
+        existing_bill = gst_bill if is_gst else non_gst_bill
+        old_bill_data = existing_bill.to_dict()
+
+        # Get old items for stock reversal
+        old_items = existing_bill.items
+        new_items = data.get('items', [])
+
+        # Validate new items
+        is_valid, error_msg = validate_items(new_items)
+        if not is_valid:
+            return jsonify({'error': error_msg}), 400
+
+        # Step 1: Reverse stock for old items
+        for old_item in old_items:
+            product = StockEntry.query.filter_by(
+                product_id=old_item['product_id'],
+                client_id=client_id
+            ).first()
+
+            if product:
+                # Add back the quantity from old bill
+                product.quantity += old_item['quantity']
+
+        # Step 2: Deduct stock for new items
+        for new_item in new_items:
+            product = StockEntry.query.filter_by(
+                product_id=new_item['product_id'],
+                client_id=client_id
+            ).first()
+
+            if not product:
+                db.session.rollback()
+                return jsonify({'error': f"Product {new_item['product_name']} not found"}), 404
+
+            # Check if sufficient stock available
+            if product.quantity < new_item['quantity']:
+                db.session.rollback()
+                return jsonify({'error': f"Insufficient stock for {new_item['product_name']}. Available: {product.quantity}"}), 400
+
+            # Deduct the new quantity
+            product.quantity -= new_item['quantity']
+
+        # Step 3: Update bill details
+        existing_bill.customer_name = data.get('customer_name', existing_bill.customer_name)
+        existing_bill.customer_phone = data.get('customer_phone', existing_bill.customer_phone)
+        existing_bill.customer_gstin = data.get('customer_gstin', existing_bill.customer_gstin)
+        existing_bill.items = new_items
+        existing_bill.payment_type = data.get('payment_type', existing_bill.payment_type)
+        existing_bill.amount_received = data.get('amount_received', existing_bill.amount_received)
+        existing_bill.discount_percentage = data.get('discount_percentage', existing_bill.discount_percentage)
+        existing_bill.updated_at = datetime.utcnow()
+
+        if is_gst:
+            # Update GST-specific fields
+            subtotal = data.get('subtotal', float(existing_bill.subtotal))
+            gst_percentage = data.get('gst_percentage', float(existing_bill.gst_percentage))
+            gst_amount = calculate_gst_amount(subtotal, gst_percentage)
+            final_amount = calculate_final_amount(subtotal, gst_amount)
+
+            existing_bill.subtotal = subtotal
+            existing_bill.gst_percentage = gst_percentage
+            existing_bill.gst_amount = gst_amount
+            existing_bill.final_amount = final_amount
+        else:
+            # Update Non-GST total
+            existing_bill.total_amount = data.get('total_amount', existing_bill.total_amount)
+
+        db.session.commit()
+
+        # Log the update action
+        log_action('UPDATE',
+                  'gst_billing' if is_gst else 'non_gst_billing',
+                  bill_id,
+                  old_bill_data,
+                  existing_bill.to_dict())
+
+        return jsonify({
+            'success': True,
+            'message': 'Bill updated successfully',
+            'bill': existing_bill.to_dict()
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update bill', 'message': str(e)}), 500
+
+
+@billing_bp.route('/exchange/<bill_id>', methods=['POST'])
+@authenticate
+def exchange_bill(bill_id):
+    """
+    Create an exchange bill - return old items and create new bill with exchanged items
+    Handles stock adjustments for both returned and new items
+    """
+    try:
+        data = request.get_json()
+        client_id = g.user['client_id']
+        user_id = g.user['user_id']
+
+        # Find the original bill
+        original_gst_bill = GSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
+        original_non_gst_bill = NonGSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
+
+        if not original_gst_bill and not original_non_gst_bill:
+            return jsonify({'error': 'Original bill not found'}), 404
+
+        is_gst = original_gst_bill is not None
+        original_bill = original_gst_bill if is_gst else original_non_gst_bill
+
+        # Get exchange data
+        returned_items = data.get('returned_items', [])  # Items being returned
+        new_items = data.get('new_items', [])  # New items in exchange
+        exchange_type = data.get('exchange_type', 'partial')  # 'full' or 'partial'
+
+        if not returned_items:
+            return jsonify({'error': 'No items selected for return'}), 400
+
+        # Validate returned items exist in original bill
+        original_items = original_bill.items
+        for returned_item in returned_items:
+            found = False
+            for orig_item in original_items:
+                if orig_item['product_id'] == returned_item['product_id']:
+                    if returned_item['quantity'] > orig_item['quantity']:
+                        return jsonify({'error': f"Cannot return more than purchased for {orig_item['product_name']}"}), 400
+                    found = True
+                    break
+            if not found:
+                return jsonify({'error': f"Product {returned_item['product_name']} not found in original bill"}), 404
+
+        # Step 1: Add returned items back to stock
+        for returned_item in returned_items:
+            product = StockEntry.query.filter_by(
+                product_id=returned_item['product_id'],
+                client_id=client_id
+            ).first()
+
+            if product:
+                product.quantity += returned_item['quantity']
+
+        # Step 2: Deduct new items from stock
+        for new_item in new_items:
+            product = StockEntry.query.filter_by(
+                product_id=new_item['product_id'],
+                client_id=client_id
+            ).first()
+
+            if not product:
+                db.session.rollback()
+                return jsonify({'error': f"Product {new_item['product_name']} not found"}), 404
+
+            if product.quantity < new_item['quantity']:
+                db.session.rollback()
+                return jsonify({'error': f"Insufficient stock for {new_item['product_name']}. Available: {product.quantity}"}), 400
+
+            product.quantity -= new_item['quantity']
+
+        # Step 3: Calculate amounts
+        returned_amount = sum(item['amount'] for item in returned_items)
+        new_amount = sum(item['amount'] for item in new_items)
+        difference = new_amount - returned_amount
+
+        # Step 4: Create exchange bill
+        new_bill_id = str(uuid.uuid4())
+
+        # Get next bill number
+        if is_gst:
+            max_bill = GSTBilling.query.filter_by(client_id=client_id).order_by(GSTBilling.bill_number.desc()).first()
+        else:
+            max_bill = NonGSTBilling.query.filter_by(client_id=client_id).order_by(NonGSTBilling.bill_number.desc()).first()
+
+        next_bill_number = (max_bill.bill_number + 1) if max_bill else 1
+
+        # Parse payment type
+        payment_data = data.get('payment_type', '[]')
+
+        if is_gst:
+            # Create GST exchange bill
+            subtotal = sum(item['quantity'] * item['rate'] for item in new_items)
+            gst_amount = sum(item['gst_amount'] for item in new_items)
+            final_amount = new_amount
+
+            exchange_bill = GSTBilling(
+                bill_id=new_bill_id,
+                client_id=client_id,
+                bill_number=next_bill_number,
+                customer_name=data.get('customer_name', original_bill.customer_name),
+                customer_phone=data.get('customer_phone', original_bill.customer_phone),
+                customer_gstin=data.get('customer_gstin', original_bill.customer_gstin),
+                items=new_items,
+                subtotal=subtotal,
+                gst_percentage=new_items[0]['gst_percentage'] if new_items else 0,
+                gst_amount=gst_amount,
+                final_amount=final_amount,
+                payment_type=payment_data,
+                amount_received=data.get('amount_received', 0),
+                discount_percentage=data.get('discount_percentage', 0),
+                status='final',
+                created_by=user_id,
+                created_at=datetime.utcnow()
+            )
+            db.session.add(exchange_bill)
+        else:
+            # Create Non-GST exchange bill
+            total_amount = new_amount
+
+            exchange_bill = NonGSTBilling(
+                bill_id=new_bill_id,
+                client_id=client_id,
+                bill_number=next_bill_number,
+                customer_name=data.get('customer_name', original_bill.customer_name),
+                customer_phone=data.get('customer_phone', original_bill.customer_phone),
+                customer_gstin=data.get('customer_gstin', original_bill.customer_gstin),
+                items=new_items,
+                total_amount=total_amount,
+                payment_type=payment_data,
+                amount_received=data.get('amount_received', 0),
+                discount_percentage=data.get('discount_percentage', 0),
+                status='final',
+                created_by=user_id,
+                created_at=datetime.utcnow()
+            )
+            db.session.add(exchange_bill)
+
+        db.session.commit()
+
+        # Log the exchange action
+        log_action('EXCHANGE',
+                  'gst_billing' if is_gst else 'non_gst_billing',
+                  new_bill_id,
+                  {
+                      'original_bill_id': bill_id,
+                      'returned_items': returned_items,
+                      'returned_amount': returned_amount
+                  },
+                  {
+                      'new_bill_id': new_bill_id,
+                      'new_items': new_items,
+                      'new_amount': new_amount,
+                      'difference': difference
+                  })
+
+        return jsonify({
+            'success': True,
+            'message': 'Exchange processed successfully',
+            'original_bill_id': bill_id,
+            'exchange_bill_id': new_bill_id,
+            'exchange_bill_number': next_bill_number,
+            'returned_amount': round(returned_amount, 2),
+            'new_amount': round(new_amount, 2),
+            'difference': round(difference, 2),
+            'refund_due': round(difference, 2) if difference < 0 else 0,
+            'payment_due': round(difference, 2) if difference > 0 else 0
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to process exchange', 'message': str(e)}), 500

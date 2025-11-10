@@ -3,6 +3,7 @@
 import React, { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useClient } from '@/contexts/ClientContext';
+import { useNotification } from '@/hooks/useNotification';
 import axios from 'axios';
 import {
   Search,
@@ -52,6 +53,7 @@ export default function ClientManagement() {
   const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const router = useRouter();
   const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
+  const { showSuccess, showError, showWarning, NotificationContainer } = useNotification();
 
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -158,27 +160,29 @@ export default function ClientManagement() {
 
       // Show success message with deletion summary
       const summary = response.data.summary;
-      const summaryMessage = `
-Client deleted successfully!
+      const summaryMessage = `Summary:
+• Users: ${summary.users}
+• Total Bills: ${summary.total_bills} (GST: ${summary.gst_bills}, Non-GST: ${summary.non_gst_bills})
+• Stock Entries: ${summary.stock_entries}
+• Customers: ${summary.customers}
+• Payment Types: ${summary.payment_types}
+• Reports: ${summary.reports}
+• Audit Logs: ${summary.audit_logs}`;
 
-Summary:
-- Users: ${summary.users}
-- Total Bills: ${summary.total_bills} (GST: ${summary.gst_bills}, Non-GST: ${summary.non_gst_bills})
-- Stock Entries: ${summary.stock_entries}
-- Customers: ${summary.customers}
-- Payment Types: ${summary.payment_types}
-- Reports: ${summary.reports}
-- Audit Logs: ${summary.audit_logs}
-      `.trim();
-
-      alert(summaryMessage);
+      showSuccess(
+        'Client Deleted Successfully!',
+        summaryMessage
+      );
 
       setDeleteConfirmOpen(false);
       setClientToDelete(null);
       fetchClients();
     } catch (error: any) {
       console.error('Error deleting client:', error);
-      alert(error.response?.data?.error || 'Failed to delete client');
+      showError(
+        'Delete Failed',
+        error.response?.data?.error || 'Failed to delete client. Please try again.'
+      );
     } finally {
       setDeleting(false);
     }
@@ -214,9 +218,11 @@ Summary:
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-6">
+    <>
+      <NotificationContainer />
+      <div className="p-6 max-w-7xl mx-auto">
+        {/* Header */}
+        <div className="mb-6">
         <div className="flex justify-between items-center">
           <div>
             <h1 className="text-3xl font-bold text-gray-900">Client Management</h1>
@@ -512,6 +518,7 @@ Summary:
           </div>
         </div>
       )}
-    </div>
+      </div>
+    </>
   );
 }

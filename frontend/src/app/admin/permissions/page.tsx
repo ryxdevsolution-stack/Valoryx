@@ -5,7 +5,7 @@ import { usePermissions } from '@/hooks/usePermissions'
 import DashboardLayout from '@/components/DashboardLayout'
 import { TableSkeleton } from '@/components/SkeletonLoader'
 import api from '@/lib/api'
-import { Shield, User, Check, X, Save, RefreshCw, AlertCircle } from 'lucide-react'
+import { Shield, User, Check, Save, RefreshCw, AlertCircle, Search } from 'lucide-react'
 
 interface Permission {
   permission_id: string
@@ -36,6 +36,7 @@ export default function PermissionsPage() {
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
+  const [searchTerm, setSearchTerm] = useState('')
 
   useEffect(() => {
     fetchData()
@@ -206,64 +207,129 @@ export default function PermissionsPage() {
               {selectedUserData ? (
                 <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md">
                   <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                    <div className="flex items-center justify-between">
-                      <div>
-                        <h2 className="font-semibold text-lg text-gray-900 dark:text-white">
-                          Edit Permissions for {selectedUserData.email}
-                        </h2>
-                        {selectedUserData.is_super_admin && (
-                          <p className="text-sm text-yellow-600 dark:text-yellow-400 mt-1">
-                            Super admins have all permissions by default
-                          </p>
-                        )}
+                    <div className="flex flex-col gap-4">
+                      <div className="flex items-center justify-between">
+                        <div>
+                          <h2 className="font-semibold text-lg text-gray-900 dark:text-white">
+                            Edit Permissions for {selectedUserData.email}
+                          </h2>
+                          {selectedUserData.is_super_admin && (
+                            <p className="text-sm text-yellow-600 dark:text-yellow-400 mt-1">
+                              Super admins have all permissions by default
+                            </p>
+                          )}
+                        </div>
+                        <button
+                          onClick={savePermissions}
+                          disabled={saving || selectedUserData.is_super_admin}
+                          className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
+                        >
+                          {saving ? (
+                            <RefreshCw className="w-4 h-4 animate-spin" />
+                          ) : (
+                            <Save className="w-4 h-4" />
+                          )}
+                          Save Changes
+                        </button>
                       </div>
-                      <button
-                        onClick={savePermissions}
-                        disabled={saving || selectedUserData.is_super_admin}
-                        className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                      >
-                        {saving ? (
-                          <RefreshCw className="w-4 h-4 animate-spin" />
-                        ) : (
-                          <Save className="w-4 h-4" />
-                        )}
-                        Save Changes
-                      </button>
+
+                      {/* Search Box */}
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                        <input
+                          type="text"
+                          placeholder="Search permissions..."
+                          value={searchTerm}
+                          onChange={(e) => setSearchTerm(e.target.value)}
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                        />
+                      </div>
                     </div>
                   </div>
 
-                  <div className="p-4 max-h-96 overflow-y-auto">
-                    {Object.entries(categorizedPermissions).map(([category, permissions]) => (
-                      <div key={category} className="mb-6">
-                        <h3 className="font-medium text-gray-900 dark:text-white mb-3 capitalize">
-                          {category}
-                        </h3>
-                        <div className="space-y-2">
-                          {permissions.map(permission => (
-                            <label
-                              key={permission.permission_id}
-                              className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 cursor-pointer"
-                            >
-                              <input
-                                type="checkbox"
-                                checked={userPermissions[permission.permission_name] || false}
-                                onChange={() => togglePermission(permission.permission_name)}
-                                disabled={selectedUserData.is_super_admin}
-                                className="mt-1 rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 disabled:opacity-50"
-                              />
-                              <div className="flex-1">
-                                <p className="font-medium text-sm text-gray-900 dark:text-white">
-                                  {permission.permission_name}
-                                </p>
-                                <p className="text-xs text-gray-500 dark:text-gray-400">
-                                  {permission.description}
-                                </p>
+                  <div className="p-4 max-h-[600px] overflow-y-auto">
+                    {Object.entries(categorizedPermissions)
+                      .sort(([a], [b]) => a.localeCompare(b))
+                      .map(([category, permissions]) => {
+                        const categoryPerms = permissions
+                          .filter(p =>
+                            searchTerm === '' ||
+                            p.permission_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            p.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                            category.toLowerCase().includes(searchTerm.toLowerCase())
+                          )
+                          .sort((a, b) => a.permission_name.localeCompare(b.permission_name))
+
+                        // Skip empty categories when searching
+                        if (categoryPerms.length === 0) return null
+                        const checkedCount = categoryPerms.filter(p => userPermissions[p.permission_name]).length
+                        const allChecked = checkedCount === categoryPerms.length && categoryPerms.length > 0
+                        const someChecked = checkedCount > 0 && checkedCount < categoryPerms.length
+
+                        return (
+                          <div key={category} className="mb-6 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
+                            <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 p-4 border-b border-gray-200 dark:border-gray-700">
+                              <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-3">
+                                  <h3 className="font-bold text-base text-gray-900 dark:text-white">
+                                    {category}
+                                  </h3>
+                                  <span className="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-800 text-purple-700 dark:text-purple-300 rounded-full font-medium">
+                                    {checkedCount}/{categoryPerms.length}
+                                  </span>
+                                </div>
+                                <label className="flex items-center gap-2 cursor-pointer">
+                                  <input
+                                    type="checkbox"
+                                    checked={allChecked}
+                                    ref={el => {
+                                      if (el) el.indeterminate = someChecked
+                                    }}
+                                    onChange={() => {
+                                      const newChecked = !allChecked
+                                      categoryPerms.forEach(perm => {
+                                        setUserPermissions(prev => ({
+                                          ...prev,
+                                          [perm.permission_name]: newChecked
+                                        }))
+                                      })
+                                    }}
+                                    disabled={selectedUserData.is_super_admin}
+                                    className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 disabled:opacity-50"
+                                  />
+                                  <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
+                                    Select All
+                                  </span>
+                                </label>
                               </div>
-                            </label>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
+                            </div>
+                            <div className="p-3 space-y-1 bg-white dark:bg-gray-800">
+                              {categoryPerms.map(permission => (
+                                <label
+                                  key={permission.permission_id}
+                                  className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors group"
+                                >
+                                  <input
+                                    type="checkbox"
+                                    checked={userPermissions[permission.permission_name] || false}
+                                    onChange={() => togglePermission(permission.permission_name)}
+                                    disabled={selectedUserData.is_super_admin}
+                                    className="mt-1 rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 disabled:opacity-50"
+                                  />
+                                  <div className="flex-1 min-w-0">
+                                    <p className="font-medium text-sm text-gray-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
+                                      {permission.permission_name}
+                                    </p>
+                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                                      {permission.description}
+                                    </p>
+                                  </div>
+                                </label>
+                              ))}
+                            </div>
+                          </div>
+                        )
+                      })}
                   </div>
                 </div>
               ) : (

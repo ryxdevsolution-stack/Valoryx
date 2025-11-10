@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
+import NotesModal from '@/components/NotesModal'
 import api from '@/lib/api'
 import { motion } from 'framer-motion'
 
@@ -40,6 +41,7 @@ export default function ReportsPage() {
   const [timeFilter, setTimeFilter] = useState<'daily' | 'weekly' | 'monthly'>('daily')
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'date' | 'amount' | 'customer'>('date')
+  const [isNotesModalOpen, setIsNotesModalOpen] = useState(false)
 
   const ongoingRequest = useRef<Promise<void> | null>(null)
   const hasInitialized = useRef(false)
@@ -303,8 +305,19 @@ export default function ReportsPage() {
             )}
           </div>
 
-          {/* Date Range Picker */}
+          {/* Date Range Picker and Notes Button */}
           <div className="flex items-center gap-3">
+            <button
+              type="button"
+              onClick={() => setIsNotesModalOpen(true)}
+              className="px-4 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+              title="View and manage notes"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Notes
+            </button>
             <input
               type="date"
               value={dateRange.start_date}
@@ -681,6 +694,9 @@ export default function ReportsPage() {
           )}
         </motion.div>
       </div>
+
+      {/* Notes Modal */}
+      <NotesModal isOpen={isNotesModalOpen} onClose={() => setIsNotesModalOpen(false)} />
     </DashboardLayout>
   )
 }

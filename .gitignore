@@ -67,3 +67,5 @@ htmlcov/
 *.tmp
 temp/
 tmp/
+frontend/.env
+.env
