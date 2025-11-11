@@ -25,7 +25,8 @@
       "Bash(del c:UsersadminDesktopmj-billingbackendfix_admin_indent.py)",
       "Bash(pip install:*)",
       "Bash(git commit:*)",
-      "Bash(git push:*)"
+      "Bash(git push:*)",
+      "Bash(python3:*)"
     ],
     "deny": [],
     "ask": [],

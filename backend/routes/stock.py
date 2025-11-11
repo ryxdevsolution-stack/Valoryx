@@ -13,6 +13,56 @@ from utils.audit_logger import log_action
 stock_bp = Blueprint('stock', __name__)
 
 
+def generate_item_code(client_id, product_name):
+    """
+    Auto-generate item code based on product name and client
+    Format: {PRODUCT_INITIALS}-{CLIENT_PREFIX}-{SEQUENCE}
+    Example: LAP-550-001 for "Laptop" product
+    """
+    import re
+
+    # Extract product initials (first 3 letters, alphanumeric only)
+    clean_name = re.sub(r'[^a-zA-Z0-9]', '', product_name)
+    product_prefix = clean_name[:3].upper() if clean_name else 'ITM'
+
+    # Extract client prefix (first 3 chars of client_id)
+    client_prefix = client_id[:3].upper()
+
+    # Find the highest sequence number for this client
+    existing_codes = StockEntry.query.filter_by(client_id=client_id).with_entities(StockEntry.item_code).all()
+
+    max_sequence = 0
+    for (code,) in existing_codes:
+        if code:
+            # Extract sequence number from codes matching pattern
+            parts = code.split('-')
+            if len(parts) >= 3:
+                try:
+                    seq = int(parts[-1])
+                    max_sequence = max(max_sequence, seq)
+                except ValueError:
+                    continue
+
+    # Generate next sequence
+    next_sequence = max_sequence + 1
+
+    # Format: PROD-CLI-001
+    item_code = f"{product_prefix}-{client_prefix}-{next_sequence:03d}"
+
+    # Handle collision (in case of race condition)
+    counter = 0
+    while StockEntry.query.filter_by(client_id=client_id, item_code=item_code).first():
+        counter += 1
+        next_sequence += counter
+        item_code = f"{product_prefix}-{client_prefix}-{next_sequence:03d}"
+        if counter > 100:  # Safety limit
+            # Fallback to UUID-based code
+            item_code = f"{product_prefix}-{client_prefix}-{uuid.uuid4().hex[:6].upper()}"
+            break
+
+    return item_code
+
+
 @stock_bp.route('', methods=['POST'])
 @authenticate
 def add_stock():
@@ -41,9 +91,33 @@ def add_stock():
             old_data = existing_product.to_dict()
             existing_product.quantity += data['quantity']
             existing_product.rate = data.get('rate', existing_product.rate)
+            existing_product.cost_price = data.get('cost_price', existing_product.cost_price)
+            existing_product.mrp = data.get('mrp', existing_product.mrp)
             existing_product.category = data.get('category', existing_product.category)
             existing_product.unit = data.get('unit', existing_product.unit)
             existing_product.low_stock_alert = data.get('low_stock_alert', existing_product.low_stock_alert)
+
+            # Handle item_code - auto-generate if empty/None
+            item_code_value = data.get('item_code', existing_product.item_code)
+            if isinstance(item_code_value, str):
+                item_code_value = item_code_value.strip()
+                item_code_value = item_code_value if item_code_value else None
+
+            # If no item_code exists, auto-generate one
+            if not item_code_value and not existing_product.item_code:
+                item_code_value = generate_item_code(client_id, existing_product.product_name)
+
+            existing_product.item_code = item_code_value
+
+            # Handle barcode - set to None if empty to avoid unique constraint issues
+            barcode_value = data.get('barcode', existing_product.barcode)
+            if isinstance(barcode_value, str):
+                barcode_value = barcode_value.strip()
+                barcode_value = barcode_value if barcode_value else None
+            existing_product.barcode = barcode_value
+
+            existing_product.gst_percentage = data.get('gst_percentage', existing_product.gst_percentage)
+            existing_product.hsn_code = data.get('hsn_code', existing_product.hsn_code)
             existing_product.updated_at = datetime.utcnow()
 
             db.session.commit()
@@ -60,6 +134,17 @@ def add_stock():
 
         else:
             # Create new product entry
+            # Handle barcode uniqueness - set to None if empty to avoid unique constraint issues
+            barcode_value = data.get('barcode', '').strip()
+            barcode_value = barcode_value if barcode_value else None
+
+            # Handle item_code - auto-generate if empty
+            item_code_value = data.get('item_code', '').strip()
+            if not item_code_value:
+                # Auto-generate item code
+                item_code_value = generate_item_code(client_id, data['product_name'])
+            # else: user provided item_code, use it
+
             new_product = StockEntry(
                 product_id=str(uuid.uuid4()),
                 client_id=client_id,
@@ -67,8 +152,14 @@ def add_stock():
                 category=data.get('category', 'Other'),
                 quantity=data['quantity'],
                 rate=data['rate'],
+                cost_price=data.get('cost_price'),
+                mrp=data.get('mrp'),
                 unit=data.get('unit', 'pcs'),
                 low_stock_alert=data.get('low_stock_alert', 10),
+                item_code=item_code_value,
+                barcode=barcode_value,
+                gst_percentage=data.get('gst_percentage', 0),
+                hsn_code=data.get('hsn_code', ''),
                 created_at=datetime.utcnow()
             )
 
@@ -310,6 +401,15 @@ def bulk_import_stock():
                 unit = str(row['unit']).strip() if 'unit' in row and not pd.isna(row['unit']) else 'pcs'
                 low_stock_alert = int(row['low_stock_alert']) if 'low_stock_alert' in row and not pd.isna(row['low_stock_alert']) else 10
 
+                # Handle item_code - auto-generate if not provided
+                item_code = str(row['item_code']).strip() if 'item_code' in row and not pd.isna(row['item_code']) else ''
+                if not item_code:
+                    item_code = generate_item_code(client_id, product_name)
+
+                # Handle barcode - set to None if empty
+                barcode = str(row['barcode']).strip() if 'barcode' in row and not pd.isna(row['barcode']) else ''
+                barcode = barcode if barcode else None
+
                 # Validate quantity and rate
                 if quantity < 0 or rate < 0:
                     error_count += 1
@@ -330,6 +430,15 @@ def bulk_import_stock():
                     existing_product.category = category
                     existing_product.unit = unit
                     existing_product.low_stock_alert = low_stock_alert
+
+                    # Auto-generate item_code if existing product doesn't have one
+                    if not existing_product.item_code:
+                        existing_product.item_code = item_code
+
+                    # Update barcode if provided and existing doesn't have one
+                    if barcode and not existing_product.barcode:
+                        existing_product.barcode = barcode
+
                     existing_product.updated_at = datetime.utcnow()
 
                     # Log action
@@ -347,6 +456,8 @@ def bulk_import_stock():
                         rate=rate,
                         unit=unit,
                         low_stock_alert=low_stock_alert,
+                        item_code=item_code,
+                        barcode=barcode,
                         created_at=datetime.utcnow()
                     )
 

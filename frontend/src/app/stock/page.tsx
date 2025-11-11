@@ -111,7 +111,13 @@ export default function StockManagementPage() {
       setShowAddForm(false)
 
       // Optimistic update - add new stock to list without refetching
-      const newStock = response.data.stock
+      const newStock = response.data.product
+
+      // Ensure is_low_stock is set
+      if (!newStock.hasOwnProperty('is_low_stock')) {
+        newStock.is_low_stock = newStock.quantity <= (newStock.low_stock_alert || 10)
+      }
+
       setStocks(prev => [newStock, ...prev])
 
       setFormData({
@@ -150,7 +156,8 @@ export default function StockManagementPage() {
   }
 
   const isLowStock = (stock: Stock) => {
-    return stock.is_low_stock
+    // Fallback calculation if is_low_stock is undefined
+    return stock.is_low_stock ?? (stock.quantity <= stock.low_stock_alert)
   }
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
@@ -415,9 +422,10 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, item_code: e.target.value })
                   }
-                  placeholder="e.g., LP-001"
+                  placeholder="Auto-generated if left blank"
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
                 />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Leave blank to auto-generate based on product name</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
