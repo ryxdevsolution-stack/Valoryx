@@ -93,6 +93,7 @@ def add_stock():
             existing_product.rate = data.get('rate', existing_product.rate)
             existing_product.cost_price = data.get('cost_price', existing_product.cost_price)
             existing_product.mrp = data.get('mrp', existing_product.mrp)
+            existing_product.pricing = data.get('pricing', existing_product.pricing)
             existing_product.category = data.get('category', existing_product.category)
             existing_product.unit = data.get('unit', existing_product.unit)
             existing_product.low_stock_alert = data.get('low_stock_alert', existing_product.low_stock_alert)
@@ -154,6 +155,7 @@ def add_stock():
                 rate=data['rate'],
                 cost_price=data.get('cost_price'),
                 mrp=data.get('mrp'),
+                pricing=data.get('pricing'),
                 unit=data.get('unit', 'pcs'),
                 low_stock_alert=data.get('low_stock_alert', 10),
                 item_code=item_code_value,
@@ -400,6 +402,9 @@ def bulk_import_stock():
                 category = str(row['category']).strip() if 'category' in row and not pd.isna(row['category']) else 'Other'
                 unit = str(row['unit']).strip() if 'unit' in row and not pd.isna(row['unit']) else 'pcs'
                 low_stock_alert = int(row['low_stock_alert']) if 'low_stock_alert' in row and not pd.isna(row['low_stock_alert']) else 10
+                cost_price = float(row['cost_price']) if 'cost_price' in row and not pd.isna(row['cost_price']) else None
+                mrp = float(row['mrp']) if 'mrp' in row and not pd.isna(row['mrp']) else None
+                pricing = float(row['pricing']) if 'pricing' in row and not pd.isna(row['pricing']) else None
 
                 # Handle item_code - auto-generate if not provided
                 item_code = str(row['item_code']).strip() if 'item_code' in row and not pd.isna(row['item_code']) else ''
@@ -427,6 +432,9 @@ def bulk_import_stock():
                     old_data = existing_product.to_dict()
                     existing_product.quantity += quantity
                     existing_product.rate = rate
+                    existing_product.cost_price = cost_price if cost_price is not None else existing_product.cost_price
+                    existing_product.mrp = mrp if mrp is not None else existing_product.mrp
+                    existing_product.pricing = pricing if pricing is not None else existing_product.pricing
                     existing_product.category = category
                     existing_product.unit = unit
                     existing_product.low_stock_alert = low_stock_alert
@@ -454,6 +462,9 @@ def bulk_import_stock():
                         category=category,
                         quantity=quantity,
                         rate=rate,
+                        cost_price=cost_price,
+                        mrp=mrp,
+                        pricing=pricing,
                         unit=unit,
                         low_stock_alert=low_stock_alert,
                         item_code=item_code,

@@ -13,6 +13,7 @@ class StockEntry(db.Model):
     rate = db.Column(db.Numeric(10, 2), nullable=False)
     cost_price = db.Column(db.Numeric(10, 2), nullable=True)  # Cost price for profit calculation
     mrp = db.Column(db.Numeric(10, 2), nullable=True)  # Maximum Retail Price (for display on print)
+    pricing = db.Column(db.Numeric(10, 2), nullable=True, default=None)  # Pricing field from stock updation
     unit = db.Column(db.String(20), default='pcs')
     low_stock_alert = db.Column(db.Integer, default=10)
     item_code = db.Column(db.String(50), nullable=True)
@@ -32,6 +33,7 @@ class StockEntry(db.Model):
             'rate': float(self.rate),
             'cost_price': float(self.cost_price) if self.cost_price else None,
             'mrp': float(self.mrp) if self.mrp else None,
+            'pricing': float(self.pricing) if self.pricing else None,
             'unit': self.unit,
             'low_stock_alert': self.low_stock_alert,
             'item_code': self.item_code,

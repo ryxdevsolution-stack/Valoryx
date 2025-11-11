@@ -13,6 +13,7 @@ interface Stock {
   rate: number | string
   cost_price?: number | string | null
   mrp?: number | string | null
+  pricing?: number | string | null
   category: string
   unit: string
   low_stock_alert: number
@@ -40,6 +41,7 @@ export default function StockManagementPage() {
     rate: 0,
     cost_price: 0,
     mrp: 0,
+    pricing: 0,
     category: '',
     unit: 'pcs',
     low_stock_alert: 10,
@@ -126,6 +128,7 @@ export default function StockManagementPage() {
         rate: 0,
         cost_price: 0,
         mrp: 0,
+        pricing: 0,
         category: '',
         unit: 'pcs',
         low_stock_alert: 10,
@@ -366,6 +369,23 @@ export default function StockManagementPage() {
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Shown on print, not in billing</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Pricing (₹)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={formData.pricing}
+                  onChange={(e) =>
+                    setFormData({ ...formData, pricing: parseFloat(e.target.value) || 0 })
+                  }
+                  placeholder="Stock pricing"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Pricing from stock updation</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">

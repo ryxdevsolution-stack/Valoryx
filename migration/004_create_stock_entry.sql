@@ -7,11 +7,15 @@ CREATE TABLE IF NOT EXISTS stock_entry (
     product_id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     client_id UUID NOT NULL REFERENCES client_entry(client_id) ON DELETE CASCADE,
     product_name VARCHAR(255) NOT NULL,
-    category VARCHAR(100) CHECK (category IN ('Stationery', 'Books', 'Office Supplies', 'Electronics', 'Other')),
+    category VARCHAR(100),
     quantity INTEGER NOT NULL DEFAULT 0 CHECK (quantity >= 0),
     rate DECIMAL(10, 2) NOT NULL CHECK (rate >= 0),
-    unit VARCHAR(20) CHECK (unit IN ('pcs', 'box', 'kg', 'liter', 'pack')) DEFAULT 'pcs',
-    low_stock_alert INTEGER DEFAULT 10,
+    unit VARCHAR(20),
+    low_stock_alert INTEGER,
+    item_code VARCHAR(50),
+    barcode VARCHAR(100),
+    gst_percentage DECIMAL(5, 2),
+    hsn_code VARCHAR(20),
     created_at TIMESTAMP DEFAULT NOW(),
     updated_at TIMESTAMP DEFAULT NOW()
 );
