@@ -35,6 +35,7 @@ export default function StockManagementPage() {
   const [showBulkImport, setShowBulkImport] = useState(false)
   const [uploadProgress, setUploadProgress] = useState(false)
   const [importResult, setImportResult] = useState<any>(null)
+  const [editingId, setEditingId] = useState<string | null>(null)
   const [formData, setFormData] = useState({
     product_name: '',
     quantity: 0,
@@ -108,20 +109,42 @@ export default function StockManagementPage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     try {
-      const response = await api.post('/stock', formData)
-      alert('Stock added successfully!')
-      setShowAddForm(false)
+      if (editingId) {
+        // Update existing stock
+        const response = await api.put(`/stock/${editingId}`, formData)
+        alert('Stock updated successfully!')
+        setShowAddForm(false)
+        setEditingId(null)
 
-      // Optimistic update - add new stock to list without refetching
-      const newStock = response.data.product
+        // Optimistic update - update the stock in the list
+        const updatedStock = response.data.product
 
-      // Ensure is_low_stock is set
-      if (!newStock.hasOwnProperty('is_low_stock')) {
-        newStock.is_low_stock = newStock.quantity <= (newStock.low_stock_alert || 10)
+        // Ensure is_low_stock is set
+        if (!updatedStock.hasOwnProperty('is_low_stock')) {
+          updatedStock.is_low_stock = updatedStock.quantity <= (updatedStock.low_stock_alert || 10)
+        }
+
+        setStocks(prev => prev.map(stock =>
+          stock.product_id === editingId ? updatedStock : stock
+        ))
+      } else {
+        // Add new stock
+        const response = await api.post('/stock', formData)
+        alert('Stock added successfully!')
+        setShowAddForm(false)
+
+        // Optimistic update - add new stock to list without refetching
+        const newStock = response.data.product
+
+        // Ensure is_low_stock is set
+        if (!newStock.hasOwnProperty('is_low_stock')) {
+          newStock.is_low_stock = newStock.quantity <= (newStock.low_stock_alert || 10)
+        }
+
+        setStocks(prev => [newStock, ...prev])
       }
 
-      setStocks(prev => [newStock, ...prev])
-
+      // Reset form
       setFormData({
         product_name: '',
         quantity: 0,
@@ -138,8 +161,49 @@ export default function StockManagementPage() {
         hsn_code: '',
       })
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to add stock')
+      alert(error.response?.data?.error || `Failed to ${editingId ? 'update' : 'add'} stock`)
     }
+  }
+
+  const handleEdit = (stock: Stock) => {
+    setEditingId(stock.product_id)
+    setFormData({
+      product_name: stock.product_name,
+      quantity: stock.quantity,
+      rate: Number(stock.rate),
+      cost_price: stock.cost_price ? Number(stock.cost_price) : 0,
+      mrp: stock.mrp ? Number(stock.mrp) : 0,
+      pricing: stock.pricing ? Number(stock.pricing) : 0,
+      category: stock.category || '',
+      unit: stock.unit,
+      low_stock_alert: stock.low_stock_alert,
+      item_code: stock.item_code || '',
+      barcode: stock.barcode || '',
+      gst_percentage: Number(stock.gst_percentage),
+      hsn_code: stock.hsn_code || '',
+    })
+    setShowAddForm(true)
+    setShowBulkImport(false)
+  }
+
+  const handleCancelEdit = () => {
+    setEditingId(null)
+    setShowAddForm(false)
+    setFormData({
+      product_name: '',
+      quantity: 0,
+      rate: 0,
+      cost_price: 0,
+      mrp: 0,
+      pricing: 0,
+      category: '',
+      unit: 'pcs',
+      low_stock_alert: 10,
+      item_code: '',
+      barcode: '',
+      gst_percentage: 0,
+      hsn_code: '',
+    })
   }
 
   const handleDelete = async (productId: string) => {
@@ -277,7 +341,14 @@ export default function StockManagementPage() {
             📥 Bulk Import
           </button>
           <button
-            onClick={() => setShowAddForm(!showAddForm)}
+            onClick={() => {
+              if (showAddForm) {
+                handleCancelEdit()
+              } else {
+                setShowAddForm(true)
+                setShowBulkImport(false)
+              }
+            }}
             className="px-6 py-3 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-800 dark:hover:bg-blue-600 transition font-medium"
           >
             {showAddForm ? 'Cancel' : '+ Add Stock'}
@@ -285,10 +356,12 @@ export default function StockManagementPage() {
         </div>
       </div>
 
-      {/* Add Stock Form */}
+      {/* Add/Edit Stock Form */}
       {showAddForm && (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900 p-6 mb-6">
-          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">Add New Stock</h2>
+          <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
+            {editingId ? 'Edit Stock' : 'Add New Stock'}
+          </h2>
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
@@ -499,11 +572,11 @@ export default function StockManagementPage() {
                 type="submit"
                 className="px-6 py-2 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-600 transition"
               >
-                Add Stock
+                {editingId ? 'Update Stock' : 'Add Stock'}
               </button>
               <button
                 type="button"
-                onClick={() => setShowAddForm(false)}
+                onClick={handleCancelEdit}
                 className="px-6 py-2 bg-gray-600 dark:bg-gray-700 text-white rounded-lg hover:bg-gray-700 dark:hover:bg-gray-600 transition"
               >
                 Cancel
@@ -717,12 +790,20 @@ export default function StockManagementPage() {
                     )}
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <button
-                      onClick={() => handleDelete(stock.product_id)}
-                      className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 font-medium"
-                    >
-                      Delete
-                    </button>
+                    <div className="flex gap-3">
+                      <button
+                        onClick={() => handleEdit(stock)}
+                        className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 font-medium"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        onClick={() => handleDelete(stock.product_id)}
+                        className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 font-medium"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </td>
                 </tr>
               ))}

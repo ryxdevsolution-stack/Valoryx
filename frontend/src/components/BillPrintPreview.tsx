@@ -1,6 +1,7 @@
 'use client'
 
 import { useRef, useEffect } from 'react'
+import { useReactToPrint } from 'react-to-print'
 
 interface BillItem {
   product_name: string
@@ -62,9 +63,40 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
     logo_url: ''
   }
 
-  const handlePrint = () => {
-    window.print()
-  }
+  const handlePrint = useReactToPrint({
+    contentRef: printRef,
+    documentTitle: `Bill_${bill.bill_number}`,
+    pageStyle: `
+      @page {
+        size: 80mm auto;
+        margin: 0mm;
+      }
+      @media print {
+        html, body {
+          width: 80mm;
+          margin: 0;
+          padding: 0;
+          background: white;
+        }
+        body {
+          width: 80mm !important;
+          min-height: auto !important;
+        }
+        * {
+          -webkit-print-color-adjust: exact !important;
+          print-color-adjust: exact !important;
+          color-adjust: exact !important;
+        }
+      }
+    `,
+    onBeforePrint: () => {
+      console.log('Starting print...')
+      return Promise.resolve()
+    },
+    onAfterPrint: () => {
+      console.log('Print completed')
+    },
+  })
 
   // Auto-trigger print when component mounts
   useEffect(() => {
@@ -72,7 +104,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
       hasAutoPrinted.current = true
       // Small delay to ensure the component is fully rendered
       const timer = setTimeout(() => {
-        window.print()
+        handlePrint()
       }, 500)
       return () => clearTimeout(timer)
     }
@@ -100,7 +132,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
   const totalItems = bill.items.length
 
   return (
-    <>
+    <div className="bill-print-modal-wrapper">
       {/* Screen Overlay */}
       <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4 print:hidden">
         <div className="bg-white rounded-lg shadow-2xl w-full max-w-md max-h-[90vh] overflow-hidden flex flex-col">
@@ -127,10 +159,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
 
           <div className="flex-1 overflow-auto bg-gray-50 p-6">
             <div className="bg-white shadow-lg" style={{ maxWidth: '80mm', margin: '0 auto' }}>
-              <div ref={printRef} className="print-content" style={{ padding: '4mm' }}>
-
-            {/* Actual print content */}
-            <div className="bill-receipt">
+              <div ref={printRef} className="bill-receipt">
               {/* Star border top */}
               <div className="text-center" style={{ fontSize: '10px', letterSpacing: '-1px' }}>
                 ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
@@ -170,12 +199,12 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
               {/* Bill Info */}
               <div style={{ fontSize: '7pt', marginBottom: '2mm' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5mm' }}>
-                  <span>User : ADMIN</span>
-                  <span><strong>Bill No  : {bill.bill_number}</strong></span>
+                  <span>Bill No  : {bill.bill_number}</span>
+                  <span><strong>Date  : {formatDate(bill.created_at)}</strong></span>
                 </div>
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Time :{formatTime(bill.created_at)}</span>
-                  <span><strong>Date  : {formatDate(bill.created_at)}</strong></span>
+                  <span>Time : {formatTime(bill.created_at)}</span>
+                  <span>Mode : {bill.type === 'gst' ? 'GST' : 'NON-GST'}</span>
                 </div>
                 {bill.customer_name && (
                   <div style={{ marginTop: '2mm', borderTop: '1px solid #ccc', paddingTop: '1mm' }}>
@@ -405,7 +434,6 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
               <div className="text-center" style={{ fontSize: '10px', letterSpacing: '-1px', marginTop: '2mm' }}>
                 ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
               </div>
-            </div>
               </div>
             </div>
           </div>
@@ -426,77 +454,35 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
         </div>
       </div>
 
-      {/* Print Styles */}
-      <style jsx global>{`
-        @media print {
-          body * {
-            visibility: hidden;
-          }
-
-          .bill-receipt,
-          .bill-receipt * {
-            visibility: visible;
-          }
-
-          .bill-receipt {
-            position: absolute;
-            left: 0;
-            top: 0;
-            width: 80mm;
-            max-width: 80mm;
-            margin: 0;
-            padding: 5mm;
-            font-family: 'Courier New', monospace;
-            font-size: 11pt;
-            line-height: 1.3;
-            color: black;
-            background: white;
-          }
-
-          /* Hide print buttons and overlays */
-          .print\\:hidden {
-            display: none !important;
-          }
-
-          /* Ensure proper page breaks */
-          .bill-receipt {
-            page-break-after: auto;
-            page-break-inside: avoid;
-          }
-
-          /* Print-specific table styling */
-          .bill-receipt table {
-            width: 100%;
-            border-collapse: collapse;
-          }
-
-          .bill-receipt th,
-          .bill-receipt td {
-            padding: 2px 0;
-          }
-
-          /* Thermal printer settings */
-          @page {
-            size: 80mm auto;
-            margin: 0;
-          }
-        }
-
-        /* Screen preview styling */
+      {/* Screen preview styling */}
+      <style dangerouslySetInnerHTML={{__html: `
         .bill-receipt {
           font-family: 'Courier New', monospace;
           max-width: 80mm;
+          width: 80mm;
           margin: 0 auto;
           background: white;
           color: black;
           line-height: 1.4;
+          padding: 5mm;
+          box-sizing: border-box;
         }
 
         .bill-receipt table {
           width: 100%;
           border-collapse: collapse;
         }
-      `}</style>
-    </>
+
+        @media print {
+          .bill-receipt {
+            width: 80mm !important;
+            max-width: 80mm !important;
+            margin: 0 !important;
+            padding: 5mm !important;
+            box-sizing: border-box !important;
+          }
+        }
+      `}} />
+    </div>
   )
 }

@@ -277,10 +277,26 @@ def update_stock(product_id):
             product.quantity = data['quantity']
         if 'rate' in data:
             product.rate = data['rate']
+        if 'cost_price' in data:
+            product.cost_price = data['cost_price']
+        if 'mrp' in data:
+            product.mrp = data['mrp']
+        if 'pricing' in data:
+            product.pricing = data['pricing']
         if 'unit' in data:
             product.unit = data['unit']
         if 'low_stock_alert' in data:
             product.low_stock_alert = data['low_stock_alert']
+        if 'item_code' in data:
+            item_code_value = data['item_code'].strip() if isinstance(data['item_code'], str) else data['item_code']
+            product.item_code = item_code_value if item_code_value else product.item_code
+        if 'barcode' in data:
+            barcode_value = data['barcode'].strip() if isinstance(data['barcode'], str) else data['barcode']
+            product.barcode = barcode_value if barcode_value else None
+        if 'gst_percentage' in data:
+            product.gst_percentage = data['gst_percentage']
+        if 'hsn_code' in data:
+            product.hsn_code = data['hsn_code']
 
         product.updated_at = datetime.utcnow()
 
