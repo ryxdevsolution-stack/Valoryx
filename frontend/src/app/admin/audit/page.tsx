@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useClient } from '@/contexts/ClientContext';
 import axios from 'axios';
@@ -50,23 +50,7 @@ export default function AuditLogViewer() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalLogs, setTotalLogs] = useState(0);
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.push('/auth/login');
-      return;
-    }
-
-    if (!authLoading && user && !isSuperAdmin()) {
-      router.push('/dashboard');
-      return;
-    }
-
-    if (user && isSuperAdmin()) {
-      fetchAuditLogs();
-    }
-  }, [user, authLoading, isSuperAdmin, router, currentPage, searchTerm, actionFilter, entityFilter, dateFilter]);
-
-  const fetchAuditLogs = async () => {
+  const fetchAuditLogs = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -91,7 +75,23 @@ export default function AuditLogViewer() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentPage, searchTerm, actionFilter, entityFilter, dateFilter]);
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/auth/login');
+      return;
+    }
+
+    if (!authLoading && user && !isSuperAdmin()) {
+      router.push('/dashboard');
+      return;
+    }
+
+    if (user && isSuperAdmin()) {
+      fetchAuditLogs();
+    }
+  }, [user, authLoading, isSuperAdmin, router, fetchAuditLogs]);
 
   const formatAction = (action: string) => {
     return action.split('_').map(word =>

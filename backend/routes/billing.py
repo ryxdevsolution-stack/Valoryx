@@ -783,3 +783,89 @@ def exchange_bill(bill_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to process exchange', 'message': str(e)}), 500
+
+
+@billing_bp.route('/print', methods=['POST'])
+@authenticate
+def print_bill():
+    """
+    Print bill to thermal printer (silent printing without browser dialog)
+    Receives bill data and client info, prints directly to connected thermal printer
+    """
+    try:
+        from utils.thermal_printer import ThermalPrinter
+
+        data = request.get_json()
+
+        # Validate required data
+        if 'bill' not in data or 'clientInfo' not in data:
+            return jsonify({'error': 'Missing bill or clientInfo data'}), 400
+
+        bill_data = data['bill']
+        client_info = data['clientInfo']
+
+        # Get printer name from request or use default
+        printer_name = data.get('printerName', None)
+
+        # Initialize thermal printer
+        printer = ThermalPrinter(printer_name=printer_name)
+
+        # Print the bill
+        success = printer.print_bill(bill_data, client_info)
+
+        if success:
+            # Log the print action
+            log_action(
+                user_id=g.user['user_id'],
+                client_id=g.user['client_id'],
+                action='PRINT_BILL',
+                entity_type='bill',
+                entity_id=bill_data.get('bill_number', 'unknown'),
+                details=f"Printed bill #{bill_data.get('bill_number', 'N/A')}"
+            )
+
+            return jsonify({
+                'success': True,
+                'message': 'Bill printed successfully',
+                'printer': printer.printer_name
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to print bill',
+                'message': 'Printer may be offline or not configured'
+            }), 500
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': 'Print failed',
+            'message': str(e)
+        }), 500
+
+
+@billing_bp.route('/printers', methods=['GET'])
+@authenticate
+def list_printers():
+    """
+    List all available printers on the system
+    """
+    try:
+        from utils.thermal_printer import ThermalPrinter
+
+        printer = ThermalPrinter()
+        printers = printer.list_printers()
+        default_printer = printer.printer_name
+
+        return jsonify({
+            'success': True,
+            'printers': printers,
+            'default_printer': default_printer
+        }), 200
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': 'Failed to list printers',
+            'message': str(e)
+        }), 500

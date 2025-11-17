@@ -6,6 +6,7 @@ from models.client_model import ClientEntry
 from utils.auth_middleware import authenticate, require_role
 from utils.permission_middleware import require_super_admin
 from utils.audit_logger import log_action
+from utils.supabase_storage import upload_logo, delete_logo, replace_logo
 
 client_bp = Blueprint('client', __name__)
 
@@ -131,3 +132,108 @@ def update_client(client_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to update client', 'message': str(e)}), 500
+
+
+@client_bp.route('/<client_id>/upload-logo', methods=['POST'])
+@authenticate
+def upload_client_logo(client_id):
+    """
+    Upload or replace client logo
+    User can upload logo for their own client_id, or super admin can upload for any client
+    Accepts multipart/form-data with 'logo' file field
+    """
+    try:
+        # Verify user is accessing their own client OR is super admin
+        is_super_admin = g.user.get('is_super_admin', False)
+        if not is_super_admin and client_id != g.user['client_id']:
+            return jsonify({'error': 'Access denied'}), 403
+
+        # Get client
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+
+        # Check if file is present
+        if 'logo' not in request.files:
+            return jsonify({'error': 'No file provided'}), 400
+
+        file = request.files['logo']
+
+        if file.filename == '':
+            return jsonify({'error': 'No file selected'}), 400
+
+        # Store old data for audit
+        old_data = client.to_dict()
+        old_logo_url = client.logo_url
+
+        # Upload logo (will replace old one if exists)
+        success, new_url, error = replace_logo(old_logo_url, file, client_id)
+
+        if not success:
+            return jsonify({'error': error}), 400
+
+        # Update database
+        client.logo_url = new_url
+        db.session.commit()
+
+        # Log action
+        log_action('UPDATE', 'client_entry', client_id, old_data, client.to_dict())
+
+        return jsonify({
+            'success': True,
+            'message': 'Logo uploaded successfully',
+            'logo_url': new_url
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to upload logo', 'message': str(e)}), 500
+
+
+@client_bp.route('/<client_id>/delete-logo', methods=['DELETE'])
+@authenticate
+def delete_client_logo(client_id):
+    """
+    Delete client logo
+    User can delete logo for their own client_id, or super admin can delete for any client
+    """
+    try:
+        # Verify user is accessing their own client OR is super admin
+        is_super_admin = g.user.get('is_super_admin', False)
+        if not is_super_admin and client_id != g.user['client_id']:
+            return jsonify({'error': 'Access denied'}), 403
+
+        # Get client
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+
+        if not client.logo_url:
+            return jsonify({'error': 'No logo to delete'}), 404
+
+        # Store old data for audit
+        old_data = client.to_dict()
+
+        # Delete from storage
+        success, error = delete_logo(client.logo_url, client_id)
+
+        if not success:
+            return jsonify({'error': error}), 400
+
+        # Update database
+        client.logo_url = None
+        db.session.commit()
+
+        # Log action
+        log_action('UPDATE', 'client_entry', client_id, old_data, client.to_dict())
+
+        return jsonify({
+            'success': True,
+            'message': 'Logo deleted successfully'
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to delete logo', 'message': str(e)}), 500

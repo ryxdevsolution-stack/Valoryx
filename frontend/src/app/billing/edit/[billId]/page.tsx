@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { useParams, useRouter } from 'next/navigation'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
@@ -112,12 +112,7 @@ export default function EditBillPage() {
   const [showPrintPreview, setShowPrintPreview] = useState(false)
   const [billForPrint, setBillForPrint] = useState<any>(null)
 
-  useEffect(() => {
-    loadBillData()
-    loadProducts()
-  }, [billId])
-
-  const loadBillData = async () => {
+  const loadBillData = useCallback(async () => {
     try {
       setLoading(true)
       const response = await api.get(`/billing/${billId}`)
@@ -153,16 +148,21 @@ export default function EditBillPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [billId, router])
 
-  const loadProducts = async () => {
+  const loadProducts = useCallback(async () => {
     try {
       const fetchedProducts = await fetchProducts()
       setProducts(fetchedProducts)
     } catch (error) {
       console.error('Failed to load products:', error)
     }
-  }
+  }, [fetchProducts])
+
+  useEffect(() => {
+    loadBillData()
+    loadProducts()
+  }, [loadBillData, loadProducts])
 
   const filteredProducts = products.filter(
     (p) =>

@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback } from 'react'
 import dynamic from 'next/dynamic'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useClient } from '@/contexts/ClientContext'
@@ -91,11 +91,7 @@ export default function DashboardPage() {
   // Track ongoing request to prevent duplicates (for React Strict Mode)
   const ongoingRequest = useRef<Promise<void> | null>(null)
 
-  useEffect(() => {
-    fetchAnalytics()
-  }, [timeRange])
-
-  const fetchAnalytics = async () => {
+  const fetchAnalytics = useCallback(async () => {
     // If a request is already ongoing, return that promise
     if (ongoingRequest.current) {
       return ongoingRequest.current
@@ -116,7 +112,11 @@ export default function DashboardPage() {
 
     ongoingRequest.current = request
     return request
-  }
+  }, [timeRange])
+
+  useEffect(() => {
+    fetchAnalytics()
+  }, [fetchAnalytics])
 
   const exportLowStock = async (format: 'pdf' | 'xlsx') => {
     try {

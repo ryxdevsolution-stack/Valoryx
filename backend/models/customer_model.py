@@ -7,6 +7,7 @@ class Customer(db.Model):
 
     customer_id = db.Column(db.String(36), primary_key=True)
     client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
+    customer_code = db.Column(db.Integer, unique=True, index=True)
     customer_name = db.Column(db.String(255), nullable=False)
     customer_phone = db.Column(db.String(20), nullable=False)
     customer_email = db.Column(db.String(255))
@@ -28,6 +29,7 @@ class Customer(db.Model):
         return {
             'customer_id': self.customer_id,
             'client_id': self.client_id,
+            'customer_code': self.customer_code,
             'customer_name': self.customer_name,
             'customer_phone': self.customer_phone,
             'customer_email': self.customer_email,

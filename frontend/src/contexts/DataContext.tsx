@@ -110,7 +110,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     ongoingRequests.current.products = request
     return request
-  }, [])
+  }, [cache])
 
   // Fetch payment types with caching and request deduplication
   const fetchPaymentTypes = useCallback(async (forceRefresh = false): Promise<PaymentType[]> => {
@@ -160,7 +160,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     ongoingRequests.current.paymentTypes = request
     return request
-  }, [])
+  }, [cache])
 
   // Invalidate cache manually
   const invalidateCache = useCallback((key?: 'products' | 'paymentTypes') => {

@@ -1,10 +1,11 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useClient } from '@/contexts/ClientContext';
 import { useNotification } from '@/hooks/useNotification';
 import axios from 'axios';
+import NextImage from 'next/image';
 import {
   Search,
   Filter,
@@ -67,23 +68,7 @@ export default function ClientManagement() {
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
   const [deleting, setDeleting] = useState(false);
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.push('/auth/login');
-      return;
-    }
-
-    if (!authLoading && user && !isSuperAdmin()) {
-      router.push('/dashboard');
-      return;
-    }
-
-    if (user && isSuperAdmin()) {
-      fetchClients();
-    }
-  }, [user, authLoading, isSuperAdmin, router, currentPage, searchTerm, statusFilter]);
-
-  const fetchClients = async () => {
+  const fetchClients = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -114,7 +99,23 @@ export default function ClientManagement() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiUrl, currentPage, searchTerm, statusFilter]);
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/auth/login');
+      return;
+    }
+
+    if (!authLoading && user && !isSuperAdmin()) {
+      router.push('/dashboard');
+      return;
+    }
+
+    if (user && isSuperAdmin()) {
+      fetchClients();
+    }
+  }, [user, authLoading, isSuperAdmin, router, currentPage, searchTerm, statusFilter, fetchClients]);
 
   const handleToggleStatus = async (clientId: string) => {
     try {
@@ -308,10 +309,12 @@ export default function ClientManagement() {
                   <td className="px-6 py-4">
                     <div className="flex items-center">
                       {client.logo_url ? (
-                        <img
+                        <NextImage
                           src={client.logo_url}
                           alt={client.client_name}
-                          className="h-10 w-10 rounded-full mr-3"
+                          width={40}
+                          height={40}
+                          className="h-10 w-10 rounded-full mr-3 object-cover"
                         />
                       ) : (
                         <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center mr-3">
@@ -464,10 +467,12 @@ export default function ClientManagement() {
               <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
                 <div className="flex items-center gap-3 mb-2">
                   {clientToDelete.logo_url ? (
-                    <img
+                    <NextImage
                       src={clientToDelete.logo_url}
                       alt={clientToDelete.client_name}
-                      className="h-10 w-10 rounded-full"
+                      width={40}
+                      height={40}
+                      className="h-10 w-10 rounded-full object-cover"
                     />
                   ) : (
                     <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">

@@ -29,7 +29,11 @@
       "Bash(python3:*)",
       "Bash(pip3 list:*)",
       "Bash(/home/development1/Desktop/mj-billing/backend/venv/bin/pip install -r /home/development1/Desktop/mj-billing/backend/requirements.txt)",
-      "Bash(./venv/bin/flask run:*)"
+      "Bash(./venv/bin/flask run:*)",
+      "Bash(./venv/bin/pip install:*)",
+      "Bash(pkill:*)",
+      "Bash(./venv/bin/python:*)",
+      "Bash(lsof:*)"
     ],
     "deny": [],
     "ask": [],

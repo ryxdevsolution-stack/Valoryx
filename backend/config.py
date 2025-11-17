@@ -33,17 +33,21 @@ class Config:
     SQLALCHEMY_ENGINE_OPTIONS = {
         "pool_pre_ping": True,
         "pool_recycle": 300,
-        "pool_size": 10,
-        "max_overflow": 20,
-        "pool_timeout": 30,
+        "pool_size": 20,  # Increased from 10
+        "max_overflow": 30,  # Increased from 20
+        "pool_timeout": 10,  # Reduced from 30
         "echo": False,
+        "execution_options": {
+            "compiled_cache": {},  # Enable query compilation caching
+        },
         "connect_args": {
-            "connect_timeout": 10,
+            "connect_timeout": 5,  # Reduced from 10
             "keepalives": 1,
-            "keepalives_idle": 30,
-            "keepalives_interval": 10,
-            "keepalives_count": 5,
+            "keepalives_idle": 10,  # Reduced from 30
+            "keepalives_interval": 5,  # Reduced from 10
+            "keepalives_count": 3,  # Reduced from 5
             "application_name": "mj-billing-backend",
+            "options": "-c statement_timeout=5000",  # 5 second query timeout
         },
     }
 

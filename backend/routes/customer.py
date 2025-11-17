@@ -1,9 +1,11 @@
 from flask import Blueprint, jsonify, g, request
 from extensions import db
 from models.billing_model import GSTBilling, NonGSTBilling
+from models.customer_model import Customer
 from utils.auth_middleware import authenticate
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta
+import uuid
 
 customer_bp = Blueprint('customer', __name__)
 
@@ -245,3 +247,135 @@ def get_customer_details(phone):
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch customer details', 'message': str(e)}), 500
+
+
+@customer_bp.route('/next-code', methods=['GET'])
+@authenticate
+def get_next_customer_code():
+    """Get the next available customer code"""
+    try:
+        client_id = g.user['client_id']
+
+        # Get the maximum customer code for this client
+        max_code = db.session.query(func.max(Customer.customer_code)).filter_by(client_id=client_id).scalar()
+
+        # If no customers exist, start from 100
+        next_code = (max_code + 1) if max_code else 100
+
+        return jsonify({
+            'success': True,
+            'next_code': next_code
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to get next customer code', 'message': str(e)}), 500
+
+
+@customer_bp.route('/code/<int:customer_code>', methods=['GET'])
+@authenticate
+def get_customer_by_code(customer_code):
+    """Get customer details by customer code"""
+    try:
+        client_id = g.user['client_id']
+
+        # Find customer by code
+        customer = Customer.query.filter_by(
+            client_id=client_id,
+            customer_code=customer_code
+        ).first()
+
+        if not customer:
+            return jsonify({'error': 'Customer not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'customer': customer.to_dict()
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch customer', 'message': str(e)}), 500
+
+
+@customer_bp.route('/create', methods=['POST'])
+@authenticate
+def create_customer():
+    """Create a new customer with auto-generated code"""
+    try:
+        client_id = g.user['client_id']
+        data = request.get_json()
+
+        # Validate required fields
+        if not data.get('customer_name') or not data.get('customer_phone'):
+            return jsonify({'error': 'Customer name and phone are required'}), 400
+
+        # Check if customer already exists by phone
+        existing_customer = Customer.query.filter_by(
+            client_id=client_id,
+            customer_phone=data.get('customer_phone')
+        ).first()
+
+        if existing_customer:
+            return jsonify({
+                'success': True,
+                'customer': existing_customer.to_dict(),
+                'message': 'Customer already exists'
+            }), 200
+
+        # Get next customer code
+        max_code = db.session.query(func.max(Customer.customer_code)).filter_by(client_id=client_id).scalar()
+        next_code = (max_code + 1) if max_code else 100
+
+        # Create new customer
+        new_customer = Customer(
+            customer_id=str(uuid.uuid4()),
+            client_id=client_id,
+            customer_code=next_code,
+            customer_name=data.get('customer_name'),
+            customer_phone=data.get('customer_phone'),
+            customer_email=data.get('customer_email', ''),
+            customer_address=data.get('customer_address', ''),
+            customer_gstin=data.get('customer_gstin', ''),
+            customer_city=data.get('customer_city', ''),
+            customer_state=data.get('customer_state', ''),
+            customer_pincode=data.get('customer_pincode', ''),
+            notes=data.get('notes', ''),
+            status='active'
+        )
+
+        db.session.add(new_customer)
+        db.session.commit()
+
+        return jsonify({
+            'success': True,
+            'customer': new_customer.to_dict(),
+            'message': 'Customer created successfully'
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to create customer', 'message': str(e)}), 500
+
+
+@customer_bp.route('/phone/<phone>', methods=['GET'])
+@authenticate
+def get_customer_by_phone(phone):
+    """Get customer by phone number"""
+    try:
+        client_id = g.user['client_id']
+
+        # Find customer by phone
+        customer = Customer.query.filter_by(
+            client_id=client_id,
+            customer_phone=phone
+        ).first()
+
+        if not customer:
+            return jsonify({'error': 'Customer not found'}), 404
+
+        return jsonify({
+            'success': True,
+            'customer': customer.to_dict()
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch customer', 'message': str(e)}), 500

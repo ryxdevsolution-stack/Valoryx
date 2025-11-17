@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useClient } from '@/contexts/ClientContext';
 import axios from 'axios';
@@ -102,6 +102,30 @@ export default function CreateClient() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
+  const fetchPermissions = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`${apiUrl}/permissions/all`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setAvailablePermissions(response.data.permissions || []);
+    } catch (error) {
+      console.error('Error fetching permissions:', error);
+    }
+  }, [apiUrl]);
+
+  const fetchPermissionTemplates = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(`${apiUrl}/admin/permission-templates`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      setPermissionTemplates(response.data.templates || {});
+    } catch (error) {
+      console.error('Error fetching permission templates:', error);
+    }
+  }, [apiUrl]);
+
   useEffect(() => {
     if (!authLoading && !user) {
       router.push('/auth/login');
@@ -117,31 +141,7 @@ export default function CreateClient() {
       fetchPermissions();
       fetchPermissionTemplates();
     }
-  }, [user, authLoading, isSuperAdmin, router]);
-
-  const fetchPermissions = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`${apiUrl}/permissions/all`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setAvailablePermissions(response.data.permissions || []);
-    } catch (error) {
-      console.error('Error fetching permissions:', error);
-    }
-  };
-
-  const fetchPermissionTemplates = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`${apiUrl}/admin/permission-templates`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
-      setPermissionTemplates(response.data.templates || {});
-    } catch (error) {
-      console.error('Error fetching permission templates:', error);
-    }
-  };
+  }, [user, authLoading, isSuperAdmin, router, fetchPermissions, fetchPermissionTemplates]);
 
   const handleTemplateChange = (templateKey: string) => {
     setSelectedTemplate(templateKey);
@@ -487,7 +487,7 @@ export default function CreateClient() {
                 Logo URL
               </label>
               <div className="relative">
-                <Image className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
+                <Image className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" aria-hidden="true" aria-label="Logo icon" />
                 <input
                   type="url"
                   name="logo_url"

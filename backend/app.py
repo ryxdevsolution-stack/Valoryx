@@ -18,8 +18,10 @@ def create_app():
     CORS(app,
      origins=["https://mj-billing.vercel.app","http://localhost:3000","http://localhost:3001"],
      supports_credentials=True,
-     methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-     allow_headers=['Content-Type', 'Authorization'])
+     methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
+     allow_headers=['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+     expose_headers=['Content-Type', 'Authorization'],
+     max_age=3600)
 
 
     # Initialize database with error handling
@@ -99,7 +101,7 @@ def create_app():
     
     if client_bp:
         try:
-            app.register_blueprint(client_bp, url_prefix='/api/client')
+            app.register_blueprint(client_bp, url_prefix='/api/clients')
             blueprints_registered.append('client')
         except Exception as e:
             print(f"Warning: Could not register client blueprint: {e}")

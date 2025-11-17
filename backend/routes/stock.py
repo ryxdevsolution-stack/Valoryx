@@ -193,6 +193,7 @@ def get_stock():
         # Get query parameters
         category = request.args.get('category')
         search = request.args.get('search')
+        limit = request.args.get('limit', type=int)  # Optional limit
 
         # Build query
         query = StockEntry.query.filter_by(client_id=client_id)
@@ -203,8 +204,15 @@ def get_stock():
         if search:
             query = query.filter(StockEntry.product_name.ilike(f'%{search}%'))
 
+        # Apply ordering
+        query = query.order_by(StockEntry.product_name)
+
+        # Apply limit if provided (for better performance)
+        if limit:
+            query = query.limit(limit)
+
         # Get results
-        stock_entries = query.order_by(StockEntry.product_name).all()
+        stock_entries = query.all()
 
         return jsonify({
             'success': True,

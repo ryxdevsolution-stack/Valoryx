@@ -1,9 +1,10 @@
 'use client';
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useClient } from '@/contexts/ClientContext';
 import axios from 'axios';
+import NextImage from 'next/image';
 import {
   Building2,
   Mail,
@@ -103,23 +104,45 @@ export default function ClientDetailsPage() {
   const [allPermissions, setAllPermissions] = useState<Permission[]>([]);
   const [permissionsByCategory, setPermissionsByCategory] = useState<Record<string, Permission[]>>({});
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.push('/auth/login');
-      return;
+  const fetchClientUsers = useCallback(async () => {
+    try {
+      setLoadingUsers(true);
+      const token = localStorage.getItem('token');
+      const response = await axios.get(
+        `${apiUrl}/admin/clients/${clientId}/users`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+      setClientUsers(response.data.users || []);
+    } catch (err: any) {
+      console.error('Error fetching client users:', err);
+    } finally {
+      setLoadingUsers(false);
     }
+  }, [apiUrl, clientId]);
 
-    if (!authLoading && user && !isSuperAdmin()) {
-      router.push('/dashboard');
-      return;
+  const fetchAllPermissions = useCallback(async () => {
+    try {
+      const token = localStorage.getItem('token');
+      const response = await axios.get(
+        `${apiUrl}/permissions/all`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
+      setAllPermissions(response.data.permissions || []);
+      setPermissionsByCategory(response.data.categorized || {});
+    } catch (err: any) {
+      console.error('Error fetching permissions:', err);
     }
+  }, [apiUrl]);
 
-    if (user && isSuperAdmin() && clientId) {
-      fetchClientDetails();
-    }
-  }, [user, authLoading, isSuperAdmin, router, clientId]);
-
-  const fetchClientDetails = async () => {
+  const fetchClientDetails = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -144,45 +167,23 @@ export default function ClientDetailsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [apiUrl, clientId, fetchClientUsers, fetchAllPermissions]);
 
-  const fetchClientUsers = async () => {
-    try {
-      setLoadingUsers(true);
-      const token = localStorage.getItem('token');
-      const response = await axios.get(
-        `${apiUrl}/admin/clients/${clientId}/users`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
-      setClientUsers(response.data.users || []);
-    } catch (err: any) {
-      console.error('Error fetching client users:', err);
-    } finally {
-      setLoadingUsers(false);
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/auth/login');
+      return;
     }
-  };
 
-  const fetchAllPermissions = async () => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get(
-        `${apiUrl}/permissions/all`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
-      setAllPermissions(response.data.permissions || []);
-      setPermissionsByCategory(response.data.categorized || {});
-    } catch (err: any) {
-      console.error('Error fetching permissions:', err);
+    if (!authLoading && user && !isSuperAdmin()) {
+      router.push('/dashboard');
+      return;
     }
-  };
+
+    if (user && isSuperAdmin() && clientId) {
+      fetchClientDetails();
+    }
+  }, [user, authLoading, isSuperAdmin, router, clientId, fetchClientDetails]);
 
   const validateForm = (): boolean => {
     const newErrors: Partial<ClientDetails> = {};
@@ -365,10 +366,12 @@ export default function ClientDetailsPage() {
         <div className="flex justify-between items-center">
           <div className="flex items-center gap-4">
             {client.logo_url ? (
-              <img
+              <NextImage
                 src={client.logo_url}
                 alt={client.client_name}
-                className="h-16 w-16 rounded-full"
+                width={64}
+                height={64}
+                className="h-16 w-16 rounded-full object-cover"
               />
             ) : (
               <div className="h-16 w-16 rounded-full bg-blue-100 flex items-center justify-center">

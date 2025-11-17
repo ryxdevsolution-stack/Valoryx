@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { useRouter } from 'next/navigation'
@@ -117,6 +117,21 @@ export default function UnifiedBillingPage() {
   // Get current active tab
   const activeTab = billTabs.find((tab) => tab.id === activeTabId) || billTabs[0]
 
+  const loadInitialData = useCallback(async () => {
+    try {
+      const [productsData, billsResponse] = await Promise.all([
+        fetchProducts(),
+        api.get('/billing/list?limit=1'),
+      ])
+      setProducts(productsData)
+
+      const bills = billsResponse.data.bills || []
+      setNextBillNumber(bills.length > 0 ? bills[0].bill_number + 1 : 1)
+    } catch (error) {
+      setNextBillNumber(1)
+    }
+  }, [fetchProducts])
+
   useEffect(() => {
     if (!hasInitialized.current) {
       hasInitialized.current = true
@@ -149,22 +164,7 @@ export default function UnifiedBillingPage() {
       window.removeEventListener('keydown', handleKeyDown)
       document.removeEventListener('mousedown', handleClickOutside)
     }
-  }, [])
-
-  const loadInitialData = async () => {
-    try {
-      const [productsData, billsResponse] = await Promise.all([
-        fetchProducts(),
-        api.get('/billing/list?limit=1'),
-      ])
-      setProducts(productsData)
-
-      const bills = billsResponse.data.bills || []
-      setNextBillNumber(bills.length > 0 ? bills[0].bill_number + 1 : 1)
-    } catch (error) {
-      setNextBillNumber(1)
-    }
-  }
+  }, [loadInitialData])
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('en-IN', {

@@ -1,7 +1,8 @@
 'use client'
 
-import { useRef, useEffect } from 'react'
+import { useRef, useEffect, useCallback } from 'react'
 import { useReactToPrint } from 'react-to-print'
+import NextImage from 'next/image'
 
 interface BillItem {
   product_name: string
@@ -89,13 +90,13 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
         }
       }
     `,
-    onBeforePrint: () => {
+    onBeforePrint: useCallback(() => {
       console.log('Starting print...')
       return Promise.resolve()
-    },
-    onAfterPrint: () => {
+    }, []),
+    onAfterPrint: useCallback(() => {
       console.log('Print completed')
-    },
+    }, []),
   })
 
   // Auto-trigger print when component mounts
@@ -108,7 +109,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
       }, 500)
       return () => clearTimeout(timer)
     }
-  }, [autoPrint])
+  }, [autoPrint, handlePrint])
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
@@ -168,11 +169,13 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
               {/* Header */}
               <div className="text-center" style={{ marginTop: '3mm', marginBottom: '3mm' }}>
                 {safeClientInfo.logo_url && (
-                  <div style={{ margin: '0 auto 2mm', width: '20mm', height: '20mm' }}>
-                    <img
+                  <div style={{ margin: '0 auto 2mm', width: '20mm', height: '20mm', position: 'relative' }}>
+                    <NextImage
                       src={safeClientInfo.logo_url}
                       alt={safeClientInfo.client_name}
-                      style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+                      fill
+                      style={{ objectFit: 'contain' }}
+                      unoptimized
                     />
                   </div>
                 )}

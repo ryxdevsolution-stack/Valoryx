@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
 import { useClient } from '@/contexts/ClientContext';
 import axios from 'axios';
@@ -61,23 +61,7 @@ export default function UserManagement() {
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
   const [showBulkActions, setShowBulkActions] = useState(false);
 
-  useEffect(() => {
-    if (!authLoading && !user) {
-      router.push('/auth/login');
-      return;
-    }
-
-    if (!authLoading && user && !isSuperAdmin()) {
-      router.push('/dashboard');
-      return;
-    }
-
-    if (user && isSuperAdmin()) {
-      fetchUsers();
-    }
-  }, [user, authLoading, isSuperAdmin, router, currentPage, searchTerm, roleFilter, statusFilter]);
-
-  const fetchUsers = async () => {
+  const fetchUsers = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -100,7 +84,23 @@ export default function UserManagement() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [currentPage, searchTerm, roleFilter, statusFilter]);
+
+  useEffect(() => {
+    if (!authLoading && !user) {
+      router.push('/auth/login');
+      return;
+    }
+
+    if (!authLoading && user && !isSuperAdmin()) {
+      router.push('/dashboard');
+      return;
+    }
+
+    if (user && isSuperAdmin()) {
+      fetchUsers();
+    }
+  }, [user, authLoading, isSuperAdmin, router, fetchUsers]);
 
   const handleToggleStatus = async (userId: string, currentStatus: boolean) => {
     try {

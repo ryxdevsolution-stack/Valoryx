@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useState, useCallback } from 'react';
 import { useRouter, useParams } from 'next/navigation';
 import { useClient } from '@/contexts/ClientContext';
 import axios from 'axios';
@@ -76,24 +76,7 @@ export default function UserDetailPage() {
   const [showPasswordReset, setShowPasswordReset] = useState(false);
   const [newPassword, setNewPassword] = useState('');
 
-  useEffect(() => {
-    if (!authLoading && !currentUser) {
-      router.push('/auth/login');
-      return;
-    }
-
-    if (!authLoading && currentUser && !isSuperAdmin()) {
-      router.push('/dashboard');
-      return;
-    }
-
-    if (currentUser && isSuperAdmin()) {
-      fetchUserDetails();
-      fetchPermissions();
-    }
-  }, [currentUser, authLoading, isSuperAdmin, router, userId]);
-
-  const fetchUserDetails = async () => {
+  const fetchUserDetails = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
@@ -114,7 +97,24 @@ export default function UserDetailPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [userId]);
+
+  useEffect(() => {
+    if (!authLoading && !currentUser) {
+      router.push('/auth/login');
+      return;
+    }
+
+    if (!authLoading && currentUser && !isSuperAdmin()) {
+      router.push('/dashboard');
+      return;
+    }
+
+    if (currentUser && isSuperAdmin()) {
+      fetchUserDetails();
+      fetchPermissions();
+    }
+  }, [currentUser, authLoading, isSuperAdmin, router, userId, fetchUserDetails]);
 
   const fetchPermissions = async () => {
     try {

@@ -26,7 +26,8 @@ export function usePermissions() {
       if (!access && pathname !== redirectTo) {
         router.push(redirectTo)
       }
-    }, [user, permission, pathname, redirectTo, router])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [permission, pathname, redirectTo, router])
 
     return { isChecking, hasAccess }
   }
