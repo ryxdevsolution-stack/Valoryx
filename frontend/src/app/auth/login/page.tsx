@@ -1,95 +1,353 @@
 'use client'
 
 import { useState } from 'react'
+import { useRouter } from 'next/navigation'
+import dynamic from 'next/dynamic'
+import { useDataPreload } from '@/hooks/useDataPreload'
 import { useClient } from '@/contexts/ClientContext'
-import Link from 'next/link'
+import LogoAnimation from '@/components/LogoAnimation'
+import Image from 'next/image'
+import api from '@/lib/api'
+
+// Dynamically import ParticleRing with no SSR to avoid Three.js errors
+const ParticleRing = dynamic(() => import('@/components/ParticleRing'), {
+  ssr: false
+})
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
-  const { login } = useClient()
+  const [showSplash, setShowSplash] = useState(false)
+  const [clientLogoUrl, setClientLogoUrl] = useState<string | undefined>()
+  const [isFlipped, setIsFlipped] = useState(false)
+  const [funnyMessage, setFunnyMessage] = useState('')
+  const router = useRouter()
+  const { setClientData } = useClient()
+
+  // Preload data when splash screen is showing
+  useDataPreload(showSplash)
+
+  const funnyMessages = [
+    "Oops! Did you forget something? 🤔 Maybe... like, EVERYTHING?",
+    "Nice try! But you need to actually type something first! 😅",
+    "Empty fields? Really? Even my grandma fills forms better! 👵",
+    "Hello? Is anyone there? Your email and password are missing! 📧🔐",
+    "Pro tip: Login requires actual credentials, not just good vibes! ✨",
+    "Error 404: Email and Password not found! 🔍",
+    "I see you like living dangerously... without credentials! 😎",
+    "Did you think I wouldn't notice? Fill in the blanks! 📝"
+  ]
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError('')
+
+    // Check if fields are empty
+    if (!email.trim() || !password.trim()) {
+      const randomMessage = funnyMessages[Math.floor(Math.random() * funnyMessages.length)]
+      setFunnyMessage(randomMessage)
+      setIsFlipped(true)
+
+      // Flip back after 3 seconds
+      setTimeout(() => {
+        setIsFlipped(false)
+      }, 3000)
+
+      return
+    }
+
     setLoading(true)
 
     try {
-      await login(email, password)
+      // Perform login API call directly (without auto-redirect)
+      const response = await api.post('/auth/login', { email, password })
+      const { token, user, client_id, client_name, client_logo } = response.data
+
+      const userData = {
+        user_id: user.user_id,
+        email: user.email,
+        role: user.role,
+        is_super_admin: user.is_super_admin,
+        permissions: user.permissions
+      }
+
+      const clientData = {
+        client_id,
+        client_name,
+        logo_url: client_logo,
+      }
+
+      // Update ClientContext (this also updates localStorage and axios headers)
+      setClientData(userData, clientData, token)
+
+      // Show splash screen with client logo
+      setClientLogoUrl(client_logo)
+      setShowSplash(true)
+      setLoading(false)
     } catch (err: any) {
-      setError(err.message || 'Login failed')
-    } finally {
+      setError(err.response?.data?.error || 'Login failed')
       setLoading(false)
     }
   }
 
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100 dark:from-gray-900 dark:to-gray-800 px-4">
-      <div className="max-w-md w-full bg-white dark:bg-gray-800 rounded-lg shadow-xl p-8">
-        <div className="text-center mb-8">
-          <h1 className="text-4xl font-bold text-blue-600 dark:text-blue-400 mb-2">RYX</h1>
-          <p className="text-gray-600 dark:text-gray-400">Billing Software</p>
-        </div>
+  const handleSplashComplete = () => {
+    // Navigate to billing after splash animation completes
+    router.push('/billing/create')
+  }
 
-        <h2 className="text-2xl font-semibold text-gray-800 dark:text-white mb-6 text-center">
-          Login to Your Account
-        </h2>
-
-        {error && (
-          <div className="bg-red-50 dark:bg-red-900/30 border border-red-200 dark:border-red-800 text-red-700 dark:text-red-400 px-4 py-3 rounded mb-4">
-            {error}
-          </div>
-        )}
-
-        <form onSubmit={handleSubmit} className="space-y-6">
-          <div>
-            <label htmlFor="email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Email Address
-            </label>
-            <input
-              id="email"
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              placeholder="you@example.com"
-            />
-          </div>
-
-          <div>
-            <label htmlFor="password" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-              Password
-            </label>
-            <input
-              id="password"
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent outline-none transition bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-              placeholder="••••••••"
-            />
-          </div>
-
-          <button
-            type="submit"
-            disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-700 dark:bg-blue-700 dark:hover:bg-blue-600 text-white font-semibold py-3 px-4 rounded-lg transition disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {loading ? 'Logging in...' : 'Login'}
-          </button>
-        </form>
-
-        <p className="mt-6 text-center text-sm text-gray-600 dark:text-gray-400">
-           Don&apos;t have an account?{' '}
-          <Link href="/auth/register" className="text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 font-medium">
-            Register here
-          </Link>
-        </p>
+  // Show splash screen overlay
+  if (showSplash) {
+    return (
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-gradient-to-br from-slate-50 via-blue-50 to-indigo-50 dark:from-slate-950 dark:via-slate-900 dark:to-slate-950">
+        <LogoAnimation
+          onComplete={handleSplashComplete}
+          logoUrl={clientLogoUrl}
+          duration={5000}
+        />
       </div>
+    )
+  }
+
+  return (
+    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-amber-50 via-yellow-50/50 to-slate-100 relative overflow-hidden">
+      {/* 3D Particle Ring Background */}
+      <div className="absolute inset-0 z-0 opacity-30">
+        <ParticleRing />
+      </div>
+
+      {/* Rich Gradient Overlays Matching Logo */}
+      <div className="absolute inset-0 pointer-events-none">
+        <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-amber-200/30 via-yellow-100/20 to-transparent"></div>
+        <div className="absolute bottom-0 right-0 w-full h-full bg-gradient-to-tl from-slate-300/20 via-gray-200/15 to-transparent"></div>
+        <div className="absolute inset-0 bg-gradient-to-r from-amber-300/20 via-transparent to-amber-200/15"></div>
+      </div>
+
+      {/* Animated Gradient Orbs */}
+      <div className="absolute inset-0 pointer-events-none opacity-60">
+        <div className="absolute top-0 -left-1/4 w-[600px] h-[600px] bg-gradient-to-br from-amber-300/40 via-yellow-200/30 to-transparent rounded-full blur-3xl animate-pulse-slow"></div>
+        <div className="absolute bottom-0 -right-1/4 w-[500px] h-[500px] bg-gradient-to-tl from-amber-400/25 via-orange-200/20 to-transparent rounded-full blur-3xl animate-pulse-slower"></div>
+        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-gradient-to-r from-yellow-200/25 via-transparent to-amber-300/20 rounded-full blur-3xl animate-rotate-slow"></div>
+        <div className="absolute top-1/3 left-1/3 w-[400px] h-[400px] bg-gradient-to-bl from-amber-200/30 to-transparent rounded-full blur-2xl animate-float"></div>
+      </div>
+
+      {/* Subtle Elegant Pattern */}
+      <div className="absolute inset-0 pointer-events-none opacity-8">
+        <div className="absolute top-0 left-0 w-full h-full" style={{
+          backgroundImage: `radial-gradient(circle at 25% 25%, rgba(251, 191, 36, 0.2) 1px, transparent 1px),
+                           radial-gradient(circle at 75% 75%, rgba(217, 119, 6, 0.15) 1px, transparent 1px)`,
+          backgroundSize: '60px 60px'
+        }}></div>
+      </div>
+
+      {/* Background Logo */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none -mt-8 sm:-mt-12 md:-mt-16 animate-logo-breathe">
+        <div className="relative w-[200%] h-[100%] sm:w-[180%] sm:h-[95%] md:w-[160%] md:h-[90%]">
+          <Image
+            src="/RYX_Logo.png"
+            alt="RYX"
+            fill
+            className="object-contain scale-[2] sm:scale-[1.75] md:scale-[1.5] opacity-95"
+            priority
+            sizes="200vw"
+          />
+        </div>
+      </div>
+
+      {/* Card Container */}
+      <div className="w-full max-w-md relative z-10 animate-float">
+        {/* Card Flip Container */}
+        <div className={`relative w-full transition-all duration-700 transform-style-3d ${isFlipped ? 'rotate-y-180' : ''}`}>
+          {/* Front of Card - Login Form */}
+          <div className={`backdrop-blur-[2px] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.3)] border border-white/70 p-8 sm:p-10 bg-white/25 backface-hidden ${isFlipped ? 'invisible' : 'visible'}`}>
+            {/* Header */}
+            <div className="mb-8 text-center">
+              <h2 className="text-3xl font-bold text-slate-900 mb-2">Welcome Back</h2>
+              <p className="text-slate-600">Sign in to access your billing dashboard</p>
+            </div>
+
+          {error && (
+            <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-lg mb-6 animate-shake">
+              {error}
+            </div>
+          )}
+
+          <form onSubmit={handleSubmit} className="space-y-5">
+            <div className="relative">
+              <label htmlFor="email" className="block text-sm font-semibold text-slate-700 mb-2">
+                Email Address
+              </label>
+              <input
+                id="email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none transition-all duration-200 text-slate-900 placeholder-slate-400"
+                placeholder="Enter your email"
+              />
+            </div>
+
+            <div className="relative">
+              <label htmlFor="password" className="block text-sm font-semibold text-slate-700 mb-2">
+                Password
+              </label>
+              <input
+                id="password"
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none transition-all duration-200 text-slate-900 placeholder-slate-400"
+                placeholder="Enter your password"
+              />
+            </div>
+
+            <button
+              type="submit"
+              disabled={loading}
+              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-3.5 px-6 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg mt-6"
+            >
+              {loading ? (
+                <span className="flex items-center justify-center gap-2">
+                  <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div>
+                  Signing in...
+                </span>
+              ) : (
+                'Sign In'
+              )}
+            </button>
+          </form>
+          </div>
+
+          {/* Back of Card - Funny Message */}
+          <div className={`absolute inset-0 backdrop-blur-md rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.3)] border border-white/70 p-8 sm:p-10 bg-gradient-to-br from-red-50/80 to-orange-50/80 flex items-center justify-center transform rotate-y-180 backface-hidden ${isFlipped ? 'visible' : 'invisible'}`}>
+            <div className="text-center animate-bounce-in">
+              <div className="mb-6">
+                <div className="text-8xl font-black text-red-600 animate-shake-intense mb-4">!</div>
+              </div>
+              <p className="text-4xl font-black text-slate-900 mb-6 animate-fade-in-delay">OOPS!</p>
+              <p className="text-xl font-semibold text-slate-800 leading-relaxed px-4 animate-fade-in-delay-2">
+                {funnyMessage}
+              </p>
+              <div className="mt-8 text-sm font-medium text-slate-600 animate-pulse">
+                Flipping back in 3 seconds...
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <style jsx>{`
+        @keyframes shake {
+          0%, 100% { transform: translateX(0); }
+          25% { transform: translateX(-5px); }
+          75% { transform: translateX(5px); }
+        }
+        @keyframes shake-intense {
+          0%, 100% { transform: rotate(0deg) scale(1); }
+          10% { transform: rotate(-8deg) scale(1.1); }
+          20% { transform: rotate(8deg) scale(1.2); }
+          30% { transform: rotate(-10deg) scale(1.1); }
+          40% { transform: rotate(10deg) scale(1.2); }
+          50% { transform: rotate(-8deg) scale(1.15); }
+          60% { transform: rotate(8deg) scale(1.1); }
+          70% { transform: rotate(-6deg) scale(1.05); }
+          80% { transform: rotate(6deg) scale(1.1); }
+          90% { transform: rotate(-4deg) scale(1.05); }
+        }
+        @keyframes float {
+          0%, 100% { transform: translateY(0px); }
+          50% { transform: translateY(-10px); }
+        }
+        @keyframes pulse-slow {
+          0%, 100% { opacity: 0.3; transform: scale(1); }
+          50% { opacity: 0.5; transform: scale(1.1); }
+        }
+        @keyframes pulse-slower {
+          0%, 100% { opacity: 0.3; transform: scale(1); }
+          50% { opacity: 0.6; transform: scale(1.15); }
+        }
+        @keyframes rotate-slow {
+          0% { transform: translate(-50%, -50%) rotate(0deg); }
+          100% { transform: translate(-50%, -50%) rotate(360deg); }
+        }
+        @keyframes logo-breathe {
+          0%, 100% { transform: scale(1); opacity: 0.95; }
+          50% { transform: scale(1.02); opacity: 1; }
+        }
+        @keyframes bounce-in {
+          0% { transform: scale(0.3); opacity: 0; }
+          50% { transform: scale(1.05); }
+          70% { transform: scale(0.9); }
+          100% { transform: scale(1); opacity: 1; }
+        }
+        @keyframes emoji-wiggle {
+          0% { transform: rotate(0deg) scale(1) translateY(0); }
+          10% { transform: rotate(-20deg) scale(1.3) translateY(-20px); }
+          20% { transform: rotate(20deg) scale(0.8) translateY(10px); }
+          30% { transform: rotate(-25deg) scale(1.4) translateY(-15px); }
+          40% { transform: rotate(25deg) scale(0.9) translateY(5px); }
+          50% { transform: rotate(-20deg) scale(1.3) translateY(-25px); }
+          60% { transform: rotate(15deg) scale(1.1) translateY(0); }
+          70% { transform: rotate(-15deg) scale(1.2) translateY(-10px); }
+          80% { transform: rotate(10deg) scale(0.95) translateY(5px); }
+          90% { transform: rotate(-5deg) scale(1.05) translateY(-5px); }
+          100% { transform: rotate(0deg) scale(1) translateY(0); }
+        }
+        @keyframes fade-in-delay {
+          0% { opacity: 0; transform: translateY(10px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        @keyframes fade-in-delay-2 {
+          0% { opacity: 0; transform: translateY(10px); }
+          100% { opacity: 1; transform: translateY(0); }
+        }
+        .animate-shake {
+          animation: shake 0.5s ease-in-out;
+        }
+        .animate-shake-intense {
+          animation: shake-intense 0.8s ease-in-out infinite;
+          display: inline-block;
+        }
+        .animate-float {
+          animation: float 3s ease-in-out infinite;
+        }
+        .animate-emoji-wiggle {
+          animation: emoji-wiggle 1.5s ease-in-out infinite;
+          display: inline-block;
+        }
+        .animate-fade-in-delay {
+          animation: fade-in-delay 0.5s ease-out 0.3s both;
+        }
+        .animate-fade-in-delay-2 {
+          animation: fade-in-delay-2 0.5s ease-out 0.5s both;
+        }
+        .animate-pulse-slow {
+          animation: pulse-slow 4s ease-in-out infinite;
+        }
+        .animate-pulse-slower {
+          animation: pulse-slower 6s ease-in-out infinite;
+        }
+        .animate-rotate-slow {
+          animation: rotate-slow 20s linear infinite;
+        }
+        .animate-logo-breathe {
+          animation: logo-breathe 4s ease-in-out infinite;
+        }
+        .animate-bounce-in {
+          animation: bounce-in 0.6s ease-out;
+        }
+        .transform-style-3d {
+          transform-style: preserve-3d;
+        }
+        .backface-hidden {
+          backface-visibility: hidden;
+          -webkit-backface-visibility: hidden;
+        }
+        .rotate-y-180 {
+          transform: rotateY(180deg);
+        }
+      `}</style>
     </div>
   )
 }

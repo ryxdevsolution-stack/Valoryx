@@ -25,7 +25,9 @@ import {
   Mail,
   MapPin,
   Trash2,
-  AlertTriangle
+  AlertTriangle,
+  Upload,
+  Image as ImageIcon
 } from 'lucide-react';
 
 interface Client {
