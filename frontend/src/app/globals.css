@@ -113,6 +113,40 @@ html {
   animation: pulse-strong 1s ease-in-out infinite;
 }
 
+/* Print Media Reset - Ensure clean printing */
+@media print {
+  /* Reset all animations and transitions for print */
+  * {
+    animation: none !important;
+    transition: none !important;
+    -webkit-animation: none !important;
+    -webkit-transition: none !important;
+  }
+
+  /* Reset body styles for print */
+  body {
+    background: white !important;
+    color: black !important;
+    font-size: 12pt !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
+
+  /* Hide non-printable elements */
+  .no-print,
+  .print\\:hidden {
+    display: none !important;
+  }
+
+  /* Ensure bill receipt is visible */
+  .bill-receipt {
+    display: block !important;
+    position: static !important;
+    visibility: visible !important;
+    opacity: 1 !important;
+  }
+}
+
 /* Notification Animations */
 @keyframes slide-in-right {
   from {

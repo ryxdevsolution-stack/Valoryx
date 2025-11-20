@@ -1,8 +1,8 @@
 'use client'
 
-import { useRef, useEffect, useCallback } from 'react'
-import { useReactToPrint } from 'react-to-print'
+import { useRef, useEffect, useState } from 'react'
 import NextImage from 'next/image'
+import api from '@/lib/api'
 
 interface BillItem {
   product_name: string
@@ -53,6 +53,8 @@ interface BillPrintPreviewProps {
 export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint = false }: BillPrintPreviewProps) {
   const printRef = useRef<HTMLDivElement>(null)
   const hasAutoPrinted = useRef(false)
+  const [printError, setPrintError] = useState<string | null>(null)
+  const [isPrinting, setIsPrinting] = useState(false)
 
   // Provide default values if clientInfo is undefined
   const safeClientInfo: ClientInfo = clientInfo || {
@@ -64,52 +66,67 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
     logo_url: ''
   }
 
-  const handlePrint = useReactToPrint({
-    contentRef: printRef,
-    documentTitle: `Bill_${bill.bill_number}`,
-    pageStyle: `
-      @page {
-        size: 80mm auto;
-        margin: 0mm;
-      }
-      @media print {
-        html, body {
-          width: 80mm;
-          margin: 0;
-          padding: 0;
-          background: white;
-        }
-        body {
-          width: 80mm !important;
-          min-height: auto !important;
-        }
-        * {
-          -webkit-print-color-adjust: exact !important;
-          print-color-adjust: exact !important;
-          color-adjust: exact !important;
-        }
-      }
-    `,
-    onBeforePrint: useCallback(() => {
-      console.log('Starting print...')
-      return Promise.resolve()
-    }, []),
-    onAfterPrint: useCallback(() => {
-      console.log('Print completed')
-    }, []),
-  })
+  // Direct print function - ALWAYS prints directly without any dialog
+  const handleDirectPrint = async () => {
+    setIsPrinting(true)
+    setPrintError(null)
 
-  // Auto-trigger print when component mounts
+    try {
+      console.log('Sending to printer...')
+
+      // Call backend thermal printer endpoint
+      const response = await api.post('/billing/print', {
+        bill: {
+          bill_number: bill.bill_number,
+          customer_name: bill.customer_name,
+          customer_phone: bill.customer_phone,
+          items: bill.items,
+          subtotal: bill.subtotal,
+          discount_percentage: bill.discount_percentage,
+          discount_amount: bill.discount_amount,
+          gst_amount: bill.gst_amount,
+          final_amount: bill.final_amount,
+          total_amount: bill.total_amount,
+          payment_type: bill.payment_type,
+          created_at: bill.created_at,
+          type: bill.type,
+          cgst: bill.cgst,
+          sgst: bill.sgst,
+          igst: bill.igst
+        },
+        clientInfo: safeClientInfo
+      })
+
+      if (response.data.success) {
+        console.log('Print successful!')
+        // Show success message briefly then close
+        setPrintError(null)
+        setTimeout(() => {
+          onClose()
+        }, 1000)
+      } else {
+        throw new Error(response.data.error || 'Print failed')
+      }
+    } catch (error: any) {
+      console.error('Print failed:', error)
+      setPrintError(error.response?.data?.message || error.message || 'Printer not connected. Please check printer and try again.')
+    } finally {
+      setIsPrinting(false)
+    }
+  }
+
+  // Auto-print immediately when component mounts (if enabled)
   useEffect(() => {
     if (autoPrint && !hasAutoPrinted.current) {
       hasAutoPrinted.current = true
-      // Small delay to ensure the component is fully rendered
+      // Small delay to ensure component is mounted
       const timer = setTimeout(() => {
-        handlePrint()
+        handleDirectPrint()
       }, 500)
       return () => clearTimeout(timer)
     }
-  }, [autoPrint, handlePrint])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoPrint])
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
@@ -443,15 +460,48 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
 
           {/* Print Button - Fixed at bottom */}
           <div className="border-t border-gray-200 p-4 bg-white print:hidden">
+            {/* Error Display */}
+            {printError && (
+              <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
+                <div className="flex items-center gap-2">
+                  <svg className="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zM8.707 7.293a1 1 0 00-1.414 1.414L8.586 10l-1.293 1.293a1 1 0 101.414 1.414L10 11.414l1.293 1.293a1 1 0 001.414-1.414L11.414 10l1.293-1.293a1 1 0 00-1.414-1.414L10 8.586 8.707 7.293z" clipRule="evenodd" />
+                  </svg>
+                  <span>{printError}</span>
+                </div>
+              </div>
+            )}
+
+            {/* Single Direct Print Button - NO OPTIONS, NO PREVIEW */}
             <button
               type="button"
-              onClick={handlePrint}
-              className="w-full px-6 py-3 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors font-medium flex items-center justify-center gap-2"
+              onClick={() => {
+                if (isPrinting) return
+                handleDirectPrint()
+              }}
+              disabled={isPrinting}
+              className={`w-full px-6 py-3 ${
+                !isPrinting
+                  ? 'bg-green-600 hover:bg-green-700 text-white'
+                  : 'bg-gray-400 cursor-not-allowed text-gray-200'
+              } rounded-lg transition-colors font-medium flex items-center justify-center gap-2`}
             >
-              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-              </svg>
-              Proceed to Print
+              {isPrinting ? (
+                <>
+                  <svg className="animate-spin h-5 w-5" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                  </svg>
+                  <span>Sending to Printer...</span>
+                </>
+              ) : (
+                <>
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                  </svg>
+                  <span>Print Bill</span>
+                </>
+              )}
             </button>
           </div>
         </div>
