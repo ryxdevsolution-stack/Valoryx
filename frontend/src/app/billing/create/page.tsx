@@ -64,11 +64,18 @@ export default function UnifiedBillingPage() {
   const productSearchRef = useRef<HTMLInputElement>(null)
   const quantityInputRef = useRef<HTMLInputElement>(null)
   const gstInputRef = useRef<HTMLInputElement>(null)
+  const rateInputRef = useRef<HTMLInputElement>(null)
+  const customerNameRef = useRef<HTMLInputElement>(null)
+  const customerPhoneRef = useRef<HTMLInputElement>(null)
+  const customerGstinRef = useRef<HTMLInputElement>(null)
+  const discountRef = useRef<HTMLInputElement>(null)
+  const amountReceivedRef = useRef<HTMLInputElement>(null)
+  const printButtonRef = useRef<HTMLButtonElement>(null)
 
   const hasInitialized = useRef(false)
 
   // Hardcoded payment types
-  const paymentTypes = ['Cash', 'Card', 'UPI', 'Net Banking', 'Cheque', 'Credit', 'Wallet', 'Other']
+  const paymentTypes = ['Cash', 'Card', 'UPI']
 
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(false)
@@ -136,18 +143,18 @@ export default function UnifiedBillingPage() {
     if (!hasInitialized.current) {
       hasInitialized.current = true
       loadInitialData()
-      barcodeInputRef.current?.focus()
+      productSearchRef.current?.focus()
     }
 
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'F2') {
         e.preventDefault()
-        barcodeInputRef.current?.focus()
+        productSearchRef.current?.focus()
       }
       if (e.key === 'Escape') {
         setBarcodeInput('')
         setShowProductDropdown(false)
-        barcodeInputRef.current?.focus()
+        productSearchRef.current?.focus()
       }
     }
 
@@ -172,6 +179,17 @@ export default function UnifiedBillingPage() {
       month: 'short',
       year: 'numeric',
     })
+  }
+
+  // Handle Enter key navigation between form fields
+  const handleEnterNavigation = (e: React.KeyboardEvent, nextFieldRef: React.RefObject<HTMLInputElement> | null) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      if (nextFieldRef?.current) {
+        nextFieldRef.current.focus()
+        nextFieldRef.current.select()
+      }
+    }
   }
 
   // Tab management functions
@@ -214,7 +232,7 @@ export default function UnifiedBillingPage() {
   const addPaymentSplit = () => {
     const newSplits = [
       ...activeTab.payment_splits,
-      { payment_type: '', amount: 0 },
+      { payment_type: 'Cash', amount: 0 },  // Default to Cash
     ]
     updateActiveTab({ payment_splits: newSplits })
   }
@@ -240,8 +258,16 @@ export default function UnifiedBillingPage() {
 
   // Barcode scanning
   const handleBarcodeScanned = async (e: React.KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === 'Enter' && barcodeInput.trim()) {
+    if (e.key === 'Enter') {
       e.preventDefault()
+
+      // If barcode is empty, move to customer name field
+      if (!barcodeInput.trim()) {
+        customerNameRef.current?.focus()
+        return
+      }
+
+      // Process the barcode
       try {
         const response = await api.get(`/stock/lookup/${barcodeInput.trim()}`)
         const product = response.data.product
@@ -251,6 +277,8 @@ export default function UnifiedBillingPage() {
       } catch (error: any) {
         alert(error.response?.data?.error || 'Product not found')
         setBarcodeInput('')
+        // Move to product search on error
+        productSearchRef.current?.focus()
       }
     }
   }
@@ -472,9 +500,8 @@ export default function UnifiedBillingPage() {
       e.preventDefault()
 
       if (field === 'quantity') {
-        const rateInput = document.querySelector<HTMLInputElement>('input[title*="Enter rate"]')
-        rateInput?.focus()
-        rateInput?.select()
+        rateInputRef.current?.focus()
+        rateInputRef.current?.select()
       } else if (field === 'rate') {
         gstInputRef.current?.focus()
         gstInputRef.current?.select()
@@ -682,11 +709,8 @@ export default function UnifiedBillingPage() {
               </div>
             </div>
 
-            {/* Barcode Scanner - FIRST POSITION */}
-            <div className="p-2 bg-blue-50 dark:bg-blue-900/20 border-b border-gray-200 dark:border-gray-700">
-              <label className="block text-xs font-medium text-blue-700 dark:text-blue-400 mb-1">
-                Barcode Scanner (F2) - Scan First
-              </label>
+            {/* Barcode Scanner - HIDDEN BUT FUNCTIONAL */}
+            <div className="hidden">
               <input
                 ref={barcodeInputRef}
                 type="text"
@@ -699,17 +723,19 @@ export default function UnifiedBillingPage() {
             </div>
 
             {/* Customer Info */}
-            <div className="grid grid-cols-1 md:grid-cols-12 gap-2 p-2">
+            <div className="grid grid-cols-1 md:grid-cols-10 gap-2 p-2">
               {/* Customer Name - NOT REQUIRED */}
               <div className="md:col-span-3">
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Customer Name
                 </label>
                 <input
+                  ref={customerNameRef}
                   type="text"
                   placeholder="Optional"
                   value={activeTab.customer_name}
                   onChange={(e) => updateActiveTab({ customer_name: e.target.value })}
+                  onKeyDown={(e) => handleEnterNavigation(e, customerPhoneRef)}
                   className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
               </div>
@@ -720,10 +746,12 @@ export default function UnifiedBillingPage() {
                   Phone
                 </label>
                 <input
+                  ref={customerPhoneRef}
                   type="tel"
                   placeholder="Optional"
                   value={activeTab.customer_phone}
                   onChange={(e) => updateActiveTab({ customer_phone: e.target.value })}
+                  onKeyDown={(e) => handleEnterNavigation(e, customerGstinRef)}
                   className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
               </div>
@@ -734,10 +762,12 @@ export default function UnifiedBillingPage() {
                   Customer GSTIN
                 </label>
                 <input
+                  ref={customerGstinRef}
                   type="text"
                   placeholder="Optional GSTIN"
                   value={activeTab.customer_gstin}
                   onChange={(e) => updateActiveTab({ customer_gstin: e.target.value })}
+                  onKeyDown={(e) => handleEnterNavigation(e, discountRef)}
                   className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
               </div>
@@ -748,6 +778,7 @@ export default function UnifiedBillingPage() {
                   Discount %
                 </label>
                 <input
+                  ref={discountRef}
                   type="number"
                   min="0"
                   max="100"
@@ -757,24 +788,7 @@ export default function UnifiedBillingPage() {
                   onChange={(e) =>
                     updateActiveTab({ discountPercentage: parseFloat(e.target.value) || 0 })
                   }
-                  className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
-                />
-              </div>
-
-              {/* Amount Received */}
-              <div className="md:col-span-2">
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Received
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={activeTab.amountReceived || ''}
-                  onChange={(e) =>
-                    updateActiveTab({ amountReceived: parseFloat(e.target.value) || 0 })
-                  }
+                  onKeyDown={(e) => handleEnterNavigation(e, productSearchRef)}
                   className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
               </div>
@@ -803,7 +817,7 @@ export default function UnifiedBillingPage() {
               <div className="flex gap-1 items-end">
                 <div className="flex-1 relative product-search-container">
                   <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    Search Product
+                    Search Product (F2)
                   </label>
                   <input
                     ref={productSearchRef}
@@ -816,7 +830,17 @@ export default function UnifiedBillingPage() {
                       setSelectedProductIndex(0)
                     }}
                     onFocus={() => setShowProductDropdown(true)}
-                    onKeyDown={handleProductSearchKeyDown}
+                    onKeyDown={(e) => {
+                      // If Enter is pressed without a product, move to Amount Received
+                      if (e.key === 'Enter' && !productSearch.trim() && !currentItem.product_name) {
+                        e.preventDefault()
+                        // Move to Amount Received field
+                        amountReceivedRef.current?.focus()
+                        amountReceivedRef.current?.select()
+                      } else {
+                        handleProductSearchKeyDown(e)
+                      }
+                    }}
                     className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                   />
                   {/* Dropdown List */}
@@ -952,6 +976,7 @@ export default function UnifiedBillingPage() {
                     Rate
                   </label>
                   <input
+                    ref={rateInputRef}
                     type="number"
                     min="0"
                     step="0.01"
@@ -1142,6 +1167,20 @@ export default function UnifiedBillingPage() {
                             onChange={(e) =>
                               updateItemQuantity(index, parseInt(e.target.value) || 1)
                             }
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') {
+                                e.preventDefault()
+                                // If this is the last item, focus on product search
+                                if (index === activeTab.items.length - 1) {
+                                  productSearchRef.current?.focus()
+                                } else {
+                                  // Move to the next row's quantity input
+                                  const nextQuantityInput = document.querySelectorAll('input[title="Quantity"]')[index + 1] as HTMLInputElement
+                                  nextQuantityInput?.focus()
+                                  nextQuantityInput?.select()
+                                }
+                              }
+                            }}
                             className="w-full px-1 py-0.5 text-center border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium text-xs"
                           />
                         </td>
@@ -1196,17 +1235,60 @@ export default function UnifiedBillingPage() {
 
           {/* Payment Splits Section - MULTI-PAYMENT */}
           <div className="bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700 p-2">
-            <div className="flex items-center justify-between mb-2">
-              <h3 className="text-sm font-bold text-gray-900 dark:text-white">
+            <div className="mb-2">
+              <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-2">
                 Payment Methods (Split Payment)
               </h3>
-              <button
-                type="button"
-                onClick={addPaymentSplit}
-                className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-xs font-semibold"
-              >
-                + Add Payment
-              </button>
+
+              {/* Amount Received - First */}
+              <div className="flex items-center gap-2 mb-3 bg-gray-50 dark:bg-gray-900 p-2 rounded">
+                <label className="text-xs font-medium text-gray-700 dark:text-gray-300 w-20">
+                  Received:
+                </label>
+                <input
+                  ref={amountReceivedRef}
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  placeholder="0.00"
+                  value={activeTab.amountReceived || ''}
+                  onChange={(e) =>
+                    updateActiveTab({ amountReceived: parseFloat(e.target.value) || 0 })
+                  }
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      // Check if there are payment splits, if not add one
+                      if (activeTab.payment_splits.length === 0) {
+                        addPaymentSplit()
+                        setTimeout(() => {
+                          // Since Cash is default, go directly to amount input
+                          const firstAmountInput = document.querySelector('input[placeholder="Amount"]') as HTMLInputElement
+                          firstAmountInput?.focus()
+                          firstAmountInput?.select()
+                        }, 100)
+                      } else {
+                        const firstPaymentSelect = document.querySelector('select[title="Select payment type"]') as HTMLSelectElement
+                        firstPaymentSelect?.focus()
+                      }
+                    }
+                  }}
+                  className="w-32 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-semibold"
+                />
+              </div>
+
+              <div className="flex items-center justify-between">
+                <label className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                  Payment Splits:
+                </label>
+                <button
+                  type="button"
+                  onClick={addPaymentSplit}
+                  className="px-3 py-1 bg-blue-600 text-white rounded hover:bg-blue-700 transition text-xs font-semibold"
+                >
+                  + Add Payment
+                </button>
+              </div>
             </div>
             <div className="space-y-2">
               {activeTab.payment_splits.length === 0 ? (
@@ -1220,6 +1302,22 @@ export default function UnifiedBillingPage() {
                       <select
                         value={split.payment_type}
                         onChange={(e) => updatePaymentSplit(index, 'payment_type', e.target.value)}
+                        onFocus={(e) => {
+                          // Auto-open dropdown on focus
+                          const event = new MouseEvent('mousedown', { bubbles: true })
+                          e.currentTarget.dispatchEvent(event)
+                        }}
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            const amountInput = e.currentTarget.parentElement?.nextElementSibling?.querySelector('input')
+                            amountInput?.focus()
+                            // Auto-select the text in amount field
+                            setTimeout(() => {
+                              (amountInput as HTMLInputElement)?.select()
+                            }, 50)
+                          }
+                        }}
                         className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                         title="Select payment type"
                       >
@@ -1241,6 +1339,13 @@ export default function UnifiedBillingPage() {
                         onChange={(e) =>
                           updatePaymentSplit(index, 'amount', e.target.value)
                         }
+                        onKeyDown={(e) => {
+                          if (e.key === 'Enter') {
+                            e.preventDefault()
+                            // Move to Print Bill button
+                            printButtonRef.current?.focus()
+                          }
+                        }}
                         className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                       />
                     </div>
@@ -1385,9 +1490,16 @@ export default function UnifiedBillingPage() {
               {/* Actions - Right Side */}
               <div className="lg:col-span-4 flex flex-col md:flex-row items-stretch md:items-center gap-2">
                 <button
+                  ref={printButtonRef}
                   type="submit"
                   disabled={loading}
-                  className="flex-1 px-4 py-2 bg-green-600 dark:bg-green-700 text-white rounded hover:bg-green-700 dark:hover:bg-green-800 transition disabled:bg-gray-400 dark:disabled:bg-gray-600 font-bold text-sm shadow-md hover:shadow-lg"
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !loading) {
+                      e.preventDefault()
+                      handleSubmit(e as any)
+                    }
+                  }}
+                  className="flex-1 px-4 py-2 bg-green-600 dark:bg-green-700 text-white rounded hover:bg-green-700 dark:hover:bg-green-800 transition disabled:bg-gray-400 dark:disabled:bg-gray-600 font-bold text-sm shadow-md hover:shadow-lg focus:ring-2 focus:ring-green-500 focus:outline-none"
                 >
                   {loading ? 'Processing...' : 'Print Bill'}
                 </button>
@@ -1435,7 +1547,8 @@ export default function UnifiedBillingPage() {
                   type="button"
                   onClick={confirmPrintBill}
                   disabled={loading}
-                  className="w-full px-4 py-3 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-800 transition font-semibold disabled:bg-gray-400 dark:disabled:bg-gray-600"
+                  autoFocus
+                  className="w-full px-4 py-3 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-800 transition font-semibold disabled:bg-gray-400 dark:disabled:bg-gray-600 focus:ring-2 focus:ring-green-500 focus:outline-none"
                 >
                   {loading ? 'Processing...' : 'Yes, Print Now'}
                 </button>
