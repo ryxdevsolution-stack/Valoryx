@@ -5,6 +5,7 @@ from extensions import db
 from models.billing_model import GSTBilling, NonGSTBilling
 from models.stock_model import StockEntry
 from utils.auth_middleware import authenticate
+from utils.permission_middleware import require_permission, require_any_permission
 from utils.audit_logger import log_action
 from utils.helpers import calculate_gst_amount, calculate_final_amount, validate_items
 
@@ -13,6 +14,7 @@ billing_bp = Blueprint('billing', __name__)
 
 @billing_bp.route('/gst', methods=['POST'])
 @authenticate
+@require_permission('gst_billing')
 def create_gst_bill():
     """
     Create GST-enabled bill with client_id validation
@@ -96,6 +98,7 @@ def create_gst_bill():
 
 @billing_bp.route('/non-gst', methods=['POST'])
 @authenticate
+@require_permission('non_gst_billing')
 def create_non_gst_bill():
     """
     Create Non-GST bill with client_id validation
@@ -172,6 +175,7 @@ def create_non_gst_bill():
 
 @billing_bp.route('/list', methods=['GET'])
 @authenticate
+@require_any_permission('view_all_bills', 'view_own_bills')
 def get_bills():
     """
     List all bills (GST + Non-GST) filtered by client_id
@@ -452,6 +456,17 @@ def create_unified_bill():
 
             log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
 
+            # Calculate discount amount if discount percentage is provided
+            discount_amount = 0
+            if data.get('discount_percentage'):
+                total_before_discount = round(subtotal + total_gst_amount, 2)
+                discount_amount = round((total_before_discount * data.get('discount_percentage', 0)) / 100, 2)
+
+            # Calculate CGST and SGST (half of total GST each)
+            cgst = round(total_gst_amount / 2, 2)
+            sgst = round(total_gst_amount / 2, 2)
+
+            # Return complete bill data for direct printing (no need for additional fetch)
             return jsonify({
                 'success': True,
                 'bill_id': new_bill.bill_id,
@@ -460,7 +475,26 @@ def create_unified_bill():
                 'subtotal': round(subtotal, 2),
                 'gst_amount': round(total_gst_amount, 2),
                 'final_amount': round(final_amount, 2),
-                'message': 'GST bill created successfully'
+                'message': 'GST bill created successfully',
+                # Complete bill data for printing
+                'bill': {
+                    'bill_number': bill_number,
+                    'customer_name': data.get('customer_name', 'Walk-in Customer'),
+                    'customer_phone': data.get('customer_phone', ''),
+                    'items': processed_items,
+                    'subtotal': round(subtotal, 2),
+                    'discount_percentage': data.get('discount_percentage', 0),
+                    'discount_amount': discount_amount,
+                    'gst_amount': round(total_gst_amount, 2),
+                    'final_amount': round(final_amount, 2),
+                    'total_amount': round(subtotal, 2),
+                    'payment_type': data['payment_type'],
+                    'created_at': new_bill.created_at.isoformat() if new_bill.created_at else datetime.utcnow().isoformat(),
+                    'type': 'gst',
+                    'cgst': cgst,
+                    'sgst': sgst,
+                    'igst': 0
+                }
             }), 201
 
         else:
@@ -490,13 +524,38 @@ def create_unified_bill():
 
             log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
 
+            # Calculate discount amount if discount percentage is provided
+            discount_amount = 0
+            if data.get('discount_percentage'):
+                discount_amount = round((subtotal * data.get('discount_percentage', 0)) / 100, 2)
+
+            # Return complete bill data for direct printing (no need for additional fetch)
             return jsonify({
                 'success': True,
                 'bill_id': new_bill.bill_id,
                 'bill_number': bill_number,
                 'bill_type': 'Non-GST',
                 'total_amount': round(subtotal, 2),
-                'message': 'Non-GST bill created successfully'
+                'message': 'Non-GST bill created successfully',
+                # Complete bill data for printing
+                'bill': {
+                    'bill_number': bill_number,
+                    'customer_name': data.get('customer_name', 'Walk-in Customer'),
+                    'customer_phone': data.get('customer_phone', ''),
+                    'items': processed_items,
+                    'subtotal': round(subtotal, 2),
+                    'discount_percentage': data.get('discount_percentage', 0),
+                    'discount_amount': discount_amount,
+                    'gst_amount': 0,
+                    'final_amount': round(subtotal - discount_amount, 2),
+                    'total_amount': round(subtotal, 2),
+                    'payment_type': data['payment_type'],
+                    'created_at': new_bill.created_at.isoformat() if new_bill.created_at else datetime.utcnow().isoformat(),
+                    'type': 'non-gst',
+                    'cgst': 0,
+                    'sgst': 0,
+                    'igst': 0
+                }
             }), 201
 
     except Exception as e:
@@ -506,6 +565,7 @@ def create_unified_bill():
 
 @billing_bp.route('/<bill_id>', methods=['PUT'])
 @authenticate
+@require_permission('edit_bill_details')
 def update_bill(bill_id):
     """
     Update an existing bill (GST or Non-GST)
@@ -787,6 +847,7 @@ def exchange_bill(bill_id):
 
 @billing_bp.route('/print', methods=['POST'])
 @authenticate
+@require_permission('print_bills')
 def print_bill():
     """
     Print bill to thermal printer (silent printing without browser dialog)

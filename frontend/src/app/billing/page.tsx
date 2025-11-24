@@ -4,9 +4,7 @@ import { useEffect, useState, useRef } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
-import { useData } from '@/contexts/DataContext'
 import { useClient } from '@/contexts/ClientContext'
-import BillPrintPreview from '@/components/BillPrintPreview'
 import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, Edit, RefreshCw } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
@@ -54,7 +52,6 @@ export default function AllBillsPage() {
   const [selectedPaymentType, setSelectedPaymentType] = useState<string>('all')
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 20
-  const [selectedBillForPrint, setSelectedBillForPrint] = useState<Bill | null>(null)
   const [loadingBillDetails, setLoadingBillDetails] = useState(false)
 
   // Track ongoing request to prevent duplicates (for React Strict Mode)
@@ -174,18 +171,23 @@ export default function AllBillsPage() {
 
   // Create expanded bills array where split payments become separate rows
   const getExpandedBills = (billsList: Bill[]) => {
-    const expanded: Array<Bill & { displayPaymentType: string; displayAmount: number }> = []
+    const expanded: Array<Bill & { displayPaymentType: string; displayAmount: number; isFirstPayment: boolean; paymentCount: number; billSequenceNumber: number }> = []
+    let billSequenceNumber = 0
 
     billsList.forEach(bill => {
       const paymentTypes = parsePaymentTypes(bill)
+      billSequenceNumber++ // Increment for each unique bill
 
       if (paymentTypes.length > 1) {
         // Split payment - create a row for each payment type
-        paymentTypes.forEach(pt => {
+        paymentTypes.forEach((pt, index) => {
           expanded.push({
             ...bill,
             displayPaymentType: pt,
-            displayAmount: getAmountForPaymentType(bill, pt)
+            displayAmount: getAmountForPaymentType(bill, pt),
+            isFirstPayment: index === 0,
+            paymentCount: paymentTypes.length,
+            billSequenceNumber
           })
         })
       } else {
@@ -193,7 +195,10 @@ export default function AllBillsPage() {
         expanded.push({
           ...bill,
           displayPaymentType: paymentTypes[0] || bill.payment_type,
-          displayAmount: getAmount(bill)
+          displayAmount: getAmount(bill),
+          isFirstPayment: true,
+          paymentCount: 1,
+          billSequenceNumber
         })
       }
     })
@@ -219,21 +224,23 @@ export default function AllBillsPage() {
 
   // Get payment type statistics
   const paymentTypeStats = paymentTypes.map(pt => {
-    // Find all bills that include this payment type (including split payments)
-    const ptBills = bills.filter(bill => {
-      const paymentTypes = parsePaymentTypes(bill)
-      return paymentTypes.includes(pt.payment_type_id)
-    })
+    // Count unique bills that include this payment type (including split payments)
+    const uniqueBillsWithPaymentType = new Set<string>()
+    let totalAmount = 0
 
-    // Calculate total for this payment type (only the amount paid via this method)
-    const total = ptBills.reduce((sum, bill) => {
-      return sum + getAmountForPaymentType(bill, pt.payment_type_id)
-    }, 0)
+    bills.forEach(bill => {
+      const paymentTypes = parsePaymentTypes(bill)
+      if (paymentTypes.includes(pt.payment_type_id)) {
+        uniqueBillsWithPaymentType.add(bill.bill_id)
+        // Add only the amount paid via this specific payment method
+        totalAmount += getAmountForPaymentType(bill, pt.payment_type_id)
+      }
+    })
 
     return {
       ...pt,
-      count: ptBills.length,
-      total
+      count: uniqueBillsWithPaymentType.size, // Count of unique bills, not payment instances
+      total: totalAmount
     }
   })
 
@@ -245,12 +252,57 @@ export default function AllBillsPage() {
   const handlePrintBill = async (billId: string) => {
     try {
       setLoadingBillDetails(true)
+
+      // Fetch bill details
       const response = await api.get(`/billing/${billId}`)
       const billData = response.data.bill
-      setSelectedBillForPrint(billData)
+
+      // Directly send to printer without showing preview
+      const printResponse = await api.post('/billing/print', {
+        bill: {
+          bill_number: billData.bill_number,
+          customer_name: billData.customer_name,
+          customer_phone: billData.customer_phone,
+          items: billData.items,
+          subtotal: billData.subtotal,
+          discount_percentage: billData.discount_percentage,
+          discount_amount: billData.discount_amount,
+          gst_amount: billData.gst_amount,
+          final_amount: billData.final_amount,
+          total_amount: billData.total_amount,
+          payment_type: billData.payment_type,
+          created_at: billData.created_at,
+          type: billData.type,
+          cgst: billData.cgst,
+          sgst: billData.sgst,
+          igst: billData.igst
+        },
+        clientInfo: client ? {
+          client_name: client.client_name,
+          address: client.address,
+          phone: client.phone,
+          email: client.email,
+          gstin: client.gstin,
+          logo_url: client.logo_url
+        } : {
+          client_name: 'Business Name',
+          address: '',
+          phone: '',
+          email: '',
+          gstin: '',
+          logo_url: ''
+        }
+      })
+
+      if (printResponse.data.success) {
+        console.log('Print successful!')
+        // Optionally show a success toast/notification
+      } else {
+        throw new Error(printResponse.data.error || 'Print failed')
+      }
     } catch (error: any) {
-      console.error('Failed to fetch bill details:', error)
-      alert('Failed to load bill details for printing')
+      console.error('Failed to print bill:', error)
+      alert(error.response?.data?.message || error.message || 'Printer not connected. Please check printer and try again.')
     } finally {
       setLoadingBillDetails(false)
     }
@@ -418,32 +470,55 @@ export default function AllBillsPage() {
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
                   {paginatedBills.map((bill, index) => {
-                    // Calculate sequential display number
-                    const displayNumber = startIndex + index + 1
                     // Use display payment type from expanded bill
                     const paymentTypeName = bill.displayPaymentType || 'Unknown'
                     // Get color scheme for this payment type
                     const colors = getPaymentColor(paymentTypeName)
 
+                    // Check if this is part of a split payment group
+                    const isSplitPayment = bill.paymentCount > 1
+                    const showActions = bill.isFirstPayment // Only show actions for the first payment in a group
+
+                    // Calculate display number based on filtered bills (for pagination)
+                    const filteredBillNumbers = new Set(filteredExpandedBills.slice(0, startIndex + index + 1).map(b => b.billSequenceNumber))
+                    const displayNumber = filteredBillNumbers.size
+
                     return (
-                      <tr key={`${bill.bill_id}-${bill.displayPaymentType}`} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                      <tr key={`${bill.bill_id}-${bill.displayPaymentType}`}
+                          className={`hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${!bill.isFirstPayment && isSplitPayment ? 'border-t-0' : ''}`}>
                         <td className="px-2 py-1.5 whitespace-nowrap">
-                          <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{displayNumber}</span>
+                          {bill.isFirstPayment ? (
+                            <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{displayNumber}</span>
+                          ) : (
+                            <span className="text-xs text-gray-400 dark:text-gray-500 pl-2">↳</span>
+                          )}
                         </td>
                       <td className="px-2 py-1.5 whitespace-nowrap">
-                        <span className="text-xs text-gray-600 dark:text-gray-400">
-                          {new Date(bill.created_at).toLocaleDateString('en-IN', {
-                            day: '2-digit',
-                            month: '2-digit',
-                            year: 'numeric'
-                          })}
-                        </span>
+                        {bill.isFirstPayment ? (
+                          <span className="text-xs text-gray-600 dark:text-gray-400">
+                            {new Date(bill.created_at).toLocaleDateString('en-IN', {
+                              day: '2-digit',
+                              month: '2-digit',
+                              year: 'numeric'
+                            })}
+                          </span>
+                        ) : (
+                          <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
+                        )}
                       </td>
                       <td className="px-2 py-1.5">
-                        <span className="text-xs text-gray-700 dark:text-gray-300">{bill.customer_name}</span>
+                        {bill.isFirstPayment ? (
+                          <span className="text-xs text-gray-700 dark:text-gray-300">{bill.customer_name}</span>
+                        ) : (
+                          <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
+                        )}
                       </td>
                       <td className="px-2 py-1.5">
-                        <span className="text-xs text-gray-600 dark:text-gray-400">{bill.customer_phone}</span>
+                        {bill.isFirstPayment ? (
+                          <span className="text-xs text-gray-600 dark:text-gray-400">{bill.customer_phone}</span>
+                        ) : (
+                          <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
+                        )}
                       </td>
                       <td className="px-2 py-1.5 whitespace-nowrap">
                         <span className={`inline-flex items-center gap-1 px-2.5 py-1 text-[10px] font-bold text-white bg-gradient-to-r ${colors.bg} rounded-full uppercase shadow-sm`}>
@@ -455,40 +530,42 @@ export default function AllBillsPage() {
                           ₹{bill.displayAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </td>
-                      <td className="px-2 py-1.5 text-center whitespace-nowrap">
-                        <div className="flex items-center justify-center gap-1">
-                          <button
-                            type="button"
-                            onClick={() => handleExchangeBill(bill.bill_id)}
-                            className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-white bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-700 hover:to-orange-600 rounded-md transition-all"
-                            title="Exchange Bill"
-                          >
-                            <RefreshCw className="w-3 h-3" />
-                            Exchange
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handleEditBill(bill.bill_id)}
-                            className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-white bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 rounded-md transition-all"
-                            title="Edit Bill"
-                          >
-                            <Edit className="w-3 h-3" />
-                            Edit
-                          </button>
-                          <button
-                            type="button"
-                            onClick={() => handlePrintBill(bill.bill_id)}
-                            disabled={loadingBillDetails}
-                            className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-white bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                            title="Print Bill"
-                          >
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                            </svg>
-                            Print
-                          </button>
-                        </div>
-                      </td>
+                      {showActions ? (
+                        <td className="px-2 py-1.5 text-center whitespace-nowrap" rowSpan={bill.paymentCount}>
+                          <div className="flex items-center justify-center gap-1">
+                            <button
+                              type="button"
+                              onClick={() => handleExchangeBill(bill.bill_id)}
+                              className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-white bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-700 hover:to-orange-600 rounded-md transition-all"
+                              title="Exchange Bill"
+                            >
+                              <RefreshCw className="w-3 h-3" />
+                              Exchange
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handleEditBill(bill.bill_id)}
+                              className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-white bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 rounded-md transition-all"
+                              title="Edit Bill"
+                            >
+                              <Edit className="w-3 h-3" />
+                              Edit
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => handlePrintBill(bill.bill_id)}
+                              disabled={loadingBillDetails}
+                              className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-white bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                              title="Print Bill"
+                            >
+                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                              </svg>
+                              Print
+                            </button>
+                          </div>
+                        </td>
+                      ) : null}
                     </tr>
                     )
                   })}
@@ -542,7 +619,7 @@ export default function AllBillsPage() {
                   <p className="text-slate-300 dark:text-gray-300 text-[10px]">
                     {selectedPaymentType === 'all'
                       ? `All Bills (${bills.length})`
-                      : `${paymentTypes.find(pt => pt.payment_type_id === selectedPaymentType)?.payment_name} (${filteredExpandedBills.length})`
+                      : `${paymentTypes.find(pt => pt.payment_type_id === selectedPaymentType)?.payment_name} (${new Set(filteredExpandedBills.map(b => b.bill_id)).size} bills)`
                     }
                   </p>
                 </div>
@@ -555,38 +632,6 @@ export default function AllBillsPage() {
         )}
       </div>
 
-      {/* Bill Print Preview Modal */}
-      {selectedBillForPrint && client && selectedBillForPrint.items && (
-        <BillPrintPreview
-          bill={{
-            bill_number: Number(selectedBillForPrint.bill_number) || 0,
-            customer_name: selectedBillForPrint.customer_name,
-            customer_phone: selectedBillForPrint.customer_phone,
-            items: selectedBillForPrint.items,
-            subtotal: selectedBillForPrint.subtotal || 0,
-            discount_percentage: selectedBillForPrint.discount_percentage,
-            discount_amount: selectedBillForPrint.discount_amount,
-            gst_amount: selectedBillForPrint.gst_amount,
-            final_amount: selectedBillForPrint.final_amount || 0,
-            total_amount: selectedBillForPrint.total_amount || 0,
-            payment_type: String(selectedBillForPrint.payment_type || ''),
-            created_at: String(selectedBillForPrint.created_at || ''),
-            type: selectedBillForPrint.type === 'non_gst' ? 'non-gst' : 'gst',
-            cgst: selectedBillForPrint.cgst,
-            sgst: selectedBillForPrint.sgst,
-            igst: selectedBillForPrint.igst
-          }}
-          clientInfo={{
-            client_name: client.client_name,
-            address: client.address,
-            phone: client.phone,
-            email: client.email,
-            gstin: client.gstin,
-            logo_url: client.logo_url
-          }}
-          onClose={() => setSelectedBillForPrint(null)}
-        />
-      )}
     </DashboardLayout>
   )
 }

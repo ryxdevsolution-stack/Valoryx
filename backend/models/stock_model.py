@@ -5,6 +5,12 @@ class StockEntry(db.Model):
     """Product inventory management with client isolation"""
     __tablename__ = 'stock_entry'
 
+    # Performance indexes for common query patterns
+    __table_args__ = (
+        db.Index('idx_stock_client_product', 'client_id', 'product_name'),  # For duplicate checking
+        db.Index('idx_stock_client_itemcode', 'client_id', 'item_code'),    # For item code lookups
+    )
+
     product_id = db.Column(db.String(36), primary_key=True)
     client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     product_name = db.Column(db.String(255), nullable=False)
@@ -16,7 +22,7 @@ class StockEntry(db.Model):
     pricing = db.Column(db.Numeric(10, 2), nullable=True, default=None)  # Pricing field from stock updation
     unit = db.Column(db.String(20), default='pcs')
     low_stock_alert = db.Column(db.Integer, default=10)
-    item_code = db.Column(db.String(50), nullable=True)
+    item_code = db.Column(db.String(50), nullable=True, index=True)  # Added index
     barcode = db.Column(db.String(100), unique=True, nullable=True, index=True)
     gst_percentage = db.Column(db.Numeric(5, 2), default=0)
     hsn_code = db.Column(db.String(20))

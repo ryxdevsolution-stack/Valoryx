@@ -2,17 +2,10 @@
 
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import dynamic from 'next/dynamic'
-import { useDataPreload } from '@/hooks/useDataPreload'
 import { useClient } from '@/contexts/ClientContext'
 import LogoAnimation from '@/components/LogoAnimation'
 import Image from 'next/image'
 import api from '@/lib/api'
-
-// Dynamically import ParticleRing with no SSR to avoid Three.js errors
-const ParticleRing = dynamic(() => import('@/components/ParticleRing'), {
-  ssr: false
-})
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -25,9 +18,6 @@ export default function LoginPage() {
   const [funnyMessage, setFunnyMessage] = useState('')
   const router = useRouter()
   const { setClientData } = useClient()
-
-  // Preload data when splash screen is showing
-  useDataPreload(showSplash)
 
   const funnyMessages = [
     "Oops! Did you forget something? 🤔 Maybe... like, EVERYTHING?",
@@ -112,11 +102,6 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-amber-50 via-yellow-50/50 to-slate-100 relative overflow-hidden">
-      {/* 3D Particle Ring Background */}
-      <div className="absolute inset-0 z-0 opacity-30">
-        <ParticleRing />
-      </div>
-
       {/* Rich Gradient Overlays Matching Logo */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-amber-200/30 via-yellow-100/20 to-transparent"></div>

@@ -2,9 +2,10 @@ from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.user_model import User
 from models.permission_model import (
-    Permission, UserPermission,
+    Permission, UserPermission, PermissionSection,
     get_user_permissions, grant_permission,
-    revoke_permission, bulk_update_permissions
+    revoke_permission, bulk_update_permissions,
+    get_all_sections_with_permissions, get_user_permissions_by_section
 )
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
@@ -22,26 +23,38 @@ def require_super_admin():
 @permissions_bp.route('/all', methods=['GET'])
 @authenticate
 def get_all_permissions():
-    """Get all available permissions (super admin only)"""
+    """Get all available permissions organized by sections (super admin only)"""
     # Check super admin
     error = require_super_admin()
     if error:
         return error
 
     try:
-        permissions = Permission.query.all()
+        # Get all sections with their permissions in tree structure
+        sections = get_all_sections_with_permissions()
 
-        # Group by category
+        # Flatten permissions for easy access
+        all_permissions = []
         categorized = {}
-        for perm in permissions:
-            category = perm.category or 'other'
-            if category not in categorized:
-                categorized[category] = []
-            categorized[category].append(perm.to_dict())
+
+        for section in sections:
+            category = section['section_name']
+            categorized[category] = []
+
+            for perm in section.get('permissions', []):
+                perm_data = {
+                    'permission_id': perm['permission_id'],
+                    'permission_name': perm['permission_name'],
+                    'description': perm['description'],
+                    'category': category
+                }
+                all_permissions.append(perm_data)
+                categorized[category].append(perm_data)
 
         return jsonify({
             'success': True,
-            'permissions': [p.to_dict() for p in permissions],
+            'sections': sections,
+            'permissions': all_permissions,
             'categorized': categorized
         }), 200
 
@@ -69,7 +82,7 @@ def get_my_permissions():
 @permissions_bp.route('/user/<user_id>', methods=['GET'])
 @authenticate
 def get_user_permissions_route(user_id):
-    """Get specific user's permissions (super admin only)"""
+    """Get specific user's permissions organized by sections (super admin only)"""
     # Check super admin
     error = require_super_admin()
     if error:
@@ -81,7 +94,8 @@ def get_user_permissions_route(user_id):
         if not user:
             return jsonify({'error': 'User not found'}), 404
 
-        user_permissions = get_user_permissions(user_id)
+        # Get permissions organized by section
+        sections = get_user_permissions_by_section(user_id)
 
         return jsonify({
             'success': True,
@@ -91,7 +105,7 @@ def get_user_permissions_route(user_id):
                 'role': user.role,
                 'is_super_admin': user.is_super_admin
             },
-            'permissions': user_permissions
+            'sections': sections
         }), 200
 
     except Exception as e:
@@ -213,9 +227,12 @@ def bulk_update_permissions_route():
         # Update permissions
         result = bulk_update_permissions(user_id, permission_names, g.user['user_id'])
 
-        # Log action
-        log_action('BULK_UPDATE_PERMISSIONS', 'user_permissions', user_id,
-                  {'added': result['added'], 'removed': result['removed'], 'user': user.email})
+        # Log action (wrapped in try-except to prevent audit log errors from failing the request)
+        try:
+            log_action('BULK_UPDATE_PERMISSIONS', 'user_permissions', user_id,
+                      {'added': result['added'], 'removed': result['removed'], 'user': user.email})
+        except Exception as log_error:
+            print(f"Audit log error: {log_error}")
 
         return jsonify({
             'success': True,

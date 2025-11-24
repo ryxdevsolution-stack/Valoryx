@@ -5,13 +5,43 @@ import { usePermissions } from '@/hooks/usePermissions'
 import DashboardLayout from '@/components/DashboardLayout'
 import { TableSkeleton } from '@/components/SkeletonLoader'
 import api from '@/lib/api'
-import { Shield, User, Check, Save, RefreshCw, AlertCircle, Search } from 'lucide-react'
+import {
+  Shield, User, Check, Save, RefreshCw, AlertCircle, Search,
+  ChevronDown, ChevronRight, CheckSquare, Square, MinusSquare,
+  Users, Package, FileText, TrendingUp, CreditCard, UserCog,
+  Settings, PlusSquare
+} from 'lucide-react'
+
+// Icon mapping for sections
+const SECTION_ICONS: Record<string, any> = {
+  'Create Bill': PlusSquare,
+  'Manage Bills': FileText,
+  'Customer Management': Users,
+  'Stock Management': Package,
+  'Reports & Analytics': TrendingUp,
+  'Payment Types': CreditCard,
+  'User Management': UserCog,
+  'System Settings': Settings,
+  'Audit & Logs': Search,
+  'System Administration': Shield,
+}
 
 interface Permission {
   permission_id: string
   permission_name: string
   description: string
-  category: string
+  section_id: string | null
+  section_name: string | null
+  display_order: number
+}
+
+interface PermissionSection {
+  section_id: string
+  section_name: string
+  description: string
+  display_order: number
+  icon: string
+  permissions: Permission[]
 }
 
 interface UserWithPermissions {
@@ -28,15 +58,16 @@ interface UserWithPermissions {
 export default function PermissionsPage() {
   const { isSuperAdmin } = usePermissions()
   const [users, setUsers] = useState<UserWithPermissions[]>([])
-  const [allPermissions, setAllPermissions] = useState<Permission[]>([])
-  const [categorizedPermissions, setCategorizedPermissions] = useState<Record<string, Permission[]>>({})
+  const [sections, setSections] = useState<PermissionSection[]>([])
   const [selectedUser, setSelectedUser] = useState<string | null>(null)
   const [userPermissions, setUserPermissions] = useState<Record<string, boolean>>({})
+  const [expandedSections, setExpandedSections] = useState<Record<string, boolean>>({})
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [successMessage, setSuccessMessage] = useState<string | null>(null)
   const [searchTerm, setSearchTerm] = useState('')
+  const [userSearchTerm, setUserSearchTerm] = useState('')
 
   useEffect(() => {
     fetchData()
@@ -46,15 +77,21 @@ export default function PermissionsPage() {
     setLoading(true)
     setError(null)
     try {
-      // Fetch all users and permissions
+      // Fetch all users and permissions (sections)
       const [usersResponse, permissionsResponse] = await Promise.all([
         api.get('/permissions/users'),
         api.get('/permissions/all')
       ])
 
       setUsers(usersResponse.data.users)
-      setAllPermissions(permissionsResponse.data.permissions)
-      setCategorizedPermissions(permissionsResponse.data.categorized)
+      setSections(permissionsResponse.data.sections || [])
+
+      // Expand all sections by default
+      const expandAll: Record<string, boolean> = {}
+      permissionsResponse.data.sections?.forEach((section: PermissionSection) => {
+        expandAll[section.section_id] = true
+      })
+      setExpandedSections(expandAll)
     } catch (err: any) {
       setError(err.response?.data?.message || 'Failed to load data')
     } finally {
@@ -70,8 +107,10 @@ export default function PermissionsPage() {
 
     // Initialize permission checkboxes
     const permissionMap: Record<string, boolean> = {}
-    allPermissions.forEach(perm => {
-      permissionMap[perm.permission_name] = user.permissions.includes(perm.permission_name)
+    sections.forEach(section => {
+      section.permissions.forEach(perm => {
+        permissionMap[perm.permission_name] = user.permissions.includes(perm.permission_name)
+      })
     })
     setUserPermissions(permissionMap)
   }
@@ -81,6 +120,24 @@ export default function PermissionsPage() {
       ...prev,
       [permissionName]: !prev[permissionName]
     }))
+  }
+
+  const toggleSection = (sectionId: string) => {
+    setExpandedSections(prev => ({
+      ...prev,
+      [sectionId]: !prev[sectionId]
+    }))
+  }
+
+  const selectAllInSection = (section: PermissionSection) => {
+    const allSelected = section.permissions.every(p => userPermissions[p.permission_name])
+    const newPermissions = { ...userPermissions }
+
+    section.permissions.forEach(perm => {
+      newPermissions[perm.permission_name] = !allSelected
+    })
+
+    setUserPermissions(newPermissions)
   }
 
   const savePermissions = async () => {
@@ -99,30 +156,59 @@ export default function PermissionsPage() {
         permissions: enabledPermissions
       })
 
-      setSuccessMessage('Permissions updated successfully!')
+      setSuccessMessage('Permissions updated successfully')
 
       // Refresh user data
       await fetchData()
 
-      // Clear success message after 3 seconds
-      setTimeout(() => setSuccessMessage(null), 3000)
+      // Re-select user to refresh their permission state
+      if (selectedUser) {
+        selectUser(selectedUser)
+      }
     } catch (err: any) {
-      setError(err.response?.data?.message || 'Failed to update permissions')
+      setError(err.response?.data?.message || 'Failed to save permissions')
     } finally {
       setSaving(false)
     }
   }
 
-  const selectedUserData = users.find(u => u.user_id === selectedUser)
+  const getSelectedPermissionCount = () => {
+    return Object.values(userPermissions).filter(Boolean).length
+  }
+
+  const getTotalPermissionCount = () => {
+    return sections.reduce((sum, section) => sum + section.permissions.length, 0)
+  }
+
+  const getSectionPermissionCounts = (section: PermissionSection) => {
+    const total = section.permissions.length
+    const selected = section.permissions.filter(p => userPermissions[p.permission_name]).length
+    return { total, selected }
+  }
+
+  const filteredSections = sections.map(section => ({
+    ...section,
+    permissions: section.permissions.filter(p =>
+      p.permission_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      p.description.toLowerCase().includes(searchTerm.toLowerCase())
+    )
+  })).filter(section =>
+    searchTerm === '' || section.permissions.length > 0
+  )
+
+  const filteredUsers = users.filter(u =>
+    u.email.toLowerCase().includes(userSearchTerm.toLowerCase()) ||
+    u.role.toLowerCase().includes(userSearchTerm.toLowerCase())
+  )
 
   if (!isSuperAdmin()) {
     return (
       <DashboardLayout>
-        <div className="flex items-center justify-center h-screen">
+        <div className="flex items-center justify-center min-h-[400px]">
           <div className="text-center">
-            <Shield className="w-16 h-16 text-red-500 mx-auto mb-4" />
-            <h1 className="text-2xl font-bold text-gray-800 dark:text-gray-200">Access Denied</h1>
-            <p className="text-gray-600 dark:text-gray-400 mt-2">Only super admins can manage permissions</p>
+            <Shield className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+            <h3 className="text-lg font-medium text-gray-900 mb-2">Access Denied</h3>
+            <p className="text-gray-500">Only super administrators can manage permissions</p>
           </div>
         </div>
       </DashboardLayout>
@@ -131,213 +217,289 @@ export default function PermissionsPage() {
 
   return (
     <DashboardLayout>
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className="space-y-6">
         {/* Header */}
-        <div className="mb-8">
-          <div className="flex items-center gap-3 mb-4">
-            <Shield className="w-8 h-8 text-purple-600" />
-            <h1 className="text-3xl font-bold text-gray-900 dark:text-white">User Permissions</h1>
+        <div className="flex items-center justify-between">
+          <div>
+            <h1 className="text-2xl font-bold text-gray-900 flex items-center gap-2">
+              <Shield className="h-7 w-7 text-indigo-600" />
+              Permission Management
+            </h1>
+            <p className="mt-1 text-sm text-gray-500">
+              Manage user permissions and access control
+            </p>
           </div>
-          <p className="text-gray-600 dark:text-gray-400">
-            Manage user permissions and access control for your billing system
-          </p>
+          <button
+            onClick={fetchData}
+            className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-md text-gray-700 hover:bg-gray-50"
+            disabled={loading}
+          >
+            <RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
         </div>
 
         {/* Error/Success Messages */}
         {error && (
-          <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-3">
-            <AlertCircle className="w-5 h-5 text-red-500" />
-            <p className="text-red-600 dark:text-red-400">{error}</p>
+          <div className="bg-red-50 border border-red-200 rounded-lg p-4 flex items-start gap-3">
+            <AlertCircle className="h-5 w-5 text-red-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="text-sm font-medium text-red-800">Error</h3>
+              <p className="text-sm text-red-700 mt-1">{error}</p>
+            </div>
           </div>
         )}
 
         {successMessage && (
-          <div className="mb-6 p-4 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg flex items-center gap-3">
-            <Check className="w-5 h-5 text-green-500" />
-            <p className="text-green-600 dark:text-green-400">{successMessage}</p>
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4 flex items-start gap-3">
+            <Check className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+            <div>
+              <h3 className="text-sm font-medium text-green-800">Success</h3>
+              <p className="text-sm text-green-700 mt-1">{successMessage}</p>
+            </div>
           </div>
         )}
 
         {loading ? (
-          <TableSkeleton rows={5} />
+          <TableSkeleton />
         ) : (
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* User List */}
-            <div className="lg:col-span-1">
-              <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md">
-                <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                  <h2 className="font-semibold text-lg text-gray-900 dark:text-white">Users</h2>
+          <div className="grid grid-cols-12 gap-6">
+            {/* User List Panel - Left Side */}
+            <div className="col-span-12 lg:col-span-4 bg-white rounded-lg shadow">
+              <div className="p-4 border-b border-gray-200">
+                <h2 className="text-lg font-semibold text-gray-900 mb-3">Users</h2>
+                <div className="relative">
+                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
+                  <input
+                    type="text"
+                    placeholder="Search users..."
+                    value={userSearchTerm}
+                    onChange={(e) => setUserSearchTerm(e.target.value)}
+                    className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
+                  />
                 </div>
-                <div className="max-h-96 overflow-y-auto">
-                  {users.map(user => (
-                    <button
-                      key={user.user_id}
-                      onClick={() => selectUser(user.user_id)}
-                      className={`w-full text-left p-4 border-b border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${
-                        selectedUser === user.user_id ? 'bg-purple-50 dark:bg-purple-900/30' : ''
-                      }`}
-                    >
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <User className="w-4 h-4 text-gray-500" />
-                            <p className="font-medium text-gray-900 dark:text-white">{user.email}</p>
+              </div>
+              <div className="overflow-y-auto max-h-[calc(100vh-300px)]">
+                {filteredUsers.length === 0 ? (
+                  <div className="p-8 text-center text-gray-500">
+                    <User className="h-12 w-12 mx-auto mb-3 opacity-50" />
+                    <p>No users found</p>
+                  </div>
+                ) : (
+                  <div className="divide-y divide-gray-200">
+                    {filteredUsers.map(user => (
+                      <button
+                        key={user.user_id}
+                        onClick={() => selectUser(user.user_id)}
+                        className={`w-full text-left p-4 hover:bg-gray-50 transition-colors ${
+                          selectedUser === user.user_id ? 'bg-indigo-50 border-l-4 border-indigo-600' : ''
+                        }`}
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3 flex-1 min-w-0">
+                            <div className={`h-10 w-10 rounded-full flex items-center justify-center flex-shrink-0 ${
+                              user.is_super_admin ? 'bg-purple-100' : 'bg-gray-100'
+                            }`}>
+                              {user.is_super_admin ? (
+                                <Shield className="h-5 w-5 text-purple-600" />
+                              ) : (
+                                <User className="h-5 w-5 text-gray-600" />
+                              )}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-900 truncate">
+                                {user.email}
+                              </p>
+                              <div className="flex items-center gap-2 mt-1">
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                                  user.is_super_admin
+                                    ? 'bg-purple-100 text-purple-800'
+                                    : 'bg-blue-100 text-blue-800'
+                                }`}>
+                                  {user.role}
+                                </span>
+                                {!user.is_active && (
+                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-gray-100 text-gray-800">
+                                    Inactive
+                                  </span>
+                                )}
+                              </div>
+                            </div>
                           </div>
-                          <div className="flex items-center gap-2 mt-1">
-                            <span className="text-xs text-gray-500 dark:text-gray-400">{user.role}</span>
-                            {user.is_super_admin && (
-                              <span className="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-900/50 text-purple-700 dark:text-purple-300 rounded-full">
-                                Super Admin
-                              </span>
-                            )}
-                          </div>
+                          {selectedUser === user.user_id && (
+                            <Check className="h-5 w-5 text-indigo-600 flex-shrink-0" />
+                          )}
                         </div>
-                        {selectedUser === user.user_id && (
-                          <Check className="w-5 h-5 text-purple-600" />
-                        )}
-                      </div>
-                    </button>
-                  ))}
-                </div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             </div>
 
-            {/* Permission Editor */}
-            <div className="lg:col-span-2">
-              {selectedUserData ? (
-                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md">
-                  <div className="p-4 border-b border-gray-200 dark:border-gray-700">
-                    <div className="flex flex-col gap-4">
-                      <div className="flex items-center justify-between">
-                        <div>
-                          <h2 className="font-semibold text-lg text-gray-900 dark:text-white">
-                            Edit Permissions for {selectedUserData.email}
-                          </h2>
-                          {selectedUserData.is_super_admin && (
-                            <p className="text-sm text-yellow-600 dark:text-yellow-400 mt-1">
-                              Super admins have all permissions by default
-                            </p>
-                          )}
-                        </div>
-                        <button
-                          onClick={savePermissions}
-                          disabled={saving || selectedUserData.is_super_admin}
-                          className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2"
-                        >
-                          {saving ? (
-                            <RefreshCw className="w-4 h-4 animate-spin" />
-                          ) : (
-                            <Save className="w-4 h-4" />
-                          )}
-                          Save Changes
-                        </button>
+            {/* Permission Editor Panel - Right Side */}
+            <div className="col-span-12 lg:col-span-8 bg-white rounded-lg shadow">
+              {selectedUser ? (
+                <>
+                  <div className="p-4 border-b border-gray-200">
+                    <div className="flex items-center justify-between mb-3">
+                      <h2 className="text-lg font-semibold text-gray-900">
+                        Edit Permissions
+                      </h2>
+                      <div className="text-sm text-gray-600">
+                        {getSelectedPermissionCount()} of {getTotalPermissionCount()} permissions enabled
                       </div>
+                    </div>
 
-                      {/* Search Box */}
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" />
+                    <div className="flex items-center gap-3">
+                      <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
                         <input
                           type="text"
                           placeholder="Search permissions..."
                           value={searchTerm}
                           onChange={(e) => setSearchTerm(e.target.value)}
-                          className="w-full pl-10 pr-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-purple-500 focus:border-transparent"
+                          className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                         />
                       </div>
+                      <button
+                        onClick={savePermissions}
+                        disabled={saving}
+                        className="flex items-center gap-2 px-6 py-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                      >
+                        {saving ? (
+                          <>
+                            <RefreshCw className="h-4 w-4 animate-spin" />
+                            Saving...
+                          </>
+                        ) : (
+                          <>
+                            <Save className="h-4 w-4" />
+                            Save Changes
+                          </>
+                        )}
+                      </button>
                     </div>
                   </div>
 
-                  <div className="p-4 max-h-[600px] overflow-y-auto">
-                    {Object.entries(categorizedPermissions)
-                      .sort(([a], [b]) => a.localeCompare(b))
-                      .map(([category, permissions]) => {
-                        const categoryPerms = permissions
-                          .filter(p =>
-                            searchTerm === '' ||
-                            p.permission_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                            p.description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                            category.toLowerCase().includes(searchTerm.toLowerCase())
-                          )
-                          .sort((a, b) => a.permission_name.localeCompare(b.permission_name))
-
-                        // Skip empty categories when searching
-                        if (categoryPerms.length === 0) return null
-                        const checkedCount = categoryPerms.filter(p => userPermissions[p.permission_name]).length
-                        const allChecked = checkedCount === categoryPerms.length && categoryPerms.length > 0
-                        const someChecked = checkedCount > 0 && checkedCount < categoryPerms.length
-
-                        return (
-                          <div key={category} className="mb-6 border border-gray-200 dark:border-gray-700 rounded-lg overflow-hidden">
-                            <div className="bg-gradient-to-r from-purple-50 to-blue-50 dark:from-purple-900/20 dark:to-blue-900/20 p-4 border-b border-gray-200 dark:border-gray-700">
-                              <div className="flex items-center justify-between">
-                                <div className="flex items-center gap-3">
-                                  <h3 className="font-bold text-base text-gray-900 dark:text-white">
-                                    {category}
-                                  </h3>
-                                  <span className="text-xs px-2 py-1 bg-purple-100 dark:bg-purple-800 text-purple-700 dark:text-purple-300 rounded-full font-medium">
-                                    {checkedCount}/{categoryPerms.length}
-                                  </span>
-                                </div>
-                                <label className="flex items-center gap-2 cursor-pointer">
-                                  <input
-                                    type="checkbox"
-                                    checked={allChecked}
-                                    ref={el => {
-                                      if (el) el.indeterminate = someChecked
-                                    }}
-                                    onChange={() => {
-                                      const newChecked = !allChecked
-                                      categoryPerms.forEach(perm => {
-                                        setUserPermissions(prev => ({
-                                          ...prev,
-                                          [perm.permission_name]: newChecked
-                                        }))
-                                      })
-                                    }}
-                                    disabled={selectedUserData.is_super_admin}
-                                    className="rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 disabled:opacity-50"
-                                  />
-                                  <span className="text-xs font-medium text-gray-600 dark:text-gray-400">
-                                    Select All
-                                  </span>
-                                </label>
-                              </div>
-                            </div>
-                            <div className="p-3 space-y-1 bg-white dark:bg-gray-800">
-                              {categoryPerms.map(permission => (
-                                <label
-                                  key={permission.permission_id}
-                                  className="flex items-start gap-3 p-3 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors group"
-                                >
-                                  <input
-                                    type="checkbox"
-                                    checked={userPermissions[permission.permission_name] || false}
-                                    onChange={() => togglePermission(permission.permission_name)}
-                                    disabled={selectedUserData.is_super_admin}
-                                    className="mt-1 rounded border-gray-300 dark:border-gray-600 text-purple-600 focus:ring-purple-500 disabled:opacity-50"
-                                  />
-                                  <div className="flex-1 min-w-0">
-                                    <p className="font-medium text-sm text-gray-900 dark:text-white group-hover:text-purple-600 dark:group-hover:text-purple-400 transition-colors">
-                                      {permission.permission_name}
-                                    </p>
-                                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                                      {permission.description}
-                                    </p>
-                                  </div>
-                                </label>
-                              ))}
-                            </div>
+                  <div className="overflow-y-auto max-h-[calc(100vh-300px)] p-4">
+                    {users.find(u => u.user_id === selectedUser)?.is_super_admin ? (
+                      <div className="text-center py-12">
+                        <Shield className="h-16 w-16 text-purple-600 mx-auto mb-4" />
+                        <h3 className="text-lg font-medium text-gray-900 mb-2">Super Administrator</h3>
+                        <p className="text-gray-500">
+                          Super administrators have all permissions by default and cannot be modified.
+                        </p>
+                      </div>
+                    ) : (
+                      <div className="space-y-3">
+                        {filteredSections.length === 0 ? (
+                          <div className="text-center py-12">
+                            <Search className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                            <p className="text-gray-500">No permissions found matching your search</p>
                           </div>
-                        )
-                      })}
+                        ) : (
+                          filteredSections.map(section => {
+                            const { total, selected } = getSectionPermissionCounts(section)
+                            const isExpanded = expandedSections[section.section_id]
+                            const IconComponent = SECTION_ICONS[section.section_name] || Shield
+                            const allSelected = selected === total
+                            const someSelected = selected > 0 && selected < total
+
+                            return (
+                              <div key={section.section_id} className="border border-gray-200 rounded-lg overflow-hidden">
+                                {/* Section Header */}
+                                <div className="bg-gray-50 p-4">
+                                  <div className="flex items-center justify-between">
+                                    <button
+                                      onClick={() => toggleSection(section.section_id)}
+                                      className="flex items-center gap-3 flex-1 text-left hover:text-indigo-600 transition-colors"
+                                    >
+                                      {isExpanded ? (
+                                        <ChevronDown className="h-5 w-5 text-gray-500 flex-shrink-0" />
+                                      ) : (
+                                        <ChevronRight className="h-5 w-5 text-gray-500 flex-shrink-0" />
+                                      )}
+                                      <IconComponent className="h-5 w-5 text-indigo-600 flex-shrink-0" />
+                                      <div className="flex-1">
+                                        <h3 className="text-base font-semibold text-gray-900">
+                                          {section.section_name}
+                                        </h3>
+                                        {section.description && (
+                                          <p className="text-xs text-gray-500 mt-0.5">
+                                            {section.description}
+                                          </p>
+                                        )}
+                                      </div>
+                                    </button>
+                                    <div className="flex items-center gap-3">
+                                      <span className="text-sm text-gray-600">
+                                        {selected}/{total}
+                                      </span>
+                                      <button
+                                        onClick={() => selectAllInSection(section)}
+                                        className="flex items-center gap-2 px-3 py-1.5 text-sm border border-gray-300 rounded-md hover:bg-white transition-colors"
+                                      >
+                                        {allSelected ? (
+                                          <>
+                                            <CheckSquare className="h-4 w-4" />
+                                            Deselect All
+                                          </>
+                                        ) : (
+                                          <>
+                                            <Square className="h-4 w-4" />
+                                            Select All
+                                          </>
+                                        )}
+                                      </button>
+                                    </div>
+                                  </div>
+                                </div>
+
+                                {/* Permission List */}
+                                {isExpanded && (
+                                  <div className="divide-y divide-gray-100">
+                                    {section.permissions.map(permission => (
+                                      <label
+                                        key={permission.permission_id}
+                                        className="flex items-start gap-3 p-4 hover:bg-gray-50 cursor-pointer transition-colors"
+                                      >
+                                        <input
+                                          type="checkbox"
+                                          checked={userPermissions[permission.permission_name] || false}
+                                          onChange={() => togglePermission(permission.permission_name)}
+                                          className="mt-1 h-4 w-4 text-indigo-600 focus:ring-indigo-500 border-gray-300 rounded"
+                                        />
+                                        <div className="flex-1">
+                                          <div className="text-sm font-medium text-gray-900">
+                                            {permission.description}
+                                          </div>
+                                          <div className="text-xs text-gray-500 mt-0.5 font-mono">
+                                            {permission.permission_name}
+                                          </div>
+                                        </div>
+                                        {userPermissions[permission.permission_name] && (
+                                          <Check className="h-5 w-5 text-green-600 flex-shrink-0 mt-0.5" />
+                                        )}
+                                      </label>
+                                    ))}
+                                  </div>
+                                )}
+                              </div>
+                            )
+                          })
+                        )}
+                      </div>
+                    )}
                   </div>
-                </div>
+                </>
               ) : (
-                <div className="bg-white dark:bg-gray-800 rounded-lg shadow-md p-8">
+                <div className="flex items-center justify-center h-full min-h-[400px]">
                   <div className="text-center">
-                    <User className="w-12 h-12 text-gray-400 mx-auto mb-4" />
-                    <p className="text-gray-500 dark:text-gray-400">
-                      Select a user to manage their permissions
+                    <User className="h-16 w-16 text-gray-400 mx-auto mb-4" />
+                    <h3 className="text-lg font-medium text-gray-900 mb-2">No User Selected</h3>
+                    <p className="text-gray-500">
+                      Select a user from the list to manage their permissions
                     </p>
                   </div>
                 </div>

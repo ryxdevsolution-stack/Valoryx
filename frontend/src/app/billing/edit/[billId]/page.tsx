@@ -6,7 +6,6 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { useData } from '@/contexts/DataContext'
 import { useClient } from '@/contexts/ClientContext'
-import BillPrintPreview from '@/components/BillPrintPreview'
 
 interface Product {
   product_id: string
@@ -109,8 +108,6 @@ export default function EditBillPage() {
   const [paymentType, setPaymentType] = useState('')
   const [paymentAmount, setPaymentAmount] = useState<number | string>('')
 
-  const [showPrintPreview, setShowPrintPreview] = useState(false)
-  const [billForPrint, setBillForPrint] = useState<any>(null)
 
   const loadBillData = useCallback(async () => {
     try {
@@ -320,10 +317,53 @@ export default function EditBillPage() {
 
       alert('Bill updated successfully!')
 
-      // Fetch updated bill for print preview
+      // Fetch updated bill and print directly
       const billDetailsResponse = await api.get(`/billing/${billId}`)
-      setBillForPrint(billDetailsResponse.data.bill)
-      setShowPrintPreview(true)
+      const billData = billDetailsResponse.data.bill
+
+      // Directly print the bill
+      const printResponse = await api.post('/billing/print', {
+        bill: {
+          bill_number: billData.bill_number,
+          customer_name: billData.customer_name,
+          customer_phone: billData.customer_phone,
+          items: billData.items,
+          subtotal: billData.subtotal,
+          discount_percentage: billData.discount_percentage,
+          discount_amount: billData.discount_amount,
+          gst_amount: billData.gst_amount,
+          final_amount: billData.final_amount,
+          total_amount: billData.total_amount,
+          payment_type: billData.payment_type,
+          created_at: billData.created_at,
+          type: billData.type,
+          cgst: billData.cgst,
+          sgst: billData.sgst,
+          igst: billData.igst
+        },
+        clientInfo: client ? {
+          client_name: client.client_name,
+          address: client.address,
+          phone: client.phone,
+          email: client.email,
+          gstin: client.gstin,
+          logo_url: client.logo_url
+        } : {
+          client_name: 'Business Name',
+          address: '',
+          phone: '',
+          email: '',
+          gstin: '',
+          logo_url: ''
+        }
+      })
+
+      if (printResponse.data.success) {
+        console.log('Print successful!')
+        router.push('/billing')
+      } else {
+        throw new Error(printResponse.data.error || 'Print failed')
+      }
     } catch (error: any) {
       console.error('Failed to update bill:', error)
       alert(error.response?.data?.error || 'Failed to update bill')
@@ -642,17 +682,6 @@ export default function EditBillPage() {
         </div>
       </div>
 
-      {/* Print Preview Modal */}
-      {showPrintPreview && billForPrint && client && (
-        <BillPrintPreview
-          bill={billForPrint}
-          clientInfo={client}
-          onClose={() => {
-            setShowPrintPreview(false)
-            router.push('/billing')
-          }}
-        />
-      )}
     </DashboardLayout>
   )
 }

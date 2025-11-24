@@ -3,6 +3,7 @@ from extensions import db
 from models.billing_model import GSTBilling, NonGSTBilling
 from models.customer_model import Customer
 from utils.auth_middleware import authenticate
+from utils.permission_middleware import require_permission
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta
 import uuid
@@ -12,6 +13,7 @@ customer_bp = Blueprint('customer', __name__)
 
 @customer_bp.route('/list', methods=['GET'])
 @authenticate
+@require_permission('view_customers')
 def get_customers():
     """Get all customers with their billing statistics"""
     try:

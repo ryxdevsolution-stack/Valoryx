@@ -6,7 +6,7 @@ import api from '@/lib/api'
 import { useRouter } from 'next/navigation'
 import { useData } from '@/contexts/DataContext'
 import { useClient } from '@/contexts/ClientContext'
-import BillPrintPreview from '@/components/BillPrintPreview'
+import { SystemNotification } from '@/utils/notifications'
 
 interface Product {
   product_id: string
@@ -73,6 +73,10 @@ export default function UnifiedBillingPage() {
   const printButtonRef = useRef<HTMLButtonElement>(null)
 
   const hasInitialized = useRef(false)
+  const isRestoringFromStorage = useRef(false)
+
+  // LocalStorage key for draft persistence
+  const DRAFT_STORAGE_KEY = 'billing_draft_tabs'
 
   // Hardcoded payment types
   const paymentTypes = ['Cash', 'Card', 'UPI']
@@ -80,9 +84,23 @@ export default function UnifiedBillingPage() {
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(false)
 
-  // Multi-tab billing state
-  const [billTabs, setBillTabs] = useState<BillTab[]>([
-    {
+  // Multi-tab billing state - initialized from localStorage or default
+  const [billTabs, setBillTabs] = useState<BillTab[]>(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(DRAFT_STORAGE_KEY)
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          if (parsed.tabs && Array.isArray(parsed.tabs) && parsed.tabs.length > 0) {
+            isRestoringFromStorage.current = true
+            return parsed.tabs
+          }
+        }
+      } catch (e) {
+        console.error('Failed to restore draft from localStorage:', e)
+      }
+    }
+    return [{
       id: '1',
       customer_name: '',
       customer_phone: '',
@@ -91,9 +109,24 @@ export default function UnifiedBillingPage() {
       items: [],
       discountPercentage: 0,
       amountReceived: 0,
-    },
-  ])
-  const [activeTabId, setActiveTabId] = useState('1')
+    }]
+  })
+  const [activeTabId, setActiveTabId] = useState(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(DRAFT_STORAGE_KEY)
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          if (parsed.activeTabId) {
+            return parsed.activeTabId
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+    return '1'
+  })
 
   const [billDate] = useState(new Date())
   const [nextBillNumber, setNextBillNumber] = useState<number | null>(null)
@@ -102,15 +135,18 @@ export default function UnifiedBillingPage() {
   const [barcodeInput, setBarcodeInput] = useState('')
   const [productSearch, setProductSearch] = useState('')
   const [showProductDropdown, setShowProductDropdown] = useState(false)
+  const [productsLoading, setProductsLoading] = useState(true)
   const [selectedProductIndex, setSelectedProductIndex] = useState(0)
   const [isNewProduct, setIsNewProduct] = useState(false)
+  const [newProductName, setNewProductName] = useState('')
+  const [newProductBarcode, setNewProductBarcode] = useState('')
   const [currentItem, setCurrentItem] = useState({
     product_id: '',
     product_name: '',
     item_code: '',
     hsn_code: '',
     unit: '',
-    quantity: 1,
+    quantity: '' as number | string,
     rate: 0,
     gst_percentage: 0,
   })
@@ -118,24 +154,62 @@ export default function UnifiedBillingPage() {
   const [stockWarning, setStockWarning] = useState<string>('')
 
   // Modal states
-  const [showPrintConfirm, setShowPrintConfirm] = useState(false)
-  const [createdBillForPrint, setCreatedBillForPrint] = useState<any>(null)
+  const [showDraftRestored, setShowDraftRestored] = useState(false)
+
+  // Show draft restored notification
+  useEffect(() => {
+    if (typeof window !== 'undefined') {
+      try {
+        const saved = localStorage.getItem(DRAFT_STORAGE_KEY)
+        if (saved) {
+          const parsed = JSON.parse(saved)
+          if (parsed.tabs && parsed.tabs.length > 0 && parsed.tabs.some((t: BillTab) => t.items.length > 0 || t.customer_name)) {
+            setShowDraftRestored(true)
+            setTimeout(() => setShowDraftRestored(false), 4000)
+          }
+        }
+      } catch (e) {
+        // ignore
+      }
+    }
+  }, [])
 
   // Get current active tab
   const activeTab = billTabs.find((tab) => tab.id === activeTabId) || billTabs[0]
 
-  const loadInitialData = useCallback(async () => {
+  const loadInitialData = useCallback(async (retryCount = 0) => {
     try {
+      setProductsLoading(true)
       const [productsData, billsResponse] = await Promise.all([
-        fetchProducts(),
+        fetchProducts(retryCount > 0), // Force refresh on retry
         api.get('/billing/list?limit=1'),
       ])
       setProducts(productsData)
+      setProductsLoading(false)
 
       const bills = billsResponse.data.bills || []
       setNextBillNumber(bills.length > 0 ? bills[0].bill_number + 1 : 1)
+
+      // If products is empty and we haven't retried too many times, retry after delay
+      if (productsData.length === 0 && retryCount < 3) {
+        console.log(`Products empty, retrying (attempt ${retryCount + 1}/3)...`)
+        setTimeout(() => {
+          loadInitialData(retryCount + 1)
+        }, 2000)
+      }
     } catch (error) {
+      console.error('Failed to load initial data:', error)
       setNextBillNumber(1)
+
+      // Retry on error if we haven't exceeded retry limit
+      if (retryCount < 3) {
+        console.log(`Error loading data, retrying (attempt ${retryCount + 1}/3)...`)
+        setTimeout(() => {
+          loadInitialData(retryCount + 1)
+        }, 2000)
+      } else {
+        setProductsLoading(false) // Stop loading indicator after max retries
+      }
     }
   }, [fetchProducts])
 
@@ -144,6 +218,9 @@ export default function UnifiedBillingPage() {
       hasInitialized.current = true
       loadInitialData()
       productSearchRef.current?.focus()
+
+      // Request notification permission on page load
+      SystemNotification.requestPermission()
     }
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -172,6 +249,50 @@ export default function UnifiedBillingPage() {
       document.removeEventListener('mousedown', handleClickOutside)
     }
   }, [loadInitialData])
+
+  // Save drafts to localStorage whenever billTabs or activeTabId changes
+  useEffect(() => {
+    // Skip saving during initial restoration
+    if (isRestoringFromStorage.current) {
+      isRestoringFromStorage.current = false
+      return
+    }
+
+    try {
+      const dataToSave = {
+        tabs: billTabs,
+        activeTabId: activeTabId,
+        savedAt: new Date().toISOString()
+      }
+      localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(dataToSave))
+    } catch (e) {
+      console.error('Failed to save draft to localStorage:', e)
+    }
+  }, [billTabs, activeTabId])
+
+  // Function to clear draft from localStorage (called after successful bill creation)
+  const clearDraftFromStorage = useCallback((tabIdToRemove?: string) => {
+    try {
+      if (tabIdToRemove) {
+        // Only clear the specific tab that was completed
+        const remainingTabs = billTabs.filter(tab => tab.id !== tabIdToRemove)
+        if (remainingTabs.length > 0) {
+          const dataToSave = {
+            tabs: remainingTabs,
+            activeTabId: remainingTabs[0].id,
+            savedAt: new Date().toISOString()
+          }
+          localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(dataToSave))
+        } else {
+          localStorage.removeItem(DRAFT_STORAGE_KEY)
+        }
+      } else {
+        localStorage.removeItem(DRAFT_STORAGE_KEY)
+      }
+    } catch (e) {
+      console.error('Failed to clear draft from localStorage:', e)
+    }
+  }, [billTabs])
 
   const formatDate = (date: Date) => {
     return date.toLocaleDateString('en-IN', {
@@ -267,9 +388,11 @@ export default function UnifiedBillingPage() {
         return
       }
 
-      // Process the barcode
+      // Process the barcode - ensure it's sent as a complete string
       try {
-        const response = await api.get(`/stock/lookup/${barcodeInput.trim()}`)
+        // Clean the barcode - remove any unwanted spaces but keep as single string
+        const cleanedBarcode = barcodeInput.trim().replace(/\s+/g, '')
+        const response = await api.get(`/stock/lookup/${encodeURIComponent(cleanedBarcode)}`)
         const product = response.data.product
         addProductToItems(product)
         setBarcodeInput('')
@@ -293,7 +416,7 @@ export default function UnifiedBillingPage() {
       item_code: product.item_code || '',
       hsn_code: product.hsn_code || '',
       unit: product.unit || 'pcs',
-      quantity: 1,
+      quantity: '' as number | string,
       rate: Number(product.rate),
       gst_percentage: Number(product.gst_percentage || 0),
     })
@@ -307,31 +430,38 @@ export default function UnifiedBillingPage() {
   }
 
   const handleCreateNewProduct = () => {
+    if (!newProductName.trim()) return
+
     setIsNewProduct(true)
     setCurrentItem({
       product_id: 'new-product-temp',
-      product_name: productSearch,
-      item_code: '',
+      product_name: newProductName.trim(),
+      item_code: newProductBarcode || productSearch, // Store barcode as item_code
       hsn_code: '',
       unit: 'pcs',
-      quantity: 1,
+      quantity: '' as number | string,
       rate: 0,
       gst_percentage: 0,
     })
     setShowProductDropdown(false)
+    setNewProductName('') // Reset for next use
+    setNewProductBarcode('') // Reset barcode
 
     setTimeout(() => {
-      quantityInputRef.current?.focus()
-      quantityInputRef.current?.select()
+      rateInputRef.current?.focus()
+      rateInputRef.current?.select()
     }, 100)
   }
 
   const filteredProducts = products.filter((product) => {
     const searchLower = productSearch.toLowerCase()
+    const searchNoSpaces = productSearch.replace(/\s+/g, '').toLowerCase()
     return (
       product.product_name.toLowerCase().includes(searchLower) ||
       (product.item_code && product.item_code.toLowerCase().includes(searchLower)) ||
-      (product.barcode && product.barcode.toLowerCase().includes(searchLower))
+      (product.barcode && product.barcode.toLowerCase().includes(searchLower)) ||
+      // Also check barcode without spaces in case database has spaces
+      (product.barcode && product.barcode.replace(/\s+/g, '').toLowerCase().includes(searchNoSpaces))
     )
   })
 
@@ -388,7 +518,7 @@ export default function UnifiedBillingPage() {
   }
 
   const addItem = () => {
-    if (!currentItem.product_name || currentItem.quantity <= 0) {
+    if (!currentItem.product_name || !currentItem.quantity || Number(currentItem.quantity) <= 0) {
       alert('Please enter product name and valid quantity')
       return
     }
@@ -403,11 +533,11 @@ export default function UnifiedBillingPage() {
       return
     }
 
-    let actualQuantity = currentItem.quantity
+    let actualQuantity = Number(currentItem.quantity)
     let limitedByStock = false
-    const requestedQuantity = currentItem.quantity
+    const requestedQuantity = Number(currentItem.quantity)
 
-    if (!isNewProduct && availableStock > 0 && currentItem.quantity > availableStock) {
+    if (!isNewProduct && availableStock > 0 && actualQuantity > availableStock) {
       actualQuantity = availableStock
       limitedByStock = true
     }
@@ -461,7 +591,7 @@ export default function UnifiedBillingPage() {
       item_code: '',
       hsn_code: '',
       unit: '',
-      quantity: 1,
+      quantity: '' as number | string,
       rate: 0,
       gst_percentage: 0,
     })
@@ -575,7 +705,7 @@ export default function UnifiedBillingPage() {
     return hasGSTItems() ? 'GST Bill' : 'Non-GST Bill'
   }
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
     if (activeTab.items.length === 0) {
@@ -596,13 +726,9 @@ export default function UnifiedBillingPage() {
       return
     }
 
-    setShowPrintConfirm(true)
-  }
-
-  const confirmPrintBill = async () => {
+    // Directly create and print the bill
     try {
       setLoading(true)
-      setShowPrintConfirm(false)
 
       const cleanedItems = activeTab.items.map(({ limitedByStock, requestedQuantity, ...item }) => item)
 
@@ -619,15 +745,42 @@ export default function UnifiedBillingPage() {
         discount_percentage: activeTab.discountPercentage,
       })
 
-      // Fetch the created bill details for printing
-      const billId = response.data.bill_id
-      const billDetailsResponse = await api.get(`/billing/${billId}`)
-      const billData = billDetailsResponse.data.bill
+      // Check for stock warnings and show system notifications
+      if (response.data.stock_warnings && response.data.stock_warnings.length > 0) {
+        await SystemNotification.showStockWarnings(response.data.stock_warnings)
+      }
 
-      // Store bill data for printing
-      setCreatedBillForPrint(billData)
+      // Use bill data directly from create response (no need for additional fetch)
+      const billData = response.data.bill
 
-      // Remove completed tab
+      // Directly print the bill
+      const printResponse = await api.post('/billing/print', {
+        bill: billData,
+        clientInfo: client ? {
+          client_name: client.client_name,
+          address: client.address,
+          phone: client.phone,
+          email: client.email,
+          gstin: client.gstin,
+          logo_url: client.logo_url
+        } : {
+          client_name: 'Business Name',
+          address: '',
+          phone: '',
+          email: '',
+          gstin: '',
+          logo_url: ''
+        }
+      })
+
+      if (printResponse.data.success) {
+        console.log('Print successful!')
+      } else {
+        throw new Error(printResponse.data.error || 'Print failed')
+      }
+
+      // Clear the completed tab from storage and remove it
+      clearDraftFromStorage(activeTabId)
       closeTab(activeTabId)
     } catch (error: any) {
       alert(error.response?.data?.error || 'Failed to create bill')
@@ -640,6 +793,28 @@ export default function UnifiedBillingPage() {
   return (
     <DashboardLayout>
       <div className="flex flex-col h-full">
+        {/* Draft Restored Notification */}
+        {showDraftRestored && (
+          <div className="mb-2 p-2 bg-blue-100 dark:bg-blue-900/30 border border-blue-300 dark:border-blue-700 rounded-lg flex items-center justify-between animate-pulse">
+            <div className="flex items-center gap-2">
+              <svg className="w-5 h-5 text-blue-600 dark:text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+              </svg>
+              <span className="text-sm font-medium text-blue-800 dark:text-blue-300">
+                Draft bill restored! Your previous work has been recovered.
+              </span>
+            </div>
+            <button
+              onClick={() => setShowDraftRestored(false)}
+              className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-200"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+              </svg>
+            </button>
+          </div>
+        )}
+
         {/* Multi-Tab Header */}
         <div className="bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700 mb-2">
           <div className="flex items-center gap-1 p-1 overflow-x-auto">
@@ -803,15 +978,18 @@ export default function UnifiedBillingPage() {
               }`}
             >
               {isNewProduct && (
-                <div className="mb-1 flex items-center gap-1 text-green-700 dark:text-green-400">
-                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
-                    <path
-                      fillRule="evenodd"
-                      d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z"
-                      clipRule="evenodd"
-                    />
-                  </svg>
-                  <span className="text-xs font-semibold">Creating New Product</span>
+                <div className="mb-2 p-2 bg-green-100 dark:bg-green-900/40 rounded-lg border border-green-300 dark:border-green-700">
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                      <span className="bg-green-500 text-white text-xs px-2 py-0.5 rounded font-bold">NEW</span>
+                      <span className="font-semibold text-gray-900 dark:text-white text-sm">{currentItem.product_name}</span>
+                    </div>
+                    {currentItem.item_code && (
+                      <span className="font-mono text-xs bg-gray-200 dark:bg-gray-700 px-2 py-0.5 rounded text-gray-700 dark:text-gray-300">
+                        {currentItem.item_code}
+                      </span>
+                    )}
+                  </div>
                 </div>
               )}
               <div className="flex gap-1 items-end">
@@ -846,7 +1024,19 @@ export default function UnifiedBillingPage() {
                   {/* Dropdown List */}
                   {showProductDropdown && productSearch && (
                     <div className="absolute z-50 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-60 overflow-y-auto">
-                      {filteredProducts.length > 0 ? (
+                      {productsLoading ? (
+                        <div className="px-3 py-3 text-center">
+                          <div className="flex items-center justify-center gap-2">
+                            <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-blue-600"></div>
+                            <span className="text-sm text-gray-600 dark:text-gray-400">Loading products...</span>
+                          </div>
+                          {products.length === 0 && (
+                            <div className="mt-2 text-xs text-yellow-600 dark:text-yellow-400">
+                              Retrying connection...
+                            </div>
+                          )}
+                        </div>
+                      ) : filteredProducts.length > 0 ? (
                         <>
                           {filteredProducts.map((product, index) => (
                             <div
@@ -874,61 +1064,44 @@ export default function UnifiedBillingPage() {
                               </div>
                             </div>
                           ))}
-                          {/* Create New Product Option */}
-                          <div
-                            onClick={handleCreateNewProduct}
-                            className="px-3 py-2 cursor-pointer bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/30 border-t-2 border-green-300 dark:border-green-700"
-                          >
-                            <div className="flex items-center gap-2">
-                              <svg
-                                className="w-5 h-5 text-green-600 dark:text-green-400"
-                                fill="none"
-                                stroke="currentColor"
-                                viewBox="0 0 24 24"
-                              >
-                                <path
-                                  strokeLinecap="round"
-                                  strokeLinejoin="round"
-                                  strokeWidth={2}
-                                  d="M12 4v16m8-8H4"
-                                />
-                              </svg>
-                              <div>
-                                <div className="text-sm font-semibold text-green-700 dark:text-green-400">
-                                  Create New Product: &quot;{productSearch}&quot;
-                                </div>
-                                <div className="text-xs text-green-600 dark:text-green-500">
-                                  Click to add as new product to this bill
-                                </div>
-                              </div>
-                            </div>
-                          </div>
                         </>
                       ) : (
-                        <div
-                          onClick={handleCreateNewProduct}
-                          className="px-3 py-3 cursor-pointer hover:bg-green-50 dark:hover:bg-green-900/20"
-                        >
-                          <div className="flex items-center gap-2 justify-center">
-                            <svg
-                              className="w-5 h-5 text-green-600 dark:text-green-400"
-                              fill="none"
-                              stroke="currentColor"
-                              viewBox="0 0 24 24"
-                            >
-                              <path
-                                strokeLinecap="round"
-                                strokeLinejoin="round"
-                                strokeWidth={2}
-                                d="M12 4v16m8-8H4"
-                              />
-                            </svg>
-                            <div className="text-sm font-semibold text-green-700 dark:text-green-400">
-                              Create New Product: &quot;{productSearch}&quot;
-                            </div>
+                        <div className="px-3 py-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700">
+                          <div className="text-xs text-yellow-700 dark:text-yellow-400 mb-1">Product not found</div>
+                          <div className="bg-white dark:bg-gray-800 rounded px-2 py-1 mb-2 border border-yellow-200 dark:border-yellow-700">
+                            <span className="text-xs text-gray-500">Code: </span>
+                            <span className="font-mono font-bold text-gray-900 dark:text-white text-sm">{productSearch}</span>
                           </div>
-                          <div className="text-xs text-center text-gray-500 dark:text-gray-400 mt-1">
-                            Product not found. Click to create and add to bill.
+                          <div className="flex gap-2">
+                            <input
+                              type="text"
+                              value={newProductName}
+                              onChange={(e) => setNewProductName(e.target.value)}
+                              onKeyDown={(e) => {
+                                if (e.key === 'Enter' && newProductName.trim()) {
+                                  e.preventDefault()
+                                  setNewProductBarcode(productSearch)
+                                  handleCreateNewProduct()
+                                }
+                              }}
+                              placeholder="Enter product name"
+                              className="flex-1 px-2 py-1.5 text-sm border border-yellow-400 dark:border-yellow-600 rounded focus:ring-2 focus:ring-yellow-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
+                              autoFocus
+                            />
+                            <button
+                              onClick={() => {
+                                setNewProductBarcode(productSearch)
+                                handleCreateNewProduct()
+                              }}
+                              disabled={!newProductName.trim()}
+                              className={`px-3 py-1.5 rounded text-sm font-medium transition ${
+                                newProductName.trim()
+                                  ? 'bg-yellow-500 text-white hover:bg-yellow-600'
+                                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
+                              }`}
+                            >
+                              + Add
+                            </button>
                           </div>
                         </div>
                       )}
@@ -1148,6 +1321,11 @@ export default function UnifiedBillingPage() {
                             <span className="font-bold text-gray-900 dark:text-white">
                               {item.product_name}
                             </span>
+                            {item.product_id === 'new-product-temp' && (
+                              <span className="inline-flex items-center px-1 py-0.5 rounded text-xs font-semibold bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400 border border-green-300 dark:border-green-700">
+                                NEW
+                              </span>
+                            )}
                             {item.limitedByStock && (
                               <span className="inline-flex items-center px-1 py-0.5 rounded text-xs font-semibold bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-400 border border-orange-300 dark:border-orange-700">
                                 Limited
@@ -1505,102 +1683,39 @@ export default function UnifiedBillingPage() {
                 </button>
                 <button
                   type="button"
-                  onClick={() => router.push('/billing')}
+                  onClick={() => {
+                    // Clear the current bill
+                    updateActiveTab({
+                      items: [],
+                      customer_name: '',
+                      customer_phone: '',
+                      customer_gstin: '',
+                      discountPercentage: 0,
+                      amountReceived: 0,
+                      payment_splits: [],
+                    })
+                    setCurrentItem({
+                      product_id: '',
+                      product_name: '',
+                      item_code: '',
+                      hsn_code: '',
+                      unit: 'pcs',
+                      quantity: '' as number | string,
+                      rate: 0,
+                      gst_percentage: 0,
+                    })
+                    setIsNewProduct(false)
+                    setProductSearch('')
+                  }}
                   className="flex-1 px-4 py-2 bg-gray-500 dark:bg-gray-600 text-white rounded hover:bg-gray-600 dark:hover:bg-gray-700 transition font-semibold text-sm"
                 >
-                  Cancel
+                  Clear
                 </button>
               </div>
             </div>
           </div>
         </form>
 
-        {/* Print Confirmation Modal */}
-        {showPrintConfirm && (
-          <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-            <div className="bg-white dark:bg-gray-800 rounded-lg shadow-xl p-6 max-w-md w-full mx-4">
-              <div className="text-center mb-6">
-                <div className="mx-auto flex items-center justify-center h-12 w-12 rounded-full bg-blue-100 mb-4">
-                  <svg
-                    className="h-6 w-6 text-blue-600"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      strokeLinecap="round"
-                      strokeLinejoin="round"
-                      strokeWidth={2}
-                      d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z"
-                    />
-                  </svg>
-                </div>
-                <h3 className="text-lg font-bold text-gray-900 dark:text-white mb-2">
-                  Print Bill?
-                </h3>
-                <p className="text-sm text-gray-600 dark:text-gray-400">
-                  Do you want to print this bill now?
-                </p>
-              </div>
-              <div className="flex flex-col gap-3">
-                <button
-                  type="button"
-                  onClick={confirmPrintBill}
-                  disabled={loading}
-                  autoFocus
-                  className="w-full px-4 py-3 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-700 dark:hover:bg-green-800 transition font-semibold disabled:bg-gray-400 dark:disabled:bg-gray-600 focus:ring-2 focus:ring-green-500 focus:outline-none"
-                >
-                  {loading ? 'Processing...' : 'Yes, Print Now'}
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setShowPrintConfirm(false)}
-                  disabled={loading}
-                  className="w-full px-4 py-3 bg-gray-500 dark:bg-gray-600 text-white rounded-lg hover:bg-gray-600 dark:hover:bg-gray-700 transition font-semibold disabled:bg-gray-400 dark:disabled:bg-gray-600"
-                >
-                  No, Cancel
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* Bill Print Preview Modal */}
-        {createdBillForPrint && client && createdBillForPrint.items && (
-          <BillPrintPreview
-            bill={{
-              bill_number: Number(createdBillForPrint.bill_number) || 0,
-              customer_name: createdBillForPrint.customer_name,
-              customer_phone: createdBillForPrint.customer_phone,
-              items: createdBillForPrint.items,
-              subtotal: createdBillForPrint.subtotal || 0,
-              discount_percentage: createdBillForPrint.discount_percentage,
-              discount_amount: createdBillForPrint.discount_amount,
-              gst_amount: createdBillForPrint.gst_amount,
-              final_amount: createdBillForPrint.final_amount || 0,
-              total_amount: createdBillForPrint.total_amount || 0,
-              payment_type: String(createdBillForPrint.payment_type || ''),
-              created_at: String(createdBillForPrint.created_at || ''),
-              type: createdBillForPrint.type === 'non_gst' ? 'non-gst' : 'gst',
-              cgst: createdBillForPrint.cgst,
-              sgst: createdBillForPrint.sgst,
-              igst: createdBillForPrint.igst
-            }}
-            clientInfo={{
-              client_name: client.client_name,
-              address: client.address,
-              phone: client.phone,
-              email: client.email,
-              gstin: client.gstin,
-              logo_url: client.logo_url
-            }}
-            autoPrint={true}
-            onClose={() => {
-              setCreatedBillForPrint(null)
-              // Stay on create bill page for next bill
-            }}
-          />
-        )}
       </div>
     </DashboardLayout>
   )

@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 # Load .env file
 load_dotenv()
 
-# Force IPv4 resolution
+# Force IPv4 resolution for better performance
 def force_ipv4_dns():
     """Force DNS to resolve to IPv4 only"""
     original_getaddrinfo = socket.getaddrinfo
@@ -19,46 +19,141 @@ def force_ipv4_dns():
 force_ipv4_dns()
 
 
-class Config:
-    """Flask configuration for Railway / Supabase deployment"""
+class OptimizedConfig:
+    """Optimized Flask configuration for high performance"""
 
     # -------------------------------
-    # Database
+    # Database - OPTIMIZED SETTINGS
     # -------------------------------
-    # Use PostgreSQL URL from env or fallback to SQLite
-    SQLALCHEMY_DATABASE_URI = os.getenv(
-        "DB_URL", "sqlite:///app.db"
-    )  # Expected format: postgresql+psycopg2://username:password@host:port/dbname
-    SQLALCHEMY_TRACK_MODIFICATIONS = False
+    SQLALCHEMY_DATABASE_URI = os.getenv("DB_URL", "sqlite:///app.db")
+    SQLALCHEMY_TRACK_MODIFICATIONS = False  # Disable to save resources
+
+    # OPTIMIZED CONNECTION POOL SETTINGS
     SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,
-        "pool_recycle": 300,
-        "pool_size": 20,  # Increased from 10
-        "max_overflow": 30,  # Increased from 20
-        "pool_timeout": 10,  # Reduced from 30
-        "echo": False,
+        "pool_pre_ping": True,  # Verify connections before using
+        "pool_recycle": 3600,  # Recycle connections after 1 hour
+        "pool_size": 50,  # Increased pool size for high concurrency
+        "max_overflow": 100,  # Allow more overflow connections
+        "pool_timeout": 5,  # Quick timeout to fail fast
+        "echo": False,  # Disable SQL logging in production
         "execution_options": {
             "compiled_cache": {},  # Enable query compilation caching
+            "isolation_level": "READ COMMITTED",  # Prevent lock contention
         },
         "connect_args": {
-            "connect_timeout": 5,  # Reduced from 10
+            "connect_timeout": 3,  # Fail fast on connection issues
             "keepalives": 1,
-            "keepalives_idle": 10,  # Reduced from 30
-            "keepalives_interval": 5,  # Reduced from 10
-            "keepalives_count": 3,  # Reduced from 5
+            "keepalives_idle": 5,
+            "keepalives_interval": 2,
+            "keepalives_count": 2,
             "application_name": "mj-billing-backend",
-            "options": "-c statement_timeout=5000",  # 5 second query timeout
+            "options": "-c statement_timeout=10000",  # 10s timeout
         },
     }
 
+    # Query optimization
+    SQLALCHEMY_RECORD_QUERIES = False  # Disable in production
+    SQLALCHEMY_NATIVE_UNICODE = True
+
     # -------------------------------
-    # Supabase
+    # Redis Cache Configuration
+    # -------------------------------
+    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
+    CACHE_TYPE = "RedisCache"
+    CACHE_REDIS_URL = REDIS_URL
+    CACHE_DEFAULT_TIMEOUT = 300  # 5 minutes default
+    CACHE_KEY_PREFIX = "mj-billing:"
+
+    # Cache timeouts for different data types
+    CACHE_TIMEOUTS = {
+        "stock_list": 60,  # 1 minute for stock lists
+        "product_lookup": 300,  # 5 minutes for product lookups
+        "analytics": 120,  # 2 minutes for analytics
+        "bill_list": 30,  # 30 seconds for bill lists
+        "client_info": 600,  # 10 minutes for client info
+    }
+
+    # -------------------------------
+    # Performance Features
+    # -------------------------------
+    # Enable response compression
+    COMPRESS_MIMETYPES = [
+        'text/html', 'text/css', 'text/xml', 'application/json',
+        'application/javascript', 'application/pdf', 'image/svg+xml'
+    ]
+    COMPRESS_LEVEL = 6  # Balance between speed and compression
+    COMPRESS_MIN_SIZE = 500  # Don't compress small responses
+
+    # Pagination defaults
+    DEFAULT_PAGE_SIZE = 50
+    MAX_PAGE_SIZE = 200
+
+    # Batch processing
+    BATCH_SIZE = 100  # Process 100 items at a time in bulk operations
+    BULK_INSERT_SIZE = 500  # Insert 500 records at once
+
+    # -------------------------------
+    # Task Queue (Celery)
+    # -------------------------------
+    CELERY_BROKER_URL = os.getenv("CELERY_BROKER_URL", "redis://localhost:6379/1")
+    CELERY_RESULT_BACKEND = os.getenv("CELERY_RESULT_BACKEND", "redis://localhost:6379/2")
+    CELERY_TASK_SERIALIZER = 'json'
+    CELERY_RESULT_SERIALIZER = 'json'
+    CELERY_ACCEPT_CONTENT = ['json']
+    CELERY_TIMEZONE = 'UTC'
+    CELERY_ENABLE_UTC = True
+    CELERY_TASK_TRACK_STARTED = True
+    CELERY_TASK_TIME_LIMIT = 30  # 30 seconds max per task
+
+    # -------------------------------
+    # API Rate Limiting
+    # -------------------------------
+    RATELIMIT_ENABLED = True
+    RATELIMIT_STORAGE_URL = REDIS_URL
+    RATELIMIT_DEFAULT = "1000/hour"  # Default rate limit
+    RATELIMIT_HEADERS_ENABLED = True
+
+    # Specific rate limits
+    RATE_LIMITS = {
+        "analytics": "100/minute",
+        "bulk_upload": "10/minute",
+        "bill_create": "300/minute",
+        "stock_update": "500/minute",
+    }
+
+    # -------------------------------
+    # Request/Response Optimization
+    # -------------------------------
+    MAX_CONTENT_LENGTH = 50 * 1024 * 1024  # 50MB max request size
+    JSON_SORT_KEYS = False  # Don't waste time sorting
+    JSONIFY_PRETTYPRINT_REGULAR = False  # Compact JSON responses
+
+    # -------------------------------
+    # Session Configuration
+    # -------------------------------
+    SESSION_TYPE = 'redis'
+    SESSION_REDIS_URL = REDIS_URL
+    SESSION_PERMANENT = False
+    SESSION_USE_SIGNER = True
+    SESSION_KEY_PREFIX = 'session:'
+    PERMANENT_SESSION_LIFETIME = 86400  # 24 hours
+
+    # -------------------------------
+    # Monitoring & Logging
+    # -------------------------------
+    SLOW_QUERY_THRESHOLD = 1000  # Log queries slower than 1 second
+    ENABLE_QUERY_PROFILING = os.getenv("ENABLE_PROFILING", "False").lower() == "true"
+    LOG_SLOW_REQUESTS = True
+    SLOW_REQUEST_THRESHOLD = 2000  # Log requests slower than 2 seconds
+
+    # -------------------------------
+    # Supabase (unchanged)
     # -------------------------------
     SUPABASE_URL = os.getenv("SUPABASE_URL")
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
     # -------------------------------
-    # JWT
+    # JWT (unchanged)
     # -------------------------------
     JWT_SECRET = os.getenv("JWT_SECRET", "ryx-billing-secret-key-change-in-production")
     JWT_ALGORITHM = "HS256"
@@ -69,6 +164,7 @@ class Config:
     # -------------------------------
     SECRET_KEY = os.getenv("SECRET_KEY", "flask-secret-key-change-in-production")
     DEBUG = os.getenv("DEBUG", "False").lower() in ["true", "1", "yes"]
+    PROPAGATE_EXCEPTIONS = True
 
     # -------------------------------
     # CORS
@@ -76,89 +172,40 @@ class Config:
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 
     # -------------------------------
-    # Helper methods
+    # Performance Monitoring
     # -------------------------------
     @classmethod
-    def is_supabase_configured(cls) -> bool:
-        """Check if Supabase is properly configured"""
-        return bool(cls.SUPABASE_URL and cls.SUPABASE_KEY)
-
-    @classmethod
-    def get_configuration_status(cls) -> dict:
-        """Get current configuration for debugging"""
+    def get_performance_config(cls):
+        """Get current performance configuration"""
         return {
             "database": {
-                "url_set": bool(cls.SQLALCHEMY_DATABASE_URI),
-                "using_sqlite": cls.SQLALCHEMY_DATABASE_URI.startswith("sqlite://"),
-                "using_postgresql": cls.SQLALCHEMY_DATABASE_URI.startswith("postgresql://")
-                or cls.SQLALCHEMY_DATABASE_URI.startswith("postgresql+psycopg2://"),
-                "using_supabase": cls.is_supabase_configured(),
+                "pool_size": cls.SQLALCHEMY_ENGINE_OPTIONS["pool_size"],
+                "max_overflow": cls.SQLALCHEMY_ENGINE_OPTIONS["max_overflow"],
+                "pool_timeout": cls.SQLALCHEMY_ENGINE_OPTIONS["pool_timeout"],
+                "statement_timeout": "10s",
             },
-            "supabase": {
-                "url_set": bool(cls.SUPABASE_URL),
-                "key_set": bool(cls.SUPABASE_KEY),
-                "configured": cls.is_supabase_configured(),
+            "cache": {
+                "enabled": bool(cls.REDIS_URL),
+                "default_timeout": cls.CACHE_DEFAULT_TIMEOUT,
+                "key_prefix": cls.CACHE_KEY_PREFIX,
             },
-            "jwt": {
-                "secret_set": bool(cls.JWT_SECRET),
-                "using_default": cls.JWT_SECRET
-                == "ryx-billing-secret-key-change-in-production",
+            "batch_processing": {
+                "batch_size": cls.BATCH_SIZE,
+                "bulk_insert_size": cls.BULK_INSERT_SIZE,
             },
-            "flask": {
-                "secret_set": bool(cls.SECRET_KEY),
-                "using_default": cls.SECRET_KEY
-                == "flask-secret-key-change-in-production",
-                "debug_mode": cls.DEBUG,
+            "pagination": {
+                "default_size": cls.DEFAULT_PAGE_SIZE,
+                "max_size": cls.MAX_PAGE_SIZE,
             },
-        }
-
-    @classmethod
-    def get_missing_configs(cls) -> list[str]:
-        """Return list of missing or default configs"""
-        missing = []
-        if not cls.SUPABASE_URL:
-            missing.append("SUPABASE_URL")
-        if not cls.SUPABASE_KEY:
-            missing.append("SUPABASE_KEY")
-        if cls.JWT_SECRET == "ryx-billing-secret-key-change-in-production":
-            missing.append("JWT_SECRET (default)")
-        if cls.SECRET_KEY == "flask-secret-key-change-in-production":
-            missing.append("SECRET_KEY (default)")
-        return missing
-
-    @classmethod
-    def validate_db_url(cls) -> tuple[bool, str]:
-        """Validate DB URL format"""
-        try:
-            from urllib.parse import urlparse
-
-            parsed = urlparse(cls.SQLALCHEMY_DATABASE_URI)
-            if parsed.scheme not in ["postgresql", "postgresql+psycopg2", "sqlite"]:
-                return False, f"Unsupported scheme: {parsed.scheme}"
-            if parsed.scheme.startswith("postgresql"):
-                if not parsed.hostname or not parsed.username:
-                    return False, "PostgreSQL URL missing hostname or username"
-                if not parsed.password:
-                    return False, "PostgreSQL URL missing password"
-            return True, "Valid database URL"
-        except Exception as e:
-            return False, f"Invalid database URL: {e}"
-
-    @classmethod
-    def get_db_url_info(cls) -> dict:
-        """Return parsed DB URL info without exposing password"""
-        try:
-            from urllib.parse import urlparse
-
-            parsed = urlparse(cls.SQLALCHEMY_DATABASE_URI)
-            return {
-                "scheme": parsed.scheme,
-                "hostname": parsed.hostname,
-                "port": parsed.port,
-                "database": parsed.path.lstrip("/") if parsed.path else None,
-                "username": parsed.username,
-                "has_password": bool(parsed.password),
-                "url_length": len(cls.SQLALCHEMY_DATABASE_URI),
+            "compression": {
+                "enabled": True,
+                "level": cls.COMPRESS_LEVEL,
+                "min_size": cls.COMPRESS_MIN_SIZE,
+            },
+            "rate_limiting": {
+                "enabled": cls.RATELIMIT_ENABLED,
+                "default": cls.RATELIMIT_DEFAULT,
             }
-        except Exception as e:
-            return {"error": str(e), "url_length": len(cls.SQLALCHEMY_DATABASE_URI)}
+        }
+# Create alias for backward compatibility
+Config = OptimizedConfig

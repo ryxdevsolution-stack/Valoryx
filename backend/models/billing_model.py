@@ -6,6 +6,12 @@ class GSTBilling(db.Model):
     """GST-enabled billing with percentage calculation"""
     __tablename__ = 'gst_billing'
 
+    # Performance indexes for common query patterns
+    __table_args__ = (
+        db.Index('idx_gst_client_created', 'client_id', 'created_at'),  # For date range queries
+        db.Index('idx_gst_client_billnum', 'client_id', 'bill_number'),  # For bill number lookups
+    )
+
     bill_id = db.Column(db.String(36), primary_key=True)
     client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     bill_number = db.Column(db.Integer)
@@ -52,6 +58,12 @@ class GSTBilling(db.Model):
 class NonGSTBilling(db.Model):
     """Non-GST billing entries"""
     __tablename__ = 'non_gst_billing'
+
+    # Performance indexes for common query patterns
+    __table_args__ = (
+        db.Index('idx_nongst_client_created', 'client_id', 'created_at'),  # For date range queries
+        db.Index('idx_nongst_client_billnum', 'client_id', 'bill_number'),  # For bill number lookups
+    )
 
     bill_id = db.Column(db.String(36), primary_key=True)
     client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)

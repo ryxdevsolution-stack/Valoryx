@@ -6,7 +6,6 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { useData } from '@/contexts/DataContext'
 import { useClient } from '@/contexts/ClientContext'
-import BillPrintPreview from '@/components/BillPrintPreview'
 import { RefreshCw, ArrowRight, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
 
 interface Product {
@@ -102,10 +101,6 @@ export default function ExchangeBillPage() {
   const [paymentType, setPaymentType] = useState('')
   const [paymentAmount, setPaymentAmount] = useState<number | string>('')
 
-  const [showSuccessModal, setShowSuccessModal] = useState(false)
-  const [exchangeResult, setExchangeResult] = useState<any>(null)
-  const [showPrintPreview, setShowPrintPreview] = useState(false)
-  const [billForPrint, setBillForPrint] = useState<any>(null)
 
   const loadBillData = useCallback(async () => {
     try {
@@ -268,6 +263,10 @@ export default function ExchangeBillPage() {
 
   const getTotalPaymentSplits = () => paymentSplits.reduce((sum, split) => sum + split.amount, 0)
 
+  const handleCloseExchange = () => {
+    router.push('/billing')
+  }
+
   const handleProcessExchange = async () => {
     const selectedItems = getSelectedReturnItems()
 
@@ -363,13 +362,56 @@ export default function ExchangeBillPage() {
 
       const response = await api.post(`/billing/exchange/${billId}`, requestBody)
 
-      setExchangeResult(response.data)
-      setShowSuccessModal(true)
+      alert('Exchange processed successfully!')
 
-      // Fetch the new exchange bill for printing
+      // Fetch the new exchange bill and print directly
       const newBillId = response.data.exchange_bill_id
       const billDetailsResponse = await api.get(`/billing/${newBillId}`)
-      setBillForPrint(billDetailsResponse.data.bill)
+      const billData = billDetailsResponse.data.bill
+
+      // Directly print the bill
+      const printResponse = await api.post('/billing/print', {
+        bill: {
+          bill_number: billData.bill_number,
+          customer_name: billData.customer_name,
+          customer_phone: billData.customer_phone,
+          items: billData.items,
+          subtotal: billData.subtotal,
+          discount_percentage: billData.discount_percentage,
+          discount_amount: billData.discount_amount,
+          gst_amount: billData.gst_amount,
+          final_amount: billData.final_amount,
+          total_amount: billData.total_amount,
+          payment_type: billData.payment_type,
+          created_at: billData.created_at,
+          type: billData.type,
+          cgst: billData.cgst,
+          sgst: billData.sgst,
+          igst: billData.igst
+        },
+        clientInfo: client ? {
+          client_name: client.client_name,
+          address: client.address,
+          phone: client.phone,
+          email: client.email,
+          gstin: client.gstin,
+          logo_url: client.logo_url
+        } : {
+          client_name: 'Business Name',
+          address: '',
+          phone: '',
+          email: '',
+          gstin: '',
+          logo_url: ''
+        }
+      })
+
+      if (printResponse.data.success) {
+        console.log('Print successful!')
+        router.push('/billing')
+      } else {
+        throw new Error(printResponse.data.error || 'Print failed')
+      }
     } catch (error: any) {
       console.error('Failed to process exchange:', error)
       console.error('Error response:', error.response?.data)
@@ -387,14 +429,6 @@ export default function ExchangeBillPage() {
     }
   }
 
-  const handlePrintAndClose = () => {
-    setShowSuccessModal(false)
-    setShowPrintPreview(true)
-  }
-
-  const handleCloseExchange = () => {
-    router.push('/billing')
-  }
 
   if (loading) {
     return (
@@ -842,84 +876,6 @@ export default function ExchangeBillPage() {
         </div>
       </div>
 
-      {/* Success Modal */}
-      {showSuccessModal && exchangeResult && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white dark:bg-gray-800 rounded-xl shadow-2xl max-w-md w-full p-6">
-            <div className="text-center">
-              <CheckCircle2 className="w-16 h-16 text-green-600 mx-auto mb-4" />
-              <h2 className="text-2xl font-bold text-gray-900 dark:text-white mb-2">
-                Exchange Successful!
-              </h2>
-              <p className="text-gray-600 dark:text-gray-400 mb-4">
-                Exchange bill has been created successfully
-              </p>
-
-              <div className="bg-gray-50 dark:bg-gray-700 rounded-lg p-4 mb-4 text-left">
-                <div className="space-y-2 text-sm">
-                  <div className="flex justify-between">
-                    <span className="text-gray-600 dark:text-gray-400">Original Bill:</span>
-                    <span className="font-semibold text-gray-900 dark:text-white">
-                      #{bill.bill_number}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600 dark:text-gray-400">New Bill:</span>
-                    <span className="font-semibold text-gray-900 dark:text-white">
-                      #{exchangeResult.exchange_bill_number}
-                    </span>
-                  </div>
-                  <div className="flex justify-between pt-2 border-t border-gray-200 dark:border-gray-600">
-                    <span className="text-gray-600 dark:text-gray-400">Returned:</span>
-                    <span className="font-semibold text-red-600 dark:text-red-400">
-                      ₹{exchangeResult.returned_amount}
-                    </span>
-                  </div>
-                  <div className="flex justify-between">
-                    <span className="text-gray-600 dark:text-gray-400">New Items:</span>
-                    <span className="font-semibold text-green-600 dark:text-green-400">
-                      ₹{exchangeResult.new_amount}
-                    </span>
-                  </div>
-                  <div className="flex justify-between pt-2 border-t-2 border-gray-300 dark:border-gray-600">
-                    <span className="font-bold text-gray-900 dark:text-white">Difference:</span>
-                    <span className={`font-bold ${exchangeResult.difference >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                      {exchangeResult.difference >= 0 ? '+' : ''}₹{Math.abs(exchangeResult.difference).toFixed(2)}
-                    </span>
-                  </div>
-                </div>
-              </div>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={handleCloseExchange}
-                  className="flex-1 px-4 py-2 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition"
-                >
-                  Close
-                </button>
-                <button
-                  onClick={handlePrintAndClose}
-                  className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-                >
-                  Print Bill
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Print Preview Modal */}
-      {showPrintPreview && billForPrint && client && (
-        <BillPrintPreview
-          bill={billForPrint}
-          clientInfo={client}
-          onClose={() => {
-            setShowPrintPreview(false)
-            router.push('/billing')
-          }}
-        />
-      )}
     </DashboardLayout>
   )
 }

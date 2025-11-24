@@ -1,5 +1,5 @@
 // src/lib/api.ts
-import axios from 'axios'
+import axios, { AxiosRequestConfig } from 'axios'
 
 const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000/api',
@@ -8,7 +8,31 @@ const api = axios.create({
   },
 })
 
-// Add request interceptor to include token
+// Loading state management
+let showLoadingFn: ((message?: string) => void) | null = null
+let hideLoadingFn: (() => void) | null = null
+let activeRequests = 0
+let loadingTimeout: NodeJS.Timeout | null = null
+const LOADING_DELAY = 300 // Only show loading after 300ms delay
+
+// Function to set loading handlers from React context
+export function setLoadingHandlers(
+  showLoading: (message?: string) => void,
+  hideLoading: () => void
+) {
+  showLoadingFn = showLoading
+  hideLoadingFn = hideLoading
+}
+
+// Extend AxiosRequestConfig to support showLoading option
+declare module 'axios' {
+  export interface AxiosRequestConfig {
+    showLoading?: boolean  // Opt-in: set to true to show global loading
+    loadingMessage?: string
+  }
+}
+
+// Add request interceptor to include token and show loading
 api.interceptors.request.use(
   (config) => {
     const token = localStorage.getItem('token')
@@ -21,6 +45,20 @@ api.interceptors.request.use(
       delete config.headers['Content-Type']
     }
 
+    // Show loading indicator only if showLoading is explicitly true
+    if (config.showLoading && showLoadingFn) {
+      const loadingFn = showLoadingFn // Capture for closure
+      activeRequests++
+      if (activeRequests === 1) {
+        // Delay showing the loading to prevent flicker on fast requests
+        loadingTimeout = setTimeout(() => {
+          if (activeRequests > 0 && loadingFn) {
+            loadingFn(config.loadingMessage)
+          }
+        }, LOADING_DELAY)
+      }
+    }
+
     return config
   },
   (error) => {
@@ -28,10 +66,30 @@ api.interceptors.request.use(
   }
 )
 
-// Add response interceptor to handle token expiration
+// Helper function to hide loading
+const decrementLoading = (config: AxiosRequestConfig | undefined) => {
+  if (config && config.showLoading && hideLoadingFn) {
+    activeRequests = Math.max(0, activeRequests - 1)
+    if (activeRequests === 0) {
+      // Clear timeout if request finished before delay
+      if (loadingTimeout) {
+        clearTimeout(loadingTimeout)
+        loadingTimeout = null
+      }
+      hideLoadingFn()
+    }
+  }
+}
+
+// Add response interceptor to handle token expiration and hide loading
 api.interceptors.response.use(
-  (response) => response,
+  (response) => {
+    decrementLoading(response.config)
+    return response
+  },
   (error) => {
+    decrementLoading(error.config)
+
     if (error.response?.status === 401) {
       // Token expired or invalid
       localStorage.removeItem('token')

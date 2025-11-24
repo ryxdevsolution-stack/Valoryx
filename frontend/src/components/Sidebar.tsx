@@ -22,21 +22,21 @@ import {
   Building2
 } from 'lucide-react'
 
-// Define navigation items with granular permissions
+// Define navigation items with new permission names
 const allNavigation = [
-  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, permission: 'dashboard.view' },
-  { name: 'Create Bill', href: '/billing/create', icon: PlusSquare, permission: 'billing.create' },
-  { name: 'All Bills', href: '/billing', icon: FileText, permission: 'billing.view' },
-  { name: 'Customers', href: '/customers', icon: Users, permission: 'customers.view' },
-  { name: 'Stock Management', href: '/stock', icon: Package, permission: 'stock.view' },
-  { name: 'Reports', href: '/reports', icon: TrendingUp, permission: 'reports.view' },
-  { name: 'Audit Logs', href: '/audit', icon: Search, permission: 'audit.view' },
+  { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, permission: 'view_dashboard' },
+  { name: 'Create Bill', href: '/billing/create', icon: PlusSquare, permission: 'gst_billing' }, // Need either GST or Non-GST
+  { name: 'All Bills', href: '/billing', icon: FileText, permission: 'view_all_bills' },
+  { name: 'Customers', href: '/customers', icon: Users, permission: 'view_customers' },
+  { name: 'Stock Management', href: '/stock', icon: Package, permission: 'view_stock' },
+  { name: 'Reports', href: '/reports', icon: TrendingUp, permission: 'view_sales_reports' },
+  { name: 'Audit Logs', href: '/audit', icon: Search, permission: 'view_audit_logs' },
 ]
 
 // Admin-only navigation items
 const adminNavigation = [
   { name: 'Client Management', href: '/admin/clients', icon: Building2, requireSuperAdmin: true },
-  { name: 'User Permissions', href: '/admin/permissions', icon: Shield, permission: 'permissions.view' },
+  { name: 'User Permissions', href: '/admin/permissions', icon: Shield, permission: 'assign_permissions' },
 ]
 
 export default function Sidebar() {

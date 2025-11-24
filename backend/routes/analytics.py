@@ -14,7 +14,7 @@ analytics_bp = Blueprint('analytics', __name__)
 @analytics_bp.route('/dashboard', methods=['GET'])
 @authenticate
 def get_dashboard_analytics():
-    """Get comprehensive analytics for dashboard with real data"""
+    """Get comprehensive analytics for dashboard with real data - OPTIMIZED with SQL"""
     try:
         client_id = g.user['client_id']
         time_range = request.args.get('range', 'today')
@@ -28,43 +28,87 @@ def get_dashboard_analytics():
         else:  # month
             start_date = now - timedelta(days=30)
 
-        # Fetch all bills for the client
-        gst_bills = GSTBilling.query.filter_by(client_id=client_id).all()
-        non_gst_bills = NonGSTBilling.query.filter_by(client_id=client_id).all()
-
-        # Calculate revenue metrics
-        revenue_today = 0
-        revenue_week = 0
-        revenue_month = 0
-
         today_start = now.replace(hour=0, minute=0, second=0, microsecond=0)
         week_start = now - timedelta(days=7)
         month_start = now - timedelta(days=30)
         prev_month_start = now - timedelta(days=60)
 
-        revenue_prev_month = 0
+        # ==================== SQL AGGREGATIONS (N+1 FIX) ====================
+        # Revenue calculations using SQL instead of loading all records
 
-        for bill in gst_bills:
-            amount = float(bill.final_amount)
-            if bill.created_at >= today_start:
-                revenue_today += amount
-            if bill.created_at >= week_start:
-                revenue_week += amount
-            if bill.created_at >= month_start:
-                revenue_month += amount
-            elif bill.created_at >= prev_month_start:
-                revenue_prev_month += amount
+        # Today's revenue - GST
+        gst_today = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
+            GSTBilling.client_id == client_id,
+            GSTBilling.created_at >= today_start
+        ).scalar() or 0
 
-        for bill in non_gst_bills:
-            amount = float(bill.total_amount)
-            if bill.created_at >= today_start:
-                revenue_today += amount
-            if bill.created_at >= week_start:
-                revenue_week += amount
-            if bill.created_at >= month_start:
-                revenue_month += amount
-            elif bill.created_at >= prev_month_start:
-                revenue_prev_month += amount
+        # Today's revenue - Non-GST
+        non_gst_today = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
+            NonGSTBilling.client_id == client_id,
+            NonGSTBilling.created_at >= today_start
+        ).scalar() or 0
+
+        revenue_today = float(gst_today) + float(non_gst_today)
+
+        # Week's revenue
+        gst_week = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
+            GSTBilling.client_id == client_id,
+            GSTBilling.created_at >= week_start
+        ).scalar() or 0
+
+        non_gst_week = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
+            NonGSTBilling.client_id == client_id,
+            NonGSTBilling.created_at >= week_start
+        ).scalar() or 0
+
+        revenue_week = float(gst_week) + float(non_gst_week)
+
+        # Month's revenue
+        gst_month = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
+            GSTBilling.client_id == client_id,
+            GSTBilling.created_at >= month_start
+        ).scalar() or 0
+
+        non_gst_month = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
+            NonGSTBilling.client_id == client_id,
+            NonGSTBilling.created_at >= month_start
+        ).scalar() or 0
+
+        revenue_month = float(gst_month) + float(non_gst_month)
+
+        # Previous month's revenue (for growth calculation)
+        gst_prev_month = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
+            GSTBilling.client_id == client_id,
+            GSTBilling.created_at >= prev_month_start,
+            GSTBilling.created_at < month_start
+        ).scalar() or 0
+
+        non_gst_prev_month = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
+            NonGSTBilling.client_id == client_id,
+            NonGSTBilling.created_at >= prev_month_start,
+            NonGSTBilling.created_at < month_start
+        ).scalar() or 0
+
+        revenue_prev_month = float(gst_prev_month) + float(non_gst_prev_month)
+
+        # Bill counts using SQL
+        total_gst_bills = db.session.query(func.count(GSTBilling.bill_id)).filter(
+            GSTBilling.client_id == client_id
+        ).scalar() or 0
+
+        total_non_gst_bills = db.session.query(func.count(NonGSTBilling.bill_id)).filter(
+            NonGSTBilling.client_id == client_id
+        ).scalar() or 0
+
+        today_gst_count = db.session.query(func.count(GSTBilling.bill_id)).filter(
+            GSTBilling.client_id == client_id,
+            GSTBilling.created_at >= today_start
+        ).scalar() or 0
+
+        today_non_gst_count = db.session.query(func.count(NonGSTBilling.bill_id)).filter(
+            NonGSTBilling.client_id == client_id,
+            NonGSTBilling.created_at >= today_start
+        ).scalar() or 0
 
         # Calculate growth rate
         growth_rate = 0
@@ -72,8 +116,20 @@ def get_dashboard_analytics():
             growth_rate = ((revenue_month - revenue_prev_month) / revenue_prev_month) * 100
 
         # Calculate bills metrics
-        total_bills = len(gst_bills) + len(non_gst_bills)
+        total_bills = total_gst_bills + total_non_gst_bills
         avg_bill_value = (revenue_month / total_bills) if total_bills > 0 else 0
+
+        # ==================== LOAD ONLY RECENT BILLS FOR PRODUCT ANALYSIS ====================
+        # Only load bills from start_date for product analysis (not ALL historical bills)
+        gst_bills = GSTBilling.query.filter(
+            GSTBilling.client_id == client_id,
+            GSTBilling.created_at >= prev_month_start  # Only last 60 days max for product analysis
+        ).all()
+
+        non_gst_bills = NonGSTBilling.query.filter(
+            NonGSTBilling.client_id == client_id,
+            NonGSTBilling.created_at >= prev_month_start  # Only last 60 days max
+        ).all()
 
         # Product performance analysis (ALL TIME)
         product_sales = defaultdict(lambda: {'quantity': 0, 'revenue': 0.0, 'category': '', 'recent_sales': 0, 'old_sales': 0})
@@ -396,9 +452,9 @@ def get_dashboard_analytics():
                 'growth': round(growth_rate, 2)
             },
             'bills': {
-                'totalGST': len(gst_bills),
-                'totalNonGST': len(non_gst_bills),
-                'todayCount': len([b for b in gst_bills if b.created_at >= today_start]) + len([b for b in non_gst_bills if b.created_at >= today_start]),
+                'totalGST': total_gst_bills,
+                'totalNonGST': total_non_gst_bills,
+                'todayCount': today_gst_count + today_non_gst_count,
                 'avgBillValue': round(avg_bill_value, 2)
             },
             'products': {

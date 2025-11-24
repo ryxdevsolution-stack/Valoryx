@@ -3,6 +3,32 @@ from datetime import datetime
 import uuid
 from sqlalchemy.dialects.postgresql import UUID
 
+class PermissionSection(db.Model):
+    """Permission section model for organizing permissions"""
+    __tablename__ = 'permission_sections'
+
+    section_id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    section_name = db.Column(db.String(100), unique=True, nullable=False)
+    description = db.Column(db.Text)
+    display_order = db.Column(db.Integer, nullable=False)
+    icon = db.Column(db.String(50))
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
+
+    # Relationship to permissions
+    permissions = db.relationship('Permission', back_populates='section', cascade='all, delete-orphan', order_by='Permission.display_order')
+
+    def to_dict(self):
+        return {
+            'section_id': str(self.section_id),
+            'section_name': self.section_name,
+            'description': self.description,
+            'display_order': self.display_order,
+            'icon': self.icon,
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'permissions': [p.to_dict() for p in self.permissions] if hasattr(self, '_permissions_loaded') else []
+        }
+
+
 class Permission(db.Model):
     """Permission definition model"""
     __tablename__ = 'permissions'
@@ -10,10 +36,12 @@ class Permission(db.Model):
     permission_id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     permission_name = db.Column(db.String(100), unique=True, nullable=False, index=True)
     description = db.Column(db.String(255))
-    category = db.Column(db.String(50))
+    section_id = db.Column(UUID(as_uuid=True), db.ForeignKey('permission_sections.section_id', ondelete='CASCADE'))
+    display_order = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
-    # Relationship to user_permissions
+    # Relationships
+    section = db.relationship('PermissionSection', back_populates='permissions')
     user_permissions = db.relationship('UserPermission', back_populates='permission', cascade='all, delete-orphan')
 
     def to_dict(self):
@@ -21,7 +49,9 @@ class Permission(db.Model):
             'permission_id': str(self.permission_id),
             'permission_name': self.permission_name,
             'description': self.description,
-            'category': self.category,
+            'section_id': str(self.section_id) if self.section_id else None,
+            'section_name': self.section.section_name if self.section else None,
+            'display_order': self.display_order,
             'created_at': self.created_at.isoformat() if self.created_at else None
         }
 
@@ -135,7 +165,7 @@ def revoke_permission(user_id, permission_name):
 
 
 def bulk_update_permissions(user_id, permission_names, granted_by_id):
-    """Update user's permissions to match the provided list"""
+    """Update user's permissions to match the provided list (optimized for bulk operations)"""
     # Get current permissions
     current_permissions = set(get_user_permissions(user_id))
     new_permissions = set(permission_names)
@@ -146,15 +176,67 @@ def bulk_update_permissions(user_id, permission_names, granted_by_id):
     # Permissions to remove
     to_remove = current_permissions - new_permissions
 
-    # Add new permissions
-    for perm_name in to_add:
-        grant_permission(user_id, perm_name, granted_by_id)
+    # Bulk add new permissions
+    if to_add:
+        # Get all permission IDs in one query
+        permissions = Permission.query.filter(Permission.permission_name.in_(to_add)).all()
+        perm_map = {p.permission_name: p.permission_id for p in permissions}
 
-    # Remove old permissions
-    for perm_name in to_remove:
-        revoke_permission(user_id, perm_name)
+        # Bulk insert
+        new_user_perms = [
+            UserPermission(
+                user_id=user_id,
+                permission_id=perm_map[perm_name],
+                granted_by=granted_by_id
+            )
+            for perm_name in to_add if perm_name in perm_map
+        ]
+        db.session.bulk_save_objects(new_user_perms)
+
+    # Bulk remove old permissions
+    if to_remove:
+        # Get all permission IDs in one query
+        permissions = Permission.query.filter(Permission.permission_name.in_(to_remove)).all()
+        perm_ids = [p.permission_id for p in permissions]
+
+        # Bulk delete
+        UserPermission.query.filter(
+            UserPermission.user_id == user_id,
+            UserPermission.permission_id.in_(perm_ids)
+        ).delete(synchronize_session=False)
+
+    # Single commit for all changes
+    db.session.commit()
 
     return {
         'added': list(to_add),
         'removed': list(to_remove)
     }
+
+
+def get_all_sections_with_permissions():
+    """Get all permission sections with their permissions in a tree structure"""
+    sections = PermissionSection.query.order_by(PermissionSection.display_order).all()
+
+    result = []
+    for section in sections:
+        section._permissions_loaded = True
+        result.append(section.to_dict())
+
+    return result
+
+
+def get_user_permissions_by_section(user_id):
+    """Get user's permissions organized by section"""
+    # Get all sections with permissions
+    sections = get_all_sections_with_permissions()
+
+    # Get user's permission names
+    user_perms = set(get_user_permissions(user_id))
+
+    # Mark which permissions the user has
+    for section in sections:
+        for perm in section['permissions']:
+            perm['has_permission'] = perm['permission_name'] in user_perms
+
+    return sections

@@ -8,6 +8,7 @@ import pandas as pd
 from extensions import db
 from models.stock_model import StockEntry
 from utils.auth_middleware import authenticate
+from utils.permission_middleware import require_permission
 from utils.audit_logger import log_action
 
 stock_bp = Blueprint('stock', __name__)
@@ -65,6 +66,7 @@ def generate_item_code(client_id, product_name):
 
 @stock_bp.route('', methods=['POST'])
 @authenticate
+@require_permission('add_product')
 def add_stock():
     """
     Add stock entry with client_id
@@ -185,6 +187,7 @@ def add_stock():
 
 @stock_bp.route('', methods=['GET'])
 @authenticate
+@require_permission('view_stock')
 def get_stock():
     """List stock entries filtered by client_id"""
     try:
@@ -258,6 +261,7 @@ def get_low_stock_alerts():
 
 @stock_bp.route('/<product_id>', methods=['PUT'])
 @authenticate
+@require_permission('edit_product_details')
 def update_stock(product_id):
     """Update stock entry with client_id validation"""
     try:

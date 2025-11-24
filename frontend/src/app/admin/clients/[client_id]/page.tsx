@@ -135,10 +135,12 @@ export default function ClientDetailsPage() {
           }
         }
       );
+      console.log('Permissions response:', response.data);
       setAllPermissions(response.data.permissions || []);
       setPermissionsByCategory(response.data.categorized || {});
     } catch (err: any) {
       console.error('Error fetching permissions:', err);
+      console.error('Error details:', err.response?.data);
     }
   }, [apiUrl]);
 
