@@ -81,6 +81,10 @@ def login():
             'client_id': str(user.client_id),
             'client_name': client.client_name,
             'client_logo': client.logo_url,
+            'client_address': client.address,
+            'client_phone': client.phone,
+            'client_email': client.email,
+            'client_gstin': client.gst_number,
             'user': {
                 'user_id': str(user.user_id),
                 'email': user.email,

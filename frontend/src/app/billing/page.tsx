@@ -275,7 +275,8 @@ export default function AllBillsPage() {
           type: billData.type,
           cgst: billData.cgst,
           sgst: billData.sgst,
-          igst: billData.igst
+          igst: billData.igst,
+          user_name: billData.user_name || billData.created_by || 'Admin'
         },
         clientInfo: client ? {
           client_name: client.client_name,

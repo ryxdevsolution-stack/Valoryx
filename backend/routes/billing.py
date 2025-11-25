@@ -385,6 +385,11 @@ def create_unified_bill():
             if item_gst_pct > 0:
                 has_gst_items = True
 
+            # Get MRP from item or product
+            item_mrp = float(item.get('mrp', 0)) if item.get('mrp') else None
+            if not item_mrp and not is_new_product and hasattr(product, 'mrp') and product.mrp:
+                item_mrp = float(product.mrp)
+
             # Build processed item - Convert all values to JSON-serializable types
             processed_items.append({
                 'product_id': str(product_id) if not is_new_product else product_id,
@@ -394,6 +399,7 @@ def create_unified_bill():
                 'unit': item.get('unit', product.unit if not is_new_product else 'pcs'),
                 'quantity': item_qty,
                 'rate': item_rate,
+                'mrp': item_mrp if item_mrp else item_rate,  # Use rate as MRP if not available
                 'gst_percentage': item_gst_pct,
                 'gst_amount': round(item_gst_amt, 2),
                 'amount': round(item_total, 2)
@@ -403,6 +409,9 @@ def create_unified_bill():
             total_gst_amount += item_gst_amt
 
         final_amount = subtotal + total_gst_amount
+
+        # Calculate effective GST percentage (weighted average based on subtotal)
+        effective_gst_percentage = (total_gst_amount / subtotal * 100) if subtotal > 0 else 0
 
         # Create new products in stock_entry table BEFORE creating bill
         for new_product_data, new_product_id in new_products_to_create:
@@ -440,7 +449,7 @@ def create_unified_bill():
                 customer_gstin=data.get('customer_gstin'),
                 items=processed_items,
                 subtotal=round(subtotal, 2),
-                gst_percentage=0,  # Not applicable for mixed GST rates
+                gst_percentage=round(effective_gst_percentage, 2),  # Effective/average GST rate
                 gst_amount=round(total_gst_amount, 2),
                 final_amount=round(final_amount, 2),
                 payment_type=data['payment_type'],
@@ -493,7 +502,8 @@ def create_unified_bill():
                     'type': 'gst',
                     'cgst': cgst,
                     'sgst': sgst,
-                    'igst': 0
+                    'igst': 0,
+                    'user_name': g.user.get('email', 'Admin').split('@')[0]  # Use email username as user name
                 }
             }), 201
 
@@ -554,7 +564,8 @@ def create_unified_bill():
                     'type': 'non-gst',
                     'cgst': 0,
                     'sgst': 0,
-                    'igst': 0
+                    'igst': 0,
+                    'user_name': g.user.get('email', 'Admin').split('@')[0]  # Use email username as user name
                 }
             }), 201
 
@@ -877,12 +888,11 @@ def print_bill():
         if success:
             # Log the print action
             log_action(
-                user_id=g.user['user_id'],
-                client_id=g.user['client_id'],
-                action='PRINT_BILL',
-                entity_type='bill',
-                entity_id=bill_data.get('bill_number', 'unknown'),
-                details=f"Printed bill #{bill_data.get('bill_number', 'N/A')}"
+                'PRINT_BILL',
+                'billing',
+                str(bill_data.get('bill_number', 'unknown')),
+                None,
+                {'bill_number': bill_data.get('bill_number'), 'printed_at': datetime.utcnow().isoformat()}
             )
 
             return jsonify({

@@ -113,7 +113,7 @@ class ThermalPrinter:
             return []
 
     def _generate_receipt_html(self, bill_data: Dict[str, Any], client_info: Dict[str, Any]) -> str:
-        """Generate HTML for thermal receipt (80mm width)"""
+        """Generate HTML for thermal receipt (80mm width) matching sample format"""
 
         # Extract data
         items = bill_data.get('items', [])
@@ -121,26 +121,31 @@ class ThermalPrinter:
         total_qty = sum(item.get('quantity', 0) for item in items)
 
         # Calculate savings if MRP exists
-        total_mrp = sum(
-            item.get('mrp', 0) * item.get('quantity', 0)
-            for item in items if item.get('mrp', 0) > 0
-        )
-        total_selling = sum(
-            item.get('rate', 0) * item.get('quantity', 0)
-            for item in items
-        )
-        total_savings = total_mrp - total_selling if total_mrp > total_selling else 0
-        savings_percentage = (total_savings / total_mrp * 100) if total_mrp > 0 else 0
+        total_savings = 0
+        gst_breakdown = {}  # Group items by GST percentage
 
-        # Date formatting
-        created_at = bill_data.get('created_at', datetime.now().isoformat())
-        try:
-            date_obj = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-            date_str = date_obj.strftime('%d-%m-%Y')
-            time_str = date_obj.strftime('%I:%M:%S %p')
-        except:
-            date_str = datetime.now().strftime('%d-%m-%Y')
-            time_str = datetime.now().strftime('%I:%M:%S %p')
+        for item in items:
+            mrp = float(item.get('mrp', 0)) if item.get('mrp') else float(item.get('rate', 0))
+            rate = float(item.get('rate', 0))
+            qty = int(item.get('quantity', 0))
+            gst_pct = float(item.get('gst_percentage', 0))
+
+            if mrp > rate:
+                total_savings += (mrp - rate) * qty
+
+            # Track GST breakdown by percentage
+            if gst_pct > 0:
+                taxable_amt = qty * rate
+                gst_for_item = taxable_amt * gst_pct / 100
+                if gst_pct not in gst_breakdown:
+                    gst_breakdown[gst_pct] = {'taxable': 0, 'gst': 0}
+                gst_breakdown[gst_pct]['taxable'] += taxable_amt
+                gst_breakdown[gst_pct]['gst'] += gst_for_item
+
+        # Use local time
+        date_str = datetime.now().strftime('%d-%m-%Y')
+        time_str = datetime.now().strftime('%I:%M:%S %p')
+        user_name = bill_data.get('user_name', bill_data.get('created_by', 'Admin'))
 
         # Build HTML
         html = f"""
@@ -149,256 +154,148 @@ class ThermalPrinter:
 <head>
     <meta charset="UTF-8">
     <style>
-        @page {{
-            size: 80mm auto;
-            margin: 0;
-        }}
-
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
-
-        body {{
-            font-family: 'Courier New', monospace;
-            width: 80mm;
-            background: white;
-            color: black;
-            font-size: 9pt;
-            line-height: 1.4;
-            padding: 5mm;
-        }}
-
+        @page {{ size: 80mm auto; margin: 0; }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'Courier New', monospace; width: 80mm; background: white; color: black; font-size: 9pt; line-height: 1.3; padding: 3mm; }}
         .center {{ text-align: center; }}
         .bold {{ font-weight: bold; }}
-        .large {{ font-size: 12pt; }}
-        .small {{ font-size: 7pt; }}
-        .tiny {{ font-size: 6pt; }}
-        .uppercase {{ text-transform: uppercase; }}
-        .dashed {{ border-bottom: 2px dashed #000; margin: 2mm 0; }}
-        .solid {{ border-bottom: 2px solid #000; }}
-        .double {{ border: 3px double #000; }}
-
-        .flex {{
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 0.5mm;
-        }}
-
-        .logo {{
-            width: 20mm;
-            height: 20mm;
-            margin: 0 auto 2mm;
-        }}
-
-        .item-row {{
-            margin-bottom: 2mm;
-        }}
-
-        .item-name {{
-            font-size: 8pt;
-            font-weight: bold;
-            text-transform: uppercase;
-            margin-bottom: 0.5mm;
-        }}
-
-        .item-details {{
-            display: flex;
-            justify-content: space-between;
-            padding-left: 5mm;
-            font-size: 7pt;
-        }}
-
-        .savings-box {{
-            border: 3px double #000;
-            padding: 3mm 2mm;
-            margin: 3mm 0;
-            text-align: center;
-            background: #f9f9f9;
-        }}
-
-        .grand-total {{
-            border-top: 2px solid #000;
-            border-bottom: 2px solid #000;
-            padding: 2mm 0;
-            margin: 2mm 0;
-            font-size: 11pt;
-            font-weight: bold;
-            font-style: italic;
-        }}
+        .large {{ font-size: 11pt; }}
+        .small {{ font-size: 8pt; }}
+        .dashed {{ border-bottom: 1px dashed #000; margin: 2mm 0; }}
+        .solid {{ border-bottom: 2px solid #000; margin: 2mm 0; }}
+        .flex {{ display: flex; justify-content: space-between; }}
+        .item-row {{ margin-bottom: 2mm; }}
+        .item-name {{ font-size: 8pt; font-weight: bold; }}
+        .item-details {{ font-size: 7pt; padding-left: 3mm; }}
+        .grand-total {{ border: 2px solid #000; padding: 2mm; margin: 2mm 0; font-size: 10pt; font-weight: bold; }}
+        .gst-table {{ width: 100%; font-size: 7pt; border-collapse: collapse; margin: 2mm 0; }}
+        .gst-table th, .gst-table td {{ border: 1px solid #000; padding: 1mm; text-align: center; }}
+        .savings-box {{ border: 2px double #000; padding: 2mm; margin: 2mm 0; text-align: center; }}
     </style>
 </head>
 <body>
-    <!-- Star border top -->
-    <div class="center small">★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★</div>
-
-    <!-- Header -->
-    <div class="center" style="margin: 3mm 0;">
-        {"<img src='" + client_info.get('logo_url', '') + "' class='logo' />" if client_info.get('logo_url') else ""}
-        <div class="large bold uppercase" style="letter-spacing: 1px; margin-bottom: 1mm;">
-            {client_info.get('client_name', 'Business Name')}
-        </div>
-        {"<div class='small' style='line-height: 1.2; margin-bottom: 1mm;'>" + client_info.get('address', '').replace('\n', '<br>') + "</div>" if client_info.get('address') else ""}
-        <div class="small">
-            {"<div>Ph: " + client_info.get('phone', '') + "</div>" if client_info.get('phone') else ""}
-            {"<div>GSTIN: " + client_info.get('gstin', '') + "</div>" if client_info.get('gstin') else ""}
-        </div>
-        <div class="bold" style="font-size: 9pt; margin-top: 2mm; text-transform: uppercase;">
-            {bill_data.get('type', 'non-gst').upper() == 'GST' and 'TAX INVOICE' or 'CASH BILL'}
-        </div>
+    <div class="solid"></div>
+    <div class="center" style="margin: 2mm 0;">
+        <div class="large bold">{client_info.get('client_name', 'Business Name')}</div>
+        {"<div class='small'>" + client_info.get('address', '').replace(chr(10), '<br>') + "</div>" if client_info.get('address') else ""}
+        {"<div class='small'>Ph: " + client_info.get('phone', '') + "</div>" if client_info.get('phone') else ""}
+        {"<div class='small'>GSTIN: " + client_info.get('gstin', '') + "</div>" if client_info.get('gstin') else ""}
     </div>
+    <div class="solid"></div>
 
+    <div class="center bold" style="margin: 1mm 0;">
+        {bill_data.get('type', 'non-gst').upper() == 'GST' and 'TAX INVOICE' or 'CASH BILL'}
+    </div>
     <div class="dashed"></div>
 
-    <!-- Bill Info -->
-    <div class="small" style="margin-bottom: 2mm;">
-        <div class="flex">
-            <span>Bill No  : {bill_data.get('bill_number', 'N/A')}</span>
-            <span><strong>Date  : {date_str}</strong></span>
-        </div>
-        <div class="flex">
-            <span>Time : {time_str}</span>
-            <span>Mode : {bill_data.get('type', 'NON-GST').upper()}</span>
-        </div>
-        {"<div style='margin-top: 2mm; border-top: 1px solid #ccc; padding-top: 1mm;'><div><strong>Customer:</strong> " + bill_data.get('customer_name', '') + "</div>" + ("<div><strong>Phone:</strong> " + bill_data.get('customer_phone', '') + "</div>" if bill_data.get('customer_phone') else "") + "</div>" if bill_data.get('customer_name') else ""}
+    <div class="small">
+        <div class="flex"><span>User: {user_name}</span><span>Time: {time_str}</span></div>
+        <div class="flex"><span>Bill No: {bill_data.get('bill_number', 'N/A')}</span><span>Date: {date_str}</span></div>
+        {"<div>Customer: " + bill_data.get('customer_name', '') + "</div>" if bill_data.get('customer_name') else ""}
+        {"<div>Phone: " + bill_data.get('customer_phone', '') + "</div>" if bill_data.get('customer_phone') else ""}
     </div>
-
     <div class="dashed"></div>
 
     <!-- Items Header -->
-    <div class="small flex bold" style="margin-bottom: 1mm;">
-        <span style="flex: 1;">Description</span>
+    <div class="small" style="display: flex; font-weight: bold; margin-bottom: 1mm;">
+        <span style="flex: 2;">Item</span>
         <span style="width: 8mm; text-align: center;">Qty</span>
-        <span style="width: 13mm; text-align: right;">MRP</span>
-        <span style="width: 13mm; text-align: right;">Price</span>
-        <span style="width: 15mm; text-align: right;">Amt</span>
+        <span style="width: 14mm; text-align: right;">MRP</span>
+        <span style="width: 14mm; text-align: right;">Rate</span>
+        <span style="width: 14mm; text-align: right;">Amt</span>
     </div>
-
     <div class="dashed"></div>
-
-    <!-- Items -->
 """
 
-        # Add items
+        # Add items - single line format
         for item in items:
-            mrp = item.get('mrp', 0)
-            rate = item.get('rate', 0)
-            # Show GST info if available
-            gst_info = ""
-            if item.get('gst_percentage', 0) > 0:
-                gst_info = f" (+{item.get('gst_percentage', 0)}% GST)"
+            mrp = float(item.get('mrp', 0)) if item.get('mrp') else float(item.get('rate', 0))
+            rate = float(item.get('rate', 0))
+            qty = int(item.get('quantity', 0))
+            amt = float(item.get('amount', 0))
+            name = item.get('product_name', 'Item')
+            if len(name) > 18:
+                name = name[:15] + "..."
             html += f"""
-    <div class="item-row">
-        <div class="item-name">{item.get('product_name', 'Item')}{gst_info}</div>
-        <div class="item-details">
-            <span style="flex: 1;"></span>
-            <span style="width: 8mm; text-align: center;">{item.get('quantity', 0)}</span>
-            <span style="width: 13mm; text-align: right;">{"<s>" + f"{mrp:.2f}" + "</s>" if mrp > rate else f"{mrp:.2f}" if mrp > 0 else "-"}</span>
-            <span style="width: 13mm; text-align: right;">{rate:.2f}</span>
-            <span style="width: 15mm; text-align: right; font-weight: bold;">{item.get('amount', 0):.2f}</span>
-        </div>
+    <div class="small" style="display: flex; margin-bottom: 1mm;">
+        <span style="flex: 2;">{name}</span>
+        <span style="width: 8mm; text-align: center;">{qty}</span>
+        <span style="width: 14mm; text-align: right;">{mrp:.2f}</span>
+        <span style="width: 14mm; text-align: right;">{rate:.2f}</span>
+        <span style="width: 14mm; text-align: right; font-weight: bold;">{amt:.2f}</span>
     </div>
 """
 
-        # Totals and footer
-        # Calculate totals properly
-        subtotal = bill_data.get('subtotal', 0)
-        # Calculate discount amount if percentage is provided
-        discount_percentage = bill_data.get('discount_percentage', 0)
-        if discount_percentage > 0 and not bill_data.get('discount_amount'):
-            discount = (subtotal * discount_percentage) / 100
-        else:
-            discount = bill_data.get('discount_amount', 0)
+        # Calculate totals
+        subtotal = float(bill_data.get('subtotal', 0) or 0)
+        discount = float(bill_data.get('discount_amount', 0) or 0)
+        gst_amount = float(bill_data.get('gst_amount', 0) or 0)
 
-        gst_amount = bill_data.get('gst_amount', 0)
-
-        # Calculate proper final amount
         if bill_data.get('type', '').lower() == 'gst':
-            final_amount = bill_data.get('final_amount', 0)
-            # Apply discount after GST
-            if discount > 0:
-                final_amount = subtotal + gst_amount - discount
+            final_amount = float(bill_data.get('final_amount', 0) or 0)
         else:
-            final_amount = bill_data.get('total_amount', 0)
-            if discount > 0:
-                final_amount = subtotal - discount
+            final_amount = float(bill_data.get('total_amount', 0) or 0)
 
         round_off = round(final_amount) - final_amount
 
-        # Calculate items total (with GST if applicable)
-        items_total = sum(item.get('amount', 0) for item in items)
-
         html += f"""
     <div class="dashed"></div>
+    <div class="small flex"><span>Items: {total_items} &nbsp; Total Qty: {total_qty}</span><span>Sub Total: {subtotal:.2f}</span></div>
+    {"<div class='small flex'><span>Discount:</span><span>-" + f"{discount:.2f}" + "</span></div>" if discount > 0 else ""}
+    {"<div class='small flex'><span>GST Amount:</span><span>" + f"{gst_amount:.2f}" + "</span></div>" if gst_amount > 0 else ""}
+    {"<div class='small flex'><span>Round Off:</span><span>" + (f"+{round_off:.2f}" if round_off > 0 else f"{round_off:.2f}") + "</span></div>" if abs(round_off) >= 0.01 else ""}
 
-    <!-- Items summary -->
-    <div class="small flex" style="margin-bottom: 2mm;">
-        <span>Items: {total_items}  Total Qty: {total_qty}</span>
-        <span class="bold">Items Total: {items_total:.2f}</span>
-    </div>
-
-    <div class="dashed"></div>
-
-    <!-- Subtotal and GST breakdown -->
-    <div class="small" style="margin-bottom: 2mm;">
-        <div class="flex">
-            <span>Taxable Amount :</span>
-            <span>{subtotal:.2f}</span>
-        </div>
-        {"<div class='flex'><span>GST Amount :</span><span>+" + f"{gst_amount:.2f}" + "</span></div>" if gst_amount > 0 else ""}
-        {"<div class='flex' style='margin-left: 10mm;'><span class='tiny'>CGST (9%) :</span><span class='tiny'>" + f"{(gst_amount/2):.2f}" + "</span></div>" if bill_data.get('type', '').lower() == 'gst' and gst_amount > 0 else ""}
-        {"<div class='flex' style='margin-left: 10mm;'><span class='tiny'>SGST (9%) :</span><span class='tiny'>" + f"{(gst_amount/2):.2f}" + "</span></div>" if bill_data.get('type', '').lower() == 'gst' and gst_amount > 0 else ""}
-        {"<div class='flex'><span>Discount" + (f" ({discount_percentage}%)" if discount_percentage > 0 else "") + " :</span><span>-" + f"{discount:.2f}" + "</span></div>" if discount > 0 else ""}
-        {"<div class='flex'><span>Round Off :</span><span>" + (f"+{round_off:.2f}" if round_off > 0 else f"{round_off:.2f}") + "</span></div>" if round_off != 0 else ""}
-    </div>
-
-    <!-- Grand Total -->
     <div class="grand-total flex">
-        <span>GRAND TOTAL :</span>
-        <span>₹ {round(final_amount):.2f}</span>
+        <span>GRAND TOTAL:</span>
+        <span>Rs. {round(final_amount):.2f}</span>
     </div>
-
-    <div class="dashed"></div>
-
-    <!-- Payment Info -->
-    <div class="small" style="margin-bottom: 2mm;">
-        <div class="center" style="margin-bottom: 1mm;"><strong>Payment Mode:</strong></div>
-        <div class="center">{self._format_payment_type(bill_data.get('payment_type', 'CASH'))}</div>
-    </div>
-
-    <div class="dashed"></div>
-
-    <!-- Footer -->
-    <div class="center" style="margin-top: 3mm;">
 """
 
+        # GST breakdown table for GST bills
+        if bill_data.get('type', '').upper() == 'GST' and gst_breakdown:
+            html += """
+    <div class="center small bold">GST BREAKDOWN</div>
+    <table class="gst-table">
+        <tr><th>Tax%</th><th>Taxable</th><th>CGST%</th><th>CGST</th><th>SGST%</th><th>SGST</th><th>Total</th></tr>
+"""
+            for gst_pct in sorted(gst_breakdown.keys()):
+                data = gst_breakdown[gst_pct]
+                taxable = data['taxable']
+                total_gst = data['gst']
+                cgst_pct = gst_pct / 2
+                cgst_amt = total_gst / 2
+                html += f"""
+        <tr>
+            <td>{gst_pct:.0f}%</td>
+            <td>{taxable:.2f}</td>
+            <td>{cgst_pct:.1f}%</td>
+            <td>{cgst_amt:.2f}</td>
+            <td>{cgst_pct:.1f}%</td>
+            <td>{cgst_amt:.2f}</td>
+            <td>{total_gst:.2f}</td>
+        </tr>
+"""
+            html += """    </table>"""
+
+        # Payment info
+        html += f"""
+    <div class="dashed"></div>
+    <div class="small center">Payment: {self._format_payment_type(bill_data.get('payment_type', 'CASH'))}</div>
+"""
+
+        # Savings
         if total_savings > 0:
             html += f"""
-        <div class="savings-box">
-            <div style="font-size: 9pt; font-weight: bold; margin-bottom: 1mm; letter-spacing: 0.5px;">
-                🎉 TODAY'S SAVINGS 🎉
-            </div>
-            <div style="font-size: 16pt; font-weight: bold; letter-spacing: 1px;">
-                ₹{total_savings:.2f}
-            </div>
-            <div style="font-size: 8pt; font-weight: bold; margin-top: 1mm;">
-                You saved {savings_percentage:.1f}% on MRP!
-            </div>
-            <div class="tiny" style="margin-top: 1mm; font-style: italic;">
-                Total MRP: ₹{total_mrp:.2f} | You Pay: ₹{round(final_amount):.2f}
-            </div>
-        </div>
+    <div class="savings-box">
+        <div class="bold">TODAY'S SAVINGS</div>
+        <div class="large bold">Rs. {total_savings:.2f}</div>
+    </div>
 """
 
         html += """
-        <div style="font-size: 9pt; font-weight: bold; letter-spacing: 1px;">
-            ★★★ THANK YOU VISIT AGAIN ★★★
-        </div>
-    </div>
-
-    <!-- Star border bottom -->
-    <div class="center small" style="margin-top: 2mm;">★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★</div>
+    <div class="dashed"></div>
+    <div class="center bold" style="margin: 2mm 0;">THANK YOU VISIT AGAIN!</div>
+    <div class="solid"></div>
 </body>
 </html>
 """
@@ -417,99 +314,165 @@ class ThermalPrinter:
             return str(payment_info)
 
     def _generate_text_receipt(self, bill_data: Dict[str, Any], client_info: Dict[str, Any]) -> str:
-        """Generate plain text receipt for thermal printer"""
+        """Generate plain text receipt for thermal printer matching sample format"""
+        import json
         lines = []
+        W = 42  # Receipt width in characters
 
-        # Header
-        lines.append("*" * 40)
-        lines.append(client_info.get('client_name', 'Business Name').center(40))
+        # Header with business info
+        lines.append("=" * W)
+        lines.append(client_info.get('client_name', 'Business Name').center(W))
         if client_info.get('address'):
             for addr_line in client_info['address'].split('\n'):
-                lines.append(addr_line.center(40))
+                if addr_line.strip():
+                    lines.append(addr_line.strip().center(W))
         if client_info.get('phone'):
-            lines.append(f"Ph: {client_info['phone']}".center(40))
+            lines.append(f"Ph: {client_info['phone']}".center(W))
         if client_info.get('gstin'):
-            lines.append(f"GSTIN: {client_info['gstin']}".center(40))
+            lines.append(f"GSTIN: {client_info['gstin']}".center(W))
+        lines.append("=" * W)
 
+        # Bill type header
         bill_type = "TAX INVOICE" if bill_data.get('type', '').upper() == 'GST' else "CASH BILL"
-        lines.append("")
-        lines.append(bill_type.center(40))
-        lines.append("-" * 40)
+        lines.append(bill_type.center(W))
+        lines.append("-" * W)
 
-        # Bill info
-        lines.append(f"Bill No: {bill_data.get('bill_number', 'N/A')}")
+        # User and Time on same line, Bill No and Date on next line
+        user_name = bill_data.get('user_name', bill_data.get('created_by', 'Admin'))
+        time_str = datetime.now().strftime('%I:%M:%S %p')
+        date_str = datetime.now().strftime('%d-%m-%Y')
+        bill_no = bill_data.get('bill_number', 'N/A')
 
-        created_at = bill_data.get('created_at', '')
-        try:
-            from datetime import datetime
-            date_obj = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-            date_str = date_obj.strftime('%d-%m-%Y %I:%M:%S %p')
-        except:
-            date_str = datetime.now().strftime('%d-%m-%Y %I:%M:%S %p')
-        lines.append(f"Date: {date_str}")
+        lines.append(f"User: {user_name:<14} Time: {time_str}")
+        lines.append(f"Bill No: {bill_no:<12} Date: {date_str}")
 
+        # Customer info if present
         if bill_data.get('customer_name'):
             lines.append(f"Customer: {bill_data['customer_name']}")
             if bill_data.get('customer_phone'):
                 lines.append(f"Phone: {bill_data['customer_phone']}")
 
-        lines.append("-" * 40)
-        lines.append("Item                     Qty  Rate   Amt")
-        lines.append("-" * 40)
+        lines.append("-" * W)
 
-        # Items
-        for item in bill_data.get('items', []):
-            name = item.get('product_name', 'Item')[:20]
-            qty = item.get('quantity', 0)
-            rate = item.get('rate', 0)
-            amt = item.get('amount', 0)
-            lines.append(f"{name:<25}{qty:3} {rate:6.2f} {amt:7.2f}")
+        # Items - two line format per item
+        items = bill_data.get('items', [])
+        total_qty = 0
+        total_savings = 0
+        gst_breakdown = {}  # Group items by GST percentage
 
-        lines.append("-" * 40)
+        # Item header
+        lines.append(f"{'Item':<18} {'Qty':>3} {'MRP':>7} {'Rate':>7} {'Amt':>7}")
+        lines.append("-" * W)
 
-        # Totals (convert strings to float)
-        subtotal = bill_data.get('subtotal', 0)
-        try:
-            subtotal = float(subtotal)
-        except:
-            subtotal = 0
-        lines.append(f"{'Subtotal:':<30} {subtotal:>9.2f}")
+        for item in items:
+            # Clean product name
+            name = str(item.get('product_name', 'Item')).replace('\n', ' ').replace('\r', '').strip()
+            if len(name) > 18:
+                name = name[:15] + "..."
 
-        discount_amount = bill_data.get('discount_amount', 0)
-        try:
-            discount_amount = float(discount_amount)
-        except:
-            discount_amount = 0
+            qty = int(item.get('quantity', 0))
+            rate = float(item.get('rate', 0))
+            mrp = float(item.get('mrp', 0)) if item.get('mrp') else rate
+            amt = float(item.get('amount', 0))
+            gst_pct = float(item.get('gst_percentage', 0))
+
+            total_qty += qty
+
+            # Calculate savings for this item
+            if mrp > rate:
+                total_savings += (mrp - rate) * qty
+
+            # Track GST breakdown by percentage
+            if gst_pct > 0:
+                taxable_amt = qty * rate
+                gst_for_item = taxable_amt * gst_pct / 100
+                if gst_pct not in gst_breakdown:
+                    gst_breakdown[gst_pct] = {'taxable': 0, 'gst': 0}
+                gst_breakdown[gst_pct]['taxable'] += taxable_amt
+                gst_breakdown[gst_pct]['gst'] += gst_for_item
+
+            # Single line: Name, Qty, MRP, Rate, Amount
+            lines.append(f"{name:<18} {qty:>3} {mrp:>7.2f} {rate:>7.2f} {amt:>7.2f}")
+
+        lines.append("-" * W)
+
+        # Items summary line
+        total_items = len(items)
+        subtotal = float(bill_data.get('subtotal', 0))
+        lines.append(f"Items: {total_items}  Total Qty: {total_qty}     Sub Total:{subtotal:>8.2f}")
+
+        # Discount if any
+        discount_amount = float(bill_data.get('discount_amount', 0) or 0)
         if discount_amount > 0:
-            lines.append(f"{'Discount:':<30} -{discount_amount:>8.2f}")
+            lines.append(f"{'Discount:':<32}{-discount_amount:>9.2f}")
 
-        lines.append("=" * 40)
-        final = bill_data.get('final_amount', 0) if bill_data.get('type') == 'gst' else bill_data.get('total_amount', 0)
-        # Convert to float if it's a string
-        try:
-            final = float(final)
-        except:
-            final = 0
-        lines.append(f"{'GRAND TOTAL:':<30} {round(final):>9.2f}")
-        lines.append("=" * 40)
+        # GST Amount total (for GST bills)
+        gst_amount = float(bill_data.get('gst_amount', 0) or 0)
+        if gst_amount > 0:
+            lines.append(f"{'GST Amount:':<32}{gst_amount:>9.2f}")
 
-        # Payment - handle both string and JSON array formats
+        # Calculate final amount
+        if bill_data.get('type', '').lower() == 'gst':
+            final = float(bill_data.get('final_amount', 0) or 0)
+        else:
+            final = float(bill_data.get('total_amount', 0) or 0)
+
+        # Round off
+        round_off = round(final) - final
+        if abs(round_off) >= 0.01:
+            sign = "+" if round_off > 0 else ""
+            lines.append(f"{'Round Off:':<32}{sign}{round_off:>8.2f}")
+
+        lines.append("=" * W)
+        lines.append(f"{'GRAND TOTAL:':<24} Rs.{round(final):>13.2f}")
+        lines.append("=" * W)
+
+        # GST breakdown table (only for GST bills with GST items)
+        if bill_data.get('type', '').upper() == 'GST' and gst_breakdown:
+            lines.append("")
+            lines.append("GST BREAKDOWN".center(W))
+            lines.append("-" * W)
+            # Header: Tax% | Taxable | CGST | SGST | Total
+            lines.append("Tax%   Taxable   CGST%  CGST    SGST%  SGST   Total")
+            lines.append("-" * W)
+
+            for gst_pct in sorted(gst_breakdown.keys()):
+                data = gst_breakdown[gst_pct]
+                taxable = data['taxable']
+                total_gst = data['gst']
+                cgst_pct = gst_pct / 2
+                sgst_pct = gst_pct / 2
+                cgst_amt = total_gst / 2
+                sgst_amt = total_gst / 2
+
+                lines.append(f"{gst_pct:>4.0f}% {taxable:>8.2f}  {cgst_pct:>4.1f}% {cgst_amt:>6.2f}  {sgst_pct:>4.1f}% {sgst_amt:>5.2f} {total_gst:>6.2f}")
+
+            lines.append("-" * W)
+
+        # Payment info
+        lines.append("")
         payment_info = bill_data.get('payment_type', 'CASH')
         try:
-            # Try to parse if it's a JSON string
-            import json
             if isinstance(payment_info, str) and payment_info.startswith('['):
                 payments = json.loads(payment_info)
-                payment_str = ', '.join([f"{p['payment_type']}: {p['amount']}" for p in payments])
-                lines.append(f"Payment: {payment_str}")
+                payment_str = ', '.join([f"{p['payment_type']}: Rs.{p['amount']}" for p in payments])
+                lines.append(f"Payment: {payment_str}".center(W))
             else:
-                lines.append(f"Payment: {payment_info}")
+                lines.append(f"Payment: {payment_info}".center(W))
         except:
-            # If parsing fails, just use as is
-            lines.append(f"Payment: {payment_info}")
+            lines.append(f"Payment: {payment_info}".center(W))
+
+        # Today's savings
+        if total_savings > 0:
+            lines.append("")
+            lines.append("*" * W)
+            lines.append(f"TODAY'S SAVINGS: Rs. {total_savings:.2f}".center(W))
+            lines.append("*" * W)
+
+        # Footer
         lines.append("")
-        lines.append("THANK YOU VISIT AGAIN!".center(40))
-        lines.append("*" * 40)
+        lines.append("THANK YOU VISIT AGAIN!".center(W))
+        lines.append("=" * W)
 
         return '\n'.join(lines)
 

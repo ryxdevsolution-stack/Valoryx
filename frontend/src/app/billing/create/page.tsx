@@ -74,6 +74,8 @@ export default function UnifiedBillingPage() {
 
   const hasInitialized = useRef(false)
   const isRestoringFromStorage = useRef(false)
+  const barcodeBuffer = useRef('')
+  const barcodeTimeout = useRef<NodeJS.Timeout | null>(null)
 
   // LocalStorage key for draft persistence
   const DRAFT_STORAGE_KEY = 'billing_draft_tabs'
@@ -231,7 +233,51 @@ export default function UnifiedBillingPage() {
       if (e.key === 'Escape') {
         setBarcodeInput('')
         setShowProductDropdown(false)
+        barcodeBuffer.current = ''
         productSearchRef.current?.focus()
+      }
+
+      // Global barcode scanning - capture input even when not focused on search field
+      const activeElement = document.activeElement
+      const isInputFocused = activeElement?.tagName === 'INPUT' || activeElement?.tagName === 'TEXTAREA'
+
+      // If not in an input field, capture barcode characters
+      if (!isInputFocused) {
+        // Handle Enter key - process the barcode buffer
+        if (e.key === 'Enter' && barcodeBuffer.current.length > 0) {
+          e.preventDefault()
+          const scannedBarcode = barcodeBuffer.current.trim()
+          barcodeBuffer.current = ''
+          if (barcodeTimeout.current) {
+            clearTimeout(barcodeTimeout.current)
+            barcodeTimeout.current = null
+          }
+          // Set barcode input and trigger search
+          setBarcodeInput(scannedBarcode)
+          // Focus the barcode input and trigger Enter
+          setTimeout(() => {
+            barcodeInputRef.current?.focus()
+            // Simulate Enter key press on the input
+            const enterEvent = new KeyboardEvent('keydown', { key: 'Enter', bubbles: true })
+            barcodeInputRef.current?.dispatchEvent(enterEvent)
+          }, 50)
+          return
+        }
+
+        // Capture printable characters for barcode
+        if (e.key.length === 1 && !e.ctrlKey && !e.altKey && !e.metaKey) {
+          barcodeBuffer.current += e.key
+
+          // Clear previous timeout
+          if (barcodeTimeout.current) {
+            clearTimeout(barcodeTimeout.current)
+          }
+
+          // Set timeout to clear buffer if no more input (user stopped typing)
+          barcodeTimeout.current = setTimeout(() => {
+            barcodeBuffer.current = ''
+          }, 100) // Barcode scanners type very fast, 100ms is enough
+        }
       }
     }
 
@@ -247,6 +293,9 @@ export default function UnifiedBillingPage() {
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
       document.removeEventListener('mousedown', handleClickOutside)
+      if (barcodeTimeout.current) {
+        clearTimeout(barcodeTimeout.current)
+      }
     }
   }, [loadInitialData])
 
@@ -333,7 +382,24 @@ export default function UnifiedBillingPage() {
   }
 
   const closeTab = (tabId: string) => {
-    if (billTabs.length === 1) return
+    if (billTabs.length === 1) {
+      // Reset the single tab instead of closing
+      const newTabId = Date.now().toString()
+      setBillTabs([{
+        id: newTabId,
+        customer_name: '',
+        customer_phone: '',
+        customer_gstin: '',
+        payment_splits: [],
+        items: [],
+        discountPercentage: 0,
+        amountReceived: 0,
+      }])
+      setActiveTabId(newTabId)
+      // Also update the bill number for the new bill
+      loadInitialData()
+      return
+    }
     const newTabs = billTabs.filter((tab) => tab.id !== tabId)
     setBillTabs(newTabs)
     if (activeTabId === tabId) {

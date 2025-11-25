@@ -76,7 +76,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   const login = async (email: string, password: string) => {
     try {
       const response = await api.post('/auth/login', { email, password })
-      const { token, user, client_id, client_name, client_logo } = response.data
+      const { token, user, client_id, client_name, client_logo, client_address, client_phone, client_email, client_gstin } = response.data
 
       const userData: User = {
         user_id: user.user_id,
@@ -90,6 +90,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         client_id,
         client_name,
         logo_url: client_logo,
+        address: client_address,
+        phone: client_phone,
+        email: client_email,
+        gstin: client_gstin,
       }
 
       // Store in state
