@@ -51,24 +51,101 @@ def create_app():
 
     # Register blueprints with error handling
     blueprints_registered = []
+    import_errors = []
+
+    # Import each blueprint separately to identify which one fails
+    auth_bp = billing_bp = stock_bp = report_bp = audit_bp = None
+    client_bp = payment_bp = customer_bp = analytics_bp = None
+    permissions_bp = admin_bp = notes_bp = bulk_order_bp = expense_bp = None
+
     try:
         from routes.auth import auth_bp
+    except Exception as e:
+        import_errors.append(f"auth: {str(e)}")
+        logging.error(f"Failed to import auth blueprint: {e}")
+
+    try:
         from routes.billing import billing_bp
+    except Exception as e:
+        import_errors.append(f"billing: {str(e)}")
+        logging.error(f"Failed to import billing blueprint: {e}")
+
+    try:
         from routes.stock import stock_bp
+    except Exception as e:
+        import_errors.append(f"stock: {str(e)}")
+        logging.error(f"Failed to import stock blueprint: {e}")
+
+    try:
         from routes.report import report_bp
+    except Exception as e:
+        import_errors.append(f"report: {str(e)}")
+        logging.error(f"Failed to import report blueprint: {e}")
+
+    try:
         from routes.audit import audit_bp
+    except Exception as e:
+        import_errors.append(f"audit: {str(e)}")
+        logging.error(f"Failed to import audit blueprint: {e}")
+
+    try:
         from routes.client import client_bp
+    except Exception as e:
+        import_errors.append(f"client: {str(e)}")
+        logging.error(f"Failed to import client blueprint: {e}")
+
+    try:
         from routes.payment import payment_bp
+    except Exception as e:
+        import_errors.append(f"payment: {str(e)}")
+        logging.error(f"Failed to import payment blueprint: {e}")
+
+    try:
         from routes.customer import customer_bp
+    except Exception as e:
+        import_errors.append(f"customer: {str(e)}")
+        logging.error(f"Failed to import customer blueprint: {e}")
+
+    try:
         from routes.analytics import analytics_bp
+    except Exception as e:
+        import_errors.append(f"analytics: {str(e)}")
+        logging.error(f"Failed to import analytics blueprint: {e}")
+
+    try:
         from routes.permissions import permissions_bp
+    except Exception as e:
+        import_errors.append(f"permissions: {str(e)}")
+        logging.error(f"Failed to import permissions blueprint: {e}")
+
+    try:
         from routes.admin import admin_bp
+    except Exception as e:
+        import_errors.append(f"admin: {str(e)}")
+        logging.error(f"Failed to import admin blueprint: {e}")
+
+    try:
         from routes.notes import notes_bp
+    except Exception as e:
+        import_errors.append(f"notes: {str(e)}")
+        logging.error(f"Failed to import notes blueprint: {e}")
+
+    try:
         from routes.bulk_stock_order import bulk_order_bp
+    except Exception as e:
+        import_errors.append(f"bulk_order: {str(e)}")
+        logging.error(f"Failed to import bulk_order blueprint: {e}")
+
+    try:
         from routes.expense import expense_bp
-    except ImportError as e:
-        print(f"Warning: Could not import routes: {e}")
-        auth_bp = billing_bp = stock_bp = report_bp = audit_bp = client_bp = payment_bp = customer_bp = analytics_bp = permissions_bp = admin_bp = notes_bp = bulk_order_bp = expense_bp = None
+    except Exception as e:
+        import_errors.append(f"expense: {str(e)}")
+        logging.error(f"Failed to import expense blueprint: {e}")
+
+    # Store import errors for debugging
+    app.config['IMPORT_ERRORS'] = import_errors
+    if import_errors:
+        logging.error(f"Blueprint import errors: {import_errors}")
 
     # Register blueprints only if they were imported successfully
     if auth_bp:
@@ -181,57 +258,51 @@ def create_app():
     @app.route('/api/status', methods=['GET'])
     def status_check():
         from config import Config
-        
+
         # Test database connection
         db_connected = False
         try:
             db_connected = test_db_connection(app)
         except:
             pass
-        
-        config_status = Config.get_configuration_status()
-        missing_configs = Config.get_missing_configs()
-        db_url_valid, db_url_message = Config.validate_db_url()
-        db_url_info = Config.get_db_url_info()
-        
+
+        # Check Supabase configuration
+        supabase_url_set = bool(Config.SUPABASE_URL)
+        supabase_key_set = bool(Config.SUPABASE_KEY)
+        supabase_configured = supabase_url_set and supabase_key_set
+        using_supabase = 'supabase' in str(Config.SQLALCHEMY_DATABASE_URI).lower() or 'postgresql' in str(Config.SQLALCHEMY_DATABASE_URI).lower()
+
         status = {
             'status': 'running',
             'message': 'RYX Billing API is running',
             'database': {
                 'initialized': db_initialized,
                 'connected': db_connected,
-                'type': 'Supabase PostgreSQL' if config_status['database']['using_supabase'] else 'SQLite (fallback)',
-                'url_valid': db_url_valid,
-                'url_message': db_url_message,
-                'url_info': db_url_info
+                'type': 'PostgreSQL' if using_supabase else 'SQLite (fallback)'
             },
             'supabase': {
-                'configured': config_status['supabase']['configured'],
-                'url_set': config_status['supabase']['url_set'],
-                'key_set': config_status['supabase']['key_set']
+                'configured': supabase_configured,
+                'url_set': supabase_url_set,
+                'key_set': supabase_key_set
             },
             'blueprints': {
                 'registered': app.config.get('BLUEPRINTS_REGISTERED', []),
-                'count': len(app.config.get('BLUEPRINTS_REGISTERED', []))
+                'count': len(app.config.get('BLUEPRINTS_REGISTERED', [])),
+                'import_errors': app.config.get('IMPORT_ERRORS', [])
             },
-            'configuration': config_status,
-            'missing_configs': missing_configs,
+            'cors_origins': os.environ.get('CORS_ORIGINS', 'not set'),
             'warnings': []
         }
-        
-        # Add warnings for missing configurations
-        if missing_configs:
-            status['warnings'].append(f"Missing environment variables: {', '.join(missing_configs)}")
-        
-        if not config_status['supabase']['configured']:
+
+        if not supabase_configured:
             status['warnings'].append("Supabase not configured - using SQLite fallback")
-        
+
         if not db_connected:
             status['warnings'].append("Database connection failed")
-        
-        if not db_url_valid:
-            status['warnings'].append(f"Invalid database URL: {db_url_message}")
-        
+
+        if app.config.get('IMPORT_ERRORS'):
+            status['warnings'].append(f"Blueprint import errors: {len(app.config.get('IMPORT_ERRORS', []))} failures")
+
         return status, 200
 
     # Handle CORS preflight requests explicitly
@@ -310,7 +381,9 @@ def create_app():
             'status': 'success',
             'message': 'Test endpoint working',
             'database_available': db_initialized,
-            'blueprints_registered': len(app.config.get('BLUEPRINTS_REGISTERED', []))
+            'blueprints_registered': len(app.config.get('BLUEPRINTS_REGISTERED', [])),
+            'blueprints': app.config.get('BLUEPRINTS_REGISTERED', []),
+            'import_errors': app.config.get('IMPORT_ERRORS', [])
         }, 200
     
     @app.route('/', methods=['GET'])
