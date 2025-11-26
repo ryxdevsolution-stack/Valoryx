@@ -2,6 +2,7 @@ import os
 import sys
 from flask import Flask
 from flask_cors import CORS
+from werkzeug.exceptions import HTTPException
 
 # Add current directory to Python path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -270,6 +271,11 @@ def create_app():
             'database_available': db_initialized,
             'blueprints_registered': len(app.config.get('BLUEPRINTS_REGISTERED', []))
         }, 200
+    
+    @app.route('/', methods=['GET'])
+    def root():
+        return {"status": "ok", "message": "MJ Billing backend running"}, 200
+
 
     return app
 
