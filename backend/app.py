@@ -250,9 +250,20 @@ def create_app():
 
         return None
 
-    # Global error handler to prevent crashes
+    # Handle HTTP exceptions properly (don't convert 404 to 500)
+    @app.errorhandler(HTTPException)
+    def handle_http_exception(e):
+        return {
+            'error': e.name,
+            'message': e.description,
+        }, e.code
+
+    # Global error handler for non-HTTP exceptions
     @app.errorhandler(Exception)
     def handle_exception(e):
+        # Pass through HTTP exceptions
+        if isinstance(e, HTTPException):
+            return handle_http_exception(e)
         import traceback
         logging.error(f"Unhandled exception: {str(e)}")
         logging.error(traceback.format_exc())
