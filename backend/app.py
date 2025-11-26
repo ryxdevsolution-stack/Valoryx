@@ -15,9 +15,13 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    # Initialize CORS
+    # Initialize CORS - use CORS_ORIGINS env var or allow all
+    cors_origins = os.environ.get('CORS_ORIGINS', '*')
+    if cors_origins != '*':
+        cors_origins = [origin.strip() for origin in cors_origins.split(',')]
+
     CORS(app,
-     origins=["https://mj-billing.vercel.app","http://localhost:3000","https://mj-billing.vercel.app/"],
+     origins=cors_origins,
      supports_credentials=True,
      methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
      allow_headers=['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
