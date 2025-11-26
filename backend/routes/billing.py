@@ -271,13 +271,15 @@ def get_bill_details(bill_id):
 
 @billing_bp.route('/create', methods=['POST'])
 @authenticate
+@require_any_permission('gst_billing', 'non_gst_billing')
 def create_unified_bill():
     """
-    Smart unified billing endpoint
-    - Automatically detects GST or Non-GST based on items
-    - Calculates per-item GST from product's gst_percentage
-    - Routes to appropriate table based on presence of GST
-    - Supports multi-payment splits, customer GSTIN, received amount, and discount
+    Smart unified billing endpoint with permission-based bill type determination
+
+    Permission-based routing:
+    - gst_billing only: Always creates GST bill (even if items have 0% GST)
+    - non_gst_billing only: Always creates Non-GST bill (forces all GST to 0)
+    - Both permissions: Smart detection based on item GST percentages
 
     Request format:
     {
@@ -307,6 +309,18 @@ def create_unified_bill():
         data = request.get_json()
         client_id = g.user['client_id']
 
+        # Check user permissions for billing
+        user_permissions = g.user.get('permissions', [])
+        is_super_admin = g.user.get('is_super_admin', False)
+
+        has_gst_permission = is_super_admin or 'gst_billing' in user_permissions
+        has_non_gst_permission = is_super_admin or 'non_gst_billing' in user_permissions
+
+        # Determine billing mode based on permissions
+        gst_only = has_gst_permission and not has_non_gst_permission
+        non_gst_only = not has_gst_permission and has_non_gst_permission
+        # has_both_permissions = has_gst_permission and has_non_gst_permission (smart detection)
+
         # Validate required fields - customer_name is now optional
         required_fields = ['items', 'payment_type']
         for field in required_fields:
@@ -325,11 +339,12 @@ def create_unified_bill():
         new_products_to_create = []
 
         for item in data['items']:
-            # Check if this is a new product (temp ID from frontend)
+            # Check if this is a new product (temp ID from frontend) or quick sale (nosave-)
             product_id = item['product_id']
             is_new_product = product_id.startswith('temp-')
+            is_quick_sale = product_id.startswith('nosave-')  # Quick sale - don't save to stock
 
-            if not is_new_product:
+            if not is_new_product and not is_quick_sale:
                 # Verify product belongs to this client
                 product = StockEntry.query.filter_by(
                     product_id=product_id,
@@ -349,6 +364,12 @@ def create_unified_bill():
                 item_qty = item['quantity']
                 item_rate = float(item.get('rate', product.rate))
                 item_gst_pct = float(item.get('gst_percentage', product.gst_percentage or 0))
+            elif is_quick_sale:
+                # Quick sale - use data from frontend, do NOT create in stock
+                item_qty = item['quantity']
+                item_rate = float(item.get('rate', 0))
+                item_gst_pct = float(item.get('gst_percentage', 0))
+                # Keep the nosave- product_id as-is (no stock entry created)
             else:
                 # New product - use data from frontend and create in stock
                 item_qty = item['quantity']
@@ -377,6 +398,10 @@ def create_unified_bill():
                 # Update product_id to use real UUID in processed items
                 product_id = new_product_id
 
+            # For non-GST only users, force GST to 0
+            if non_gst_only:
+                item_gst_pct = 0
+
             # Calculate amounts
             item_subtotal = item_qty * item_rate
             item_gst_amt = (item_subtotal * item_gst_pct) / 100
@@ -387,16 +412,19 @@ def create_unified_bill():
 
             # Get MRP from item or product
             item_mrp = float(item.get('mrp', 0)) if item.get('mrp') else None
-            if not item_mrp and not is_new_product and hasattr(product, 'mrp') and product.mrp:
+            if not item_mrp and not is_new_product and not is_quick_sale and hasattr(product, 'mrp') and product.mrp:
                 item_mrp = float(product.mrp)
+
+            # Determine if we have a product object (only for existing stock items)
+            has_product = not is_new_product and not is_quick_sale
 
             # Build processed item - Convert all values to JSON-serializable types
             processed_items.append({
-                'product_id': str(product_id) if not is_new_product else product_id,
-                'product_name': item.get('product_name', product.product_name if not is_new_product else 'Unknown'),
-                'item_code': item.get('item_code', product.item_code if not is_new_product else ''),
-                'hsn_code': item.get('hsn_code', product.hsn_code if not is_new_product else ''),
-                'unit': item.get('unit', product.unit if not is_new_product else 'pcs'),
+                'product_id': str(product_id) if has_product else product_id,
+                'product_name': item.get('product_name', product.product_name if has_product else 'Unknown'),
+                'item_code': item.get('item_code', product.item_code if has_product else ''),
+                'hsn_code': item.get('hsn_code', product.hsn_code if has_product else ''),
+                'unit': item.get('unit', product.unit if has_product else 'pcs'),
                 'quantity': item_qty,
                 'rate': item_rate,
                 'mrp': item_mrp if item_mrp else item_rate,  # Use rate as MRP if not available
@@ -434,8 +462,14 @@ def create_unified_bill():
         if new_products_to_create:
             db.session.flush()
 
-        # Route to appropriate billing table based on GST presence
-        if has_gst_items:
+        # Route to appropriate billing table based on permission and GST presence
+        # Permission-based routing:
+        # - gst_only: Always GST bill (even if no GST items)
+        # - non_gst_only: Always Non-GST bill (GST already forced to 0 above)
+        # - both permissions: Smart detection based on has_gst_items
+        should_create_gst_bill = gst_only or (not non_gst_only and has_gst_items)
+
+        if should_create_gst_bill:
             # Create GST Bill
             last_bill = GSTBilling.query.filter_by(client_id=client_id).order_by(GSTBilling.bill_number.desc()).first()
             bill_number = (last_bill.bill_number + 1) if last_bill else 1

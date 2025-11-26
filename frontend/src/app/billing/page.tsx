@@ -210,7 +210,19 @@ export default function AllBillsPage() {
   const expandedBills = getExpandedBills(bills)
   const filteredExpandedBills = selectedPaymentType === 'all'
     ? expandedBills
-    : expandedBills.filter(bill => bill.displayPaymentType === selectedPaymentType)
+    : selectedPaymentType.includes('+')
+      // Split payment filter - show bills that have this exact combination
+      ? expandedBills.filter(bill => {
+          const billTypes = parsePaymentTypes(bill)
+          if (billTypes.length <= 1) return false
+          const sortedTypes = [...billTypes].sort().join('+')
+          return sortedTypes === selectedPaymentType
+        })
+      // Single payment filter - only show bills with exactly that one payment type (no splits)
+      : expandedBills.filter(bill => {
+          const billTypes = parsePaymentTypes(bill)
+          return billTypes.length === 1 && bill.displayPaymentType === selectedPaymentType
+        })
 
   // Pagination
   const totalPages = Math.ceil(filteredExpandedBills.length / itemsPerPage)
@@ -222,27 +234,54 @@ export default function AllBillsPage() {
   const grandTotal = bills.reduce((sum, bill) => sum + getAmount(bill), 0)
   const filteredTotal = filteredExpandedBills.reduce((sum, bill) => sum + bill.displayAmount, 0)
 
-  // Get payment type statistics
+  // Get payment type statistics (only single payment bills, not split payments)
   const paymentTypeStats = paymentTypes.map(pt => {
-    // Count unique bills that include this payment type (including split payments)
-    const uniqueBillsWithPaymentType = new Set<string>()
+    // Count only bills that have exactly this single payment type (no splits)
+    let count = 0
     let totalAmount = 0
 
     bills.forEach(bill => {
-      const paymentTypes = parsePaymentTypes(bill)
-      if (paymentTypes.includes(pt.payment_type_id)) {
-        uniqueBillsWithPaymentType.add(bill.bill_id)
-        // Add only the amount paid via this specific payment method
-        totalAmount += getAmountForPaymentType(bill, pt.payment_type_id)
+      const types = parsePaymentTypes(bill)
+      // Only count if this bill has exactly one payment type and it matches
+      if (types.length === 1 && types[0] === pt.payment_type_id) {
+        count += 1
+        totalAmount += getAmount(bill)
       }
     })
 
     return {
       ...pt,
-      count: uniqueBillsWithPaymentType.size, // Count of unique bills, not payment instances
+      count,
       total: totalAmount
     }
   })
+
+  // Get split payment (relationship) statistics
+  const splitPaymentStats = (() => {
+    const splitCombinations = new Map<string, { count: number; total: number; types: string[] }>()
+
+    bills.forEach(bill => {
+      const types = parsePaymentTypes(bill)
+      if (types.length > 1) {
+        // Sort types to ensure consistent key (e.g., "CASH+UPI" not "UPI+CASH")
+        const sortedTypes = [...types].sort()
+        const key = sortedTypes.join('+')
+
+        const existing = splitCombinations.get(key) || { count: 0, total: 0, types: sortedTypes }
+        existing.count += 1
+        existing.total += getAmount(bill)
+        splitCombinations.set(key, existing)
+      }
+    })
+
+    return Array.from(splitCombinations.entries()).map(([key, data]) => ({
+      id: key,
+      name: key,
+      count: data.count,
+      total: data.total,
+      types: data.types
+    }))
+  })()
 
   // Reset to page 1 when filter changes
   useEffect(() => {
@@ -365,44 +404,46 @@ export default function AllBillsPage() {
           </div>
         ) : (
           <>
-            {/* Payment Type Filter Cards - User Friendly */}
+            {/* Payment Type Filter Cards - Compact */}
             <div className="flex-shrink-0 mb-2 overflow-x-auto scrollbar-hide">
-              <div className="flex gap-2 pb-1 min-w-max">
+              <div className="flex gap-1.5 pb-1 min-w-max">
                 {/* All Bills Card */}
                 <button
                   type="button"
                   onClick={() => setSelectedPaymentType('all')}
-                  className={`group flex items-center gap-2 px-3 py-2 rounded-lg border-2 transition-all duration-200 ${
+                  className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-md border transition-all duration-200 ${
                     selectedPaymentType === 'all'
-                      ? 'bg-gradient-to-br from-slate-700 to-slate-600 border-slate-600 shadow-lg scale-105'
-                      : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:border-slate-400 dark:hover:border-slate-500 hover:shadow-md'
+                      ? 'bg-gradient-to-br from-slate-700 to-slate-600 border-slate-600 shadow-md'
+                      : 'bg-white dark:bg-gray-800 border-gray-300 dark:border-gray-600 hover:border-slate-400 dark:hover:border-slate-500 hover:shadow-sm'
                   }`}
                 >
-                  <div className={`p-1.5 rounded-md ${
+                  <div className={`p-1 rounded ${
                     selectedPaymentType === 'all'
                       ? 'bg-white/20'
-                      : 'bg-gray-100 dark:bg-gray-700 group-hover:bg-gray-200 dark:group-hover:bg-gray-600'
+                      : 'bg-gray-100 dark:bg-gray-700'
                   }`}>
-                    <FileText className={`w-4 h-4 ${
+                    <FileText className={`w-3 h-3 ${
                       selectedPaymentType === 'all' ? 'text-white' : 'text-gray-600 dark:text-gray-300'
                     }`} />
                   </div>
                   <div className="text-left">
-                    <p className={`text-[10px] font-semibold ${
+                    <p className={`text-[9px] font-medium ${
                       selectedPaymentType === 'all' ? 'text-white/80' : 'text-gray-500 dark:text-gray-400'
                     }`}>
                       All Bills
                     </p>
-                    <p className={`text-base font-bold ${
-                      selectedPaymentType === 'all' ? 'text-white' : 'text-gray-900 dark:text-white'
-                    }`}>
-                      {bills.length}
-                    </p>
-                    <p className={`text-xs font-semibold ${
-                      selectedPaymentType === 'all' ? 'text-white/90' : 'text-gray-700 dark:text-gray-300'
-                    }`}>
-                      ₹{grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                    </p>
+                    <div className="flex items-baseline gap-1">
+                      <span className={`text-sm font-bold ${
+                        selectedPaymentType === 'all' ? 'text-white' : 'text-gray-900 dark:text-white'
+                      }`}>
+                        {bills.length}
+                      </span>
+                      <span className={`text-[10px] font-medium ${
+                        selectedPaymentType === 'all' ? 'text-white/80' : 'text-gray-600 dark:text-gray-400'
+                      }`}>
+                        ₹{grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                      </span>
+                    </div>
                   </div>
                 </button>
 
@@ -417,41 +458,92 @@ export default function AllBillsPage() {
                       key={stat.payment_type_id}
                       type="button"
                       onClick={() => setSelectedPaymentType(stat.payment_type_id)}
-                      className={`group flex items-center gap-2 px-3 py-2 rounded-lg border-2 transition-all duration-200 ${
+                      className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-md border transition-all duration-200 ${
                         isSelected
-                          ? `bg-gradient-to-br ${colors.bg} border-transparent shadow-xl scale-105`
-                          : `bg-white dark:bg-gray-800 ${colors.border} border-opacity-30 dark:border-opacity-30 hover:border-opacity-60 hover:shadow-lg`
+                          ? `bg-gradient-to-br ${colors.bg} border-transparent shadow-md`
+                          : `bg-white dark:bg-gray-800 ${colors.border} border-opacity-30 dark:border-opacity-30 hover:border-opacity-60 hover:shadow-sm`
                       }`}
                     >
-                      <div className={`p-1.5 rounded-md ${
+                      <div className={`p-1 rounded ${
                         isSelected
                           ? 'bg-white/20'
                           : `bg-${colors.text.split('-')[1]}-50 dark:bg-${colors.text.split('-')[1]}-900/20`
                       }`}>
-                        <Icon className={`w-4 h-4 ${
+                        <Icon className={`w-3 h-3 ${
                           isSelected ? 'text-white' : colors.text
                         }`} />
                       </div>
                       <div className="text-left">
-                        <p className={`text-[10px] font-semibold uppercase tracking-wide ${
+                        <p className={`text-[9px] font-medium uppercase tracking-wide ${
                           isSelected ? 'text-white/80' : `${colors.text} opacity-70`
                         }`}>
                           {stat.payment_name}
                         </p>
-                        <p className={`text-base font-bold ${
-                          isSelected ? 'text-white' : 'text-gray-900 dark:text-white'
-                        }`}>
-                          {stat.count}
-                        </p>
-                        <p className={`text-xs font-semibold ${
-                          isSelected ? 'text-white/90' : 'text-gray-700 dark:text-gray-300'
-                        }`}>
-                          ₹{stat.total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
-                        </p>
+                        <div className="flex items-baseline gap-1">
+                          <span className={`text-sm font-bold ${
+                            isSelected ? 'text-white' : 'text-gray-900 dark:text-white'
+                          }`}>
+                            {stat.count}
+                          </span>
+                          <span className={`text-[10px] font-medium ${
+                            isSelected ? 'text-white/80' : 'text-gray-600 dark:text-gray-400'
+                          }`}>
+                            ₹{stat.total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                          </span>
+                        </div>
                       </div>
                     </button>
                   )
                 })}
+
+                {/* Split Payment Relationship Cards */}
+                {splitPaymentStats.length > 0 && (
+                  <>
+                    <div className="w-px bg-gray-300 dark:bg-gray-600 mx-1 self-stretch" />
+                    {splitPaymentStats.map(stat => {
+                      const isSelected = selectedPaymentType === stat.id
+                      return (
+                        <button
+                          key={stat.id}
+                          type="button"
+                          onClick={() => setSelectedPaymentType(stat.id)}
+                          className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-md border transition-all duration-200 ${
+                            isSelected
+                              ? 'bg-gradient-to-br from-amber-500 to-orange-500 border-transparent shadow-md'
+                              : 'bg-white dark:bg-gray-800 border-amber-400 border-opacity-40 dark:border-opacity-40 hover:border-opacity-70 hover:shadow-sm'
+                          }`}
+                        >
+                          <div className={`p-1 rounded ${
+                            isSelected ? 'bg-white/20' : 'bg-amber-50 dark:bg-amber-900/20'
+                          }`}>
+                            <RefreshCw className={`w-3 h-3 ${
+                              isSelected ? 'text-white' : 'text-amber-600'
+                            }`} />
+                          </div>
+                          <div className="text-left">
+                            <p className={`text-[9px] font-medium uppercase tracking-wide ${
+                              isSelected ? 'text-white/80' : 'text-amber-600 opacity-70'
+                            }`}>
+                              {stat.name}
+                            </p>
+                            <div className="flex items-baseline gap-1">
+                              <span className={`text-sm font-bold ${
+                                isSelected ? 'text-white' : 'text-gray-900 dark:text-white'
+                              }`}>
+                                {stat.count}
+                              </span>
+                              <span className={`text-[10px] font-medium ${
+                                isSelected ? 'text-white/80' : 'text-gray-600 dark:text-gray-400'
+                              }`}>
+                                ₹{stat.total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                              </span>
+                            </div>
+                          </div>
+                        </button>
+                      )
+                    })}
+                  </>
+                )}
               </div>
             </div>
 

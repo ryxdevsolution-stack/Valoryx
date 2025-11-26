@@ -699,19 +699,19 @@ export default function StockManagementPage() {
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   GST Percentage
                 </label>
-                <select
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
                   value={formData.gst_percentage}
                   onChange={(e) =>
-                    setFormData({ ...formData, gst_percentage: parseFloat(e.target.value) })
+                    setFormData({ ...formData, gst_percentage: parseFloat(e.target.value) || 0 })
                   }
+                  placeholder="0"
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                >
-                  <option value={0}>0% (Non-GST)</option>
-                  <option value={5}>5%</option>
-                  <option value={12}>12%</option>
-                  <option value={18}>18%</option>
-                  <option value={28}>28%</option>
-                </select>
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Common: 0%, 5%, 12%, 18%, 28%</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">

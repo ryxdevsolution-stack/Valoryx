@@ -4,6 +4,7 @@ from flask import request, jsonify, g
 from config import Config
 from models.user_model import User
 from models.client_model import ClientEntry
+from utils.cache_helper import get_cache_manager
 
 def get_client_id_from_token(token):
     """Extract and validate client_id from JWT token"""
@@ -25,6 +26,7 @@ def authenticate(f):
     """
     Authentication decorator - MUST be used on ALL protected routes
     Extracts client_id from JWT token and stores in g.user
+    Uses Redis cache for user/client data to reduce DB queries
     """
     @wraps(f)
     def decorated_function(*args, **kwargs):
@@ -48,31 +50,75 @@ def authenticate(f):
             if not user_id or not client_id:
                 return jsonify({'error': 'Invalid token payload'}), 401
 
-            # Verify user exists and is active
-            user = User.query.filter_by(user_id=user_id, is_active=True).first()
-            if not user:
-                return jsonify({'error': 'User not found or inactive'}), 401
+            # Try to get user/client data from Redis cache first
+            cache = get_cache_manager()
+            cache_key = f"user_session:{user_id}"
+            cached_data = cache.get(cache_key)
 
-            # Verify client exists and is active
-            client = ClientEntry.query.filter_by(client_id=client_id, is_active=True).first()
-            if not client:
-                return jsonify({'error': 'Client not found or inactive'}), 401
+            if cached_data:
+                # Use cached data - no DB query needed
+                user_data = cached_data.get('user', {})
+                client_data = cached_data.get('client', {})
 
-            # Store user and client info in g object for access in route handlers
-            g.user = {
-                'user_id': user_id,
-                'client_id': client_id,
-                'email': user.email,
-                'role': user.role,
-                'is_super_admin': decoded.get('is_super_admin', False),
-                'permissions': decoded.get('permissions', [])
-            }
+                g.user = {
+                    'user_id': user_id,
+                    'client_id': client_id,
+                    'email': user_data.get('email', ''),
+                    'full_name': user_data.get('full_name', ''),
+                    'phone': user_data.get('phone', ''),
+                    'department': user_data.get('department', ''),
+                    'role': user_data.get('role', 'staff'),
+                    'is_super_admin': user_data.get('is_super_admin', False),
+                    'permissions': user_data.get('permissions', [])
+                }
 
-            g.client = {
-                'client_id': client_id,
-                'client_name': client.client_name,
-                'logo_url': client.logo_url
-            }
+                g.client = {
+                    'client_id': client_id,
+                    'client_name': client_data.get('client_name', ''),
+                    'logo_url': client_data.get('logo_url', ''),
+                    'address': client_data.get('address', ''),
+                    'phone': client_data.get('phone', ''),
+                    'email': client_data.get('email', ''),
+                    'gstin': client_data.get('gstin', '')
+                }
+            else:
+                # Cache miss - query DB and cache the result
+                user = User.query.filter_by(user_id=user_id, is_active=True).first()
+                if not user:
+                    return jsonify({'error': 'User not found or inactive'}), 401
+
+                client = ClientEntry.query.filter_by(client_id=client_id, is_active=True).first()
+                if not client:
+                    return jsonify({'error': 'Client not found or inactive'}), 401
+
+                # Store user and client info in g object
+                g.user = {
+                    'user_id': user_id,
+                    'client_id': client_id,
+                    'email': user.email,
+                    'full_name': user.full_name or user.email.split('@')[0],
+                    'phone': user.phone,
+                    'department': user.department,
+                    'role': user.role,
+                    'is_super_admin': decoded.get('is_super_admin', False),
+                    'permissions': decoded.get('permissions', [])
+                }
+
+                g.client = {
+                    'client_id': client_id,
+                    'client_name': client.client_name,
+                    'logo_url': client.logo_url,
+                    'address': client.address,
+                    'phone': client.phone,
+                    'email': client.email,
+                    'gstin': client.gst_number
+                }
+
+                # Cache the data for future requests (24 hours)
+                cache.set(cache_key, {
+                    'user': g.user,
+                    'client': g.client
+                }, 86400)
 
             return f(*args, **kwargs)
 

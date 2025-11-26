@@ -110,7 +110,8 @@ export default function AuditorReportsPage() {
     setExporting(true)
     try {
       // Call backend API to generate PDF
-      const response = await api.post('/reports/export-pdf', {
+      // Client and user info are fetched from Redis cache in backend
+      const response = await api.post('/report/export-pdf', {
         bills: gstBills,
         start_date: dateRange.start_date,
         end_date: dateRange.end_date

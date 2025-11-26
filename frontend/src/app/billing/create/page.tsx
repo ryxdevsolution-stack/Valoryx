@@ -59,7 +59,14 @@ interface BillTab {
 export default function UnifiedBillingPage() {
   const router = useRouter()
   const { fetchProducts } = useData()
-  const { client } = useClient()
+  const { client, hasPermission } = useClient()
+
+  // Permission-based billing mode
+  const hasGstPermission = hasPermission('gst_billing')
+  const hasNonGstPermission = hasPermission('non_gst_billing')
+  const hasBothPermissions = hasGstPermission && hasNonGstPermission
+  const gstOnly = hasGstPermission && !hasNonGstPermission
+  const nonGstOnly = !hasGstPermission && hasNonGstPermission
   const barcodeInputRef = useRef<HTMLInputElement>(null)
   const productSearchRef = useRef<HTMLInputElement>(null)
   const quantityInputRef = useRef<HTMLInputElement>(null)
@@ -476,6 +483,13 @@ export default function UnifiedBillingPage() {
     setIsNewProduct(false)
     setAvailableStock(product.quantity || 0)
     setStockWarning('')
+    const defaultRate = Number(product.rate)
+
+    // Determine GST based on permissions:
+    // - Non-GST only: Always 0%
+    // - GST only or Both: Use product's GST percentage
+    const gstPercentage = nonGstOnly ? 0 : Number(product.gst_percentage || 0)
+
     setCurrentItem({
       product_id: product.product_id,
       product_name: product.product_name,
@@ -483,8 +497,8 @@ export default function UnifiedBillingPage() {
       hsn_code: product.hsn_code || '',
       unit: product.unit || 'pcs',
       quantity: '' as number | string,
-      rate: Number(product.rate),
-      gst_percentage: Number(product.gst_percentage || 0),
+      rate: defaultRate,
+      gst_percentage: gstPercentage,
     })
     setProductSearch(product.product_name)
     setShowProductDropdown(false)
@@ -534,7 +548,8 @@ export default function UnifiedBillingPage() {
   const addProductToItems = (product: any) => {
     const qty = 1
     const rate = Number(product.rate)
-    const productGstPct = Number(product.gst_percentage || 0)
+    // Non-GST only users: Force GST to 0
+    const productGstPct = nonGstOnly ? 0 : Number(product.gst_percentage || 0)
 
     const existingItemIndex = activeTab.items.findIndex(
       (item) =>
@@ -638,9 +653,14 @@ export default function UnifiedBillingPage() {
       const gstAmt = (subtotal * currentItem.gst_percentage) / 100
       const total = subtotal + gstAmt
 
+      // For quick sale items (nosave-), keep the existing ID; for other new products use temp-
+      const productId = currentItem.product_id.startsWith('nosave-')
+        ? currentItem.product_id
+        : (isNewProduct ? `temp-${Date.now()}` : currentItem.product_id)
+
       const newItem: BillItem = {
         ...currentItem,
-        product_id: isNewProduct ? `temp-${Date.now()}` : currentItem.product_id,
+        product_id: productId,
         quantity: actualQuantity,
         gst_amount: Number(gstAmt.toFixed(2)),
         amount: Number(total.toFixed(2)),
@@ -699,8 +719,13 @@ export default function UnifiedBillingPage() {
         rateInputRef.current?.focus()
         rateInputRef.current?.select()
       } else if (field === 'rate') {
-        gstInputRef.current?.focus()
-        gstInputRef.current?.select()
+        // For non-GST only users, skip GST field and add item directly
+        if (nonGstOnly) {
+          addItem()
+        } else {
+          gstInputRef.current?.focus()
+          gstInputRef.current?.select()
+        }
       } else if (field === 'gst') {
         addItem()
       }
@@ -764,11 +789,28 @@ export default function UnifiedBillingPage() {
   }
 
   const hasGSTItems = () => {
+    // Non-GST only: Never has GST items
+    if (nonGstOnly) return false
+    // GST only: Always has GST (even if all items are 0%, treat as GST bill)
+    if (gstOnly) return true
+    // Both permissions: Smart detection based on items
     return activeTab.items.some((item) => item.gst_percentage > 0)
   }
 
   const getBillType = () => {
-    return hasGSTItems() ? 'GST Bill' : 'Non-GST Bill'
+    // Permission-based bill type determination
+    if (gstOnly) return 'GST Bill'
+    if (nonGstOnly) return 'Non-GST Bill'
+    // Both permissions: Smart detection
+    return activeTab.items.some((item) => item.gst_percentage > 0) ? 'GST Bill' : 'Non-GST Bill'
+  }
+
+  // Determine if GST columns should be shown in the table
+  const showGstColumns = () => {
+    // Non-GST only: Never show GST columns
+    if (nonGstOnly) return false
+    // GST only or both permissions: Show GST columns
+    return true
   }
 
   const handleSubmit = async (e: React.FormEvent) => {
@@ -1132,43 +1174,36 @@ export default function UnifiedBillingPage() {
                           ))}
                         </>
                       ) : (
-                        <div className="px-3 py-3 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-300 dark:border-yellow-700">
-                          <div className="text-xs text-yellow-700 dark:text-yellow-400 mb-1">Product not found</div>
-                          <div className="bg-white dark:bg-gray-800 rounded px-2 py-1 mb-2 border border-yellow-200 dark:border-yellow-700">
-                            <span className="text-xs text-gray-500">Code: </span>
-                            <span className="font-mono font-bold text-gray-900 dark:text-white text-sm">{productSearch}</span>
+                        <div className="px-3 py-3 bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700">
+                          <div className="text-xs text-green-700 dark:text-green-400 mb-2">Quick Sale - Product not in stock</div>
+                          <div className="bg-white dark:bg-gray-800 rounded px-2 py-1 mb-2 border border-green-200 dark:border-green-700">
+                            <span className="text-xs text-gray-500">Product: </span>
+                            <span className="font-bold text-gray-900 dark:text-white text-sm">{productSearch}</span>
                           </div>
-                          <div className="flex gap-2">
-                            <input
-                              type="text"
-                              value={newProductName}
-                              onChange={(e) => setNewProductName(e.target.value)}
-                              onKeyDown={(e) => {
-                                if (e.key === 'Enter' && newProductName.trim()) {
-                                  e.preventDefault()
-                                  setNewProductBarcode(productSearch)
-                                  handleCreateNewProduct()
-                                }
-                              }}
-                              placeholder="Enter product name"
-                              className="flex-1 px-2 py-1.5 text-sm border border-yellow-400 dark:border-yellow-600 rounded focus:ring-2 focus:ring-yellow-500 bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                              autoFocus
-                            />
-                            <button
-                              onClick={() => {
-                                setNewProductBarcode(productSearch)
-                                handleCreateNewProduct()
-                              }}
-                              disabled={!newProductName.trim()}
-                              className={`px-3 py-1.5 rounded text-sm font-medium transition ${
-                                newProductName.trim()
-                                  ? 'bg-yellow-500 text-white hover:bg-yellow-600'
-                                  : 'bg-gray-300 text-gray-500 cursor-not-allowed'
-                              }`}
-                            >
-                              + Add
-                            </button>
-                          </div>
+                          <button
+                            onClick={() => {
+                              // Use search text as product name directly - quick sale (not saved to stock)
+                              setIsNewProduct(true)
+                              setCurrentItem({
+                                product_id: `nosave-${Date.now()}`,
+                                product_name: productSearch.trim(),
+                                item_code: '',
+                                hsn_code: '',
+                                unit: 'pcs',
+                                quantity: '' as number | string,
+                                rate: 0,
+                                gst_percentage: 0,
+                              })
+                              setShowProductDropdown(false)
+                              setTimeout(() => {
+                                rateInputRef.current?.focus()
+                                rateInputRef.current?.select()
+                              }, 100)
+                            }}
+                            className="w-full px-3 py-2 rounded text-sm font-medium transition bg-green-500 text-white hover:bg-green-600"
+                          >
+                            Use &quot;{productSearch}&quot; as Quick Sale
+                          </button>
                         </div>
                       )}
                     </div>
@@ -1229,29 +1264,32 @@ export default function UnifiedBillingPage() {
                     title="Enter rate"
                   />
                 </div>
-                <div className="w-20">
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                    GST%
-                  </label>
-                  <input
-                    ref={gstInputRef}
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="0.01"
-                    placeholder="0"
-                    value={currentItem.gst_percentage || ''}
-                    onChange={(e) =>
-                      setCurrentItem({
-                        ...currentItem,
-                        gst_percentage: parseFloat(e.target.value) || 0,
-                      })
-                    }
-                    onKeyDown={(e) => handleKeyPress(e, 'gst')}
-                    className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
-                    title="Enter GST %"
-                  />
-                </div>
+                {/* GST% field - Hidden for non-GST only users */}
+                {!nonGstOnly && (
+                  <div className="w-20">
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      GST%
+                    </label>
+                    <input
+                      ref={gstInputRef}
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      placeholder="0"
+                      value={currentItem.gst_percentage || ''}
+                      onChange={(e) =>
+                        setCurrentItem({
+                          ...currentItem,
+                          gst_percentage: parseFloat(e.target.value) || 0,
+                        })
+                      }
+                      onKeyDown={(e) => handleKeyPress(e, 'gst')}
+                      className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                      title="Enter GST %"
+                    />
+                  </div>
+                )}
                 <div>
                   <button
                     type="button"
@@ -1322,7 +1360,7 @@ export default function UnifiedBillingPage() {
                     <th className="px-1 py-1 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-20">
                       Rate
                     </th>
-                    {hasGSTItems() && (
+                    {showGstColumns() && (
                       <>
                         <th className="px-1 py-1 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-14">
                           GST%
@@ -1344,7 +1382,7 @@ export default function UnifiedBillingPage() {
                   {activeTab.items.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={hasGSTItems() ? 10 : 8}
+                        colSpan={showGstColumns() ? 10 : 8}
                         className="px-2 py-12 text-center text-gray-400 dark:text-gray-500 border-b border-gray-200 dark:border-gray-700"
                       >
                         <div className="flex flex-col items-center gap-1">
@@ -1431,7 +1469,7 @@ export default function UnifiedBillingPage() {
                         <td className="px-1 py-0.5 text-xs text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 text-right font-semibold">
                           ₹{Number(item.rate).toFixed(2)}
                         </td>
-                        {hasGSTItems() && (
+                        {showGstColumns() && (
                           <>
                             <td className="px-1 py-0.5 text-xs border-r border-gray-200 dark:border-gray-700 text-center">
                               <span
@@ -1664,7 +1702,7 @@ export default function UnifiedBillingPage() {
                       ₹{calculateSubtotal().toFixed(2)}
                     </span>
                   </div>
-                  {hasGSTItems() && (
+                  {showGstColumns() && calculateTotalGST() > 0 && (
                     <div className="flex justify-between items-center">
                       <span className="text-xs text-gray-700 dark:text-gray-300 font-medium">
                         Total GST:

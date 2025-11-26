@@ -319,17 +319,16 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                         <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                           GST %
                         </label>
-                        <select
+                        <input
+                          type="number"
+                          min="0"
+                          max="100"
+                          step="0.01"
                           value={item.gst_percentage}
-                          onChange={(e) => updateItem(index, 'gst_percentage', parseFloat(e.target.value))}
+                          onChange={(e) => updateItem(index, 'gst_percentage', parseFloat(e.target.value) || 0)}
+                          placeholder="0"
                           className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-600 dark:text-white rounded text-sm"
-                        >
-                          <option value={0}>0%</option>
-                          <option value={5}>5%</option>
-                          <option value={12}>12%</option>
-                          <option value={18}>18%</option>
-                          <option value={28}>28%</option>
-                        </select>
+                        />
                       </div>
                     </div>
                   </div>

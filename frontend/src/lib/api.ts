@@ -81,6 +81,13 @@ const decrementLoading = (config: AxiosRequestConfig | undefined) => {
   }
 }
 
+// Logout handler - will be set by ClientContext
+let logoutHandlerFn: (() => void) | null = null
+
+export function setLogoutHandler(handler: () => void) {
+  logoutHandlerFn = handler
+}
+
 // Add response interceptor to handle token expiration and hide loading
 api.interceptors.response.use(
   (response) => {
@@ -96,9 +103,18 @@ api.interceptors.response.use(
       localStorage.removeItem('user')
       localStorage.removeItem('client')
 
+      // Clear axios header
+      delete api.defaults.headers.common['Authorization']
+
       // Only redirect if not already on login page
       if (typeof window !== 'undefined' && !window.location.pathname.includes('/auth/login')) {
-        window.location.href = '/auth/login'
+        // Use logout handler if available (proper React state cleanup)
+        if (logoutHandlerFn) {
+          logoutHandlerFn()
+        } else {
+          // Fallback to direct redirect
+          window.location.href = '/auth/login'
+        }
       }
     }
     return Promise.reject(error)

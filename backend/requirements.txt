@@ -13,3 +13,4 @@ openpyxl==3.1.5
 xlrd==2.0.1
 gunicorn==21.2.0
 numpy==1.26.4
+reportlab==4.2.5

@@ -9,9 +9,13 @@ from models.client_model import ClientEntry
 from models.permission_model import get_user_permissions
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
+from utils.cache_helper import get_cache_manager
 from config import Config
 
 auth_bp = Blueprint('auth', __name__)
+
+# Cache timeout for user session data (24 hours)
+USER_SESSION_CACHE_TIMEOUT = 86400
 
 
 @auth_bp.route('/login', methods=['POST'])
@@ -74,6 +78,37 @@ def login():
         g.user = {'user_id': str(user.user_id), 'client_id': str(user.client_id)}
         log_action('LOGIN', 'users', str(user.user_id))
 
+        # Prepare user data for caching
+        user_data = {
+            'user_id': str(user.user_id),
+            'email': user.email,
+            'full_name': user.full_name or user.email.split('@')[0],
+            'phone': user.phone,
+            'department': user.department,
+            'role': user.role,
+            'is_super_admin': user.is_super_admin,
+            'permissions': user_permissions
+        }
+
+        # Prepare client data for caching
+        client_data = {
+            'client_id': str(user.client_id),
+            'client_name': client.client_name,
+            'logo_url': client.logo_url,
+            'address': client.address,
+            'phone': client.phone,
+            'email': client.email,
+            'gstin': client.gst_number
+        }
+
+        # Cache user and client data in Redis
+        cache = get_cache_manager()
+        cache_key = f"user_session:{user.user_id}"
+        cache.set(cache_key, {
+            'user': user_data,
+            'client': client_data
+        }, USER_SESSION_CACHE_TIMEOUT)
+
         # Return token with client info and permissions (convert all UUIDs to strings)
         return jsonify({
             'success': True,
@@ -85,13 +120,7 @@ def login():
             'client_phone': client.phone,
             'client_email': client.email,
             'client_gstin': client.gst_number,
-            'user': {
-                'user_id': str(user.user_id),
-                'email': user.email,
-                'role': user.role,
-                'is_super_admin': user.is_super_admin,
-                'permissions': user_permissions
-            }
+            'user': user_data
         }), 200
 
     except Exception as e:
@@ -155,9 +184,13 @@ def register():
 @auth_bp.route('/logout', methods=['POST'])
 @authenticate
 def logout():
-    """User logout - Logs action to audit"""
+    """User logout - Logs action to audit and clears cache"""
     try:
         log_action('LOGOUT', 'users', g.user['user_id'])
+
+        # Clear user session from cache
+        cache = get_cache_manager()
+        cache.delete(f"user_session:{g.user['user_id']}")
 
         return jsonify({
             'success': True,

@@ -1,8 +1,8 @@
 'use client'
 
-import { createContext, useContext, useState, useEffect, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
 import { useRouter } from 'next/navigation'
-import api from '@/lib/api'
+import api, { setLogoutHandler } from '@/lib/api'
 
 interface User {
   user_id: string
@@ -33,6 +33,7 @@ interface ClientContextType {
   setClientData: (user: User, client: Client, token: string) => void
   hasPermission: (permission: string) => boolean
   isSuperAdmin: () => boolean
+  refreshClientData: () => Promise<void>
 }
 
 const ClientContext = createContext<ClientContextType | undefined>(undefined)
@@ -46,31 +47,51 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   const router = useRouter()
 
   useEffect(() => {
-    // Check for stored token on mount - synchronously
-    try {
-      const storedToken = localStorage.getItem('token')
-      const storedUser = localStorage.getItem('user')
-      const storedClient = localStorage.getItem('client')
+    // Check for stored token on mount
+    const initializeAuth = async () => {
+      try {
+        const storedToken = localStorage.getItem('token')
+        const storedUser = localStorage.getItem('user')
+        const storedClient = localStorage.getItem('client')
 
-      if (storedToken && storedUser && storedClient) {
-        const userData = JSON.parse(storedUser)
-        const clientData = JSON.parse(storedClient)
+        if (storedToken && storedUser && storedClient) {
+          const userData = JSON.parse(storedUser)
+          const clientData = JSON.parse(storedClient)
 
-        setToken(storedToken)
-        setUser(userData)
-        setClient(clientData)
-        setIsAuthenticated(true)
-        api.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`
+          setToken(storedToken)
+          setUser(userData)
+          setClient(clientData)
+          setIsAuthenticated(true)
+          api.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`
+
+          // Check if client data is missing address (old localStorage data)
+          // If so, clear localStorage and force re-login to get fresh data
+          if (!clientData.address && clientData.client_id) {
+            localStorage.removeItem('token')
+            localStorage.removeItem('user')
+            localStorage.removeItem('client')
+            setToken(null)
+            setUser(null)
+            setClient(null)
+            setIsAuthenticated(false)
+            delete api.defaults.headers.common['Authorization']
+            // Redirect to login
+            router.push('/auth/login')
+            return
+          }
+        }
+      } catch (error) {
+        // Clear invalid data
+        localStorage.removeItem('token')
+        localStorage.removeItem('user')
+        localStorage.removeItem('client')
+        setIsAuthenticated(false)
+      } finally {
+        setIsLoading(false)
       }
-    } catch (error) {
-      // Clear invalid data
-      localStorage.removeItem('token')
-      localStorage.removeItem('user')
-      localStorage.removeItem('client')
-      setIsAuthenticated(false)
-    } finally {
-      setIsLoading(false)
     }
+
+    initializeAuth()
   }, [])
 
   const login = async (email: string, password: string) => {
@@ -117,7 +138,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }
   }
 
-  const logout = () => {
+  const logout = useCallback(() => {
     // Clear state
     setToken(null)
     setUser(null)
@@ -134,7 +155,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
 
     // Redirect to login
     router.push('/auth/login')
-  }
+  }, [router])
+
+  // Register logout handler with api interceptor for token expiration
+  useEffect(() => {
+    setLogoutHandler(logout)
+  }, [logout])
 
   const setClientData = (userData: User, clientData: Client, tokenData: string) => {
     setUser(userData)
@@ -159,6 +185,31 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     return user?.is_super_admin || false
   }
 
+  // Refresh client data from API (can be called manually if needed)
+  const refreshClientData = useCallback(async () => {
+    if (!token || !client?.client_id) return
+
+    try {
+      const response = await api.get(`/client/${client.client_id}`)
+      if (response.data?.client) {
+        const freshClient = response.data.client
+        const updatedClient: Client = {
+          client_id: freshClient.client_id,
+          client_name: freshClient.client_name,
+          logo_url: freshClient.logo_url,
+          address: freshClient.address,
+          phone: freshClient.phone,
+          email: freshClient.email,
+          gstin: freshClient.gst_number,
+        }
+        setClient(updatedClient)
+        localStorage.setItem('client', JSON.stringify(updatedClient))
+      }
+    } catch (error) {
+      console.error('Failed to refresh client data:', error)
+    }
+  }, [token, client?.client_id])
+
   return (
     <ClientContext.Provider
       value={{
@@ -172,6 +223,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         setClientData,
         hasPermission,
         isSuperAdmin,
+        refreshClientData,
       }}
     >
       {children}

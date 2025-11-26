@@ -53,7 +53,7 @@ export default function LoginPage() {
     try {
       // Perform login API call directly (without auto-redirect)
       const response = await api.post('/auth/login', { email, password })
-      const { token, user, client_id, client_name, client_logo } = response.data
+      const { token, user, client_id, client_name, client_logo, client_address, client_phone, client_email, client_gstin } = response.data
 
       const userData = {
         user_id: user.user_id,
@@ -67,6 +67,10 @@ export default function LoginPage() {
         client_id,
         client_name,
         logo_url: client_logo,
+        address: client_address,
+        phone: client_phone,
+        email: client_email,
+        gstin: client_gstin,
       }
 
       // Update ClientContext (this also updates localStorage and axios headers)

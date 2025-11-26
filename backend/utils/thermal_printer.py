@@ -184,7 +184,7 @@ class ThermalPrinter:
     <div class="solid"></div>
 
     <div class="center bold" style="margin: 1mm 0;">
-        {bill_data.get('type', 'non-gst').upper() == 'GST' and 'TAX INVOICE' or 'CASH BILL'}
+        {bill_data.get('type', 'non-gst').upper() == 'GST' and 'TAX INVOICE' or 'RECEIPT'}
     </div>
     <div class="dashed"></div>
 
@@ -333,18 +333,20 @@ class ThermalPrinter:
         lines.append("=" * W)
 
         # Bill type header
-        bill_type = "TAX INVOICE" if bill_data.get('type', '').upper() == 'GST' else "CASH BILL"
+        bill_type = "TAX INVOICE" if bill_data.get('type', '').upper() == 'GST' else "RECEIPT"
         lines.append(bill_type.center(W))
         lines.append("-" * W)
 
         # User and Time on same line, Bill No and Date on next line
         user_name = bill_data.get('user_name', bill_data.get('created_by', 'Admin'))
+        if len(user_name) > 12:
+            user_name = user_name[:12]
         time_str = datetime.now().strftime('%I:%M:%S %p')
         date_str = datetime.now().strftime('%d-%m-%Y')
         bill_no = bill_data.get('bill_number', 'N/A')
 
-        lines.append(f"User: {user_name:<14} Time: {time_str}")
-        lines.append(f"Bill No: {bill_no:<12} Date: {date_str}")
+        lines.append(f"User: {user_name:<12} Time: {time_str}")
+        lines.append(f"Bill No: {bill_no:<10} Date: {date_str}")
 
         # Customer info if present
         if bill_data.get('customer_name'):
@@ -354,35 +356,37 @@ class ThermalPrinter:
 
         lines.append("-" * W)
 
-        # Items - two line format per item
+        # Items section
         items = bill_data.get('items', [])
         total_qty = 0
         total_savings = 0
-        gst_breakdown = {}  # Group items by GST percentage
+        gst_breakdown = {}
 
-        # Item header
-        lines.append(f"{'Item':<18} {'Qty':>3} {'MRP':>7} {'Rate':>7} {'Amt':>7}")
+        # Item header - total 42 chars: Name(14) Qty(4) MRP(8) Rate(8) Amt(8)
+        lines.append(f"{'Item':<14}{'Qty':>4}{'MRP':>8}{'Rate':>8}{'Amt':>8}")
         lines.append("-" * W)
 
         for item in items:
             # Clean product name
             name = str(item.get('product_name', 'Item')).replace('\n', ' ').replace('\r', '').strip()
-            if len(name) > 18:
-                name = name[:15] + "..."
+            if len(name) > 14:
+                name = name[:11] + "..."
 
             qty = int(item.get('quantity', 0))
             rate = float(item.get('rate', 0))
-            mrp = float(item.get('mrp', 0)) if item.get('mrp') else rate
+            item_mrp = item.get('mrp')
+            if item_mrp and float(item_mrp) > 0:
+                mrp = float(item_mrp)
+            else:
+                mrp = rate
             amt = float(item.get('amount', 0))
             gst_pct = float(item.get('gst_percentage', 0))
 
             total_qty += qty
 
-            # Calculate savings for this item
             if mrp > rate:
                 total_savings += (mrp - rate) * qty
 
-            # Track GST breakdown by percentage
             if gst_pct > 0:
                 taxable_amt = qty * rate
                 gst_for_item = taxable_amt * gst_pct / 100
@@ -391,27 +395,38 @@ class ThermalPrinter:
                 gst_breakdown[gst_pct]['taxable'] += taxable_amt
                 gst_breakdown[gst_pct]['gst'] += gst_for_item
 
-            # Single line: Name, Qty, MRP, Rate, Amount
-            lines.append(f"{name:<18} {qty:>3} {mrp:>7.2f} {rate:>7.2f} {amt:>7.2f}")
+            # Format numbers compactly for large values
+            def fmt(val, w):
+                if val >= 100000:
+                    return f"{val:.0f}"[:w].rjust(w)
+                elif val >= 10000:
+                    return f"{val:.0f}".rjust(w)
+                elif val >= 1000:
+                    return f"{val:.1f}".rjust(w)
+                else:
+                    return f"{val:.2f}".rjust(w)
+
+            # Single line per item: Name Qty MRP Rate Amt
+            lines.append(f"{name:<14}{qty:>4}{fmt(mrp,8)}{fmt(rate,8)}{fmt(amt,8)}")
 
         lines.append("-" * W)
 
-        # Items summary line
+        # Items summary
         total_items = len(items)
         subtotal = float(bill_data.get('subtotal', 0))
-        lines.append(f"Items: {total_items}  Total Qty: {total_qty}     Sub Total:{subtotal:>8.2f}")
+        lines.append(f"Items:{total_items} Total Qty:{total_qty}  SubTotal:{subtotal:>9.2f}")
 
-        # Discount if any
+        # Discount
         discount_amount = float(bill_data.get('discount_amount', 0) or 0)
         if discount_amount > 0:
-            lines.append(f"{'Discount:':<32}{-discount_amount:>9.2f}")
+            lines.append(f"Discount:{-discount_amount:>32.2f}")
 
-        # GST Amount total (for GST bills)
+        # GST Amount
         gst_amount = float(bill_data.get('gst_amount', 0) or 0)
         if gst_amount > 0:
-            lines.append(f"{'GST Amount:':<32}{gst_amount:>9.2f}")
+            lines.append(f"GST Amount:{gst_amount:>30.2f}")
 
-        # Calculate final amount
+        # Final amount
         if bill_data.get('type', '').lower() == 'gst':
             final = float(bill_data.get('final_amount', 0) or 0)
         else:
@@ -421,19 +436,19 @@ class ThermalPrinter:
         round_off = round(final) - final
         if abs(round_off) >= 0.01:
             sign = "+" if round_off > 0 else ""
-            lines.append(f"{'Round Off:':<32}{sign}{round_off:>8.2f}")
+            lines.append(f"Round Off:{sign}{round_off:>30.2f}")
 
         lines.append("=" * W)
-        lines.append(f"{'GRAND TOTAL:':<24} Rs.{round(final):>13.2f}")
+        lines.append(f"GRAND TOTAL:        Rs.{round(final):>16.2f}")
         lines.append("=" * W)
 
-        # GST breakdown table (only for GST bills with GST items)
+        # GST breakdown table - total 42 chars
         if bill_data.get('type', '').upper() == 'GST' and gst_breakdown:
             lines.append("")
             lines.append("GST BREAKDOWN".center(W))
             lines.append("-" * W)
-            # Header: Tax% | Taxable | CGST | SGST | Total
-            lines.append("Tax%   Taxable   CGST%  CGST    SGST%  SGST   Total")
+            # Tax%(5) Taxable(9) CGST%(6) CGST(7) SGST%(6) SGST(7) = 40
+            lines.append(f"{'Tax%':>4}{'Taxable':>9}{'CGST%':>6}{'CGST':>7}{'SGST%':>6}{'SGST':>7}{'Tot':>3}")
             lines.append("-" * W)
 
             for gst_pct in sorted(gst_breakdown.keys()):
@@ -445,7 +460,7 @@ class ThermalPrinter:
                 cgst_amt = total_gst / 2
                 sgst_amt = total_gst / 2
 
-                lines.append(f"{gst_pct:>4.0f}% {taxable:>8.2f}  {cgst_pct:>4.1f}% {cgst_amt:>6.2f}  {sgst_pct:>4.1f}% {sgst_amt:>5.2f} {total_gst:>6.2f}")
+                lines.append(f"{gst_pct:>3.0f}%{taxable:>9.2f}{cgst_pct:>5.1f}%{cgst_amt:>7.2f}{sgst_pct:>5.1f}%{sgst_amt:>7.2f}")
 
             lines.append("-" * W)
 
@@ -455,8 +470,12 @@ class ThermalPrinter:
         try:
             if isinstance(payment_info, str) and payment_info.startswith('['):
                 payments = json.loads(payment_info)
-                payment_str = ', '.join([f"{p['payment_type']}: Rs.{p['amount']}" for p in payments])
-                lines.append(f"Payment: {payment_str}".center(W))
+                payment_parts = []
+                for p in payments:
+                    ptype = p.get('payment_type', p.get('PAYMENT_TYPE', 'Cash'))
+                    pamt = p.get('amount', p.get('AMOUNT', 0))
+                    payment_parts.append(f"{ptype}:Rs.{pamt}")
+                lines.append(f"Payment: {', '.join(payment_parts)}")
             else:
                 lines.append(f"Payment: {payment_info}".center(W))
         except:
