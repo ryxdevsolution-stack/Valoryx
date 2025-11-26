@@ -18,7 +18,7 @@ auth_bp = Blueprint('auth', __name__)
 USER_SESSION_CACHE_TIMEOUT = 86400
 
 
-@auth_bp.route('/login', methods=['POST'])
+@auth_bp.route('/login', methods=['POST', 'OPTIONS'])
 def login():
     """
     User login - Returns JWT token with client_id
