@@ -234,6 +234,32 @@ def create_app():
         
         return status, 200
 
+    # Handle CORS preflight requests explicitly
+    @app.before_request
+    def handle_preflight():
+        from flask import request, make_response
+        if request.method == 'OPTIONS':
+            response = make_response()
+            # Use CORS_ORIGINS from environment variable
+            allowed_origins = os.environ.get('CORS_ORIGINS', '*')
+            request_origin = request.headers.get('Origin', '')
+
+            if allowed_origins == '*':
+                response.headers['Access-Control-Allow-Origin'] = '*'
+            else:
+                # Check if request origin is in allowed list
+                allowed_list = [o.strip() for o in allowed_origins.split(',')]
+                if request_origin in allowed_list:
+                    response.headers['Access-Control-Allow-Origin'] = request_origin
+                else:
+                    response.headers['Access-Control-Allow-Origin'] = allowed_list[0] if allowed_list else '*'
+
+            response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
+            response.headers['Access-Control-Allow-Credentials'] = 'true'
+            response.headers['Access-Control-Max-Age'] = '3600'
+            return response, 200
+
     # Middleware to check database connection for critical endpoints
     @app.before_request
     def check_database_for_critical_endpoints():
