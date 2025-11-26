@@ -17,7 +17,7 @@ def create_app():
 
     # Initialize CORS
     CORS(app,
-     origins=["https://mj-billing.vercel.app","http://localhost:3000","http://localhost:3001"],
+     origins=["https://mj-billing.vercel.app","http://localhost:3000","https://mj-billing.vercel.app/"],
      supports_credentials=True,
      methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
      allow_headers=['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
