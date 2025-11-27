@@ -45,8 +45,19 @@ interface PaymentSplit {
   amount: number
 }
 
+interface CustomerData {
+  customer_id: string
+  customer_code: number
+  customer_name: string
+  customer_phone: string
+  customer_gstin?: string
+  customer_email?: string
+  customer_address?: string
+}
+
 interface BillTab {
   id: string
+  customer_code: string
   customer_name: string
   customer_phone: string
   customer_gstin: string
@@ -72,6 +83,7 @@ export default function UnifiedBillingPage() {
   const quantityInputRef = useRef<HTMLInputElement>(null)
   const gstInputRef = useRef<HTMLInputElement>(null)
   const rateInputRef = useRef<HTMLInputElement>(null)
+  const customerCodeRef = useRef<HTMLInputElement>(null)
   const customerNameRef = useRef<HTMLInputElement>(null)
   const customerPhoneRef = useRef<HTMLInputElement>(null)
   const customerGstinRef = useRef<HTMLInputElement>(null)
@@ -111,6 +123,7 @@ export default function UnifiedBillingPage() {
     }
     return [{
       id: '1',
+      customer_code: '',
       customer_name: '',
       customer_phone: '',
       customer_gstin: '',
@@ -164,6 +177,13 @@ export default function UnifiedBillingPage() {
 
   // Modal states
   const [showDraftRestored, setShowDraftRestored] = useState(false)
+
+  // Customer search states
+  const [customerSuggestions, setCustomerSuggestions] = useState<CustomerData[]>([])
+  const [showCustomerDropdown, setShowCustomerDropdown] = useState(false)
+  const [customerSearchField, setCustomerSearchField] = useState<'code' | 'name' | 'phone' | null>(null)
+  const [selectedCustomerIndex, setSelectedCustomerIndex] = useState(0)
+  const customerSearchTimeout = useRef<NodeJS.Timeout | null>(null)
 
   // Show draft restored notification
   useEffect(() => {
@@ -376,6 +396,7 @@ export default function UnifiedBillingPage() {
       ...billTabs,
       {
         id: newTabId,
+        customer_code: '',
         customer_name: '',
         customer_phone: '',
         customer_gstin: '',
@@ -394,6 +415,7 @@ export default function UnifiedBillingPage() {
       const newTabId = Date.now().toString()
       setBillTabs([{
         id: newTabId,
+        customer_code: '',
         customer_name: '',
         customer_phone: '',
         customer_gstin: '',
@@ -420,6 +442,132 @@ export default function UnifiedBillingPage() {
         tab.id === activeTabId ? { ...tab, ...updates } : tab
       )
     )
+  }
+
+  // Customer search function
+  const searchCustomers = async (query: string) => {
+    if (!query || query.length < 1) {
+      setCustomerSuggestions([])
+      setShowCustomerDropdown(false)
+      setSelectedCustomerIndex(0)
+      return
+    }
+
+    try {
+      const response = await api.get(`/customer/search?q=${encodeURIComponent(query)}`)
+      if (response.data.success && response.data.customers.length > 0) {
+        setCustomerSuggestions(response.data.customers)
+        setShowCustomerDropdown(true)
+        setSelectedCustomerIndex(0)
+      } else {
+        setCustomerSuggestions([])
+        setShowCustomerDropdown(false)
+        setSelectedCustomerIndex(0)
+      }
+    } catch (error) {
+      console.error('Customer search failed:', error)
+      setCustomerSuggestions([])
+      setShowCustomerDropdown(false)
+      setSelectedCustomerIndex(0)
+    }
+  }
+
+  // Handle customer field change with debounced search
+  const handleCustomerFieldChange = (field: 'code' | 'name' | 'phone', value: string) => {
+    // Update the field value
+    if (field === 'code') {
+      updateActiveTab({ customer_code: value })
+    } else if (field === 'name') {
+      updateActiveTab({ customer_name: value })
+    } else if (field === 'phone') {
+      updateActiveTab({ customer_phone: value })
+    }
+
+    // Clear previous timeout
+    if (customerSearchTimeout.current) {
+      clearTimeout(customerSearchTimeout.current)
+    }
+
+    // Set field being searched
+    setCustomerSearchField(field)
+
+    // Debounced search
+    customerSearchTimeout.current = setTimeout(() => {
+      searchCustomers(value)
+    }, 300)
+  }
+
+  // Lookup customer by exact code and auto-fill
+  const lookupCustomerByCode = async (code: string) => {
+    if (!code) return false
+    try {
+      const response = await api.get(`/customer/code/${code}`)
+      if (response.data.success && response.data.customer) {
+        const customer = response.data.customer
+        updateActiveTab({
+          customer_code: customer.customer_code.toString(),
+          customer_name: customer.customer_name,
+          customer_phone: customer.customer_phone,
+          customer_gstin: customer.customer_gstin || '',
+        })
+        setShowCustomerDropdown(false)
+        setCustomerSuggestions([])
+        return true
+      }
+    } catch (error) {
+      // Customer not found - that's ok
+    }
+    return false
+  }
+
+  // Handle customer selection from dropdown
+  const selectCustomer = (customer: CustomerData) => {
+    updateActiveTab({
+      customer_code: customer.customer_code.toString(),
+      customer_name: customer.customer_name,
+      customer_phone: customer.customer_phone,
+      customer_gstin: customer.customer_gstin || '',
+    })
+    setShowCustomerDropdown(false)
+    setCustomerSuggestions([])
+    setCustomerSearchField(null)
+    setSelectedCustomerIndex(0)
+
+    // Move to discount field after selection
+    setTimeout(() => {
+      discountRef.current?.focus()
+    }, 100)
+  }
+
+  // Handle keyboard navigation for customer dropdown
+  const handleCustomerKeyDown = (e: React.KeyboardEvent, field: 'code' | 'name' | 'phone') => {
+    if (!showCustomerDropdown || customerSuggestions.length === 0) {
+      return false // Not handled
+    }
+
+    if (e.key === 'ArrowDown' || (e.key === 'Tab' && !e.shiftKey)) {
+      e.preventDefault()
+      setSelectedCustomerIndex(prev =>
+        prev < customerSuggestions.length - 1 ? prev + 1 : 0
+      )
+      return true
+    } else if (e.key === 'ArrowUp' || (e.key === 'Tab' && e.shiftKey)) {
+      e.preventDefault()
+      setSelectedCustomerIndex(prev =>
+        prev > 0 ? prev - 1 : customerSuggestions.length - 1
+      )
+      return true
+    } else if (e.key === 'Enter' && customerSuggestions[selectedCustomerIndex]) {
+      e.preventDefault()
+      selectCustomer(customerSuggestions[selectedCustomerIndex])
+      return true
+    } else if (e.key === 'Escape') {
+      e.preventDefault()
+      setShowCustomerDropdown(false)
+      setCustomerSuggestions([])
+      return true
+    }
+    return false
   }
 
   // Payment split management
@@ -838,6 +986,21 @@ export default function UnifiedBillingPage() {
     try {
       setLoading(true)
 
+      // Auto-save new customer if phone is provided but no customer code (new customer)
+      if (activeTab.customer_phone && !activeTab.customer_code && activeTab.customer_name) {
+        try {
+          await api.post('/customer/create', {
+            customer_name: activeTab.customer_name,
+            customer_phone: activeTab.customer_phone,
+            customer_gstin: activeTab.customer_gstin || '',
+          })
+          console.log('New customer saved automatically')
+        } catch (customerError: any) {
+          // Don't fail the bill if customer creation fails (customer might already exist)
+          console.log('Customer save skipped:', customerError.response?.data?.message || 'Already exists or error')
+        }
+      }
+
       const cleanedItems = activeTab.items.map(({ limitedByStock, requestedQuantity, ...item }) => item)
 
       // Format payment_type as JSON string of splits
@@ -1006,9 +1169,72 @@ export default function UnifiedBillingPage() {
             </div>
 
             {/* Customer Info */}
-            <div className="grid grid-cols-1 md:grid-cols-10 gap-2 p-2">
-              {/* Customer Name - NOT REQUIRED */}
-              <div className="md:col-span-3">
+            <div className="grid grid-cols-1 md:grid-cols-12 gap-2 p-2 relative">
+              {/* Customer No */}
+              <div className="md:col-span-2 relative customer-search-container">
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  Customer No
+                </label>
+                <input
+                  ref={customerCodeRef}
+                  type="text"
+                  placeholder="100+"
+                  value={activeTab.customer_code}
+                  onChange={(e) => handleCustomerFieldChange('code', e.target.value)}
+                  onFocus={() => activeTab.customer_code && searchCustomers(activeTab.customer_code)}
+                  onBlur={async () => {
+                    // Auto-lookup by exact code when leaving field
+                    if (activeTab.customer_code && !activeTab.customer_name) {
+                      await lookupCustomerByCode(activeTab.customer_code)
+                    }
+                    setTimeout(() => setShowCustomerDropdown(false), 200)
+                  }}
+                  onKeyDown={async (e) => {
+                    // First check if dropdown navigation should handle it
+                    if (handleCustomerKeyDown(e, 'code')) {
+                      return
+                    }
+                    // Otherwise handle Enter for direct lookup
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      const found = await lookupCustomerByCode(activeTab.customer_code)
+                      if (found) {
+                        discountRef.current?.focus()
+                      } else {
+                        customerNameRef.current?.focus()
+                      }
+                    }
+                  }}
+                  className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                />
+                {/* Customer Dropdown for Code field */}
+                {showCustomerDropdown && customerSearchField === 'code' && customerSuggestions.length > 0 && (
+                  <div className="absolute z-50 w-64 mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {customerSuggestions.map((customer, index) => (
+                      <div
+                        key={customer.customer_id}
+                        onClick={() => selectCustomer(customer)}
+                        className={`px-3 py-2 cursor-pointer border-b border-gray-100 dark:border-gray-700 ${
+                          index === selectedCustomerIndex
+                            ? 'bg-blue-100 dark:bg-blue-900'
+                            : 'hover:bg-blue-50 dark:hover:bg-gray-700'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <span className="text-sm font-semibold text-blue-600 dark:text-blue-400">#{customer.customer_code}</span>
+                            <span className="text-sm text-gray-900 dark:text-white ml-2">{customer.customer_name}</span>
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">{customer.customer_phone}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Customer Name */}
+              <div className="md:col-span-3 relative customer-search-container">
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Customer Name
                 </label>
@@ -1017,14 +1243,44 @@ export default function UnifiedBillingPage() {
                   type="text"
                   placeholder="Optional"
                   value={activeTab.customer_name}
-                  onChange={(e) => updateActiveTab({ customer_name: e.target.value })}
-                  onKeyDown={(e) => handleEnterNavigation(e, customerPhoneRef)}
+                  onChange={(e) => handleCustomerFieldChange('name', e.target.value)}
+                  onFocus={() => activeTab.customer_name && searchCustomers(activeTab.customer_name)}
+                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
+                  onKeyDown={(e) => {
+                    if (!handleCustomerKeyDown(e, 'name')) {
+                      handleEnterNavigation(e, customerPhoneRef)
+                    }
+                  }}
                   className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
+                {/* Customer Dropdown for Name field */}
+                {showCustomerDropdown && customerSearchField === 'name' && customerSuggestions.length > 0 && (
+                  <div className="absolute z-50 w-72 mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {customerSuggestions.map((customer, index) => (
+                      <div
+                        key={customer.customer_id}
+                        onClick={() => selectCustomer(customer)}
+                        className={`px-3 py-2 cursor-pointer border-b border-gray-100 dark:border-gray-700 ${
+                          index === selectedCustomerIndex
+                            ? 'bg-blue-100 dark:bg-blue-900'
+                            : 'hover:bg-blue-50 dark:hover:bg-gray-700'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <span className="text-sm font-semibold text-gray-900 dark:text-white">{customer.customer_name}</span>
+                            <span className="text-xs text-blue-600 dark:text-blue-400 ml-2">#{customer.customer_code}</span>
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">{customer.customer_phone}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              {/* Phone - NOT REQUIRED */}
-              <div className="md:col-span-2">
+              {/* Phone */}
+              <div className="md:col-span-2 relative customer-search-container">
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Phone
                 </label>
@@ -1033,13 +1289,43 @@ export default function UnifiedBillingPage() {
                   type="tel"
                   placeholder="Optional"
                   value={activeTab.customer_phone}
-                  onChange={(e) => updateActiveTab({ customer_phone: e.target.value })}
-                  onKeyDown={(e) => handleEnterNavigation(e, customerGstinRef)}
+                  onChange={(e) => handleCustomerFieldChange('phone', e.target.value)}
+                  onFocus={() => activeTab.customer_phone && searchCustomers(activeTab.customer_phone)}
+                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
+                  onKeyDown={(e) => {
+                    if (!handleCustomerKeyDown(e, 'phone')) {
+                      handleEnterNavigation(e, customerGstinRef)
+                    }
+                  }}
                   className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
+                {/* Customer Dropdown for Phone field */}
+                {showCustomerDropdown && customerSearchField === 'phone' && customerSuggestions.length > 0 && (
+                  <div className="absolute z-50 w-64 mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                    {customerSuggestions.map((customer, index) => (
+                      <div
+                        key={customer.customer_id}
+                        onClick={() => selectCustomer(customer)}
+                        className={`px-3 py-2 cursor-pointer border-b border-gray-100 dark:border-gray-700 ${
+                          index === selectedCustomerIndex
+                            ? 'bg-blue-100 dark:bg-blue-900'
+                            : 'hover:bg-blue-50 dark:hover:bg-gray-700'
+                        }`}
+                      >
+                        <div className="flex justify-between items-center">
+                          <div>
+                            <span className="text-sm font-semibold text-gray-900 dark:text-white">{customer.customer_phone}</span>
+                            <span className="text-xs text-blue-600 dark:text-blue-400 ml-2">#{customer.customer_code}</span>
+                          </div>
+                        </div>
+                        <div className="text-xs text-gray-500 dark:text-gray-400">{customer.customer_name}</div>
+                      </div>
+                    ))}
+                  </div>
+                )}
               </div>
 
-              {/* GST Number - NEW FIELD */}
+              {/* GST Number */}
               <div className="md:col-span-3">
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Customer GSTIN
@@ -1580,30 +1866,43 @@ export default function UnifiedBillingPage() {
               ) : (
                 activeTab.payment_splits.map((split, index) => (
                   <div key={index} className="flex gap-2 items-center">
-                    <div className="flex-1">
+                    <div className="flex-1 relative">
                       <select
                         value={split.payment_type}
-                        onChange={(e) => updatePaymentSplit(index, 'payment_type', e.target.value)}
+                        onChange={(e) => {
+                          // Just update the value, stay in dropdown
+                          updatePaymentSplit(index, 'payment_type', e.target.value)
+                        }}
                         onFocus={(e) => {
                           // Auto-open dropdown on focus
-                          const event = new MouseEvent('mousedown', { bubbles: true })
-                          e.currentTarget.dispatchEvent(event)
+                          e.target.size = paymentTypes.length + 1
+                        }}
+                        onBlur={(e) => {
+                          e.target.size = 1
                         }}
                         onKeyDown={(e) => {
+                          const select = e.currentTarget as HTMLSelectElement
+                          // Only Enter closes dropdown and moves to amount
                           if (e.key === 'Enter') {
                             e.preventDefault()
-                            const amountInput = e.currentTarget.parentElement?.nextElementSibling?.querySelector('input')
-                            amountInput?.focus()
-                            // Auto-select the text in amount field
-                            setTimeout(() => {
-                              (amountInput as HTMLInputElement)?.select()
-                            }, 50)
+                            select.size = 1
+                            if (split.payment_type) {
+                              const amountInput = select.parentElement?.nextElementSibling?.querySelector('input')
+                              amountInput?.focus()
+                              setTimeout(() => {
+                                (amountInput as HTMLInputElement)?.select()
+                              }, 50)
+                            }
+                          } else if (e.key === 'Escape') {
+                            select.size = 1
+                            select.blur()
                           }
+                          // Arrow Up/Down navigate options naturally
                         }}
-                        className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                        className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 focus:absolute focus:z-50 focus:shadow-lg"
                         title="Select payment type"
                       >
-                        <option value="">Select Payment Type</option>
+                        <option value="">-- Select --</option>
                         {paymentTypes.map((pt) => (
                           <option key={pt} value={pt}>
                             {pt}
@@ -1624,8 +1923,66 @@ export default function UnifiedBillingPage() {
                         onKeyDown={(e) => {
                           if (e.key === 'Enter') {
                             e.preventDefault()
-                            // Move to Print Bill button
-                            printButtonRef.current?.focus()
+                            if (e.shiftKey) {
+                              // Shift+Enter: Add another payment split
+                              addPaymentSplit()
+                              setTimeout(() => {
+                                const allSelects = document.querySelectorAll('select[title="Select payment type"]')
+                                const lastSelect = allSelects[allSelects.length - 1] as HTMLSelectElement
+                                lastSelect?.focus()
+                              }, 100)
+                            } else {
+                              // Enter: Check if there are incomplete payment splits
+                              const allSelects = document.querySelectorAll('select[title="Select payment type"]')
+                              const allAmounts = document.querySelectorAll('input[placeholder="Amount"]')
+
+                              // FIRST: Check ALL payment type dropdowns
+                              for (let i = 0; i < activeTab.payment_splits.length; i++) {
+                                const ps = activeTab.payment_splits[i]
+                                if (!ps.payment_type) {
+                                  // Focus on the dropdown that needs payment type
+                                  (allSelects[i] as HTMLSelectElement)?.focus()
+                                  return
+                                }
+                              }
+
+                              // SECOND: Check ALL amounts (only after all types are filled)
+                              for (let i = 0; i < activeTab.payment_splits.length; i++) {
+                                const ps = activeTab.payment_splits[i]
+                                if (!ps.amount || ps.amount === 0) {
+                                  // Focus on the amount input that needs value
+                                  (allAmounts[i] as HTMLInputElement)?.focus()
+                                  ;(allAmounts[i] as HTMLInputElement)?.select()
+                                  return
+                                }
+                              }
+
+                              // All complete, go to Print Bill
+                              printButtonRef.current?.focus()
+                            }
+                          } else if (e.key === 'Tab' && !e.shiftKey) {
+                            // Tab: Move to next incomplete or add new payment if last
+                            const isLast = index === activeTab.payment_splits.length - 1
+                            if (isLast) {
+                              // Check if there are incomplete payments before adding new
+                              const allSelects = document.querySelectorAll('select[title="Select payment type"]')
+                              const allAmounts = document.querySelectorAll('input[placeholder="Amount"]')
+
+                              for (let i = 0; i < activeTab.payment_splits.length; i++) {
+                                const ps = activeTab.payment_splits[i]
+                                if (!ps.payment_type) {
+                                  e.preventDefault()
+                                  ;(allSelects[i] as HTMLSelectElement)?.focus()
+                                  return
+                                }
+                                if (i !== index && (!ps.amount || ps.amount === 0)) {
+                                  e.preventDefault()
+                                  ;(allAmounts[i] as HTMLInputElement)?.focus()
+                                  ;(allAmounts[i] as HTMLInputElement)?.select()
+                                  return
+                                }
+                              }
+                            }
                           }
                         }}
                         className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
@@ -1791,6 +2148,7 @@ export default function UnifiedBillingPage() {
                     // Clear the current bill
                     updateActiveTab({
                       items: [],
+                      customer_code: '',
                       customer_name: '',
                       customer_phone: '',
                       customer_gstin: '',
@@ -1810,6 +2168,8 @@ export default function UnifiedBillingPage() {
                     })
                     setIsNewProduct(false)
                     setProductSearch('')
+                    setCustomerSuggestions([])
+                    setShowCustomerDropdown(false)
                   }}
                   className="flex-1 px-4 py-2 bg-gray-500 dark:bg-gray-600 text-white rounded hover:bg-gray-600 dark:hover:bg-gray-700 transition font-semibold text-sm"
                 >

@@ -25,8 +25,9 @@ import {
 // Define navigation items with new permission names
 const allNavigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, permission: 'view_dashboard' },
-  { name: 'Create Bill', href: '/billing/create', icon: PlusSquare, permission: 'gst_billing' }, // Need either GST or Non-GST
+  { name: 'Create Bill', href: '/billing/create', icon: PlusSquare, permissions: ['gst_billing', 'non_gst_billing'] }, // Need either GST or Non-GST
   { name: 'All Bills', href: '/billing', icon: FileText, permission: 'view_all_bills' },
+  { name: 'My Bills', href: '/billing', icon: FileText, permission: 'view_own_bills' }, // For staff viewing their own bills
   { name: 'Customers', href: '/customers', icon: Users, permission: 'view_customers' },
   { name: 'Stock Management', href: '/stock', icon: Package, permission: 'view_stock' },
   { name: 'Reports', href: '/reports', icon: TrendingUp, permission: 'view_sales_reports' },
@@ -50,7 +51,17 @@ export default function Sidebar() {
   // Filter navigation items based on permissions
   const navigation = useMemo(() => {
     if (!user) return []
-    return allNavigation.filter(item => hasPermission(item.permission))
+    return allNavigation.filter(item => {
+      // Handle multiple permissions (any one of them grants access)
+      if ('permissions' in item && item.permissions) {
+        return item.permissions.some(p => hasPermission(p))
+      }
+      // Handle single permission
+      if (item.permission) {
+        return hasPermission(item.permission)
+      }
+      return false
+    })
   }, [user, hasPermission])
 
   // Get admin navigation items based on permissions

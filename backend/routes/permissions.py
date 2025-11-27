@@ -255,8 +255,15 @@ def get_all_users_with_permissions():
         return error
 
     try:
-        # Get all users in the same client
-        users = User.query.filter_by(client_id=g.client['client_id']).all()
+        # Get client_id from query param or use current client
+        client_id = request.args.get('client_id')
+
+        # Super admin can view all clients' users or specific client
+        if client_id:
+            users = User.query.filter_by(client_id=client_id).order_by(User.email).all()
+        else:
+            # Default: show users from current super admin's client
+            users = User.query.filter_by(client_id=g.user['client_id']).order_by(User.email).all()
 
         users_data = []
         for user in users:
@@ -264,18 +271,72 @@ def get_all_users_with_permissions():
             users_data.append({
                 'user_id': user.user_id,
                 'email': user.email,
+                'full_name': user.full_name or user.email.split('@')[0],
                 'role': user.role,
                 'is_super_admin': user.is_super_admin,
                 'is_active': user.is_active,
                 'permissions': user_permissions,
+                'permission_count': len(user_permissions),
                 'created_at': user.created_at.isoformat() if user.created_at else None,
                 'last_login': user.last_login.isoformat() if user.last_login else None
             })
 
         return jsonify({
             'success': True,
-            'users': users_data
+            'users': users_data,
+            'total_users': len(users_data)
         }), 200
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch users', 'message': str(e)}), 500
+
+
+@permissions_bp.route('/sections', methods=['GET'])
+@authenticate
+def get_permission_sections():
+    """Get all permission sections with permissions count"""
+    try:
+        sections = get_all_sections_with_permissions()
+
+        return jsonify({
+            'success': True,
+            'sections': sections,
+            'total_sections': len(sections),
+            'total_permissions': sum(len(s.get('permissions', [])) for s in sections)
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch permission sections', 'message': str(e)}), 500
+
+
+@permissions_bp.route('/check', methods=['GET'])
+@authenticate
+def check_permissions_setup():
+    """Check if permissions are properly set up in the database"""
+    try:
+        # Count sections
+        section_count = PermissionSection.query.count()
+
+        # Count permissions
+        permission_count = Permission.query.count()
+
+        # Get sections with their permission counts
+        sections = db.session.query(
+            PermissionSection.section_name,
+            db.func.count(Permission.permission_id).label('perm_count')
+        ).outerjoin(
+            Permission, PermissionSection.section_id == Permission.section_id
+        ).group_by(PermissionSection.section_name).all()
+
+        sections_summary = [{'name': s[0], 'permissions': s[1]} for s in sections]
+
+        return jsonify({
+            'success': True,
+            'total_sections': section_count,
+            'total_permissions': permission_count,
+            'sections': sections_summary,
+            'status': 'OK' if section_count > 0 and permission_count > 0 else 'NEEDS_SETUP'
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to check permissions', 'message': str(e)}), 500

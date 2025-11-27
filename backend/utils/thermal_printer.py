@@ -112,7 +112,7 @@ class ThermalPrinter:
             print(f"Error listing printers: {e}")
             return []
 
-    def _generate_receipt_html(self, bill_data: Dict[str, Any], client_info: Dict[str, Any]) -> str:
+    def _generate_receipt_html(self, bill_data: Dict[str, Any], client_info: Dict[str, Any], show_no_exchange: bool = False) -> str:
         """Generate HTML for thermal receipt (80mm width) matching sample format"""
 
         # Extract data
@@ -283,6 +283,13 @@ class ThermalPrinter:
     <div class="small center">Payment: {self._format_payment_type(bill_data.get('payment_type', 'CASH'))}</div>
 """
 
+        # No Exchange notice
+        if show_no_exchange:
+            html += """
+    <div class="dashed"></div>
+    <div class="center bold" style="margin: 2mm 0; padding: 1mm; border: 1px solid #000;">** NO EXCHANGE AVAILABLE **</div>
+"""
+
         # Savings
         if total_savings > 0:
             html += f"""
@@ -313,7 +320,7 @@ class ThermalPrinter:
         except:
             return str(payment_info)
 
-    def _generate_text_receipt(self, bill_data: Dict[str, Any], client_info: Dict[str, Any]) -> str:
+    def _generate_text_receipt(self, bill_data: Dict[str, Any], client_info: Dict[str, Any], show_no_exchange: bool = False) -> str:
         """Generate plain text receipt for thermal printer matching sample format"""
         import json
         lines = []
@@ -481,6 +488,13 @@ class ThermalPrinter:
         except:
             lines.append(f"Payment: {payment_info}".center(W))
 
+        # No Exchange notice
+        if show_no_exchange:
+            lines.append("")
+            lines.append("-" * W)
+            lines.append("** NO EXCHANGE AVAILABLE **".center(W))
+            lines.append("-" * W)
+
         # Today's savings
         if total_savings > 0:
             lines.append("")
@@ -495,13 +509,14 @@ class ThermalPrinter:
 
         return '\n'.join(lines)
 
-    def print_bill(self, bill_data: Dict[str, Any], client_info: Dict[str, Any]) -> bool:
+    def print_bill(self, bill_data: Dict[str, Any], client_info: Dict[str, Any], show_no_exchange: bool = False) -> bool:
         """
         Print bill to thermal printer
 
         Args:
             bill_data: Bill information
             client_info: Client/business information
+            show_no_exchange: Whether to show "No Exchange Available" on the receipt
 
         Returns:
             True if print successful, False otherwise
@@ -519,7 +534,7 @@ class ThermalPrinter:
                 try:
                     print("[THERMAL_PRINTER] Using text-based printing for thermal printer...")
                     # Generate text receipt
-                    text_content = self._generate_text_receipt(bill_data, client_info)
+                    text_content = self._generate_text_receipt(bill_data, client_info, show_no_exchange)
 
                     # Create temporary text file
                     with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:

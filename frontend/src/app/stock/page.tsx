@@ -1003,7 +1003,7 @@ export default function StockManagementPage() {
             <h3 className="font-semibold text-yellow-900 dark:text-yellow-300 mb-2">ℹ️ Important Notes</h3>
             <ul className="text-sm text-yellow-800 dark:text-yellow-400 space-y-1">
               <li>• Required columns: <strong>product_name, quantity, rate</strong></li>
-              <li>• Optional columns: category, unit, low_stock_alert</li>
+              <li>• Optional columns: category, unit, low_stock_alert, item_code, barcode, gst_percentage, hsn_code, pricing</li>
               <li>• If product exists, quantity will be <strong>added</strong> (not replaced)</li>
               <li>• Negative values are not allowed</li>
               <li>• Maximum file size: 5MB</li>

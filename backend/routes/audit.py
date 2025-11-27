@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.audit_model import AuditLog
 from models.user_model import User
+from models.permission_model import get_user_permissions
 from utils.auth_middleware import authenticate
 
 audit_bp = Blueprint('audit', __name__)
@@ -11,11 +12,23 @@ audit_bp = Blueprint('audit', __name__)
 @authenticate
 def get_audit_logs():
     """
-    Get audit logs filtered by client_id
-    Supports filtering by action_type and date range
+    Get audit logs filtered by client_id and user permissions
+
+    Permission-based filtering:
+    - view_all_bills: User can see all bills from all staff in their client
+    - view_own_bills: User can only see their own bills
+    - gst_billing: User can see GST billing logs
+    - non_gst_billing: User can see non-GST billing logs
     """
     try:
         client_id = g.user['client_id']
+        user_id = g.user['user_id']
+        is_super_admin = g.user.get('is_super_admin', False)
+
+        # Get user's permissions
+        user_permissions = g.user.get('permissions', [])
+        if not user_permissions:
+            user_permissions = get_user_permissions(user_id)
 
         # Get query parameters
         action = request.args.get('action')
@@ -24,8 +37,32 @@ def get_audit_logs():
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 50))
 
-        # Build query
+        # Build query - ALWAYS filter by client_id first (mandatory)
         query = AuditLog.query.filter_by(client_id=client_id)
+
+        # Permission-based user filtering
+        # Super admin or users with view_all_bills can see all bills
+        # Users with only view_own_bills see only their own bills
+        has_view_all = is_super_admin or 'view_all_bills' in user_permissions
+        has_view_own = 'view_own_bills' in user_permissions
+
+        if not has_view_all:
+            # User can only see their own audit logs
+            query = query.filter(AuditLog.user_id == user_id)
+
+        # Filter by billing table based on permissions (for billing-related logs)
+        # Determine which billing tables user can see
+        allowed_tables = []
+        if is_super_admin or 'gst_billing' in user_permissions:
+            allowed_tables.append('gst_billing')
+        if is_super_admin or 'non_gst_billing' in user_permissions:
+            allowed_tables.append('non_gst_billing')
+
+        # If filtering for billing logs only, apply table filter
+        # Otherwise show all logs (including non-billing actions)
+        billing_only = request.args.get('billing_only', 'false').lower() == 'true'
+        if billing_only and allowed_tables:
+            query = query.filter(AuditLog.table_name.in_(allowed_tables))
 
         if action:
             query = query.filter_by(action_type=action)

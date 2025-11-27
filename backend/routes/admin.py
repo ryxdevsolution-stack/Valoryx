@@ -55,8 +55,8 @@ def get_all_users():
         status_filter = request.args.get('status', '')
         client_id = request.args.get('client_id', g.user['client_id'])
 
-        # Base query
-        query = User.query.filter_by(client_id=client_id)
+        # Base query (exclude deleted users)
+        query = User.query.filter_by(client_id=client_id).filter(User.deleted_at.is_(None))
 
         # Apply search filter
         if search:
@@ -324,6 +324,42 @@ def update_user(user_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to update user: {str(e)}'}), 500
+
+@admin_bp.route('/users/<user_id>', methods=['DELETE'])
+@authenticate
+@require_super_admin
+def delete_user(user_id):
+    """Delete a single user (soft delete)"""
+    try:
+        # Prevent self-deletion
+        if g.user['user_id'] == user_id:
+            return jsonify({'error': 'Cannot delete yourself'}), 400
+
+        user = User.query.filter_by(user_id=user_id).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+
+        # Soft delete
+        user.is_active = False
+        user.deleted_at = datetime.utcnow()
+        user.updated_by = g.user['user_id']
+
+        db.session.commit()
+
+        # Log the action
+        log_admin_action(
+            action_type='DELETE',
+            table_name='users',
+            record_id=user_id,
+            old_data={'email': user.email, 'full_name': user.full_name}
+        )
+
+        return jsonify({'message': 'User deleted successfully'}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to delete user: {str(e)}'}), 500
+
 
 @admin_bp.route('/users/<user_id>/password', methods=['POST'])
 @authenticate
@@ -1068,8 +1104,8 @@ def get_client_details(client_id):
         if not client:
             return jsonify({'error': 'Client not found'}), 404
 
-        # Get all users for this client
-        users = User.query.filter_by(client_id=client_id).all()
+        # Get all users for this client (exclude deleted users)
+        users = User.query.filter_by(client_id=client_id).filter(User.deleted_at.is_(None)).all()
 
         # Get statistics
         active_users = len([u for u in users if u.is_active])
@@ -1447,8 +1483,8 @@ def get_client_users(client_id):
         if not client:
             return jsonify({'error': 'Client not found'}), 404
 
-        # Get all users for this client
-        users = User.query.filter_by(client_id=client_id).all()
+        # Get all users for this client (exclude deleted users)
+        users = User.query.filter_by(client_id=client_id).filter(User.deleted_at.is_(None)).all()
 
         users_data = []
         for user in users:

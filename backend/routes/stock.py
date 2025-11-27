@@ -443,6 +443,10 @@ def bulk_import_stock():
                 barcode = str(row['barcode']).strip() if 'barcode' in row and not pd.isna(row['barcode']) else ''
                 barcode = barcode if barcode else None
 
+                # Handle GST percentage and HSN code
+                gst_percentage = float(row['gst_percentage']) if 'gst_percentage' in row and not pd.isna(row['gst_percentage']) else 0
+                hsn_code = str(row['hsn_code']).strip() if 'hsn_code' in row and not pd.isna(row['hsn_code']) else ''
+
                 # Validate quantity and rate
                 if quantity < 0 or rate < 0:
                     error_count += 1
@@ -466,6 +470,8 @@ def bulk_import_stock():
                     existing_product.category = category
                     existing_product.unit = unit
                     existing_product.low_stock_alert = low_stock_alert
+                    existing_product.gst_percentage = gst_percentage
+                    existing_product.hsn_code = hsn_code
 
                     # Auto-generate item_code if existing product doesn't have one
                     if not existing_product.item_code:
@@ -497,6 +503,8 @@ def bulk_import_stock():
                         low_stock_alert=low_stock_alert,
                         item_code=item_code,
                         barcode=barcode,
+                        gst_percentage=gst_percentage,
+                        hsn_code=hsn_code,
                         created_at=datetime.utcnow()
                     )
 

@@ -48,6 +48,7 @@ interface UsersResponse {
 export default function UserManagement() {
   const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const router = useRouter();
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
 
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
@@ -74,7 +75,15 @@ export default function UserManagement() {
         ...(statusFilter && { status: statusFilter })
       });
 
-      const response = await axios.get<UsersResponse>(`/api/admin/users?${params}`);
+      const token = localStorage.getItem('token');
+      const response = await axios.get<UsersResponse>(
+        `${apiUrl}/admin/users?${params}`,
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
       setUsers(response.data.users);
       setTotalPages(response.data.pages);
       setTotalUsers(response.data.total);
@@ -84,7 +93,7 @@ export default function UserManagement() {
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchTerm, roleFilter, statusFilter]);
+  }, [apiUrl, currentPage, searchTerm, roleFilter, statusFilter]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -102,9 +111,18 @@ export default function UserManagement() {
     }
   }, [user, authLoading, isSuperAdmin, router, fetchUsers]);
 
-  const handleToggleStatus = async (userId: string, currentStatus: boolean) => {
+  const handleToggleStatus = async (userId: string) => {
     try {
-      await axios.post(`/api/admin/users/${userId}/toggle-status`);
+      const token = localStorage.getItem('token');
+      await axios.post(
+        `${apiUrl}/admin/users/${userId}/toggle-status`,
+        {},
+        {
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        }
+      );
       fetchUsers();
     } catch (error) {
       console.error('Error toggling user status:', error);
@@ -114,7 +132,16 @@ export default function UserManagement() {
   const handleToggleSuperAdmin = async (userId: string) => {
     if (confirm('Are you sure you want to change super admin status for this user?')) {
       try {
-        await axios.post(`/api/admin/users/${userId}/promote`);
+        const token = localStorage.getItem('token');
+        await axios.post(
+          `${apiUrl}/admin/users/${userId}/promote`,
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        );
         fetchUsers();
       } catch (error) {
         console.error('Error toggling super admin:', error);
@@ -125,7 +152,16 @@ export default function UserManagement() {
   const handleResetPassword = async (userId: string) => {
     if (confirm('Are you sure you want to reset the password for this user?')) {
       try {
-        const response = await axios.post(`/api/admin/users/${userId}/password`);
+        const token = localStorage.getItem('token');
+        const response = await axios.post(
+          `${apiUrl}/admin/users/${userId}/password`,
+          {},
+          {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        );
         if (response.data.generated_password) {
           alert(`Password reset successfully. New password: ${response.data.generated_password}`);
         } else {
@@ -145,10 +181,19 @@ export default function UserManagement() {
 
     if (confirm(`Are you sure you want to ${operation} ${selectedUsers.length} user(s)?`)) {
       try {
-        await axios.post('/api/admin/users/bulk', {
-          user_ids: selectedUsers,
-          operation
-        });
+        const token = localStorage.getItem('token');
+        await axios.post(
+          `${apiUrl}/admin/users/bulk`,
+          {
+            user_ids: selectedUsers,
+            operation
+          },
+          {
+            headers: {
+              Authorization: `Bearer ${token}`
+            }
+          }
+        );
         setSelectedUsers([]);
         setShowBulkActions(false);
         fetchUsers();
@@ -403,7 +448,7 @@ export default function UserManagement() {
                         <Edit className="h-4 w-4" />
                       </button>
                       <button
-                        onClick={() => handleToggleStatus(user.user_id, user.is_active)}
+                        onClick={() => handleToggleStatus(user.user_id)}
                         className={`${
                           user.is_active
                             ? 'text-yellow-600 hover:text-yellow-900'

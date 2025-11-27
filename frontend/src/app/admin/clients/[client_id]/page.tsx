@@ -102,6 +102,11 @@ export default function ClientDetailsPage() {
   const [showPermissionsModal, setShowPermissionsModal] = useState(false);
   const [selectedUser, setSelectedUser] = useState<UserWithPermissions | null>(null);
   const [allPermissions, setAllPermissions] = useState<Permission[]>([]);
+
+  // Delete user modal states
+  const [showDeleteModal, setShowDeleteModal] = useState(false);
+  const [userToDelete, setUserToDelete] = useState<UserWithPermissions | null>(null);
+  const [deleting, setDeleting] = useState(false);
   const [permissionsByCategory, setPermissionsByCategory] = useState<Record<string, Permission[]>>({});
 
   const fetchClientUsers = useCallback(async () => {
@@ -300,26 +305,37 @@ export default function ClientDetailsPage() {
     }
   };
 
-  const handleDeleteUser = async (userId: string) => {
-    if (!confirm('Are you sure you want to delete this user?')) return;
+  const openDeleteModal = (user: UserWithPermissions) => {
+    setUserToDelete(user);
+    setShowDeleteModal(true);
+  };
 
+  const handleDeleteUser = async () => {
+    if (!userToDelete) return;
+
+    setDeleting(true);
+    setError(null);
     try {
       const token = localStorage.getItem('token');
-      await axios.post(
-        `${apiUrl}/admin/users/bulk`,
-        {
-          user_ids: [userId],
-          operation: 'delete'
-        },
+      await axios.delete(
+        `${apiUrl}/admin/users/${userToDelete.user_id}`,
         {
           headers: {
             Authorization: `Bearer ${token}`
           }
         }
       );
+      setShowDeleteModal(false);
+      setUserToDelete(null);
       fetchClientUsers();
-    } catch (err) {
+      fetchClientDetails();
+    } catch (err: any) {
       console.error('Error deleting user:', err);
+      setShowDeleteModal(false);
+      setUserToDelete(null);
+      setError(err.response?.data?.error || 'Failed to delete user');
+    } finally {
+      setDeleting(false);
     }
   };
 
@@ -374,6 +390,7 @@ export default function ClientDetailsPage() {
                 width={64}
                 height={64}
                 className="h-16 w-16 rounded-full object-cover"
+                unoptimized
               />
             ) : (
               <div className="h-16 w-16 rounded-full bg-blue-100 flex items-center justify-center">
@@ -682,7 +699,7 @@ export default function ClientDetailsPage() {
                         {user.is_active ? 'Deactivate' : 'Activate'}
                       </button>
                       <button
-                        onClick={() => handleDeleteUser(user.user_id)}
+                        onClick={() => openDeleteModal(user)}
                         className="p-1.5 text-red-600 hover:bg-red-50 rounded transition"
                         title="Delete User"
                       >
@@ -783,6 +800,51 @@ export default function ClientDetailsPage() {
             fetchClientUsers();
           }}
         />
+      )}
+
+      {/* Delete User Confirmation Modal */}
+      {showDeleteModal && userToDelete && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-lg max-w-md w-full shadow-xl">
+            <div className="p-6">
+              <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-red-100">
+                <Trash2 className="h-6 w-6 text-red-600" />
+              </div>
+              <h3 className="text-lg font-semibold text-center text-gray-900 mb-2">
+                Delete User
+              </h3>
+              <p className="text-center text-gray-600 mb-6">
+                Are you sure you want to delete <span className="font-medium">{userToDelete.full_name || userToDelete.email}</span>? This action cannot be undone.
+              </p>
+              <div className="flex gap-3">
+                <button
+                  onClick={() => {
+                    setShowDeleteModal(false);
+                    setUserToDelete(null);
+                  }}
+                  disabled={deleting}
+                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteUser}
+                  disabled={deleting}
+                  className="flex-1 px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center justify-center gap-2"
+                >
+                  {deleting ? (
+                    <>
+                      <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
+                      Deleting...
+                    </>
+                  ) : (
+                    'Delete'
+                  )}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   );
@@ -1101,9 +1163,14 @@ function EditPermissionsModal({ user, apiUrl, allPermissions, permissionsByCateg
           )}
 
           {user.is_super_admin && (
-            <div className="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-lg flex items-center gap-2">
-              <Shield className="h-5 w-5 text-purple-600" />
-              <p className="text-purple-800">This user is a Super Admin and has all permissions by default.</p>
+            <div className="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+              <div className="flex items-center gap-3">
+                <Shield className="h-6 w-6 text-purple-600" />
+                <div>
+                  <p className="text-purple-800 font-medium">Super Administrator</p>
+                  <p className="text-purple-600 text-sm">This user has all permissions by default and cannot be modified.</p>
+                </div>
+              </div>
             </div>
           )}
 

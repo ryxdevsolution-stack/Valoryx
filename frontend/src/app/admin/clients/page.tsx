@@ -317,6 +317,7 @@ export default function ClientManagement() {
                           width={40}
                           height={40}
                           className="h-10 w-10 rounded-full mr-3 object-cover"
+                          unoptimized
                         />
                       ) : (
                         <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center mr-3">
@@ -475,6 +476,7 @@ export default function ClientManagement() {
                       width={40}
                       height={40}
                       className="h-10 w-10 rounded-full object-cover"
+                      unoptimized
                     />
                   ) : (
                     <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">

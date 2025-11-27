@@ -7,9 +7,9 @@ import { TableSkeleton } from '@/components/SkeletonLoader'
 import api from '@/lib/api'
 import {
   Shield, User, Check, Save, RefreshCw, AlertCircle, Search,
-  ChevronDown, ChevronRight, CheckSquare, Square, MinusSquare,
+  ChevronDown, ChevronRight, CheckSquare, Square,
   Users, Package, FileText, TrendingUp, CreditCard, UserCog,
-  Settings, PlusSquare
+  Settings, PlusSquare, Crown
 } from 'lucide-react'
 
 // Icon mapping for sections
@@ -24,6 +24,8 @@ const SECTION_ICONS: Record<string, any> = {
   'System Settings': Settings,
   'Audit & Logs': Search,
   'System Administration': Shield,
+  'Bulk Orders': Package,
+  'Notes': FileText,
 }
 
 interface Permission {
@@ -47,10 +49,12 @@ interface PermissionSection {
 interface UserWithPermissions {
   user_id: string
   email: string
+  full_name?: string
   role: string
   is_super_admin: boolean
   is_active: boolean
   permissions: string[]
+  permission_count?: number
   created_at: string
   last_login: string | null
 }
@@ -186,6 +190,26 @@ export default function PermissionsPage() {
     return { total, selected }
   }
 
+  const selectAllPermissions = () => {
+    const allPerms: Record<string, boolean> = {}
+    sections.forEach(section => {
+      section.permissions.forEach(perm => {
+        allPerms[perm.permission_name] = true
+      })
+    })
+    setUserPermissions(allPerms)
+  }
+
+  const deselectAllPermissions = () => {
+    const allPerms: Record<string, boolean> = {}
+    sections.forEach(section => {
+      section.permissions.forEach(perm => {
+        allPerms[perm.permission_name] = false
+      })
+    })
+    setUserPermissions(allPerms)
+  }
+
   const filteredSections = sections.map(section => ({
     ...section,
     permissions: section.permissions.filter(p =>
@@ -308,6 +332,9 @@ export default function PermissionsPage() {
                             </div>
                             <div className="flex-1 min-w-0">
                               <p className="text-sm font-medium text-gray-900 truncate">
+                                {user.full_name || user.email.split('@')[0]}
+                              </p>
+                              <p className="text-xs text-gray-500 truncate">
                                 {user.email}
                               </p>
                               <div className="flex items-center gap-2 mt-1">
@@ -323,6 +350,15 @@ export default function PermissionsPage() {
                                     Inactive
                                   </span>
                                 )}
+                                <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
+                                  user.is_super_admin
+                                    ? 'bg-purple-100 text-purple-800'
+                                    : 'bg-green-100 text-green-800'
+                                }`}>
+                                  {user.is_super_admin
+                                    ? 'All perms'
+                                    : `${user.permission_count || user.permissions.length} perms`}
+                                </span>
                               </div>
                             </div>
                           </div>
@@ -362,6 +398,24 @@ export default function PermissionsPage() {
                           className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-md focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500"
                         />
                       </div>
+                      {!users.find(u => u.user_id === selectedUser)?.is_super_admin && (
+                        <div className="flex items-center gap-2">
+                          <button
+                            onClick={selectAllPermissions}
+                            className="flex items-center gap-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                          >
+                            <CheckSquare className="h-4 w-4" />
+                            All
+                          </button>
+                          <button
+                            onClick={deselectAllPermissions}
+                            className="flex items-center gap-1 px-3 py-2 text-sm border border-gray-300 rounded-md hover:bg-gray-50 transition-colors"
+                          >
+                            <Square className="h-4 w-4" />
+                            None
+                          </button>
+                        </div>
+                      )}
                       <button
                         onClick={savePermissions}
                         disabled={saving}
@@ -385,11 +439,20 @@ export default function PermissionsPage() {
                   <div className="overflow-y-auto max-h-[calc(100vh-300px)] p-4">
                     {users.find(u => u.user_id === selectedUser)?.is_super_admin ? (
                       <div className="text-center py-12">
-                        <Shield className="h-16 w-16 text-purple-600 mx-auto mb-4" />
-                        <h3 className="text-lg font-medium text-gray-900 mb-2">Super Administrator</h3>
-                        <p className="text-gray-500">
+                        <div className="relative inline-block mb-4">
+                          <Shield className="h-20 w-20 text-purple-600" />
+                          <Crown className="h-8 w-8 text-yellow-500 absolute -top-2 -right-2" />
+                        </div>
+                        <h3 className="text-xl font-semibold text-gray-900 mb-2">Super Administrator</h3>
+                        <p className="text-gray-500 mb-4">
                           Super administrators have all permissions by default and cannot be modified.
                         </p>
+                        <div className="inline-flex items-center gap-2 px-4 py-2 bg-purple-50 rounded-full">
+                          <Check className="h-5 w-5 text-purple-600" />
+                          <span className="text-purple-800 font-medium">
+                            {getTotalPermissionCount()} permissions granted
+                          </span>
+                        </div>
                       </div>
                     ) : (
                       <div className="space-y-3">
@@ -404,7 +467,6 @@ export default function PermissionsPage() {
                             const isExpanded = expandedSections[section.section_id]
                             const IconComponent = SECTION_ICONS[section.section_name] || Shield
                             const allSelected = selected === total
-                            const someSelected = selected > 0 && selected < total
 
                             return (
                               <div key={section.section_id} className="border border-gray-200 rounded-lg overflow-hidden">

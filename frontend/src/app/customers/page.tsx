@@ -7,6 +7,7 @@ import Link from 'next/link'
 import { CustomerCardSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 
 interface Customer {
+  customer_code: number | null
   customer_name: string
   customer_phone: string
   customer_email: string
@@ -18,6 +19,8 @@ interface Customer {
   status: 'Active' | 'Inactive'
   gst_bills: number
   non_gst_bills: number
+  is_walkin?: boolean
+  bill_number?: number
 }
 
 interface Statistics {
@@ -89,7 +92,8 @@ export default function CustomersPage() {
   const filteredCustomers = customers.filter((customer) => {
     const matchesSearch =
       customer.customer_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      customer.customer_phone.includes(searchQuery)
+      customer.customer_phone.includes(searchQuery) ||
+      (customer.customer_code && customer.customer_code.toString().includes(searchQuery))
     const matchesStatus = filterStatus === 'all' || customer.status === filterStatus
     return matchesSearch && matchesStatus
   })
@@ -222,6 +226,7 @@ export default function CustomersPage() {
                 <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
                   <thead className="bg-gradient-to-r from-slate-700 to-slate-600 dark:from-gray-700 dark:to-gray-600">
                     <tr>
+                      <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase tracking-wider">No</th>
                       <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase tracking-wider">Customer</th>
                       <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase tracking-wider">Contact</th>
                       <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase tracking-wider">Bills</th>
@@ -231,12 +236,19 @@ export default function CustomersPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                    {filteredCustomers.map((customer) => (
+                    {filteredCustomers.map((customer, index) => (
                       <tr
-                        key={customer.customer_phone}
+                        key={customer.is_walkin ? `walkin-${customer.bill_number}-${index}` : customer.customer_phone}
                         className="hover:bg-gray-50 dark:hover:bg-gray-700 transition cursor-pointer"
                         onClick={() => setSelectedCustomer(customer)}
                       >
+                        <td className="px-3 py-2.5">
+                          {customer.customer_code ? (
+                            <span className="text-xs font-bold text-blue-600 dark:text-blue-400">#{customer.customer_code}</span>
+                          ) : (
+                            <span className="text-xs text-gray-400 dark:text-gray-500">-</span>
+                          )}
+                        </td>
                         <td className="px-3 py-2.5">
                           <div className="flex items-center">
                             <div className="flex-shrink-0 h-8 w-8 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white text-xs font-bold">
@@ -255,9 +267,11 @@ export default function CustomersPage() {
                         </td>
                         <td className="px-3 py-2.5">
                           <div className="text-xs font-medium text-gray-900 dark:text-white">{customer.total_bills}</div>
-                          <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                            {customer.gst_bills} GST, {customer.non_gst_bills} Non-GST
-                          </div>
+                          {!customer.is_walkin && (
+                            <div className="text-[10px] text-gray-500 dark:text-gray-400">
+                              {customer.gst_bills} GST, {customer.non_gst_bills} Non-GST
+                            </div>
+                          )}
                         </td>
                         <td className="px-3 py-2.5">
                           <div className="text-xs font-bold text-green-600 dark:text-green-400">{formatCurrency(customer.total_amount)}</div>
@@ -284,9 +298,9 @@ export default function CustomersPage() {
 
             {/* Mobile Card View */}
             <div className="md:hidden space-y-3">
-              {filteredCustomers.map((customer) => (
+              {filteredCustomers.map((customer, index) => (
                 <div
-                  key={customer.customer_phone}
+                  key={customer.is_walkin ? `walkin-${customer.bill_number}-${index}` : customer.customer_phone}
                   onClick={() => setSelectedCustomer(customer)}
                   className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 hover:shadow-lg transition touch-manipulation border border-gray-200 dark:border-gray-700"
                 >
@@ -295,7 +309,12 @@ export default function CustomersPage() {
                       {customer.customer_name.charAt(0).toUpperCase()}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="text-base font-bold text-gray-900 dark:text-white truncate">{customer.customer_name}</h3>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-base font-bold text-gray-900 dark:text-white truncate">{customer.customer_name}</h3>
+                        {customer.customer_code && (
+                          <span className="text-xs font-bold text-blue-600 dark:text-blue-400">#{customer.customer_code}</span>
+                        )}
+                      </div>
                       <p className="text-sm text-gray-600 dark:text-gray-400">{customer.customer_phone}</p>
                       {customer.customer_email && (
                         <p className="text-xs text-gray-500 dark:text-gray-500 truncate">{customer.customer_email}</p>

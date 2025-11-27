@@ -78,7 +78,9 @@
       "Bash(./start-backend.sh:*)",
       "Bash(./venv/bin/gunicorn:*)",
       "Bash(PGPASSWORD=mj123 psql:*)",
-      "Bash(./.venv/bin/python:*)"
+      "Bash(./.venv/bin/python:*)",
+      "Bash(./.venv/bin/pip install:*)",
+      "Bash(done)"
     ],
     "deny": [],
     "ask": [],
