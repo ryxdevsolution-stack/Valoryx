@@ -9,6 +9,7 @@ const ServiceManager = require('./services');
 const WindowManager = require('./window');
 const { setupIPC } = require('./ipc');
 const { APP_CONFIG } = require('../utils/config');
+const AppUpdater = require('./updater');
 
 // Prevent multiple instances
 const gotTheLock = app.requestSingleInstanceLock();
@@ -49,6 +50,15 @@ if (!gotTheLock) {
             mainWindow.on('closed', () => {
                 mainWindow = null;
             });
+
+            // Initialize auto-updater (check for updates after app starts)
+            if (APP_CONFIG.isProduction) {
+                const updater = new AppUpdater();
+                // Check for updates after 5 seconds (let app fully load first)
+                setTimeout(() => {
+                    updater.checkForUpdates();
+                }, 5000);
+            }
 
             console.log('Application initialized successfully');
 

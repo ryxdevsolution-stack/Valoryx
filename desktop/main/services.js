@@ -44,16 +44,22 @@ class ServiceManager {
     }
 
     getBackendCommand() {
-        // Check for virtual environment first
-        const venvPython = path.join(__dirname, '../../backend/venv/bin/python');
+        // Check for virtual environment first (cross-platform)
         const fs = require('fs');
+        const isWindows = process.platform === 'win32';
+
+        // Windows: venv\Scripts\python.exe, Linux/Mac: venv/bin/python
+        const venvPython = isWindows
+            ? path.join(__dirname, '../../backend/venv/Scripts/python.exe')
+            : path.join(__dirname, '../../backend/venv/bin/python');
 
         if (fs.existsSync(venvPython)) {
             return { command: venvPython, args: ['app.py'] };
         }
 
         // Fallback to system Python
-        return { command: 'python3', args: ['app.py'] };
+        const pythonCmd = isWindows ? 'python' : 'python3';
+        return { command: pythonCmd, args: ['app.py'] };
     }
 
     getFrontendCommand() {
