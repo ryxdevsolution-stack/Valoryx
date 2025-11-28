@@ -4,8 +4,15 @@ import { useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { useClient } from '@/contexts/ClientContext'
 import LogoAnimation from '@/components/LogoAnimation'
+import dynamic from 'next/dynamic'
 import Image from 'next/image'
 import api from '@/lib/api'
+
+// Dynamic import with SSR disabled for Three.js components
+const ParticleRing = dynamic(() => import('@/components/ParticleRing'), {
+  ssr: false,
+  loading: () => <div className="absolute inset-0 bg-transparent" />
+})
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -106,6 +113,9 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-amber-50 via-yellow-50/50 to-slate-100 relative overflow-hidden">
+      {/* 3D Particle Ring Background */}
+      <ParticleRing />
+
       {/* Rich Gradient Overlays Matching Logo */}
       <div className="absolute inset-0 pointer-events-none">
         <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-amber-200/30 via-yellow-100/20 to-transparent"></div>
