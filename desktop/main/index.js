@@ -34,6 +34,10 @@ if (!gotTheLock) {
         try {
             console.log('Starting RYX Billing Desktop Application...');
 
+            // Initialize service manager (finds/setups Python)
+            console.log('Setting up Python environment...');
+            await serviceManager.initialize();
+
             // Start backend and frontend services
             await serviceManager.startAll();
 

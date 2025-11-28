@@ -3,8 +3,9 @@
  * Handles starting, stopping, and monitoring of backend and frontend services
  */
 
-const { spawn } = require('child_process');
+const { spawn, execSync } = require('child_process');
 const path = require('path');
+const fs = require('fs');
 const { checkPort, waitForService } = require('../utils/health-check');
 const { APP_CONFIG } = require('../utils/config');
 
@@ -14,6 +15,13 @@ class ServiceManager {
             backend: null,
             frontend: null
         };
+        this.isWindows = process.platform === 'win32';
+        this.pythonPath = null;
+    }
+
+    async initialize() {
+        // Find or setup Python
+        this.pythonPath = await this.findOrSetupPython();
 
         this.config = {
             backend: {
@@ -21,7 +29,7 @@ class ServiceManager {
                 url: `http://localhost:${APP_CONFIG.backend.port}`,
                 healthEndpoint: '/api/health',
                 startCommand: this.getBackendCommand(),
-                cwd: path.join(__dirname, '../../backend'),
+                cwd: this.getBackendPath(),
                 env: {
                     ...process.env,
                     FLASK_ENV: APP_CONFIG.isDevelopment ? 'development' : 'production',
@@ -33,7 +41,7 @@ class ServiceManager {
                 url: `http://localhost:${APP_CONFIG.frontend.port}`,
                 healthEndpoint: '/',
                 startCommand: this.getFrontendCommand(),
-                cwd: path.join(__dirname, '../../frontend'),
+                cwd: this.getFrontendPath(),
                 env: {
                     ...process.env,
                     PORT: APP_CONFIG.frontend.port.toString(),
@@ -43,23 +51,249 @@ class ServiceManager {
         };
     }
 
-    getBackendCommand() {
-        // Check for virtual environment first (cross-platform)
-        const fs = require('fs');
-        const isWindows = process.platform === 'win32';
+    getBackendPath() {
+        // Handle both development and packaged app paths
+        if (this.isPackaged()) {
+            return path.join(process.resourcesPath, 'app.asar.unpacked', 'backend');
+        }
+        return path.join(__dirname, '../../backend');
+    }
 
-        // Windows: venv\Scripts\python.exe, Linux/Mac: venv/bin/python
-        const venvPython = isWindows
-            ? path.join(__dirname, '../../backend/venv/Scripts/python.exe')
-            : path.join(__dirname, '../../backend/venv/bin/python');
+    getFrontendPath() {
+        if (this.isPackaged()) {
+            return path.join(process.resourcesPath, 'app.asar.unpacked', 'frontend');
+        }
+        return path.join(__dirname, '../../frontend');
+    }
 
-        if (fs.existsSync(venvPython)) {
-            return { command: venvPython, args: ['app.py'] };
+    isPackaged() {
+        return require('electron').app.isPackaged;
+    }
+
+    /**
+     * Find bundled Python, system Python, or download embeddable Python
+     */
+    async findOrSetupPython() {
+        console.log('[PYTHON] Looking for Python...');
+
+        // 1. Check for bundled Python (in resources)
+        const bundledPython = this.getBundledPythonPath();
+        if (bundledPython && fs.existsSync(bundledPython)) {
+            console.log('[PYTHON] Found bundled Python:', bundledPython);
+            return bundledPython;
         }
 
-        // Fallback to system Python
-        const pythonCmd = isWindows ? 'python' : 'python3';
-        return { command: pythonCmd, args: ['app.py'] };
+        // 2. Check for existing venv in backend
+        const venvPython = this.getVenvPythonPath();
+        if (fs.existsSync(venvPython)) {
+            console.log('[PYTHON] Found existing venv:', venvPython);
+            return venvPython;
+        }
+
+        // 3. Check for system Python
+        const systemPython = this.findSystemPython();
+        if (systemPython) {
+            console.log('[PYTHON] Found system Python:', systemPython);
+            // Create venv with system Python
+            await this.setupVirtualEnv(systemPython);
+            return this.getVenvPythonPath();
+        }
+
+        // 4. Download embeddable Python (Windows only)
+        if (this.isWindows) {
+            console.log('[PYTHON] Downloading embeddable Python...');
+            await this.downloadEmbeddablePython();
+            return this.getBundledPythonPath();
+        }
+
+        throw new Error('Python not found. Please install Python 3.10+ from python.org');
+    }
+
+    getBundledPythonPath() {
+        const resourcesPath = this.isPackaged()
+            ? process.resourcesPath
+            : path.join(__dirname, '../resources');
+
+        if (this.isWindows) {
+            return path.join(resourcesPath, 'python', 'python.exe');
+        }
+        return path.join(resourcesPath, 'python', 'bin', 'python3');
+    }
+
+    getVenvPythonPath() {
+        const backendPath = this.getBackendPath();
+        if (this.isWindows) {
+            return path.join(backendPath, 'venv', 'Scripts', 'python.exe');
+        }
+        return path.join(backendPath, 'venv', 'bin', 'python');
+    }
+
+    findSystemPython() {
+        const commands = this.isWindows
+            ? ['python', 'python3', 'py -3']
+            : ['python3', 'python'];
+
+        for (const cmd of commands) {
+            try {
+                const result = execSync(`${cmd} --version`, {
+                    encoding: 'utf8',
+                    stdio: ['pipe', 'pipe', 'pipe']
+                });
+                if (result.includes('Python 3')) {
+                    // Get full path
+                    const pathCmd = this.isWindows
+                        ? `where ${cmd.split(' ')[0]}`
+                        : `which ${cmd}`;
+                    try {
+                        const pythonPath = execSync(pathCmd, { encoding: 'utf8' }).trim().split('\n')[0];
+                        return pythonPath;
+                    } catch {
+                        return cmd;
+                    }
+                }
+            } catch (e) {
+                // Command not found, try next
+            }
+        }
+        return null;
+    }
+
+    async setupVirtualEnv(pythonPath) {
+        const backendPath = this.getBackendPath();
+        const venvPath = path.join(backendPath, 'venv');
+
+        if (fs.existsSync(venvPath)) {
+            console.log('[PYTHON] Venv already exists');
+            return;
+        }
+
+        console.log('[PYTHON] Creating virtual environment...');
+
+        try {
+            execSync(`"${pythonPath}" -m venv "${venvPath}"`, {
+                cwd: backendPath,
+                stdio: 'inherit'
+            });
+
+            // Install requirements
+            const venvPip = this.isWindows
+                ? path.join(venvPath, 'Scripts', 'pip.exe')
+                : path.join(venvPath, 'bin', 'pip');
+
+            const requirementsPath = path.join(backendPath, 'requirements.txt');
+
+            if (fs.existsSync(requirementsPath)) {
+                console.log('[PYTHON] Installing requirements...');
+                execSync(`"${venvPip}" install -r "${requirementsPath}"`, {
+                    cwd: backendPath,
+                    stdio: 'inherit'
+                });
+            }
+
+            console.log('[PYTHON] Virtual environment setup complete');
+        } catch (error) {
+            console.error('[PYTHON] Failed to setup venv:', error);
+            throw error;
+        }
+    }
+
+    async downloadEmbeddablePython() {
+        const https = require('https');
+        const { createWriteStream, mkdirSync } = require('fs');
+        const { pipeline } = require('stream/promises');
+        const { createGunzip } = require('zlib');
+
+        const pythonVersion = '3.11.7';
+        const downloadUrl = `https://www.python.org/ftp/python/${pythonVersion}/python-${pythonVersion}-embed-amd64.zip`;
+
+        const resourcesPath = this.isPackaged()
+            ? path.join(process.resourcesPath, 'python')
+            : path.join(__dirname, '../resources/python');
+
+        mkdirSync(resourcesPath, { recursive: true });
+
+        const zipPath = path.join(resourcesPath, 'python.zip');
+
+        // Download
+        console.log('[PYTHON] Downloading from:', downloadUrl);
+
+        await new Promise((resolve, reject) => {
+            const file = createWriteStream(zipPath);
+            https.get(downloadUrl, (response) => {
+                response.pipe(file);
+                file.on('finish', () => {
+                    file.close();
+                    resolve();
+                });
+            }).on('error', reject);
+        });
+
+        // Extract using PowerShell on Windows
+        console.log('[PYTHON] Extracting...');
+        execSync(`powershell -command "Expand-Archive -Path '${zipPath}' -DestinationPath '${resourcesPath}' -Force"`, {
+            stdio: 'inherit'
+        });
+
+        // Clean up zip
+        fs.unlinkSync(zipPath);
+
+        // Install pip for embeddable Python
+        await this.installPipForEmbeddable(resourcesPath);
+
+        console.log('[PYTHON] Embeddable Python ready');
+    }
+
+    async installPipForEmbeddable(pythonDir) {
+        const https = require('https');
+        const { createWriteStream } = require('fs');
+
+        const getPipUrl = 'https://bootstrap.pypa.io/get-pip.py';
+        const getPipPath = path.join(pythonDir, 'get-pip.py');
+        const pythonExe = path.join(pythonDir, 'python.exe');
+
+        // Download get-pip.py
+        await new Promise((resolve, reject) => {
+            const file = createWriteStream(getPipPath);
+            https.get(getPipUrl, (response) => {
+                response.pipe(file);
+                file.on('finish', () => {
+                    file.close();
+                    resolve();
+                });
+            }).on('error', reject);
+        });
+
+        // Enable pip in embeddable Python (modify python311._pth)
+        const pthFiles = fs.readdirSync(pythonDir).filter(f => f.endsWith('._pth'));
+        for (const pthFile of pthFiles) {
+            const pthPath = path.join(pythonDir, pthFile);
+            let content = fs.readFileSync(pthPath, 'utf8');
+            // Uncomment import site
+            content = content.replace('#import site', 'import site');
+            content += '\nLib\\site-packages\n';
+            fs.writeFileSync(pthPath, content);
+        }
+
+        // Install pip
+        execSync(`"${pythonExe}" "${getPipPath}"`, { stdio: 'inherit' });
+
+        // Install requirements
+        const backendPath = this.getBackendPath();
+        const requirementsPath = path.join(backendPath, 'requirements.txt');
+
+        if (fs.existsSync(requirementsPath)) {
+            console.log('[PYTHON] Installing requirements with embeddable Python...');
+            execSync(`"${pythonExe}" -m pip install -r "${requirementsPath}"`, {
+                stdio: 'inherit'
+            });
+        }
+
+        // Clean up
+        fs.unlinkSync(getPipPath);
+    }
+
+    getBackendCommand() {
+        return { command: this.pythonPath, args: ['app.py'] };
     }
 
     getFrontendCommand() {
