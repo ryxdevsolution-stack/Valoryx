@@ -62,7 +62,7 @@ async function waitForService(url, options = {}) {
  * Check if a service is healthy
  * @param {string} url - URL to check
  * @param {number} timeout - Request timeout in ms
- * @returns {Promise<boolean>} - True if service responds, false otherwise
+ * @returns {Promise<boolean>} - True if service responds with 200 OK, false otherwise
  */
 function checkServiceHealth(url, timeout = 5000) {
     return new Promise((resolve) => {
@@ -77,15 +77,21 @@ function checkServiceHealth(url, timeout = 5000) {
         };
 
         const req = http.request(options, (res) => {
-            // Any response is considered healthy
-            resolve(res.statusCode < 500);
+            // Require HTTP 200 for healthy status (not just < 500)
+            const isHealthy = res.statusCode >= 200 && res.statusCode < 300;
+            if (!isHealthy) {
+                console.log(`[HEALTH] ${url} returned status ${res.statusCode} - not healthy`);
+            }
+            resolve(isHealthy);
         });
 
-        req.on('error', () => {
+        req.on('error', (error) => {
+            console.log(`[HEALTH] ${url} error: ${error.message}`);
             resolve(false);
         });
 
         req.on('timeout', () => {
+            console.log(`[HEALTH] ${url} timed out after ${timeout}ms`);
             req.destroy();
             resolve(false);
         });

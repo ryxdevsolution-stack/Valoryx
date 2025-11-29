@@ -17,11 +17,17 @@ class ServiceManager {
         };
         this.isWindows = process.platform === 'win32';
         this.pythonPath = null;
+        this.isShuttingDown = false;  // Initialize shutdown flag
     }
 
     async initialize() {
+        console.log('[SERVICE] Initializing Service Manager...');
+        console.log('[SERVICE] Platform:', process.platform);
+        console.log('[SERVICE] Is packaged:', this.isPackaged());
+
         // Find or setup Python
         this.pythonPath = await this.findOrSetupPython();
+        console.log('[SERVICE] Python path:', this.pythonPath);
 
         this.config = {
             backend: {
@@ -54,59 +60,111 @@ class ServiceManager {
     getBackendPath() {
         // Handle both development and packaged app paths
         if (this.isPackaged()) {
-            return path.join(process.resourcesPath, 'app.asar.unpacked', 'backend');
+            // In packaged app, unpacked files are in app.asar.unpacked
+            const unpackedPath = path.join(path.dirname(require.main.filename), '..', 'app.asar.unpacked', 'backend');
+            console.log('[PATHS] Backend path (packaged):', unpackedPath);
+            return unpackedPath;
         }
-        return path.join(__dirname, '../../backend');
+        const devPath = path.join(__dirname, '../../backend');
+        console.log('[PATHS] Backend path (dev):', devPath);
+        return devPath;
     }
 
     getFrontendPath() {
         if (this.isPackaged()) {
-            return path.join(process.resourcesPath, 'app.asar.unpacked', 'frontend');
+            const unpackedPath = path.join(path.dirname(require.main.filename), '..', 'app.asar.unpacked', 'frontend');
+            console.log('[PATHS] Frontend path (packaged):', unpackedPath);
+            return unpackedPath;
         }
-        return path.join(__dirname, '../../frontend');
+        const devPath = path.join(__dirname, '../../frontend');
+        console.log('[PATHS] Frontend path (dev):', devPath);
+        return devPath;
     }
 
     isPackaged() {
-        return require('electron').app.isPackaged;
+        const { app } = require('electron');
+        const packed = app.isPackaged;
+        console.log('[PATHS] Is packaged:', packed);
+        return packed;
     }
 
     /**
      * Find bundled Python, system Python, or download embeddable Python
      */
     async findOrSetupPython() {
-        console.log('[PYTHON] Looking for Python...');
+        console.log('[PYTHON] ═══════════════════════════════════════════');
+        console.log('[PYTHON] Looking for Python installation...');
+        console.log('[PYTHON] ═══════════════════════════════════════════');
+
+        const searchResults = [];
 
         // 1. Check for bundled Python (in resources)
         const bundledPython = this.getBundledPythonPath();
+        console.log('[PYTHON] Step 1: Checking bundled Python at:', bundledPython);
         if (bundledPython && fs.existsSync(bundledPython)) {
-            console.log('[PYTHON] Found bundled Python:', bundledPython);
+            console.log('[PYTHON] ✓ Found bundled Python:', bundledPython);
             return bundledPython;
         }
+        searchResults.push(`Bundled Python: NOT FOUND at ${bundledPython}`);
+        console.log('[PYTHON] ✗ Bundled Python not found');
 
         // 2. Check for existing venv in backend
         const venvPython = this.getVenvPythonPath();
+        console.log('[PYTHON] Step 2: Checking virtual environment at:', venvPython);
         if (fs.existsSync(venvPython)) {
-            console.log('[PYTHON] Found existing venv:', venvPython);
+            console.log('[PYTHON] ✓ Found existing venv:', venvPython);
             return venvPython;
         }
+        searchResults.push(`Virtual Environment: NOT FOUND at ${venvPython}`);
+        console.log('[PYTHON] ✗ Virtual environment not found');
 
         // 3. Check for system Python
+        console.log('[PYTHON] Step 3: Checking system Python...');
         const systemPython = this.findSystemPython();
         if (systemPython) {
-            console.log('[PYTHON] Found system Python:', systemPython);
+            console.log('[PYTHON] ✓ Found system Python:', systemPython);
             // Create venv with system Python
+            console.log('[PYTHON] Creating virtual environment...');
             await this.setupVirtualEnv(systemPython);
-            return this.getVenvPythonPath();
+            const venvPath = this.getVenvPythonPath();
+            if (fs.existsSync(venvPath)) {
+                console.log('[PYTHON] ✓ Virtual environment created successfully');
+                return venvPath;
+            }
         }
+        searchResults.push(`System Python: NOT FOUND (tried: python3, python${this.isWindows ? ', py -3' : ''})`);
+        console.log('[PYTHON] ✗ System Python not found');
 
         // 4. Download embeddable Python (Windows only)
         if (this.isWindows) {
-            console.log('[PYTHON] Downloading embeddable Python...');
-            await this.downloadEmbeddablePython();
-            return this.getBundledPythonPath();
+            console.log('[PYTHON] Step 4: Downloading embeddable Python (Windows)...');
+            try {
+                await this.downloadEmbeddablePython();
+                const downloadedPath = this.getBundledPythonPath();
+                if (fs.existsSync(downloadedPath)) {
+                    console.log('[PYTHON] ✓ Embeddable Python downloaded successfully');
+                    return downloadedPath;
+                }
+            } catch (downloadError) {
+                searchResults.push(`Embeddable Python Download: FAILED - ${downloadError.message}`);
+                console.log('[PYTHON] ✗ Failed to download embeddable Python:', downloadError.message);
+            }
         }
 
-        throw new Error('Python not found. Please install Python 3.10+ from python.org');
+        // All options exhausted - provide detailed error
+        console.log('[PYTHON] ═══════════════════════════════════════════');
+        console.log('[PYTHON] FAILED TO FIND PYTHON');
+        console.log('[PYTHON] ═══════════════════════════════════════════');
+        searchResults.forEach(r => console.log('[PYTHON]', r));
+
+        const errorMessage = `Python not found!\n\nSearched locations:\n${searchResults.map(r => '• ' + r).join('\n')}\n\n` +
+            `Solutions:\n` +
+            `1. Install Python 3.10+ from https://www.python.org/downloads/\n` +
+            `2. Make sure Python is added to your PATH during installation\n` +
+            `3. Or create a virtual environment manually:\n` +
+            `   cd backend && python3 -m venv venv && ./venv/bin/pip install -r requirements.txt`;
+
+        throw new Error(errorMessage);
     }
 
     getBundledPythonPath() {
@@ -299,8 +357,36 @@ class ServiceManager {
     getFrontendCommand() {
         // Use production build in production, dev server in development
         if (APP_CONFIG.isDevelopment) {
+            console.log('[FRONTEND] Development mode - using npm run dev');
             return { command: 'npm', args: ['run', 'dev'] };
         }
+
+        // In production, use the standalone Next.js server
+        const frontendPath = this.getFrontendPath();
+        console.log('[FRONTEND] Frontend path:', frontendPath);
+
+        // Next.js standalone output mirrors the project structure
+        // server.js is at .next/standalone/frontend/server.js (not .next/standalone/server.js)
+        const standalonePath = path.join(frontendPath, '.next', 'standalone', 'frontend');
+        const serverPath = path.join(standalonePath, 'server.js');
+
+        console.log('[FRONTEND] Looking for standalone server at:', serverPath);
+        console.log('[FRONTEND] Standalone path exists:', fs.existsSync(standalonePath));
+        console.log('[FRONTEND] Server.js exists:', fs.existsSync(serverPath));
+
+        // Check if standalone server exists
+        if (fs.existsSync(serverPath)) {
+            console.log('[FRONTEND] Using standalone server');
+            // The standalone server.js should be run from its directory
+            return {
+                command: 'node',
+                args: [serverPath],
+                cwd: standalonePath
+            };
+        }
+
+        // Fallback to npm start
+        console.log('[FRONTEND] Standalone not found, using npm start');
         return { command: 'npm', args: ['start'] };
     }
 
@@ -339,16 +425,27 @@ class ServiceManager {
     async startService(serviceName) {
         const config = this.config[serviceName];
 
-        console.log(`Starting ${serviceName} service...`);
+        console.log(`[${serviceName.toUpperCase()}] Starting service...`);
 
         return new Promise((resolve, reject) => {
-            const { command, args } = config.startCommand;
+            const { command, args, cwd: cmdCwd } = config.startCommand;
+
+            // Use command-specific cwd if provided, otherwise use config cwd
+            const workingDir = cmdCwd || config.cwd;
+
+            console.log(`[${serviceName.toUpperCase()}] Command: ${command} ${args.join(' ')}`);
+            console.log(`[${serviceName.toUpperCase()}] Working directory: ${workingDir}`);
+            console.log(`[${serviceName.toUpperCase()}] Directory exists: ${fs.existsSync(workingDir)}`);
+
+            // Use shell only for npm commands on Windows (npm.cmd requires shell)
+            // Direct executables (python, node) don't need shell - safer against injection
+            const needsShell = this.isWindows && (command === 'npm' || command.endsWith('npm.cmd'));
 
             const service = spawn(command, args, {
-                cwd: config.cwd,
+                cwd: workingDir,
                 env: config.env,
                 stdio: APP_CONFIG.isDevelopment ? 'inherit' : 'pipe',
-                shell: true
+                shell: needsShell
             });
 
             service.on('error', (error) => {

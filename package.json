@@ -15,8 +15,8 @@
     "dev:backend": "cd backend && python app.py",
     "dev:frontend": "cd frontend && npm run dev",
     "build:frontend": "cd frontend && npm run build",
-    "build:backend": "cd backend && pip install -r requirements.txt",
-    "build": "npm run build:frontend && npm run build:backend",
+    "build:backend": "echo Backend packages will be installed on first app run",
+    "build": "npm run build:frontend",
     "pack": "electron-builder --dir",
     "dist": "npm run build && electron-builder",
     "dist:linux": "npm run build && electron-builder --linux",
@@ -27,25 +27,31 @@
   "build": {
     "appId": "com.ryx.billing",
     "productName": "RYX Billing",
+    "artifactName": "${name}-${version}-${arch}.${ext}",
     "copyright": "Copyright © 2024 RYX Solutions",
     "directories": {
       "output": "dist"
     },
     "compression": "maximum",
     "asar": true,
+    "asarUnpack": [
+      "backend/**/*",
+      "frontend/**/*"
+    ],
     "files": [
       "desktop/**/*",
       "backend/**/*",
       "frontend/.next/**/*",
       "frontend/public/**/*",
       "frontend/package.json",
+      "frontend/next.config.js",
+      "frontend/node_modules/**/*",
       "!backend/venv/**/*",
       "!backend/__pycache__/**/*",
       "!backend/**/*.pyc",
       "!frontend/.next/cache/**/*",
-      "!frontend/node_modules/**/*",
       "!**/.git/**/*",
-      "!**/.env",
+      "!**/.env.local",
       "!**/dist/**/*",
       "!**/build/**/*"
     ],
@@ -86,11 +92,11 @@
           ]
         }
       ],
-      "icon": "desktop/resources/icon.png"
+      "icon": "desktop/resources/icon.ico"
     },
     "mac": {
       "target": "dmg",
-      "icon": "desktop/resources/icon.png",
+      "icon": "desktop/resources/icon.icns",
       "category": "public.app-category.business"
     },
     "nsis": {
@@ -110,11 +116,16 @@
   "devDependencies": {
     "cross-env": "^7.0.3",
     "dotenv": "^16.6.1",
-    "electron": "^28.3.3",
-    "electron-builder": "^24.9.1"
+    "electron-builder": "^24.9.1",
+    "electron-icon-builder": "^2.0.1",
+    "jimp": "^1.6.0",
+    "png-to-ico": "^3.0.1",
+    "sharp": "^0.34.5",
+    "to-ico": "^1.1.5"
   },
   "dependencies": {
     "axios": "^1.13.2",
+    "electron": "^33.2.1",
     "electron-updater": "^6.6.2"
   }
 }

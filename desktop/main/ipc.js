@@ -8,29 +8,71 @@ const path = require('path');
 const fs = require('fs').promises;
 const { APP_CONFIG, ConfigUtils } = require('../utils/config');
 
+// Track if handlers are already registered and store mainWindow reference
+let handlersRegistered = false;
+let currentMainWindow = null;
+
 /**
  * Setup all IPC handlers
+ * Can be called multiple times - first call registers handlers, subsequent calls update mainWindow
  */
 function setupIPC(mainWindow, serviceManager) {
+    // Always update the mainWindow reference
+    currentMainWindow = mainWindow;
+
+    // Only register handlers once to avoid "already registered" errors
+    if (handlersRegistered) {
+        console.log('IPC handlers already registered, updated mainWindow reference');
+        return;
+    }
+
     // System information handlers
     setupSystemHandlers();
 
-    // File operation handlers
-    setupFileHandlers(mainWindow);
+    // File operation handlers (use getter for mainWindow)
+    setupFileHandlers();
 
     // Service management handlers
     setupServiceHandlers(serviceManager);
 
-    // Printer handlers
-    setupPrinterHandlers(mainWindow);
+    // Printer handlers (use getter for mainWindow)
+    setupPrinterHandlers();
 
-    // Application handlers
-    setupAppHandlers(mainWindow);
+    // Application handlers (use getter for mainWindow)
+    setupAppHandlers();
 
     // Database handlers
     setupDatabaseHandlers();
 
+    handlersRegistered = true;
     console.log('IPC handlers initialized');
+}
+
+/**
+ * Get current main window (may be null during startup)
+ */
+function getMainWindow() {
+    return currentMainWindow;
+}
+
+/**
+ * Validate file path to prevent unauthorized file access
+ * Only allows access to user data directory and user-selected files via dialog
+ */
+function isPathAllowed(filePath) {
+    const normalizedPath = path.normalize(filePath);
+
+    // Get allowed directories
+    const allowedDirs = [
+        app.getPath('userData'),      // App data directory
+        app.getPath('documents'),     // User documents
+        app.getPath('downloads'),     // Downloads folder
+        app.getPath('desktop'),       // Desktop
+        app.getPath('temp'),          // Temp files
+    ];
+
+    // Check if path is within allowed directories
+    return allowedDirs.some(dir => normalizedPath.startsWith(dir));
 }
 
 /**
@@ -77,9 +119,10 @@ function setupSystemHandlers() {
 /**
  * File operation handlers
  */
-function setupFileHandlers(mainWindow) {
+function setupFileHandlers() {
     // Open file dialog
     ipcMain.handle('select-file', async (event, options = {}) => {
+        const mainWindow = getMainWindow();
         const defaultOptions = {
             properties: ['openFile'],
             filters: [
@@ -99,6 +142,7 @@ function setupFileHandlers(mainWindow) {
 
     // Open multiple files dialog
     ipcMain.handle('select-files', async (event, options = {}) => {
+        const mainWindow = getMainWindow();
         const defaultOptions = {
             properties: ['openFile', 'multiSelections'],
             filters: [
@@ -118,6 +162,7 @@ function setupFileHandlers(mainWindow) {
 
     // Save file dialog
     ipcMain.handle('save-file', async (event, options = {}) => {
+        const mainWindow = getMainWindow();
         const defaultOptions = {
             defaultPath: options.defaultName || 'untitled',
             filters: options.filters || [
@@ -145,8 +190,13 @@ function setupFileHandlers(mainWindow) {
         return result.filePath;
     });
 
-    // Read file content
+    // Read file content (with path validation)
     ipcMain.handle('read-file', async (event, filePath) => {
+        // Validate path to prevent unauthorized access
+        if (!isPathAllowed(filePath)) {
+            console.warn('[IPC] Blocked unauthorized file read:', filePath);
+            throw new Error('Access denied: File path not in allowed directories');
+        }
         try {
             const content = await fs.readFile(filePath, 'utf-8');
             return content;
@@ -156,8 +206,13 @@ function setupFileHandlers(mainWindow) {
         }
     });
 
-    // Write file content
+    // Write file content (with path validation)
     ipcMain.handle('write-file', async (event, filePath, content) => {
+        // Validate path to prevent unauthorized access
+        if (!isPathAllowed(filePath)) {
+            console.warn('[IPC] Blocked unauthorized file write:', filePath);
+            throw new Error('Access denied: File path not in allowed directories');
+        }
         try {
             await fs.writeFile(filePath, content, 'utf-8');
             return true;
@@ -169,6 +224,7 @@ function setupFileHandlers(mainWindow) {
 
     // Open folder dialog
     ipcMain.handle('select-folder', async () => {
+        const mainWindow = getMainWindow();
         const result = await dialog.showOpenDialog(mainWindow, {
             properties: ['openDirectory']
         });
@@ -239,9 +295,11 @@ function setupServiceHandlers(serviceManager) {
 /**
  * Printer handlers
  */
-function setupPrinterHandlers(mainWindow) {
+function setupPrinterHandlers() {
     // Get available printers
     ipcMain.handle('get-printers', async () => {
+        const mainWindow = getMainWindow();
+        if (!mainWindow) return [];
         try {
             const printers = await mainWindow.webContents.getPrintersAsync();
             return printers.map(printer => ({
@@ -260,6 +318,8 @@ function setupPrinterHandlers(mainWindow) {
 
     // Print document
     ipcMain.handle('print', async (event, options = {}) => {
+        const mainWindow = getMainWindow();
+        if (!mainWindow) return { success: false, error: 'Window not ready' };
         try {
             const printOptions = {
                 silent: options.silent || APP_CONFIG.printing.silentPrint,
@@ -277,6 +337,8 @@ function setupPrinterHandlers(mainWindow) {
 
     // Print to PDF
     ipcMain.handle('print-to-pdf', async (event, options = {}) => {
+        const mainWindow = getMainWindow();
+        if (!mainWindow) return { success: false, error: 'Window not ready' };
         try {
             const pdfOptions = {
                 marginsType: options.marginsType || 0,
@@ -304,9 +366,10 @@ function setupPrinterHandlers(mainWindow) {
 /**
  * Application handlers
  */
-function setupAppHandlers(mainWindow) {
+function setupAppHandlers() {
     // Show message box
     ipcMain.handle('show-message', async (event, options) => {
+        const mainWindow = getMainWindow();
         const result = await dialog.showMessageBox(mainWindow, options);
         return result;
     });
@@ -332,12 +395,15 @@ function setupAppHandlers(mainWindow) {
 
     // Minimize window
     ipcMain.handle('minimize-window', () => {
-        mainWindow.minimize();
+        const mainWindow = getMainWindow();
+        if (mainWindow) mainWindow.minimize();
         return true;
     });
 
     // Maximize window
     ipcMain.handle('maximize-window', () => {
+        const mainWindow = getMainWindow();
+        if (!mainWindow) return true;
         if (mainWindow.isMaximized()) {
             mainWindow.unmaximize();
         } else {
@@ -348,24 +414,30 @@ function setupAppHandlers(mainWindow) {
 
     // Close window
     ipcMain.handle('close-window', () => {
-        mainWindow.close();
+        const mainWindow = getMainWindow();
+        if (mainWindow) mainWindow.close();
         return true;
     });
 
     // Toggle fullscreen
     ipcMain.handle('toggle-fullscreen', () => {
+        const mainWindow = getMainWindow();
+        if (!mainWindow) return false;
         mainWindow.setFullScreen(!mainWindow.isFullScreen());
         return mainWindow.isFullScreen();
     });
 
     // Toggle DevTools
     ipcMain.handle('toggle-devtools', () => {
-        mainWindow.webContents.toggleDevTools();
+        const mainWindow = getMainWindow();
+        if (mainWindow) mainWindow.webContents.toggleDevTools();
         return true;
     });
 
     // Clear cache
     ipcMain.handle('clear-cache', async () => {
+        const mainWindow = getMainWindow();
+        if (!mainWindow) return { success: false, error: 'Window not ready' };
         try {
             await mainWindow.webContents.session.clearCache();
             return { success: true };
@@ -384,15 +456,64 @@ function setupAppHandlers(mainWindow) {
  * Database handlers
  */
 function setupDatabaseHandlers() {
-    // Check database connection
+    // Check database connection - actually verify by calling backend health endpoint
     ipcMain.handle('check-database', async () => {
-        // This would connect to your actual database
-        // For now, returning mock status
-        return {
-            connected: true,
-            type: APP_CONFIG.database.useLocal ? 'local' : 'cloud',
-            status: 'healthy'
-        };
+        const http = require('http');
+
+        return new Promise((resolve) => {
+            const options = {
+                hostname: 'localhost',
+                port: APP_CONFIG.backend.port,
+                path: '/api/health',
+                method: 'GET',
+                timeout: 5000
+            };
+
+            const req = http.request(options, (res) => {
+                let data = '';
+                res.on('data', chunk => data += chunk);
+                res.on('end', () => {
+                    try {
+                        const health = JSON.parse(data);
+                        resolve({
+                            connected: res.statusCode === 200 && health.status === 'healthy',
+                            type: APP_CONFIG.database.useLocal ? 'local' : 'cloud',
+                            status: health.database?.connected ? 'healthy' : 'degraded',
+                            details: health
+                        });
+                    } catch (e) {
+                        resolve({
+                            connected: res.statusCode === 200,
+                            type: APP_CONFIG.database.useLocal ? 'local' : 'cloud',
+                            status: 'unknown',
+                            error: 'Failed to parse health response'
+                        });
+                    }
+                });
+            });
+
+            req.on('error', (error) => {
+                console.error('[DATABASE] Health check failed:', error.message);
+                resolve({
+                    connected: false,
+                    type: APP_CONFIG.database.useLocal ? 'local' : 'cloud',
+                    status: 'error',
+                    error: error.message
+                });
+            });
+
+            req.on('timeout', () => {
+                req.destroy();
+                resolve({
+                    connected: false,
+                    type: APP_CONFIG.database.useLocal ? 'local' : 'cloud',
+                    status: 'timeout',
+                    error: 'Backend health check timed out'
+                });
+            });
+
+            req.end();
+        });
     });
 
     // Switch database mode

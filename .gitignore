@@ -1,5 +1,3 @@
-
-
 # Python
 __pycache__/
 *.py[cod]
@@ -8,7 +6,6 @@ __pycache__/
 .Python
 build/
 develop-eggs/
-dist/
 downloads/
 eggs/
 .eggs/
@@ -23,7 +20,7 @@ wheels/
 MANIFEST
 venv/
 .venv/
-
+backend/venv/
 
 # Next.js
 frontend/.next/
@@ -68,5 +65,30 @@ htmlcov/
 *.tmp
 temp/
 tmp/
-frontend/.env
+
+# Environment files
 .env
+.env.local
+.env.*.local
+backend/.env
+frontend/.env
+
+# Electron / Desktop Build
+dist/
+*.AppImage
+*.deb
+*.rpm
+*.snap
+*.dmg
+*.exe
+*.msi
+deb-extract/
+squashfs-root/
+desktop/resources/python/
+
+# Test files in root
+test*.js
+simple-test.js
+
+# Claude settings (local only)
+.claude/settings.local.json

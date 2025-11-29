@@ -399,8 +399,13 @@ app = create_app()
 
 if __name__ == '__main__':
     with app.app_context():
-        db.create_all()
-    
+        # Only create tables if they don't exist - skip if schema conflicts
+        try:
+            db.create_all()
+        except Exception as e:
+            print(f"⚠️  db.create_all() skipped: {e}")
+            print("Database tables likely already exist - continuing...")
+
     # ✅ Use environment PORT if available (Render/Railway sets this)
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=app.config.get('DEBUG', False))

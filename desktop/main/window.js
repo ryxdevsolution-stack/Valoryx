@@ -50,17 +50,30 @@ class WindowManager {
         this.mainWindowId = window.id;
         this.windows.set(window.id, window);
 
-        // Load the application
+        // Load the application with retry logic
         const startUrl = APP_CONFIG.frontend.url;
-        console.log(`Loading application from: ${startUrl}`);
+        console.log(`[WINDOW] Loading application from: ${startUrl}`);
 
-        try {
-            await window.loadURL(startUrl);
-        } catch (error) {
-            console.error('Failed to load application:', error);
-            // Try again after a delay
-            await new Promise(resolve => setTimeout(resolve, 2000));
-            await window.loadURL(startUrl);
+        const MAX_RETRIES = 3;
+        const RETRY_DELAY = 2000;
+
+        for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+                console.log(`[WINDOW] Load attempt ${attempt}/${MAX_RETRIES}...`);
+                await window.loadURL(startUrl);
+                console.log(`[WINDOW] Successfully loaded on attempt ${attempt}`);
+                break;
+            } catch (error) {
+                console.error(`[WINDOW] Failed to load (attempt ${attempt}):`, error.message);
+
+                if (attempt === MAX_RETRIES) {
+                    console.error('[WINDOW] All load attempts failed');
+                    throw new Error(`Failed to load application after ${MAX_RETRIES} attempts. Frontend may not be running. URL: ${startUrl}`);
+                }
+
+                console.log(`[WINDOW] Retrying in ${RETRY_DELAY}ms...`);
+                await new Promise(resolve => setTimeout(resolve, RETRY_DELAY));
+            }
         }
 
         // Window event handlers
@@ -178,29 +191,31 @@ class WindowManager {
      * Get the appropriate icon path for the platform
      */
     getIconPath() {
-        const iconDir = path.join(__dirname, '../resources/icons');
+        const resourcesDir = path.join(__dirname, '../resources');
+        const fs = require('fs');
 
+        // Check for platform-specific icon in resources directory
         if (process.platform === 'win32') {
-            const iconPath = path.join(iconDir, 'icon.ico');
-            if (require('fs').existsSync(iconPath)) {
+            const iconPath = path.join(resourcesDir, 'icon.ico');
+            if (fs.existsSync(iconPath)) {
                 return iconPath;
             }
         } else if (process.platform === 'darwin') {
-            const iconPath = path.join(iconDir, 'icon.icns');
-            if (require('fs').existsSync(iconPath)) {
-                return iconPath;
-            }
-        } else {
-            // Linux and others
-            const iconPath = path.join(iconDir, 'icon.png');
-            if (require('fs').existsSync(iconPath)) {
+            const iconPath = path.join(resourcesDir, 'icon.icns');
+            if (fs.existsSync(iconPath)) {
                 return iconPath;
             }
         }
 
+        // Default to PNG icon (works on Linux and as fallback)
+        const pngIconPath = path.join(resourcesDir, 'icon.png');
+        if (fs.existsSync(pngIconPath)) {
+            return pngIconPath;
+        }
+
         // Fallback to frontend public directory
         const publicIconPath = path.join(APP_CONFIG.paths.frontend, 'public', 'icon.png');
-        if (require('fs').existsSync(publicIconPath)) {
+        if (fs.existsSync(publicIconPath)) {
             return publicIconPath;
         }
 
