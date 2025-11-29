@@ -60,7 +60,11 @@ function getMainWindow() {
  * Only allows access to user data directory and user-selected files via dialog
  */
 function isPathAllowed(filePath) {
-    const normalizedPath = path.normalize(filePath);
+    if (!filePath || typeof filePath !== 'string') {
+        return false;
+    }
+
+    const normalizedPath = path.normalize(path.resolve(filePath));
 
     // Get allowed directories
     const allowedDirs = [
@@ -72,7 +76,12 @@ function isPathAllowed(filePath) {
     ];
 
     // Check if path is within allowed directories
-    return allowedDirs.some(dir => normalizedPath.startsWith(dir));
+    // Use path separator to prevent prefix bypass (e.g., /documents_malicious)
+    return allowedDirs.some(dir => {
+        const normalizedDir = path.normalize(dir);
+        const dirWithSep = normalizedDir.endsWith(path.sep) ? normalizedDir : normalizedDir + path.sep;
+        return normalizedPath === normalizedDir || normalizedPath.startsWith(dirWithSep);
+    });
 }
 
 /**
@@ -340,6 +349,12 @@ function setupPrinterHandlers() {
         const mainWindow = getMainWindow();
         if (!mainWindow) return { success: false, error: 'Window not ready' };
         try {
+            // Validate savePath if provided
+            if (options.savePath && !isPathAllowed(options.savePath)) {
+                console.warn('[IPC] Blocked unauthorized PDF save path:', options.savePath);
+                return { success: false, error: 'Access denied: Save path not in allowed directories' };
+            }
+
             const pdfOptions = {
                 marginsType: options.marginsType || 0,
                 pageSize: options.pageSize || 'A4',
@@ -370,7 +385,10 @@ function setupAppHandlers() {
     // Show message box
     ipcMain.handle('show-message', async (event, options) => {
         const mainWindow = getMainWindow();
-        const result = await dialog.showMessageBox(mainWindow, options);
+        // dialog.showMessageBox works without parent window, but we prefer attaching to mainWindow if available
+        const result = mainWindow
+            ? await dialog.showMessageBox(mainWindow, options)
+            : await dialog.showMessageBox(options);
         return result;
     });
 
