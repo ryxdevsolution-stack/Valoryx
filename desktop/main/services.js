@@ -112,9 +112,17 @@ class ServiceManager {
 
         // 2. Check for existing venv in backend
         const venvPython = this.getVenvPythonPath();
+        const venvPath = this.getVenvPath();
         console.log('[PYTHON] Step 2: Checking virtual environment at:', venvPython);
         if (fs.existsSync(venvPython)) {
             console.log('[PYTHON] ✓ Found existing venv:', venvPython);
+
+            // Verify requirements are installed, install if missing
+            if (!this.verifyRequirementsInstalled(venvPath)) {
+                console.log('[PYTHON] Requirements not installed in existing venv, installing...');
+                await this.installRequirements(venvPath);
+            }
+
             return venvPython;
         }
         searchResults.push(`Virtual Environment: NOT FOUND at ${venvPython}`);
@@ -225,8 +233,37 @@ class ServiceManager {
             fs.mkdirSync(venvParent, { recursive: true });
         }
 
+        const venvPip = this.isWindows
+            ? path.join(venvPath, 'Scripts', 'pip.exe')
+            : path.join(venvPath, 'bin', 'pip');
+
+        const requirementsPath = path.join(backendPath, 'requirements.txt');
+
+        // Check if venv already exists
         if (fs.existsSync(venvPath)) {
-            console.log('[PYTHON] Venv already exists');
+            console.log('[PYTHON] Venv already exists at:', venvPath);
+
+            // Verify Flask is installed (check if requirements are actually installed)
+            if (this.verifyRequirementsInstalled(venvPath)) {
+                console.log('[PYTHON] Requirements already installed');
+                return;
+            }
+
+            // Requirements not installed - install them now
+            console.log('[PYTHON] Requirements not installed, installing now...');
+            if (fs.existsSync(requirementsPath) && fs.existsSync(venvPip)) {
+                try {
+                    execSync(`"${venvPip}" install -r "${requirementsPath}"`, {
+                        cwd: backendPath,
+                        stdio: 'inherit',
+                        windowsHide: true
+                    });
+                    console.log('[PYTHON] Requirements installed successfully');
+                } catch (error) {
+                    console.error('[PYTHON] Failed to install requirements:', error);
+                    throw error;
+                }
+            }
             return;
         }
 
@@ -247,12 +284,6 @@ class ServiceManager {
             });
 
             // Install requirements
-            const venvPip = this.isWindows
-                ? path.join(venvPath, 'Scripts', 'pip.exe')
-                : path.join(venvPath, 'bin', 'pip');
-
-            const requirementsPath = path.join(backendPath, 'requirements.txt');
-
             if (fs.existsSync(requirementsPath)) {
                 console.log('[PYTHON] Installing requirements...');
                 execSync(`"${venvPip}" install -r "${requirementsPath}"`, {
@@ -265,6 +296,64 @@ class ServiceManager {
             console.log('[PYTHON] Virtual environment setup complete');
         } catch (error) {
             console.error('[PYTHON] Failed to setup venv:', error);
+            throw error;
+        }
+    }
+
+    verifyRequirementsInstalled(venvPath) {
+        // Check if Flask is installed by looking for flask package in site-packages
+        const sitePackages = this.isWindows
+            ? path.join(venvPath, 'Lib', 'site-packages', 'flask')
+            : path.join(venvPath, 'lib', 'python*', 'site-packages', 'flask');
+
+        if (this.isWindows) {
+            // On Windows, directly check the path
+            const exists = fs.existsSync(sitePackages);
+            console.log('[PYTHON] Flask package check:', sitePackages, 'exists:', exists);
+            return exists;
+        } else {
+            // On Linux/Mac, need to handle python version wildcard
+            const libPath = path.join(venvPath, 'lib');
+            if (!fs.existsSync(libPath)) return false;
+
+            const pythonDirs = fs.readdirSync(libPath).filter(d => d.startsWith('python'));
+            for (const pyDir of pythonDirs) {
+                const flaskPath = path.join(libPath, pyDir, 'site-packages', 'flask');
+                if (fs.existsSync(flaskPath)) return true;
+            }
+            return false;
+        }
+    }
+
+    async installRequirements(venvPath) {
+        const backendPath = this.getBackendPath();
+        const venvPip = this.isWindows
+            ? path.join(venvPath, 'Scripts', 'pip.exe')
+            : path.join(venvPath, 'bin', 'pip');
+
+        const requirementsPath = path.join(backendPath, 'requirements.txt');
+
+        console.log('[PYTHON] Installing requirements...');
+        console.log('[PYTHON] Pip path:', venvPip);
+        console.log('[PYTHON] Requirements path:', requirementsPath);
+
+        if (!fs.existsSync(venvPip)) {
+            throw new Error(`Pip not found at ${venvPip}`);
+        }
+
+        if (!fs.existsSync(requirementsPath)) {
+            throw new Error(`Requirements file not found at ${requirementsPath}`);
+        }
+
+        try {
+            execSync(`"${venvPip}" install -r "${requirementsPath}"`, {
+                cwd: backendPath,
+                stdio: 'inherit',
+                windowsHide: true
+            });
+            console.log('[PYTHON] Requirements installed successfully');
+        } catch (error) {
+            console.error('[PYTHON] Failed to install requirements:', error);
             throw error;
         }
     }
@@ -284,24 +373,34 @@ class ServiceManager {
         const frontendPath = this.getFrontendPath();
         console.log('[FRONTEND] Frontend path:', frontendPath);
 
-        // Next.js standalone output mirrors the project structure
-        // server.js is at .next/standalone/frontend/server.js (not .next/standalone/server.js)
-        const standalonePath = path.join(frontendPath, '.next', 'standalone', 'frontend');
+        // Next.js standalone output structure:
+        // .next/standalone/
+        //   ├── node_modules/     <- shared node_modules (including 'next')
+        //   ├── server.js         <- main entry (or in frontend/ subfolder)
+        //   └── frontend/
+        //       └── server.js     <- project-specific server
+        const standaloneRoot = path.join(frontendPath, '.next', 'standalone');
+        const standalonePath = path.join(standaloneRoot, 'frontend');
         const serverPath = path.join(standalonePath, 'server.js');
+        const nodeModulesPath = path.join(standaloneRoot, 'node_modules');
 
         console.log('[FRONTEND] Looking for standalone server at:', serverPath);
-        console.log('[FRONTEND] Standalone path exists:', fs.existsSync(standalonePath));
+        console.log('[FRONTEND] Standalone root:', standaloneRoot);
+        console.log('[FRONTEND] node_modules path:', nodeModulesPath);
         console.log('[FRONTEND] Server.js exists:', fs.existsSync(serverPath));
+        console.log('[FRONTEND] node_modules exists:', fs.existsSync(nodeModulesPath));
 
         // Check if standalone server exists
         if (fs.existsSync(serverPath)) {
             console.log('[FRONTEND] Using standalone server');
             // Use fork() which uses Electron's built-in Node.js
+            // NODE_PATH tells Node.js where to find modules (since server.js is in frontend/ subfolder)
             return {
                 command: 'node',  // Not actually used when useElectronNode is true
                 args: [serverPath],
                 cwd: standalonePath,
-                useElectronNode: true  // Flag to use fork() instead of spawn()
+                useElectronNode: true,  // Flag to use fork() instead of spawn()
+                nodeModulesPath: nodeModulesPath  // Pass node_modules path for NODE_PATH
             };
         }
 
@@ -348,7 +447,7 @@ class ServiceManager {
         console.log(`[${serviceName.toUpperCase()}] Starting service...`);
 
         return new Promise((resolve, reject) => {
-            const { command, args, cwd: cmdCwd, useElectronNode } = config.startCommand;
+            const { command, args, cwd: cmdCwd, useElectronNode, nodeModulesPath } = config.startCommand;
 
             // Use command-specific cwd if provided, otherwise use config cwd
             const workingDir = cmdCwd || config.cwd;
@@ -363,9 +462,19 @@ class ServiceManager {
             if (useElectronNode && args.length > 0) {
                 const scriptPath = args[args.length - 1]; // Last arg is the script path
                 console.log(`[${serviceName.toUpperCase()}] Using fork for Node.js script: ${scriptPath}`);
+
+                // Build environment with NODE_PATH for module resolution
+                const forkEnv = { ...config.env };
+                if (nodeModulesPath) {
+                    // NODE_PATH tells Node.js where to find modules
+                    // This is needed because server.js is in a subfolder but node_modules is in parent
+                    forkEnv.NODE_PATH = nodeModulesPath;
+                    console.log(`[${serviceName.toUpperCase()}] Setting NODE_PATH: ${nodeModulesPath}`);
+                }
+
                 service = fork(scriptPath, [], {
                     cwd: workingDir,
-                    env: config.env,
+                    env: forkEnv,
                     stdio: APP_CONFIG.isDevelopment ? 'inherit' : 'pipe',
                     silent: !APP_CONFIG.isDevelopment
                 });

@@ -55,6 +55,13 @@
       "!**/dist/**/*",
       "!**/build/**/*"
     ],
+    "extraFiles": [
+      {
+        "from": "frontend/.next/standalone/node_modules",
+        "to": "resources/app.asar.unpacked/frontend/.next/standalone/node_modules",
+        "filter": ["**/*"]
+      }
+    ],
     "extraResources": [
       {
         "from": "desktop/resources",
