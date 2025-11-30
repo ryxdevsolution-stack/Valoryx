@@ -137,22 +137,6 @@ class ServiceManager {
         searchResults.push(`System Python: NOT FOUND (tried: python3, python${this.isWindows ? ', py -3' : ''})`);
         console.log('[PYTHON] ✗ System Python not found');
 
-        // 4. Download embeddable Python (Windows only)
-        if (this.isWindows) {
-            console.log('[PYTHON] Step 4: Downloading embeddable Python (Windows)...');
-            try {
-                await this.downloadEmbeddablePython();
-                const downloadedPath = this.getBundledPythonPath();
-                if (fs.existsSync(downloadedPath)) {
-                    console.log('[PYTHON] ✓ Embeddable Python downloaded successfully');
-                    return downloadedPath;
-                }
-            } catch (downloadError) {
-                searchResults.push(`Embeddable Python Download: FAILED - ${downloadError.message}`);
-                console.log('[PYTHON] ✗ Failed to download embeddable Python:', downloadError.message);
-            }
-        }
-
         // All options exhausted - provide detailed error
         console.log('[PYTHON] ═══════════════════════════════════════════');
         console.log('[PYTHON] FAILED TO FIND PYTHON');
@@ -223,7 +207,6 @@ class ServiceManager {
     }
 
     async setupVirtualEnv(pythonPath) {
-        const { spawnSync } = require('child_process');
         const backendPath = this.getBackendPath();
         const venvPath = path.join(backendPath, 'venv');
 
@@ -237,20 +220,16 @@ class ServiceManager {
         console.log('[PYTHON] Venv path:', venvPath);
 
         try {
-            // Use spawnSync with array arguments to avoid shell escaping issues
-            const venvResult = spawnSync(pythonPath, ['-m', 'venv', venvPath], {
+            // On Windows, use 'python' command directly since execSync works with shell
+            // This avoids issues with Electron GUI apps not inheriting PATH properly
+            const pythonCmd = this.isWindows ? 'python' : pythonPath;
+
+            console.log('[PYTHON] Running venv creation with command:', pythonCmd);
+            execSync(`${pythonCmd} -m venv "${venvPath}"`, {
                 cwd: backendPath,
                 stdio: 'inherit',
                 windowsHide: true
             });
-
-            if (venvResult.error) {
-                throw venvResult.error;
-            }
-
-            if (venvResult.status !== 0) {
-                throw new Error(`venv creation failed with exit code ${venvResult.status}`);
-            }
 
             // Install requirements
             const venvPip = this.isWindows
@@ -261,19 +240,11 @@ class ServiceManager {
 
             if (fs.existsSync(requirementsPath)) {
                 console.log('[PYTHON] Installing requirements...');
-                const pipResult = spawnSync(venvPip, ['install', '-r', requirementsPath], {
+                execSync(`"${venvPip}" install -r "${requirementsPath}"`, {
                     cwd: backendPath,
                     stdio: 'inherit',
                     windowsHide: true
                 });
-
-                if (pipResult.error) {
-                    throw pipResult.error;
-                }
-
-                if (pipResult.status !== 0) {
-                    throw new Error(`pip install failed with exit code ${pipResult.status}`);
-                }
             }
 
             console.log('[PYTHON] Virtual environment setup complete');
@@ -281,101 +252,6 @@ class ServiceManager {
             console.error('[PYTHON] Failed to setup venv:', error);
             throw error;
         }
-    }
-
-    async downloadEmbeddablePython() {
-        const https = require('https');
-        const { createWriteStream, mkdirSync } = require('fs');
-        const { pipeline } = require('stream/promises');
-        const { createGunzip } = require('zlib');
-
-        const pythonVersion = '3.11.7';
-        const downloadUrl = `https://www.python.org/ftp/python/${pythonVersion}/python-${pythonVersion}-embed-amd64.zip`;
-
-        const resourcesPath = this.isPackaged()
-            ? path.join(process.resourcesPath, 'python')
-            : path.join(__dirname, '../resources/python');
-
-        mkdirSync(resourcesPath, { recursive: true });
-
-        const zipPath = path.join(resourcesPath, 'python.zip');
-
-        // Download
-        console.log('[PYTHON] Downloading from:', downloadUrl);
-
-        await new Promise((resolve, reject) => {
-            const file = createWriteStream(zipPath);
-            https.get(downloadUrl, (response) => {
-                response.pipe(file);
-                file.on('finish', () => {
-                    file.close();
-                    resolve();
-                });
-            }).on('error', reject);
-        });
-
-        // Extract using PowerShell on Windows
-        console.log('[PYTHON] Extracting...');
-        execSync(`powershell -command "Expand-Archive -Path '${zipPath}' -DestinationPath '${resourcesPath}' -Force"`, {
-            stdio: 'inherit'
-        });
-
-        // Clean up zip
-        fs.unlinkSync(zipPath);
-
-        // Install pip for embeddable Python
-        await this.installPipForEmbeddable(resourcesPath);
-
-        console.log('[PYTHON] Embeddable Python ready');
-    }
-
-    async installPipForEmbeddable(pythonDir) {
-        const https = require('https');
-        const { createWriteStream } = require('fs');
-
-        const getPipUrl = 'https://bootstrap.pypa.io/get-pip.py';
-        const getPipPath = path.join(pythonDir, 'get-pip.py');
-        const pythonExe = path.join(pythonDir, 'python.exe');
-
-        // Download get-pip.py
-        await new Promise((resolve, reject) => {
-            const file = createWriteStream(getPipPath);
-            https.get(getPipUrl, (response) => {
-                response.pipe(file);
-                file.on('finish', () => {
-                    file.close();
-                    resolve();
-                });
-            }).on('error', reject);
-        });
-
-        // Enable pip in embeddable Python (modify python311._pth)
-        const pthFiles = fs.readdirSync(pythonDir).filter(f => f.endsWith('._pth'));
-        for (const pthFile of pthFiles) {
-            const pthPath = path.join(pythonDir, pthFile);
-            let content = fs.readFileSync(pthPath, 'utf8');
-            // Uncomment import site
-            content = content.replace('#import site', 'import site');
-            content += '\nLib\\site-packages\n';
-            fs.writeFileSync(pthPath, content);
-        }
-
-        // Install pip
-        execSync(`"${pythonExe}" "${getPipPath}"`, { stdio: 'inherit' });
-
-        // Install requirements
-        const backendPath = this.getBackendPath();
-        const requirementsPath = path.join(backendPath, 'requirements.txt');
-
-        if (fs.existsSync(requirementsPath)) {
-            console.log('[PYTHON] Installing requirements with embeddable Python...');
-            execSync(`"${pythonExe}" -m pip install -r "${requirementsPath}"`, {
-                stdio: 'inherit'
-            });
-        }
-
-        // Clean up
-        fs.unlinkSync(getPipPath);
     }
 
     getBackendCommand() {
