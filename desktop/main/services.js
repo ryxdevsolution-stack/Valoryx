@@ -164,12 +164,21 @@ class ServiceManager {
         return path.join(resourcesPath, 'python', 'bin', 'python3');
     }
 
-    getVenvPythonPath() {
-        const backendPath = this.getBackendPath();
-        if (this.isWindows) {
-            return path.join(backendPath, 'venv', 'Scripts', 'python.exe');
+    getVenvPath() {
+        // On Windows packaged app, use AppData to avoid Program Files permission issues
+        if (this.isWindows && this.isPackaged()) {
+            const appDataPath = process.env.LOCALAPPDATA || process.env.APPDATA;
+            return path.join(appDataPath, 'RYX Billing', 'venv');
         }
-        return path.join(backendPath, 'venv', 'bin', 'python');
+        return path.join(this.getBackendPath(), 'venv');
+    }
+
+    getVenvPythonPath() {
+        const venvPath = this.getVenvPath();
+        if (this.isWindows) {
+            return path.join(venvPath, 'Scripts', 'python.exe');
+        }
+        return path.join(venvPath, 'bin', 'python');
     }
 
     findSystemPython() {
@@ -208,7 +217,13 @@ class ServiceManager {
 
     async setupVirtualEnv(pythonPath) {
         const backendPath = this.getBackendPath();
-        const venvPath = path.join(backendPath, 'venv');
+        const venvPath = this.getVenvPath();
+
+        // Ensure parent directory exists (for AppData path on Windows)
+        const venvParent = path.dirname(venvPath);
+        if (!fs.existsSync(venvParent)) {
+            fs.mkdirSync(venvParent, { recursive: true });
+        }
 
         if (fs.existsSync(venvPath)) {
             console.log('[PYTHON] Venv already exists');
