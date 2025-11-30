@@ -203,7 +203,11 @@ class ServiceManager {
                         ? `where ${cmd.split(' ')[0]}`
                         : `which ${cmd}`;
                     try {
-                        const pythonPath = execSync(pathCmd, { encoding: 'utf8' }).trim().split('\n')[0];
+                        // Remove both \r and \n to handle Windows line endings properly
+                        const pythonPath = execSync(pathCmd, { encoding: 'utf8' })
+                            .replace(/\r/g, '')
+                            .trim()
+                            .split('\n')[0];
                         return pythonPath;
                     } catch {
                         return cmd;
@@ -217,6 +221,7 @@ class ServiceManager {
     }
 
     async setupVirtualEnv(pythonPath) {
+        const { spawnSync } = require('child_process');
         const backendPath = this.getBackendPath();
         const venvPath = path.join(backendPath, 'venv');
 
@@ -226,12 +231,24 @@ class ServiceManager {
         }
 
         console.log('[PYTHON] Creating virtual environment...');
+        console.log('[PYTHON] Using Python:', pythonPath);
+        console.log('[PYTHON] Venv path:', venvPath);
 
         try {
-            execSync(`"${pythonPath}" -m venv "${venvPath}"`, {
+            // Use spawnSync with array arguments to avoid shell escaping issues
+            const venvResult = spawnSync(pythonPath, ['-m', 'venv', venvPath], {
                 cwd: backendPath,
-                stdio: 'inherit'
+                stdio: 'inherit',
+                windowsHide: true
             });
+
+            if (venvResult.error) {
+                throw venvResult.error;
+            }
+
+            if (venvResult.status !== 0) {
+                throw new Error(`venv creation failed with exit code ${venvResult.status}`);
+            }
 
             // Install requirements
             const venvPip = this.isWindows
@@ -242,10 +259,19 @@ class ServiceManager {
 
             if (fs.existsSync(requirementsPath)) {
                 console.log('[PYTHON] Installing requirements...');
-                execSync(`"${venvPip}" install -r "${requirementsPath}"`, {
+                const pipResult = spawnSync(venvPip, ['install', '-r', requirementsPath], {
                     cwd: backendPath,
-                    stdio: 'inherit'
+                    stdio: 'inherit',
+                    windowsHide: true
                 });
+
+                if (pipResult.error) {
+                    throw pipResult.error;
+                }
+
+                if (pipResult.status !== 0) {
+                    throw new Error(`pip install failed with exit code ${pipResult.status}`);
+                }
             }
 
             console.log('[PYTHON] Virtual environment setup complete');
