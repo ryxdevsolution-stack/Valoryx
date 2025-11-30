@@ -3,7 +3,7 @@
  * Handles starting, stopping, and monitoring of backend and frontend services
  */
 
-const { spawn, execSync } = require('child_process');
+const { spawn, execSync, fork } = require('child_process');
 const path = require('path');
 const fs = require('fs');
 const { checkPort, waitForService } = require('../utils/health-check');
@@ -296,11 +296,12 @@ class ServiceManager {
         // Check if standalone server exists
         if (fs.existsSync(serverPath)) {
             console.log('[FRONTEND] Using standalone server');
-            // The standalone server.js should be run from its directory
+            // Use fork() which uses Electron's built-in Node.js
             return {
-                command: 'node',
+                command: 'node',  // Not actually used when useElectronNode is true
                 args: [serverPath],
-                cwd: standalonePath
+                cwd: standalonePath,
+                useElectronNode: true  // Flag to use fork() instead of spawn()
             };
         }
 
@@ -347,7 +348,7 @@ class ServiceManager {
         console.log(`[${serviceName.toUpperCase()}] Starting service...`);
 
         return new Promise((resolve, reject) => {
-            const { command, args, cwd: cmdCwd } = config.startCommand;
+            const { command, args, cwd: cmdCwd, useElectronNode } = config.startCommand;
 
             // Use command-specific cwd if provided, otherwise use config cwd
             const workingDir = cmdCwd || config.cwd;
@@ -356,16 +357,30 @@ class ServiceManager {
             console.log(`[${serviceName.toUpperCase()}] Working directory: ${workingDir}`);
             console.log(`[${serviceName.toUpperCase()}] Directory exists: ${fs.existsSync(workingDir)}`);
 
-            // Use shell only for npm commands on Windows (npm.cmd requires shell)
-            // Direct executables (python, node) don't need shell - safer against injection
-            const needsShell = this.isWindows && (command === 'npm' || command.endsWith('npm.cmd'));
+            let service;
 
-            const service = spawn(command, args, {
-                cwd: workingDir,
-                env: config.env,
-                stdio: APP_CONFIG.isDevelopment ? 'inherit' : 'pipe',
-                shell: needsShell
-            });
+            // Use fork for Node.js scripts (uses Electron's built-in Node.js)
+            if (useElectronNode && args.length > 0) {
+                const scriptPath = args[args.length - 1]; // Last arg is the script path
+                console.log(`[${serviceName.toUpperCase()}] Using fork for Node.js script: ${scriptPath}`);
+                service = fork(scriptPath, [], {
+                    cwd: workingDir,
+                    env: config.env,
+                    stdio: APP_CONFIG.isDevelopment ? 'inherit' : 'pipe',
+                    silent: !APP_CONFIG.isDevelopment
+                });
+            } else {
+                // Use shell only for npm commands on Windows (npm.cmd requires shell)
+                // Direct executables (python, node) don't need shell - safer against injection
+                const needsShell = this.isWindows && (command === 'npm' || command.endsWith('npm.cmd'));
+
+                service = spawn(command, args, {
+                    cwd: workingDir,
+                    env: config.env,
+                    stdio: APP_CONFIG.isDevelopment ? 'inherit' : 'pipe',
+                    shell: needsShell
+                });
+            }
 
             service.on('error', (error) => {
                 console.error(`Failed to start ${serviceName}:`, error);
