@@ -113,20 +113,29 @@ class ServiceManager {
         // 2. Check for existing venv in backend
         const venvPython = this.getVenvPythonPath();
         const venvPath = this.getVenvPath();
+        const venvPip = this.isWindows
+            ? path.join(venvPath, 'Scripts', 'pip.exe')
+            : path.join(venvPath, 'bin', 'pip');
+
         console.log('[PYTHON] Step 2: Checking virtual environment at:', venvPython);
         if (fs.existsSync(venvPython)) {
             console.log('[PYTHON] ✓ Found existing venv:', venvPython);
 
-            // Verify requirements are installed, install if missing
-            if (!this.verifyRequirementsInstalled(venvPath)) {
-                console.log('[PYTHON] Requirements not installed in existing venv, installing...');
-                await this.installRequirements(venvPath);
+            // Check if venv is valid (has pip) - if not, delete and recreate
+            if (!fs.existsSync(venvPip)) {
+                console.log('[PYTHON] ✗ Venv is corrupted (pip missing), deleting and recreating...');
+                this.deleteDirectory(venvPath);
+            } else {
+                // Verify requirements are installed, install if missing
+                if (!this.verifyRequirementsInstalled(venvPath)) {
+                    console.log('[PYTHON] Requirements not installed in existing venv, installing...');
+                    await this.installRequirements(venvPath);
+                }
+                return venvPython;
             }
-
-            return venvPython;
         }
         searchResults.push(`Virtual Environment: NOT FOUND at ${venvPython}`);
-        console.log('[PYTHON] ✗ Virtual environment not found');
+        console.log('[PYTHON] ✗ Virtual environment not found or corrupted');
 
         // 3. Check for system Python
         console.log('[PYTHON] Step 3: Checking system Python...');
@@ -297,6 +306,28 @@ class ServiceManager {
         } catch (error) {
             console.error('[PYTHON] Failed to setup venv:', error);
             throw error;
+        }
+    }
+
+    deleteDirectory(dirPath) {
+        // Recursively delete a directory
+        if (fs.existsSync(dirPath)) {
+            console.log('[PYTHON] Deleting directory:', dirPath);
+            try {
+                fs.rmSync(dirPath, { recursive: true, force: true });
+                console.log('[PYTHON] Directory deleted successfully');
+            } catch (error) {
+                console.error('[PYTHON] Failed to delete directory:', error);
+                // Try alternative method on Windows
+                if (this.isWindows) {
+                    try {
+                        execSync(`rmdir /s /q "${dirPath}"`, { windowsHide: true });
+                        console.log('[PYTHON] Directory deleted with rmdir');
+                    } catch (e) {
+                        console.error('[PYTHON] rmdir also failed:', e);
+                    }
+                }
+            }
         }
     }
 
