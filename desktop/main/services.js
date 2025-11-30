@@ -60,8 +60,9 @@ class ServiceManager {
     getBackendPath() {
         // Handle both development and packaged app paths
         if (this.isPackaged()) {
-            // In packaged app, unpacked files are in app.asar.unpacked
-            const unpackedPath = path.join(path.dirname(require.main.filename), '..', 'app.asar.unpacked', 'backend');
+            // In packaged app, unpacked files are in resources/app.asar.unpacked
+            // Use process.resourcesPath which gives us the resources directory
+            const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'backend');
             console.log('[PATHS] Backend path (packaged):', unpackedPath);
             return unpackedPath;
         }
@@ -72,7 +73,8 @@ class ServiceManager {
 
     getFrontendPath() {
         if (this.isPackaged()) {
-            const unpackedPath = path.join(path.dirname(require.main.filename), '..', 'app.asar.unpacked', 'frontend');
+            // Use process.resourcesPath for correct path resolution
+            const unpackedPath = path.join(process.resourcesPath, 'app.asar.unpacked', 'frontend');
             console.log('[PATHS] Frontend path (packaged):', unpackedPath);
             return unpackedPath;
         }
