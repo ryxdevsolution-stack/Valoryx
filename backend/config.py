@@ -56,11 +56,19 @@ class OptimizedConfig:
     SQLALCHEMY_NATIVE_UNICODE = True
 
     # -------------------------------
-    # Redis Cache Configuration
+    # Cache Configuration (Redis optional for desktop mode)
     # -------------------------------
-    REDIS_URL = os.getenv("REDIS_URL", "redis://localhost:6379/0")
-    CACHE_TYPE = "RedisCache"
-    CACHE_REDIS_URL = REDIS_URL
+    REDIS_URL = os.getenv("REDIS_URL", "")
+    REDIS_AVAILABLE = bool(REDIS_URL) and os.getenv("USE_REDIS", "false").lower() == "true"
+
+    # Use SimpleCache for desktop/standalone mode, Redis for server mode
+    if REDIS_AVAILABLE:
+        CACHE_TYPE = "RedisCache"
+        CACHE_REDIS_URL = REDIS_URL
+    else:
+        CACHE_TYPE = "SimpleCache"  # In-memory cache, no Redis needed
+        CACHE_REDIS_URL = None
+
     CACHE_DEFAULT_TIMEOUT = 300  # 5 minutes default
     CACHE_KEY_PREFIX = "mj-billing:"
 
@@ -108,8 +116,8 @@ class OptimizedConfig:
     # -------------------------------
     # API Rate Limiting
     # -------------------------------
-    RATELIMIT_ENABLED = True
-    RATELIMIT_STORAGE_URL = REDIS_URL
+    RATELIMIT_ENABLED = REDIS_AVAILABLE  # Only enable if Redis available
+    RATELIMIT_STORAGE_URL = REDIS_URL if REDIS_AVAILABLE else "memory://"
     RATELIMIT_DEFAULT = "1000/hour"  # Default rate limit
     RATELIMIT_HEADERS_ENABLED = True
 
@@ -131,8 +139,9 @@ class OptimizedConfig:
     # -------------------------------
     # Session Configuration
     # -------------------------------
-    SESSION_TYPE = 'redis'
-    SESSION_REDIS_URL = REDIS_URL
+    SESSION_TYPE = 'redis' if REDIS_AVAILABLE else 'filesystem'
+    SESSION_REDIS_URL = REDIS_URL if REDIS_AVAILABLE else None
+    SESSION_FILE_DIR = os.path.join(os.path.dirname(__file__), '.sessions')
     SESSION_PERMANENT = False
     SESSION_USE_SIGNER = True
     SESSION_KEY_PREFIX = 'session:'

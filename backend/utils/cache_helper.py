@@ -134,8 +134,13 @@ def get_cache_manager() -> CacheManager:
     global _cache_manager
     if _cache_manager is None:
         from config import Config
-        redis_url = getattr(Config, 'REDIS_URL', 'redis://localhost:6379/0')
-        _cache_manager = CacheManager(redis_url)
+        redis_url = getattr(Config, 'REDIS_URL', '')
+        # Only try Redis if URL is set and USE_REDIS is enabled
+        if redis_url and getattr(Config, 'REDIS_AVAILABLE', False):
+            _cache_manager = CacheManager(redis_url)
+        else:
+            # Create disabled cache manager
+            _cache_manager = CacheManager("")
     return _cache_manager
 
 
