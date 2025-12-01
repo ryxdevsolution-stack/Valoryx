@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState } from 'react'
 import NextImage from 'next/image'
 import api from '@/lib/api'
+import { qzPrinter } from '@/lib/qzPrinter'
 
 interface BillItem {
   product_name: string
@@ -32,6 +33,8 @@ interface BillData {
   cgst?: number
   sgst?: number
   igst?: number
+  user_name?: string
+  created_by?: string
 }
 
 interface ClientInfo {
@@ -55,6 +58,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
   const hasAutoPrinted = useRef(false)
   const [printError, setPrintError] = useState<string | null>(null)
   const [isPrinting, setIsPrinting] = useState(false)
+  const [qzAvailable, setQzAvailable] = useState<boolean | null>(null)
 
   // Provide default values if clientInfo is undefined
   const safeClientInfo: ClientInfo = clientInfo || {
@@ -66,13 +70,68 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
     logo_url: ''
   }
 
-  // Direct print function - ALWAYS prints directly without any dialog
-  const handleDirectPrint = async () => {
+  // Check QZ Tray availability on mount
+  useEffect(() => {
+    const checkQz = async () => {
+      try {
+        // Dynamically import qz-tray only on client side
+        if (typeof window !== 'undefined') {
+          const qz = await import('qz-tray')
+          // Set qz globally for our service
+          ;(window as any).qz = qz.default || qz
+
+          // Try to connect
+          await qzPrinter.connect()
+          setQzAvailable(true)
+          console.log('[QZ Tray] Available and connected')
+        }
+      } catch (error) {
+        console.log('[QZ Tray] Not available, will use backend printing:', error)
+        setQzAvailable(false)
+      }
+    }
+    checkQz()
+  }, [])
+
+  // Print using QZ Tray (silent, client-side)
+  const handleQzPrint = async () => {
     setIsPrinting(true)
     setPrintError(null)
 
     try {
-      console.log('Sending to printer...')
+      console.log('[QZ Tray] Sending to printer...')
+
+      await qzPrinter.printBill(bill, safeClientInfo, false)
+
+      console.log('[QZ Tray] Print successful!')
+      setPrintError(null)
+      setTimeout(() => {
+        onClose()
+      }, 500)
+    } catch (error: any) {
+      console.error('[QZ Tray] Print failed:', error)
+
+      // Provide helpful error messages
+      let errorMessage = error.message || 'Print failed'
+      if (errorMessage.includes('not running')) {
+        errorMessage = 'QZ Tray is not running. Please start QZ Tray application.'
+      } else if (errorMessage.includes('No printer')) {
+        errorMessage = 'No printer configured. Please select a printer in Settings.'
+      }
+
+      setPrintError(errorMessage)
+    } finally {
+      setIsPrinting(false)
+    }
+  }
+
+  // Print using backend (for local server deployment)
+  const handleBackendPrint = async () => {
+    setIsPrinting(true)
+    setPrintError(null)
+
+    try {
+      console.log('[Backend] Sending to printer...')
 
       // Call backend thermal printer endpoint
       const response = await api.post('/billing/print', {
@@ -92,14 +151,15 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
           type: bill.type,
           cgst: bill.cgst,
           sgst: bill.sgst,
-          igst: bill.igst
+          igst: bill.igst,
+          user_name: bill.user_name,
+          created_by: bill.created_by
         },
         clientInfo: safeClientInfo
       })
 
       if (response.data.success) {
-        console.log('Print successful!')
-        // Show success message briefly then close
+        console.log('[Backend] Print successful!')
         setPrintError(null)
         setTimeout(() => {
           onClose()
@@ -108,16 +168,25 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
         throw new Error(response.data.error || 'Print failed')
       }
     } catch (error: any) {
-      console.error('Print failed:', error)
+      console.error('[Backend] Print failed:', error)
       setPrintError(error.response?.data?.message || error.message || 'Printer not connected. Please check printer and try again.')
     } finally {
       setIsPrinting(false)
     }
   }
 
+  // Direct print function - Uses QZ Tray if available, otherwise falls back to backend
+  const handleDirectPrint = async () => {
+    if (qzAvailable) {
+      await handleQzPrint()
+    } else {
+      await handleBackendPrint()
+    }
+  }
+
   // Auto-print immediately when component mounts (if enabled)
   useEffect(() => {
-    if (autoPrint && !hasAutoPrinted.current) {
+    if (autoPrint && !hasAutoPrinted.current && qzAvailable !== null) {
       hasAutoPrinted.current = true
       // Small delay to ensure component is mounted
       const timer = setTimeout(() => {
@@ -126,7 +195,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
       return () => clearTimeout(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [autoPrint])
+  }, [autoPrint, qzAvailable])
 
   const formatDate = (dateString: string) => {
     const date = new Date(dateString)
@@ -460,6 +529,27 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
 
           {/* Print Button - Fixed at bottom */}
           <div className="border-t border-gray-200 p-4 bg-white print:hidden">
+            {/* Print Method Indicator */}
+            <div className="mb-2 text-center">
+              {qzAvailable === null ? (
+                <span className="text-xs text-gray-400">Checking printer connection...</span>
+              ) : qzAvailable ? (
+                <span className="text-xs text-green-600 flex items-center justify-center gap-1">
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" />
+                  </svg>
+                  QZ Tray Connected (Silent Print)
+                </span>
+              ) : (
+                <span className="text-xs text-blue-600 flex items-center justify-center gap-1">
+                  <svg className="w-3 h-3" fill="currentColor" viewBox="0 0 20 20">
+                    <path fillRule="evenodd" d="M5 2a2 2 0 00-2 2v14l3.5-2 3.5 2 3.5-2 3.5 2V4a2 2 0 00-2-2H5zm2.5 3a1.5 1.5 0 100 3 1.5 1.5 0 000-3zm6.207.293a1 1 0 00-1.414 0l-6 6a1 1 0 101.414 1.414l6-6a1 1 0 000-1.414zM12.5 10a1.5 1.5 0 100 3 1.5 1.5 0 000-3z" clipRule="evenodd" />
+                  </svg>
+                  Server Print Mode
+                </span>
+              )}
+            </div>
+
             {/* Error Display */}
             {printError && (
               <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm">
@@ -476,12 +566,12 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
             <button
               type="button"
               onClick={() => {
-                if (isPrinting) return
+                if (isPrinting || qzAvailable === null) return
                 handleDirectPrint()
               }}
-              disabled={isPrinting}
+              disabled={isPrinting || qzAvailable === null}
               className={`w-full px-6 py-3 ${
-                !isPrinting
+                !isPrinting && qzAvailable !== null
                   ? 'bg-green-600 hover:bg-green-700 text-white'
                   : 'bg-gray-400 cursor-not-allowed text-gray-200'
               } rounded-lg transition-colors font-medium flex items-center justify-center gap-2`}

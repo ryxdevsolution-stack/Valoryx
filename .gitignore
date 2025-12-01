@@ -71,9 +71,11 @@ tmp/
 .env.local
 .env.*.local
 backend/.env
-frontend/.env
+# frontend/.env is NOT gitignored - it contains Render URL for web deployment
+# Use frontend/.env.local for local/desktop overrides (gitignored)
 
 # Electron / Desktop Build
+electron
 dist/
 *.AppImage
 *.deb

@@ -110,7 +110,9 @@
       "Bash(npx electron-icon-builder:*)",
       "Bash(cp:*)",
       "Bash(ss:*)",
-      "Bash(dmesg:*)"
+      "Bash(dmesg:*)",
+      "Bash(DISPLAY=:0 node:*)",
+      "Bash(DISPLAY=:0 ELECTRON_DISABLE_SANDBOX=1 npm run dev:*)"
     ],
     "deny": [],
     "ask": [],

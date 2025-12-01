@@ -30,7 +30,7 @@ class WindowManager {
                 webSecurity: APP_CONFIG.security.webSecurity,
                 preload: path.join(__dirname, '../preload/index.js')
             },
-            show: false, // Don't show until ready
+            show: true, // Show immediately
             center: true,
             backgroundColor: '#ffffff',
             titleBarStyle: process.platform === 'darwin' ? 'hiddenInset' : 'default',

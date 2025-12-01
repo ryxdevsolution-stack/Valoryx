@@ -10,8 +10,8 @@
   "homepage": "https://ryx-billing.com",
   "license": "Proprietary",
   "scripts": {
-    "start": "electron .",
-    "dev": "cross-env NODE_ENV=development electron .",
+    "start": "cross-env ELECTRON_RUN_AS_NODE= electron .",
+    "dev": "cross-env NODE_ENV=development ELECTRON_RUN_AS_NODE= electron .",
     "dev:backend": "cd backend && python app.py",
     "dev:frontend": "cd frontend && npm run dev",
     "build:frontend": "cd frontend && npm run build",
@@ -59,7 +59,9 @@
       {
         "from": "frontend/.next/standalone/node_modules",
         "to": "resources/app.asar.unpacked/frontend/.next/standalone/node_modules",
-        "filter": ["**/*"]
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "extraResources": [
@@ -123,7 +125,7 @@
   "devDependencies": {
     "cross-env": "^7.0.3",
     "dotenv": "^16.6.1",
-    "electron": "^33.2.1",
+    "electron": "^28.3.3",
     "electron-builder": "^24.9.1",
     "electron-icon-builder": "^2.0.1",
     "jimp": "^1.6.0",
