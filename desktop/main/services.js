@@ -281,15 +281,15 @@ class ServiceManager {
         console.log('[PYTHON] Venv path:', venvPath);
 
         try {
-            // On Windows, use 'python' command directly since execSync works with shell
-            // This avoids issues with Electron GUI apps not inheriting PATH properly
-            const pythonCmd = this.isWindows ? 'python' : pythonPath;
+            // Use the found Python path directly, with proper quoting for Windows
+            const pythonCmd = this.isWindows ? `"${pythonPath}"` : pythonPath;
 
             console.log('[PYTHON] Running venv creation with command:', pythonCmd);
             execSync(`${pythonCmd} -m venv "${venvPath}"`, {
                 cwd: backendPath,
                 stdio: 'inherit',
-                windowsHide: true
+                windowsHide: true,
+                shell: true
             });
 
             // Install requirements
