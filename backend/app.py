@@ -56,7 +56,7 @@ def create_app():
     # Import each blueprint separately to identify which one fails
     auth_bp = billing_bp = stock_bp = report_bp = audit_bp = None
     client_bp = payment_bp = customer_bp = analytics_bp = None
-    permissions_bp = admin_bp = notes_bp = bulk_order_bp = expense_bp = None
+    permissions_bp = admin_bp = notes_bp = bulk_order_bp = expense_bp = profile_bp = None
 
     try:
         from routes.auth import auth_bp
@@ -141,6 +141,12 @@ def create_app():
     except Exception as e:
         import_errors.append(f"expense: {str(e)}")
         logging.error(f"Failed to import expense blueprint: {e}")
+
+    try:
+        from routes.profile import profile_bp
+    except Exception as e:
+        import_errors.append(f"profile: {str(e)}")
+        logging.error(f"Failed to import profile blueprint: {e}")
 
     # Store import errors for debugging
     app.config['IMPORT_ERRORS'] = import_errors
@@ -245,6 +251,13 @@ def create_app():
             blueprints_registered.append('expense')
         except Exception as e:
             print(f"Warning: Could not register expense blueprint: {e}")
+
+    if profile_bp:
+        try:
+            app.register_blueprint(profile_bp, url_prefix='/api/profile')
+            blueprints_registered.append('profile')
+        except Exception as e:
+            print(f"Warning: Could not register profile blueprint: {e}")
 
     # Store blueprint registration status
     app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered

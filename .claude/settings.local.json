@@ -115,7 +115,10 @@
       "Bash(DISPLAY=:0 ELECTRON_DISABLE_SANDBOX=1 npm run dev:*)",
       "Bash(npx eslint:*)",
       "Bash(ELECTRON_MIRROR=\"https://npmmirror.com/mirrors/electron/\" npm run dist:win)",
-      "Bash(sudo dpkg:*)"
+      "Bash(sudo dpkg:*)",
+      "mcp__ide__getDiagnostics",
+      "Bash(grep:*)",
+      "WebSearch"
     ],
     "deny": [],
     "ask": [],

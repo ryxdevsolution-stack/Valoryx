@@ -10,6 +10,9 @@ interface User {
   role: string
   is_super_admin?: boolean
   permissions?: string[]
+  full_name?: string
+  phone?: string
+  department?: string
 }
 
 interface Client {
@@ -34,6 +37,7 @@ interface ClientContextType {
   hasPermission: (permission: string) => boolean
   isSuperAdmin: () => boolean
   refreshClientData: () => Promise<void>
+  refreshUserData: () => Promise<void>
 }
 
 const ClientContext = createContext<ClientContextType | undefined>(undefined)
@@ -104,7 +108,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         email: user.email,
         role: user.role,
         is_super_admin: user.is_super_admin,
-        permissions: user.permissions
+        permissions: user.permissions,
+        full_name: user.full_name,
+        phone: user.phone,
+        department: user.department
       }
 
       const clientData: Client = {
@@ -210,6 +217,32 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }
   }, [token, client?.client_id])
 
+  // Refresh user profile data from API
+  const refreshUserData = useCallback(async () => {
+    if (!token) return
+
+    try {
+      const response = await api.get('/profile')
+      if (response.data) {
+        const profile = response.data
+        const updatedUser: User = {
+          user_id: profile.user_id,
+          email: profile.email,
+          role: profile.role,
+          is_super_admin: profile.is_super_admin,
+          permissions: profile.permissions,
+          full_name: profile.full_name,
+          phone: profile.phone,
+          department: profile.department
+        }
+        setUser(updatedUser)
+        localStorage.setItem('user', JSON.stringify(updatedUser))
+      }
+    } catch (error) {
+      console.error('Failed to refresh user data:', error)
+    }
+  }, [token])
+
   return (
     <ClientContext.Provider
       value={{
@@ -224,6 +257,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         hasPermission,
         isSuperAdmin,
         refreshClientData,
+        refreshUserData,
       }}
     >
       {children}

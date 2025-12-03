@@ -5,7 +5,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { useClient } from '@/contexts/ClientContext'
-import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, Edit, RefreshCw } from 'lucide-react'
+import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, Edit, RefreshCw, XCircle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 interface BillItem {
@@ -36,6 +36,7 @@ interface Bill {
   cgst?: number
   sgst?: number
   igst?: number
+  status?: string
 }
 
 interface PaymentType {
@@ -356,6 +357,26 @@ export default function AllBillsPage() {
     router.push(`/billing/exchange/${billId}`)
   }
 
+  const handleCancelBill = async (billId: string, billNumber: number) => {
+    if (!confirm(`Are you sure you want to cancel Bill #${billNumber}? This will restore all item quantities to stock.`)) {
+      return
+    }
+
+    try {
+      const response = await api.post(`/billing/${billId}/cancel`)
+      if (response.data.success) {
+        alert(`Bill #${billNumber} cancelled successfully`)
+        setBills(prevBills =>
+          prevBills.map(bill =>
+            bill.bill_id === billId ? { ...bill, status: 'cancelled' } : bill
+          )
+        )
+      }
+    } catch (error: any) {
+      alert(error.response?.data?.error || 'Failed to cancel bill')
+    }
+  }
+
   // Get icon for payment type
   const getPaymentIcon = (paymentType: string) => {
     const type = paymentType.toUpperCase()
@@ -581,7 +602,12 @@ export default function AllBillsPage() {
                           className={`hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${!bill.isFirstPayment && isSplitPayment ? 'border-t-0' : ''}`}>
                         <td className="px-2 py-1.5 whitespace-nowrap">
                           {bill.isFirstPayment ? (
-                            <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{displayNumber}</span>
+                            <div className="flex items-center gap-1">
+                              <span className={`text-xs font-semibold ${bill.status === 'cancelled' ? 'text-gray-400 line-through' : 'text-gray-700 dark:text-gray-300'}`}>{displayNumber}</span>
+                              {bill.status === 'cancelled' && (
+                                <span className="px-1.5 py-0.5 text-[8px] font-bold text-red-600 bg-red-100 dark:bg-red-900/30 dark:text-red-400 rounded uppercase">Cancelled</span>
+                              )}
+                            </div>
                           ) : (
                             <span className="text-xs text-gray-400 dark:text-gray-500 pl-2">↳</span>
                           )}
@@ -625,38 +651,51 @@ export default function AllBillsPage() {
                       </td>
                       {showActions ? (
                         <td className="px-2 py-1.5 text-center whitespace-nowrap" rowSpan={bill.paymentCount}>
-                          <div className="flex items-center justify-center gap-1">
-                            <button
-                              type="button"
-                              onClick={() => handleExchangeBill(bill.bill_id)}
-                              className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-white bg-gradient-to-r from-orange-600 to-orange-500 hover:from-orange-700 hover:to-orange-600 rounded-md transition-all"
-                              title="Exchange Bill"
-                            >
-                              <RefreshCw className="w-3 h-3" />
-                              Exchange
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handleEditBill(bill.bill_id)}
-                              className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-white bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-700 hover:to-blue-600 rounded-md transition-all"
-                              title="Edit Bill"
-                            >
-                              <Edit className="w-3 h-3" />
-                              Edit
-                            </button>
-                            <button
-                              type="button"
-                              onClick={() => handlePrintBill(bill.bill_id)}
-                              disabled={loadingBillDetails}
-                              className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-white bg-gradient-to-r from-green-600 to-green-500 hover:from-green-700 hover:to-green-600 rounded-md transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                              title="Print Bill"
-                            >
-                              <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                              </svg>
-                              Print
-                            </button>
-                          </div>
+                          {bill.status === 'cancelled' ? (
+                            <span className="text-[10px] text-gray-400">No actions</span>
+                          ) : (
+                            <div className="flex items-center justify-center gap-1">
+                              <button
+                                type="button"
+                                onClick={() => handleExchangeBill(bill.bill_id)}
+                                className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-all"
+                                title="Exchange Bill"
+                              >
+                                <RefreshCw className="w-3 h-3" />
+                                Exchange
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleEditBill(bill.bill_id)}
+                                className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-all"
+                                title="Edit Bill"
+                              >
+                                <Edit className="w-3 h-3" />
+                                Edit
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handlePrintBill(bill.bill_id)}
+                                disabled={loadingBillDetails}
+                                className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                title="Print Bill"
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                                </svg>
+                                Print
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => handleCancelBill(bill.bill_id, bill.bill_number)}
+                                className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 rounded transition-all"
+                                title="Cancel Bill"
+                              >
+                                <XCircle className="w-3 h-3" />
+                                Cancel
+                              </button>
+                            </div>
+                          )}
                         </td>
                       ) : null}
                     </tr>

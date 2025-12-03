@@ -17,10 +17,11 @@ SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_KEY
 
 supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
 
-# Configuration
+# Configuration for client logos
 BUCKET_NAME = 'client-logos'
 ALLOWED_EXTENSIONS = {'png', 'jpg', 'jpeg', 'svg', 'webp'}
 MAX_FILE_SIZE = 2 * 1024 * 1024  # 2MB
+
 
 def allowed_file(filename: str) -> bool:
     """Check if file extension is allowed"""

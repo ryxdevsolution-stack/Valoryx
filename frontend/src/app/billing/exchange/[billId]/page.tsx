@@ -108,6 +108,13 @@ export default function ExchangeBillPage() {
       const response = await api.get(`/billing/${billId}`)
       const billData = response.data.bill
 
+      // Check if bill is cancelled
+      if (billData.status === 'cancelled') {
+        alert('Cannot exchange a cancelled bill')
+        router.push('/billing')
+        return
+      }
+
       setBill(billData)
 
       // Initialize return items with all original items
@@ -362,14 +369,13 @@ export default function ExchangeBillPage() {
 
       const response = await api.post(`/billing/exchange/${billId}`, requestBody)
 
-      alert('Exchange processed successfully!')
+      alert('Bill updated successfully!')
 
-      // Fetch the new exchange bill and print directly
-      const newBillId = response.data.exchange_bill_id
-      const billDetailsResponse = await api.get(`/billing/${newBillId}`)
+      // Fetch the updated bill and print
+      const billDetailsResponse = await api.get(`/billing/${billId}`)
       const billData = billDetailsResponse.data.bill
 
-      // Directly print the bill
+      // Print the updated bill
       const printResponse = await api.post('/billing/print', {
         bill: {
           bill_number: billData.bill_number,
@@ -407,7 +413,6 @@ export default function ExchangeBillPage() {
       })
 
       if (printResponse.data.success) {
-        console.log('Print successful!')
         router.push('/billing')
       } else {
         throw new Error(printResponse.data.error || 'Print failed')
@@ -435,7 +440,7 @@ export default function ExchangeBillPage() {
       <DashboardLayout>
         <div className="flex items-center justify-center h-screen">
           <div className="text-center">
-            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-orange-600 mx-auto mb-4"></div>
+            <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-gray-600 mx-auto mb-4"></div>
             <p className="text-gray-600 dark:text-gray-400">Loading bill details...</p>
           </div>
         </div>
@@ -468,41 +473,41 @@ export default function ExchangeBillPage() {
         {/* Header */}
         <div className="mb-3 sm:mb-4">
           <div className="flex items-center gap-2 mb-2">
-            <RefreshCw className="w-5 h-5 sm:w-6 sm:h-6 text-orange-600" />
+            <RefreshCw className="w-5 h-5 sm:w-6 sm:h-6 text-gray-600 dark:text-gray-400" />
             <h1 className="text-lg sm:text-2xl font-bold text-gray-900 dark:text-white">
               Exchange Bill #{bill.bill_number}
             </h1>
           </div>
           <p className="text-xs sm:text-sm text-gray-600 dark:text-gray-400">
-            Original Bill ID: {bill.bill_id} | Customer: {bill.customer_name}
+            Customer: {bill.customer_name} | Updates existing bill in place
           </p>
         </div>
 
         {/* Exchange Flow Indicator */}
-        <div className="mb-4 sm:mb-6 bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-900/20 dark:to-amber-900/20 p-3 sm:p-4 rounded-lg border-2 border-orange-200 dark:border-orange-800">
+        <div className="mb-4 sm:mb-6 bg-gray-50 dark:bg-gray-800 p-3 sm:p-4 rounded-lg border border-gray-200 dark:border-gray-700">
           <div className="flex items-center justify-between max-w-3xl mx-auto">
             <div className="text-center flex-1">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-600 text-white rounded-full flex items-center justify-center mx-auto mb-1 sm:mb-2 font-bold text-sm">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gray-700 dark:bg-gray-600 text-white rounded-full flex items-center justify-center mx-auto mb-1 sm:mb-2 font-bold text-sm">
                 1
               </div>
               <p className="text-[10px] sm:text-xs font-semibold text-gray-700 dark:text-gray-300 hidden sm:block">Select Returns</p>
               <p className="text-[10px] font-semibold text-gray-700 dark:text-gray-300 sm:hidden">Returns</p>
             </div>
-            <ArrowRight className="w-4 h-4 sm:w-6 sm:h-6 text-orange-600 mx-1 sm:mx-2" />
+            <ArrowRight className="w-4 h-4 sm:w-6 sm:h-6 text-gray-400 mx-1 sm:mx-2" />
             <div className="text-center flex-1">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-600 text-white rounded-full flex items-center justify-center mx-auto mb-1 sm:mb-2 font-bold text-sm">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gray-700 dark:bg-gray-600 text-white rounded-full flex items-center justify-center mx-auto mb-1 sm:mb-2 font-bold text-sm">
                 2
               </div>
               <p className="text-[10px] sm:text-xs font-semibold text-gray-700 dark:text-gray-300 hidden sm:block">Add New Items</p>
               <p className="text-[10px] font-semibold text-gray-700 dark:text-gray-300 sm:hidden">New Items</p>
             </div>
-            <ArrowRight className="w-4 h-4 sm:w-6 sm:h-6 text-orange-600 mx-1 sm:mx-2" />
+            <ArrowRight className="w-4 h-4 sm:w-6 sm:h-6 text-gray-400 mx-1 sm:mx-2" />
             <div className="text-center flex-1">
-              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-orange-600 text-white rounded-full flex items-center justify-center mx-auto mb-1 sm:mb-2 font-bold text-sm">
+              <div className="w-8 h-8 sm:w-10 sm:h-10 bg-gray-700 dark:bg-gray-600 text-white rounded-full flex items-center justify-center mx-auto mb-1 sm:mb-2 font-bold text-sm">
                 3
               </div>
-              <p className="text-[10px] sm:text-xs font-semibold text-gray-700 dark:text-gray-300 hidden sm:block">Process Exchange</p>
-              <p className="text-[10px] font-semibold text-gray-700 dark:text-gray-300 sm:hidden">Process</p>
+              <p className="text-[10px] sm:text-xs font-semibold text-gray-700 dark:text-gray-300 hidden sm:block">Update Bill</p>
+              <p className="text-[10px] font-semibold text-gray-700 dark:text-gray-300 sm:hidden">Update</p>
             </div>
           </div>
         </div>
@@ -511,9 +516,9 @@ export default function ExchangeBillPage() {
           {/* Left Column - Return Items */}
           <div className="space-y-3 sm:space-y-4">
             {/* Step 1: Select Items to Return */}
-            <div className="bg-white dark:bg-gray-800 p-3 sm:p-4 rounded-lg shadow border-2 border-red-200 dark:border-red-800">
+            <div className="bg-white dark:bg-gray-800 p-3 sm:p-4 rounded-lg shadow border border-gray-200 dark:border-gray-700">
               <div className="flex items-center gap-2 mb-2 sm:mb-3">
-                <div className="w-7 h-7 sm:w-8 sm:h-8 bg-red-600 text-white rounded-full flex items-center justify-center font-bold text-xs sm:text-sm">
+                <div className="w-7 h-7 sm:w-8 sm:h-8 bg-gray-600 text-white rounded-full flex items-center justify-center font-bold text-xs sm:text-sm">
                   1
                 </div>
                 <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">Items to Return</h2>
@@ -526,9 +531,9 @@ export default function ExchangeBillPage() {
                 {returnItems.map((item, index) => (
                   <div
                     key={index}
-                    className={`p-3 rounded-lg border-2 transition ${
+                    className={`p-3 rounded-lg border transition ${
                       item.selected
-                        ? 'border-red-500 bg-red-50 dark:bg-red-900/20'
+                        ? 'border-gray-400 dark:border-gray-500 bg-gray-100 dark:bg-gray-700'
                         : 'border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-700/50'
                     }`}
                   >
@@ -537,7 +542,7 @@ export default function ExchangeBillPage() {
                         type="checkbox"
                         checked={item.selected}
                         onChange={() => handleReturnItemSelect(index)}
-                        className="mt-1 w-4 h-4 text-red-600 rounded focus:ring-red-500 flex-shrink-0"
+                        className="mt-1 w-4 h-4 text-gray-600 rounded focus:ring-gray-500 flex-shrink-0"
                       />
                       <div className="flex-1 min-w-0">
                         <div className="flex justify-between items-start gap-2">
@@ -578,12 +583,12 @@ export default function ExchangeBillPage() {
                 ))}
               </div>
 
-              <div className="mt-2 sm:mt-3 p-2 sm:p-3 bg-red-100 dark:bg-red-900/30 rounded-lg">
+              <div className="mt-2 sm:mt-3 p-2 sm:p-3 bg-gray-100 dark:bg-gray-700 rounded-lg">
                 <div className="flex justify-between items-center">
-                  <span className="text-xs sm:text-sm font-semibold text-red-900 dark:text-red-200">
+                  <span className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300">
                     Return Amount:
                   </span>
-                  <span className="text-base sm:text-lg font-bold text-red-900 dark:text-red-200">
+                  <span className="text-base sm:text-lg font-bold text-gray-900 dark:text-white">
                     ₹{getReturnAmount().toFixed(2)}
                   </span>
                 </div>
@@ -594,12 +599,12 @@ export default function ExchangeBillPage() {
           {/* Right Column - New Items */}
           <div className="space-y-3 sm:space-y-4">
             {/* Step 2: Add New Items */}
-            <div className="bg-white dark:bg-gray-800 p-3 sm:p-4 rounded-lg shadow border-2 border-green-200 dark:border-green-800">
+            <div className="bg-white dark:bg-gray-800 p-3 sm:p-4 rounded-lg shadow border border-gray-200 dark:border-gray-700">
               <div className="flex items-center gap-2 mb-2 sm:mb-3">
-                <div className="w-7 h-7 sm:w-8 sm:h-8 bg-green-600 text-white rounded-full flex items-center justify-center font-bold text-xs sm:text-sm">
+                <div className="w-7 h-7 sm:w-8 sm:h-8 bg-gray-600 text-white rounded-full flex items-center justify-center font-bold text-xs sm:text-sm">
                   2
                 </div>
-                <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">Exchange With</h2>
+                <h2 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">New Items</h2>
               </div>
               <p className="text-[10px] sm:text-xs text-gray-600 dark:text-gray-400 mb-2 sm:mb-3">
                 Add new items for exchange
@@ -664,7 +669,7 @@ export default function ExchangeBillPage() {
                   />
                   <button
                     onClick={handleAddNewItem}
-                    className="px-2 py-2 bg-green-600 text-white rounded hover:bg-green-700 transition text-sm font-medium"
+                    className="px-2 py-2 bg-gray-700 dark:bg-gray-600 text-white rounded hover:bg-gray-800 dark:hover:bg-gray-500 transition text-sm font-medium"
                   >
                     Add
                   </button>
@@ -674,7 +679,7 @@ export default function ExchangeBillPage() {
               {/* New Items List */}
               <div className="space-y-2">
                 {newItems.map((item, index) => (
-                  <div key={index} className="p-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
+                  <div key={index} className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600">
                     <div className="flex justify-between items-start">
                       <div className="flex-1">
                         <p className="font-semibold text-gray-900 dark:text-white text-sm">
@@ -706,12 +711,12 @@ export default function ExchangeBillPage() {
                 )}
               </div>
 
-              <div className="mt-2 sm:mt-3 p-2 sm:p-3 bg-green-100 dark:bg-green-900/30 rounded-lg">
+              <div className="mt-2 sm:mt-3 p-2 sm:p-3 bg-gray-100 dark:bg-gray-700 rounded-lg">
                 <div className="flex justify-between items-center">
-                  <span className="text-xs sm:text-sm font-semibold text-green-900 dark:text-green-200">
+                  <span className="text-xs sm:text-sm font-semibold text-gray-700 dark:text-gray-300">
                     New Items Amount:
                   </span>
-                  <span className="text-base sm:text-lg font-bold text-green-900 dark:text-green-200">
+                  <span className="text-base sm:text-lg font-bold text-gray-900 dark:text-white">
                     ₹{getNewItemsAmount().toFixed(2)}
                   </span>
                 </div>
@@ -721,33 +726,33 @@ export default function ExchangeBillPage() {
         </div>
 
         {/* Exchange Summary & Payment */}
-        <div className="mt-3 sm:mt-4 bg-gradient-to-r from-orange-50 to-amber-50 dark:from-orange-900/20 dark:to-amber-900/20 p-3 sm:p-6 rounded-lg border-2 border-orange-200 dark:border-orange-800">
+        <div className="mt-3 sm:mt-4 bg-white dark:bg-gray-800 p-3 sm:p-6 rounded-lg shadow border border-gray-200 dark:border-gray-700">
           <div className="flex items-center gap-2 mb-3 sm:mb-4">
-            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-orange-600 text-white rounded-full flex items-center justify-center font-bold text-xs sm:text-sm">
+            <div className="w-7 h-7 sm:w-8 sm:h-8 bg-gray-600 text-white rounded-full flex items-center justify-center font-bold text-xs sm:text-sm">
               3
             </div>
-            <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">Exchange Summary</h2>
+            <h2 className="text-lg sm:text-xl font-bold text-gray-900 dark:text-white">Summary</h2>
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4 sm:gap-6">
             {/* Summary */}
             <div>
               <div className="space-y-2 text-xs sm:text-sm">
-                <div className="flex justify-between py-1.5 sm:py-2 border-b border-orange-200 dark:border-orange-800">
+                <div className="flex justify-between py-1.5 sm:py-2 border-b border-gray-200 dark:border-gray-700">
                   <span className="text-gray-700 dark:text-gray-300">Returned Value:</span>
-                  <span className="font-semibold text-red-600 dark:text-red-400">
+                  <span className="font-semibold text-gray-900 dark:text-white">
                     - ₹{getReturnAmount().toFixed(2)}
                   </span>
                 </div>
-                <div className="flex justify-between py-1.5 sm:py-2 border-b border-orange-200 dark:border-orange-800">
+                <div className="flex justify-between py-1.5 sm:py-2 border-b border-gray-200 dark:border-gray-700">
                   <span className="text-gray-700 dark:text-gray-300">New Items Value:</span>
-                  <span className="font-semibold text-green-600 dark:text-green-400">
+                  <span className="font-semibold text-gray-900 dark:text-white">
                     + ₹{getNewItemsAmount().toFixed(2)}
                   </span>
                 </div>
-                <div className="flex justify-between py-2 sm:py-3 border-t-2 border-orange-300 dark:border-orange-700">
+                <div className="flex justify-between py-2 sm:py-3 border-t-2 border-gray-300 dark:border-gray-600">
                   <span className="font-bold text-gray-900 dark:text-white">Difference:</span>
-                  <span className={`font-bold text-base sm:text-lg ${getDifference() >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  <span className={`font-bold text-base sm:text-lg ${getDifference() >= 0 ? 'text-gray-900 dark:text-white' : 'text-red-600 dark:text-red-400'}`}>
                     {getDifference() >= 0 ? '+' : ''}₹{getDifference().toFixed(2)}
                   </span>
                 </div>
@@ -849,26 +854,24 @@ export default function ExchangeBillPage() {
           <div className="mt-4 sm:mt-6 flex flex-col sm:flex-row gap-2 sm:gap-3">
             <button
               onClick={handleCloseExchange}
-              className="flex-1 px-4 sm:px-6 py-2.5 sm:py-3 bg-gray-500 text-white rounded-lg hover:bg-gray-600 transition font-semibold text-sm sm:text-base"
+              className="flex-1 px-4 sm:px-6 py-2.5 sm:py-3 bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition font-semibold text-sm sm:text-base"
             >
-              Cancel Exchange
+              Cancel
             </button>
             <button
               onClick={handleProcessExchange}
               disabled={processing || getSelectedReturnItems().length === 0 || newItems.length === 0}
-              className="flex-1 px-4 sm:px-6 py-2.5 sm:py-3 bg-orange-600 text-white rounded-lg hover:bg-orange-700 transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base"
+              className="flex-1 px-4 sm:px-6 py-2.5 sm:py-3 bg-gray-800 dark:bg-gray-100 text-white dark:text-gray-900 rounded-lg hover:bg-gray-900 dark:hover:bg-white transition font-semibold disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 text-sm sm:text-base"
             >
               {processing ? (
                 <>
-                  <div className="animate-spin rounded-full h-4 w-4 sm:h-5 sm:w-5 border-b-2 border-white"></div>
-                  <span className="hidden sm:inline">Processing...</span>
-                  <span className="sm:hidden">Processing</span>
+                  <div className="animate-spin rounded-full h-4 w-4 sm:h-5 sm:w-5 border-b-2 border-current"></div>
+                  <span>Updating...</span>
                 </>
               ) : (
                 <>
-                  <RefreshCw className="w-4 h-4 sm:w-5 sm:h-5" />
-                  <span className="hidden sm:inline">Process Exchange</span>
-                  <span className="sm:hidden">Process</span>
+                  <CheckCircle2 className="w-4 h-4 sm:w-5 sm:h-5" />
+                  <span>Update Bill</span>
                 </>
               )}
             </button>

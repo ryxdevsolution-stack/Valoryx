@@ -58,6 +58,7 @@ interface Bill {
   gst_amount?: number
   final_amount?: number
   total_amount?: number
+  status?: string
 }
 
 export default function EditBillPage() {
@@ -114,6 +115,13 @@ export default function EditBillPage() {
       setLoading(true)
       const response = await api.get(`/billing/${billId}`)
       const billData = response.data.bill
+
+      // Check if bill is cancelled
+      if (billData.status === 'cancelled') {
+        alert('Cannot edit a cancelled bill')
+        router.push('/billing')
+        return
+      }
 
       setBill(billData)
       setCustomerName(billData.customer_name || '')
