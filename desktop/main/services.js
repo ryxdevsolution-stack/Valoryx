@@ -1,6 +1,7 @@
 /**
  * Service Manager
  * Handles starting, stopping, and monitoring of backend and frontend services
+ * Optimized for Windows compatibility
  */
 
 const { spawn, execSync, fork } = require('child_process');
@@ -17,7 +18,25 @@ class ServiceManager {
         };
         this.isWindows = process.platform === 'win32';
         this.pythonPath = null;
-        this.isShuttingDown = false;  // Initialize shutdown flag
+        this.isShuttingDown = false;
+        this.progressCallback = null; // For reporting progress to splash screen
+    }
+
+    /**
+     * Set progress callback for splash screen updates
+     */
+    setProgressCallback(callback) {
+        this.progressCallback = callback;
+    }
+
+    /**
+     * Report progress to splash screen
+     */
+    reportProgress(step, message, percent) {
+        if (this.progressCallback) {
+            this.progressCallback({ step, message, percent });
+        }
+        console.log(`[SERVICE] ${message} (${percent}%)`);
     }
 
     async initialize() {
@@ -491,14 +510,11 @@ class ServiceManager {
 
             // Use fork for Node.js scripts (uses Electron's built-in Node.js)
             if (useElectronNode && args.length > 0) {
-                const scriptPath = args[args.length - 1]; // Last arg is the script path
+                const scriptPath = args[args.length - 1];
                 console.log(`[${serviceName.toUpperCase()}] Using fork for Node.js script: ${scriptPath}`);
 
-                // Build environment with NODE_PATH for module resolution
                 const forkEnv = { ...config.env };
                 if (nodeModulesPath) {
-                    // NODE_PATH tells Node.js where to find modules
-                    // This is needed because server.js is in a subfolder but node_modules is in parent
                     forkEnv.NODE_PATH = nodeModulesPath;
                     console.log(`[${serviceName.toUpperCase()}] Setting NODE_PATH: ${nodeModulesPath}`);
                 }
@@ -506,20 +522,21 @@ class ServiceManager {
                 service = fork(scriptPath, [], {
                     cwd: workingDir,
                     env: forkEnv,
-                    stdio: APP_CONFIG.isDevelopment ? 'inherit' : 'pipe',
-                    silent: !APP_CONFIG.isDevelopment
+                    stdio: ['pipe', 'pipe', 'pipe', 'ipc'],
+                    silent: true
                 });
             } else {
-                // Use shell only for npm commands on Windows (npm.cmd requires shell)
-                // Direct executables (python, node) don't need shell - safer against injection
-                const needsShell = this.isWindows && (command === 'npm' || command.endsWith('npm.cmd'));
-
-                service = spawn(command, args, {
+                // On Windows, always use shell:true for reliable execution
+                // This handles paths with spaces and ensures proper command resolution
+                const spawnOptions = {
                     cwd: workingDir,
                     env: config.env,
-                    stdio: APP_CONFIG.isDevelopment ? 'inherit' : 'pipe',
-                    shell: needsShell
-                });
+                    stdio: ['pipe', 'pipe', 'pipe'],
+                    shell: this.isWindows,
+                    windowsHide: true
+                };
+
+                service = spawn(command, args, spawnOptions);
             }
 
             service.on('error', (error) => {
@@ -544,14 +561,16 @@ class ServiceManager {
                 }
             });
 
-            // Capture output in production
-            if (!APP_CONFIG.isDevelopment) {
+            // Safely attach output handlers - check if streams exist
+            if (service.stdout) {
                 service.stdout.on('data', (data) => {
-                    console.log(`[${serviceName}]: ${data.toString()}`);
+                    console.log(`[${serviceName}]: ${data.toString().trim()}`);
                 });
+            }
 
+            if (service.stderr) {
                 service.stderr.on('data', (data) => {
-                    console.error(`[${serviceName} ERROR]: ${data.toString()}`);
+                    console.error(`[${serviceName} ERROR]: ${data.toString().trim()}`);
                 });
             }
         });
@@ -628,22 +647,49 @@ class ServiceManager {
         console.log(`Stopping ${serviceName}...`);
 
         return new Promise((resolve) => {
-            service.on('exit', () => {
+            const onExit = () => {
                 console.log(`${serviceName} stopped`);
                 this.services[serviceName] = null;
                 resolve();
-            });
+            };
 
-            // Try graceful shutdown first
-            service.kill('SIGTERM');
+            // Remove existing listeners to avoid duplicates
+            service.removeAllListeners('exit');
+            service.once('exit', onExit);
 
-            // Force kill after timeout
-            setTimeout(() => {
-                if (this.services[serviceName]) {
-                    console.log(`Force killing ${serviceName}...`);
-                    service.kill('SIGKILL');
+            // Windows doesn't support POSIX signals, use different approach
+            if (this.isWindows) {
+                try {
+                    // On Windows, use taskkill for reliable process termination
+                    if (service.pid) {
+                        execSync(`taskkill /pid ${service.pid} /T /F`, {
+                            windowsHide: true,
+                            stdio: 'ignore'
+                        });
+                    }
+                } catch (e) {
+                    // Process may already be dead, that's fine
+                    console.log(`[${serviceName}] Process already terminated or taskkill failed`);
                 }
-            }, 5000);
+                // Give it a moment then resolve
+                setTimeout(() => {
+                    if (this.services[serviceName]) {
+                        this.services[serviceName] = null;
+                    }
+                    resolve();
+                }, 1000);
+            } else {
+                // Unix - use signals
+                service.kill('SIGTERM');
+
+                // Force kill after timeout
+                setTimeout(() => {
+                    if (this.services[serviceName]) {
+                        console.log(`Force killing ${serviceName}...`);
+                        service.kill('SIGKILL');
+                    }
+                }, 3000);
+            }
         });
     }
 

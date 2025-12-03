@@ -50,12 +50,30 @@ const APP_CONFIG = {
         }
     },
 
-    // Service management
+    // Service management - optimized for faster startup
     service: {
-        maxRetries: parseInt(process.env.SERVICE_MAX_RETRIES || '30', 10),
-        retryDelay: parseInt(process.env.SERVICE_RETRY_DELAY || '1000', 10),
-        timeout: parseInt(process.env.SERVICE_TIMEOUT || '5000', 10),
+        maxRetries: parseInt(process.env.SERVICE_MAX_RETRIES || '20', 10),
+        retryDelay: parseInt(process.env.SERVICE_RETRY_DELAY || '500', 10),
+        timeout: parseInt(process.env.SERVICE_TIMEOUT || '3000', 10),
         restartAttempts: parseInt(process.env.SERVICE_RESTART_ATTEMPTS || '3', 10)
+    },
+
+    // Startup messages - friendly user feedback
+    messages: {
+        steps: {
+            initializing: 'Initializing your workspace...',
+            pythonSetup: 'Preparing the environment...',
+            backendStarting: 'Waking up the system...',
+            frontendStarting: 'Setting up the interface...',
+            servicesReady: 'Almost ready...',
+            loadingApp: 'Opening RYX Billing...'
+        },
+        errors: {
+            pythonNotFound: 'Could not find Python. Please install Python 3.10+ from python.org',
+            portInUse: 'Required port is in use. Please close other instances.',
+            serviceTimeout: 'Services took too long to start. Please try again.',
+            general: 'Something went wrong. Please restart the application.'
+        }
     },
 
     // Window configuration

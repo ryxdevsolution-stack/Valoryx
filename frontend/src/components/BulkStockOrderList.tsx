@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import api from '@/lib/api'
 
 interface OrderItem {
@@ -37,13 +37,7 @@ export default function BulkStockOrderList({ isOpen, onClose, onReceive }: Props
   const [filter, setFilter] = useState<string>('all')
   const [expandedOrder, setExpandedOrder] = useState<string | null>(null)
 
-  useEffect(() => {
-    if (isOpen) {
-      fetchOrders()
-    }
-  }, [isOpen, filter])
-
-  const fetchOrders = async () => {
+  const fetchOrders = useCallback(async () => {
     try {
       setLoading(true)
       const params = filter !== 'all' ? { status: filter } : {}
@@ -54,7 +48,13 @@ export default function BulkStockOrderList({ isOpen, onClose, onReceive }: Props
     } finally {
       setLoading(false)
     }
-  }
+  }, [filter])
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchOrders()
+    }
+  }, [isOpen, fetchOrders])
 
   const handleDelete = async (orderId: string) => {
     if (!confirm('Are you sure you want to delete this order?')) return

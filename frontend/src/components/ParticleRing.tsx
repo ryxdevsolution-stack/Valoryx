@@ -182,12 +182,13 @@ const ParticleRing = () => {
     init();
 
     // Cleanup
+    const container = containerRef.current;
     return () => {
       if (animationRef.current) {
         cancelAnimationFrame(animationRef.current);
       }
-      if (rendererRef.current && containerRef.current) {
-        containerRef.current.removeChild(rendererRef.current.domElement);
+      if (rendererRef.current && container) {
+        container.removeChild(rendererRef.current.domElement);
         rendererRef.current.dispose();
       }
     };

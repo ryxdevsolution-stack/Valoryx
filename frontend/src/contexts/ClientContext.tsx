@@ -92,7 +92,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }
 
     initializeAuth()
-  }, [])
+  }, [router])
 
   const login = async (email: string, password: string) => {
     try {

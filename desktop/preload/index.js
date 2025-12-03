@@ -135,6 +135,19 @@ contextBridge.exposeInMainWorld('electronAPI', electronAPI);
 // Also expose a flag to indicate Electron environment
 contextBridge.exposeInMainWorld('isElectron', true);
 
+// Splash screen API (exposed separately for splash window)
+const splashAPI = {
+    onProgress: (callback) => {
+        ipcRenderer.on('splash-progress', (event, data) => callback(data));
+    },
+    onVersion: (callback) => {
+        ipcRenderer.on('splash-version', (event, version) => callback(version));
+    }
+};
+
+// Expose splash API
+contextBridge.exposeInMainWorld('splashAPI', splashAPI);
+
 // Log that preload script has loaded
 console.log('Preload script loaded successfully');
 
@@ -145,6 +158,10 @@ window.addEventListener('DOMContentLoaded', () => {
 
     // Add platform class to body for platform-specific styling
     ipcRenderer.invoke('get-platform').then(platform => {
-        document.body.classList.add(`platform-${platform}`);
+        if (document.body) {
+            document.body.classList.add(`platform-${platform}`);
+        }
+    }).catch(() => {
+        // Ignore errors in splash screen context
     });
 });

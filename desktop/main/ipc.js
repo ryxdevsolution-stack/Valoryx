@@ -44,6 +44,9 @@ function setupIPC(mainWindow, serviceManager) {
     // Database handlers
     setupDatabaseHandlers();
 
+    // Navigation handlers
+    setupNavigationHandlers();
+
     handlersRegistered = true;
     console.log('IPC handlers initialized');
 }
@@ -545,6 +548,50 @@ function setupDatabaseHandlers() {
     ipcMain.handle('sync-database', async () => {
         // Implement database sync logic here
         return { success: true, syncedAt: new Date().toISOString() };
+    });
+}
+
+/**
+ * Navigation handlers
+ */
+function setupNavigationHandlers() {
+    // Navigate to a specific path
+    ipcMain.handle('navigate', (event, urlPath) => {
+        const mainWindow = getMainWindow();
+        if (!mainWindow) return false;
+        const url = `${APP_CONFIG.frontend.url}${urlPath}`;
+        mainWindow.loadURL(url);
+        return true;
+    });
+
+    // Go back in history
+    ipcMain.handle('go-back', () => {
+        const mainWindow = getMainWindow();
+        if (!mainWindow) return false;
+        if (mainWindow.webContents.canGoBack()) {
+            mainWindow.webContents.goBack();
+            return true;
+        }
+        return false;
+    });
+
+    // Go forward in history
+    ipcMain.handle('go-forward', () => {
+        const mainWindow = getMainWindow();
+        if (!mainWindow) return false;
+        if (mainWindow.webContents.canGoForward()) {
+            mainWindow.webContents.goForward();
+            return true;
+        }
+        return false;
+    });
+
+    // Refresh the page
+    ipcMain.handle('refresh', () => {
+        const mainWindow = getMainWindow();
+        if (!mainWindow) return false;
+        mainWindow.webContents.reload();
+        return true;
     });
 }
 

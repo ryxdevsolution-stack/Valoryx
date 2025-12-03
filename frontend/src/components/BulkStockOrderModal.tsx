@@ -210,7 +210,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
 
             {formData.items.length === 0 ? (
               <div className="text-center py-8 text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-700 rounded-lg">
-                No items added yet. Click "Add Item" to start.
+                No items added yet. Click &quot;Add Item&quot; to start.
               </div>
             ) : (
               <div className="space-y-4">

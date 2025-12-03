@@ -112,7 +112,10 @@
       "Bash(ss:*)",
       "Bash(dmesg:*)",
       "Bash(DISPLAY=:0 node:*)",
-      "Bash(DISPLAY=:0 ELECTRON_DISABLE_SANDBOX=1 npm run dev:*)"
+      "Bash(DISPLAY=:0 ELECTRON_DISABLE_SANDBOX=1 npm run dev:*)",
+      "Bash(npx eslint:*)",
+      "Bash(ELECTRON_MIRROR=\"https://npmmirror.com/mirrors/electron/\" npm run dist:win)",
+      "Bash(sudo dpkg:*)"
     ],
     "deny": [],
     "ask": [],

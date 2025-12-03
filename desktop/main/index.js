@@ -29,67 +29,152 @@ if (!gotTheLock) {
         }
     });
 
-    // Create splash screen
+    // Create splash screen with logo and progress
     function createSplashScreen() {
         const splash = new BrowserWindow({
-            width: 400,
-            height: 300,
+            width: 450,
+            height: 350,
             frame: false,
-            transparent: false,
+            transparent: true,
             alwaysOnTop: true,
             resizable: false,
             center: true,
+            skipTaskbar: false,
             webPreferences: {
-                nodeIntegration: true,
-                contextIsolation: false
+                nodeIntegration: false,
+                contextIsolation: true,
+                preload: path.join(__dirname, '../preload/index.js')
             }
         });
 
+        // Professional splash screen with logo, progress bar, and friendly messages
         const splashHTML = `
             <!DOCTYPE html>
             <html>
             <head>
+                <meta charset="UTF-8">
                 <style>
+                    * { margin: 0; padding: 0; box-sizing: border-box; }
                     body {
-                        font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+                        font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, sans-serif;
                         display: flex;
                         flex-direction: column;
                         align-items: center;
                         justify-content: center;
                         height: 100vh;
-                        margin: 0;
+                        background: linear-gradient(145deg, #1a1a2e 0%, #16213e 50%, #0f3460 100%);
+                        color: #ffffff;
+                        border-radius: 16px;
+                        overflow: hidden;
+                        user-select: none;
+                    }
+                    .container {
+                        text-align: center;
+                        padding: 40px;
+                    }
+                    .logo-container {
+                        margin-bottom: 24px;
+                    }
+                    .logo {
+                        width: 80px;
+                        height: 80px;
                         background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+                        border-radius: 20px;
+                        display: flex;
+                        align-items: center;
+                        justify-content: center;
+                        margin: 0 auto;
+                        box-shadow: 0 10px 40px rgba(102, 126, 234, 0.4);
+                        animation: pulse 2s ease-in-out infinite;
+                    }
+                    .logo-text {
+                        font-size: 32px;
+                        font-weight: 700;
                         color: white;
                     }
-                    h1 { margin: 0 0 10px 0; font-size: 28px; }
-                    .subtitle { opacity: 0.9; margin-bottom: 30px; }
-                    .loader {
-                        width: 50px;
-                        height: 50px;
-                        border: 4px solid rgba(255,255,255,0.3);
-                        border-top-color: white;
-                        border-radius: 50%;
-                        animation: spin 1s linear infinite;
+                    @keyframes pulse {
+                        0%, 100% { transform: scale(1); box-shadow: 0 10px 40px rgba(102, 126, 234, 0.4); }
+                        50% { transform: scale(1.05); box-shadow: 0 15px 50px rgba(102, 126, 234, 0.6); }
                     }
-                    @keyframes spin {
-                        to { transform: rotate(360deg); }
+                    .app-name {
+                        font-size: 28px;
+                        font-weight: 600;
+                        margin-bottom: 6px;
+                        background: linear-gradient(90deg, #667eea, #764ba2);
+                        -webkit-background-clip: text;
+                        -webkit-text-fill-color: transparent;
+                        background-clip: text;
+                    }
+                    .tagline {
+                        font-size: 13px;
+                        color: rgba(255, 255, 255, 0.6);
+                        margin-bottom: 32px;
+                    }
+                    .progress-container {
+                        width: 280px;
+                        margin: 0 auto 16px;
+                    }
+                    .progress-bar {
+                        height: 4px;
+                        background: rgba(255, 255, 255, 0.1);
+                        border-radius: 4px;
+                        overflow: hidden;
+                    }
+                    .progress-fill {
+                        height: 100%;
+                        background: linear-gradient(90deg, #667eea, #764ba2);
+                        border-radius: 4px;
+                        width: 0%;
+                        transition: width 0.3s ease;
                     }
                     .status {
-                        margin-top: 20px;
-                        font-size: 14px;
-                        opacity: 0.8;
+                        font-size: 13px;
+                        color: rgba(255, 255, 255, 0.8);
+                        min-height: 20px;
+                    }
+                    .step-indicator {
+                        font-size: 11px;
+                        color: rgba(255, 255, 255, 0.4);
+                        margin-top: 8px;
+                    }
+                    .version {
+                        position: absolute;
+                        bottom: 16px;
+                        font-size: 11px;
+                        color: rgba(255, 255, 255, 0.3);
                     }
                 </style>
             </head>
             <body>
-                <h1>RYX Billing</h1>
-                <div class="subtitle">Professional Billing System</div>
-                <div class="loader"></div>
-                <div class="status" id="status">Starting services...</div>
+                <div class="container">
+                    <div class="logo-container">
+                        <div class="logo">
+                            <span class="logo-text">R</span>
+                        </div>
+                    </div>
+                    <div class="app-name">RYX Billing</div>
+                    <div class="tagline">Professional Billing System</div>
+                    <div class="progress-container">
+                        <div class="progress-bar">
+                            <div class="progress-fill" id="progress"></div>
+                        </div>
+                    </div>
+                    <div class="status" id="status">Initializing...</div>
+                    <div class="step-indicator" id="step"></div>
+                </div>
+                <div class="version" id="version"></div>
                 <script>
-                    const { ipcRenderer } = require('electron');
-                    ipcRenderer.on('splash-status', (event, message) => {
-                        document.getElementById('status').textContent = message;
+                    window.addEventListener('DOMContentLoaded', () => {
+                        if (window.splashAPI) {
+                            window.splashAPI.onProgress((data) => {
+                                document.getElementById('status').textContent = data.message || '';
+                                document.getElementById('progress').style.width = (data.percent || 0) + '%';
+                                document.getElementById('step').textContent = data.step || '';
+                            });
+                            window.splashAPI.onVersion((version) => {
+                                document.getElementById('version').textContent = 'v' + version;
+                            });
+                        }
                     });
                 </script>
             </body>
@@ -104,13 +189,17 @@ if (!gotTheLock) {
     async function initializeApp() {
         let splash = null;
         let startupTimeoutId = null;
-        const STARTUP_TIMEOUT = 60000; // 60 seconds max for entire startup
+        const STARTUP_TIMEOUT = 90000; // 90 seconds max for entire startup
+        const TOTAL_STEPS = 4;
+        let currentStep = 0;
 
-        // Helper to update splash status
-        const updateSplashStatus = (message) => {
-            console.log(`[STARTUP] ${message}`);
+        // Helper to update splash progress with friendly messages
+        const updateProgress = (step, message, percent) => {
+            currentStep = step;
+            const stepText = `Step ${step} of ${TOTAL_STEPS}`;
+            console.log(`[STARTUP] [${stepText}] ${message} (${percent}%)`);
             if (splash && !splash.isDestroyed()) {
-                splash.webContents.send('splash-status', message);
+                splash.webContents.send('splash-progress', { message, percent, step: stepText });
             }
         };
 
@@ -126,30 +215,39 @@ if (!gotTheLock) {
             // Set up startup timeout
             const startupTimeout = new Promise((_, reject) => {
                 startupTimeoutId = setTimeout(() => {
-                    reject(new Error('Application startup timed out after 60 seconds. Services may be unresponsive.'));
+                    reject(new Error(APP_CONFIG.messages.errors.serviceTimeout));
                 }, STARTUP_TIMEOUT);
             });
 
             // Show splash screen
             splash = createSplashScreen();
-            updateSplashStatus('Initializing...');
+
+            // Send version to splash
+            splash.webContents.once('did-finish-load', () => {
+                splash.webContents.send('splash-version', APP_CONFIG.app.version);
+                updateProgress(1, APP_CONFIG.messages.steps.initializing, 5);
+            });
 
             // Wrap the actual startup in a race with timeout
             const startupProcess = async () => {
                 // Step 1: Initialize service manager (finds/setups Python)
-                updateSplashStatus('Setting up Python environment...');
+                updateProgress(1, APP_CONFIG.messages.steps.pythonSetup, 15);
                 await serviceManager.initialize();
+                updateProgress(1, APP_CONFIG.messages.steps.pythonSetup, 25);
 
                 // Step 2: Start backend and frontend services
-                updateSplashStatus('Starting backend server (port 5000)...');
+                updateProgress(2, APP_CONFIG.messages.steps.backendStarting, 35);
                 await serviceManager.startAll();
+                updateProgress(2, APP_CONFIG.messages.steps.servicesReady, 60);
 
-                // Step 3: Setup IPC handlers BEFORE creating window (so renderer can use them immediately)
+                // Step 3: Setup IPC handlers BEFORE creating window
+                updateProgress(3, APP_CONFIG.messages.steps.frontendStarting, 70);
                 setupIPC(null, serviceManager);
 
                 // Step 4: Create main window
-                updateSplashStatus('Loading application interface...');
+                updateProgress(4, APP_CONFIG.messages.steps.loadingApp, 85);
                 mainWindow = await windowManager.createMainWindow();
+                updateProgress(4, APP_CONFIG.messages.steps.loadingApp, 100);
 
                 return true;
             };
@@ -162,12 +260,15 @@ if (!gotTheLock) {
                 clearTimeout(startupTimeoutId);
             }
 
+            // Small delay for smooth transition
+            await new Promise(resolve => setTimeout(resolve, 300));
+
             // Close splash when main window is ready
             if (splash && !splash.isDestroyed()) {
                 splash.close();
             }
 
-            // Update IPC handlers with mainWindow reference (for handlers that need window)
+            // Update IPC handlers with mainWindow reference
             setupIPC(mainWindow, serviceManager);
 
             // Setup application menu
@@ -180,13 +281,9 @@ if (!gotTheLock) {
 
             // Initialize auto-updater (check for updates after app starts)
             if (APP_CONFIG.isProduction) {
-                // Lazy load AppUpdater to avoid electron-updater initialization errors
                 const AppUpdater = require('./updater');
                 const updater = new AppUpdater();
-                // Check for updates after 5 seconds (let app fully load first)
-                setTimeout(() => {
-                    updater.checkForUpdates();
-                }, 5000);
+                setTimeout(() => updater.checkForUpdates(), 5000);
             }
 
             console.log('═══════════════════════════════════════════════════════');
@@ -199,39 +296,32 @@ if (!gotTheLock) {
             console.error(error);
             console.error('═══════════════════════════════════════════════════════');
 
-            // Clear the timeout
-            if (startupTimeoutId) {
-                clearTimeout(startupTimeoutId);
-            }
+            if (startupTimeoutId) clearTimeout(startupTimeoutId);
+            if (splash && !splash.isDestroyed()) splash.close();
 
-            // Close splash if open
-            if (splash && !splash.isDestroyed()) {
-                splash.close();
-            }
-
-            // Provide detailed error message based on error type
+            // Provide user-friendly error message
             let userMessage = `Failed to start RYX Billing:\n\n${error.message}\n\n`;
 
-            if (error.message.includes('Python')) {
-                userMessage += 'Possible solutions:\n';
+            if (error.message.toLowerCase().includes('python')) {
+                userMessage += 'Solutions:\n';
                 userMessage += '1. Install Python 3.10+ from python.org\n';
-                userMessage += '2. Make sure Python is in your PATH\n';
-                userMessage += '3. Check the backend/venv folder exists';
-            } else if (error.message.includes('port')) {
-                userMessage += 'Possible solutions:\n';
-                userMessage += '1. Check if another application is using port 5000 or 3001\n';
-                userMessage += '2. Close any running instances of RYX Billing\n';
-                userMessage += '3. Restart your computer to free up ports';
-            } else if (error.message.includes('timeout')) {
-                userMessage += 'Possible solutions:\n';
-                userMessage += '1. Check your system resources (memory/CPU)\n';
-                userMessage += '2. Make sure antivirus is not blocking the app\n';
-                userMessage += '3. Try restarting the application';
+                userMessage += '2. Ensure "Add Python to PATH" is checked during installation\n';
+                userMessage += '3. Restart this application';
+            } else if (error.message.toLowerCase().includes('port')) {
+                userMessage += 'Solutions:\n';
+                userMessage += '1. Close any other instances of RYX Billing\n';
+                userMessage += '2. Check if another app is using the same port\n';
+                userMessage += '3. Restart your computer';
+            } else if (error.message.toLowerCase().includes('timeout') || error.message.toLowerCase().includes('long')) {
+                userMessage += 'Solutions:\n';
+                userMessage += '1. Check your system resources\n';
+                userMessage += '2. Temporarily disable antivirus\n';
+                userMessage += '3. Restart the application';
             } else {
-                userMessage += 'Please check the application logs for more details.';
+                userMessage += 'Please restart the application or contact support.';
             }
 
-            dialog.showErrorBox('Application Error', userMessage);
+            dialog.showErrorBox('Startup Error', userMessage);
             app.quit();
         }
     }

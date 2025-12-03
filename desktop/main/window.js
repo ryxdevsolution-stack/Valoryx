@@ -154,37 +154,8 @@ class WindowManager {
      * Set up navigation handlers
      */
     setupNavigationHandlers(window) {
-        // Handle navigation requests from renderer
-        const { ipcMain } = require('electron');
-
-        ipcMain.handle('navigate', (event, path) => {
-            const url = `${APP_CONFIG.frontend.url}${path}`;
-            window.loadURL(url);
-            return true;
-        });
-
-        // Handle back/forward navigation
-        ipcMain.handle('go-back', () => {
-            if (window.webContents.canGoBack()) {
-                window.webContents.goBack();
-                return true;
-            }
-            return false;
-        });
-
-        ipcMain.handle('go-forward', () => {
-            if (window.webContents.canGoForward()) {
-                window.webContents.goForward();
-                return true;
-            }
-            return false;
-        });
-
-        // Handle refresh
-        ipcMain.handle('refresh', () => {
-            window.webContents.reload();
-            return true;
-        });
+        // Navigation handlers are now in ipc.js to prevent duplicate registration
+        // This function is kept for any window-specific setup that may be needed
     }
 
     /**
