@@ -8,6 +8,7 @@ from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission, require_any_permission
 from utils.audit_logger import log_action
 from utils.helpers import calculate_gst_amount, calculate_final_amount, validate_items
+from utils.cache_helper import invalidate_billing_cache, invalidate_stock_cache
 
 billing_bp = Blueprint('billing', __name__)
 
@@ -19,6 +20,7 @@ def create_gst_bill():
     """
     Create GST-enabled bill with client_id validation
     MANDATORY: All items must belong to same client_id
+    OPTIMIZED: Uses batch query for product validation
     """
     try:
         data = request.get_json()
@@ -35,12 +37,17 @@ def create_gst_bill():
         if not is_valid:
             return jsonify({'error': error_msg}), 400
 
-        # Verify all products belong to this client
+        # OPTIMIZED: Batch fetch all products in single query (fixes N+1)
+        product_ids = [item['product_id'] for item in data['items']]
+        products = StockEntry.query.filter(
+            StockEntry.product_id.in_(product_ids),
+            StockEntry.client_id == client_id
+        ).all()
+        product_map = {p.product_id: p for p in products}
+
+        # Verify all products and check stock
         for item in data['items']:
-            product = StockEntry.query.filter_by(
-                product_id=item['product_id'],
-                client_id=client_id
-            ).first()
+            product = product_map.get(item['product_id'])
 
             if not product:
                 return jsonify({'error': f"Product {item['product_name']} not found for your account"}), 404
@@ -103,6 +110,7 @@ def create_non_gst_bill():
     """
     Create Non-GST bill with client_id validation
     MANDATORY: All items must belong to same client_id
+    OPTIMIZED: Uses batch query for product validation
     """
     try:
         data = request.get_json()
@@ -119,12 +127,17 @@ def create_non_gst_bill():
         if not is_valid:
             return jsonify({'error': error_msg}), 400
 
-        # Verify all products belong to this client
+        # OPTIMIZED: Batch fetch all products in single query (fixes N+1)
+        product_ids = [item['product_id'] for item in data['items']]
+        products = StockEntry.query.filter(
+            StockEntry.product_id.in_(product_ids),
+            StockEntry.client_id == client_id
+        ).all()
+        product_map = {p.product_id: p for p in products}
+
+        # Verify all products and check stock
         for item in data['items']:
-            product = StockEntry.query.filter_by(
-                product_id=item['product_id'],
-                client_id=client_id
-            ).first()
+            product = product_map.get(item['product_id'])
 
             if not product:
                 return jsonify({'error': f"Product {item['product_name']} not found for your account"}), 404
@@ -179,6 +192,7 @@ def create_non_gst_bill():
 def get_bills():
     """
     List all bills (GST + Non-GST) filtered by client_id
+    OPTIMIZED: Uses SQL UNION and LIMIT/OFFSET for pagination
     """
     try:
         client_id = g.user['client_id']
@@ -190,44 +204,77 @@ def get_bills():
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 50))
 
-        bills = []
+        # Calculate offset
+        offset = (page - 1) * limit
 
-        # Get GST bills if requested
-        if bill_type in ['gst', 'all']:
-            gst_query = GSTBilling.query.filter_by(client_id=client_id)
+        # For single type queries, use direct SQL pagination
+        if bill_type == 'gst':
+            query = GSTBilling.query.filter_by(client_id=client_id)
+            if date_from:
+                query = query.filter(GSTBilling.created_at >= date_from)
+            if date_to:
+                query = query.filter(GSTBilling.created_at <= date_to)
+
+            total_records = query.count()
+            bills = query.order_by(GSTBilling.created_at.desc()).offset(offset).limit(limit).all()
+            bills_data = [bill.to_dict() for bill in bills]
+
+        elif bill_type == 'non-gst':
+            query = NonGSTBilling.query.filter_by(client_id=client_id)
+            if date_from:
+                query = query.filter(NonGSTBilling.created_at >= date_from)
+            if date_to:
+                query = query.filter(NonGSTBilling.created_at <= date_to)
+
+            total_records = query.count()
+            bills = query.order_by(NonGSTBilling.created_at.desc()).offset(offset).limit(limit).all()
+            bills_data = [bill.to_dict() for bill in bills]
+
+        else:
+            # For 'all' type, use optimized union approach
+            # Count total records using efficient SQL
+            gst_count_query = GSTBilling.query.filter_by(client_id=client_id)
+            non_gst_count_query = NonGSTBilling.query.filter_by(client_id=client_id)
 
             if date_from:
-                gst_query = gst_query.filter(GSTBilling.created_at >= date_from)
+                gst_count_query = gst_count_query.filter(GSTBilling.created_at >= date_from)
+                non_gst_count_query = non_gst_count_query.filter(NonGSTBilling.created_at >= date_from)
             if date_to:
-                gst_query = gst_query.filter(GSTBilling.created_at <= date_to)
+                gst_count_query = gst_count_query.filter(GSTBilling.created_at <= date_to)
+                non_gst_count_query = non_gst_count_query.filter(NonGSTBilling.created_at <= date_to)
 
-            gst_bills = gst_query.order_by(GSTBilling.created_at.desc()).all()
-            bills.extend([bill.to_dict() for bill in gst_bills])
+            total_records = gst_count_query.count() + non_gst_count_query.count()
 
-        # Get Non-GST bills if requested
-        if bill_type in ['non-gst', 'all']:
+            # Fetch only required bills with pagination
+            # For combined view, we need to merge and sort efficiently
+            # Fetch slightly more to handle the merge correctly
+            fetch_limit = limit + offset
+
+            gst_query = GSTBilling.query.filter_by(client_id=client_id)
             non_gst_query = NonGSTBilling.query.filter_by(client_id=client_id)
 
             if date_from:
+                gst_query = gst_query.filter(GSTBilling.created_at >= date_from)
                 non_gst_query = non_gst_query.filter(NonGSTBilling.created_at >= date_from)
             if date_to:
+                gst_query = gst_query.filter(GSTBilling.created_at <= date_to)
                 non_gst_query = non_gst_query.filter(NonGSTBilling.created_at <= date_to)
 
-            non_gst_bills = non_gst_query.order_by(NonGSTBilling.created_at.desc()).all()
-            bills.extend([bill.to_dict() for bill in non_gst_bills])
+            gst_bills = gst_query.order_by(GSTBilling.created_at.desc()).limit(fetch_limit).all()
+            non_gst_bills = non_gst_query.order_by(NonGSTBilling.created_at.desc()).limit(fetch_limit).all()
 
-        # Sort by created_at descending
-        bills.sort(key=lambda x: x['created_at'], reverse=True)
+            # Merge and sort
+            all_bills = [(bill, bill.created_at) for bill in gst_bills] + \
+                       [(bill, bill.created_at) for bill in non_gst_bills]
+            all_bills.sort(key=lambda x: x[1], reverse=True)
 
-        # Pagination
-        total_records = len(bills)
-        start = (page - 1) * limit
-        end = start + limit
-        paginated_bills = bills[start:end]
+            # Apply pagination
+            paginated = all_bills[offset:offset + limit]
+            bills_data = [bill.to_dict() for bill, _ in paginated]
 
         return jsonify({
             'success': True,
-            'bills': paginated_bills,
+            'bills': bills_data,
             'pagination': {
                 'page': page,
                 'limit': limit,
@@ -330,6 +377,20 @@ def create_unified_bill():
         if not data['items'] or len(data['items']) == 0:
             return jsonify({'error': 'At least one item is required'}), 400
 
+        # OPTIMIZED: Batch fetch all existing products in single query (fixes N+1)
+        existing_product_ids = [
+            item['product_id'] for item in data['items']
+            if not item['product_id'].startswith('temp-') and not item['product_id'].startswith('nosave-')
+        ]
+        if existing_product_ids:
+            existing_products = StockEntry.query.filter(
+                StockEntry.product_id.in_(existing_product_ids),
+                StockEntry.client_id == client_id
+            ).all()
+            product_map = {p.product_id: p for p in existing_products}
+        else:
+            product_map = {}
+
         # Verify all products and calculate totals
         subtotal = 0
         total_gst_amount = 0
@@ -345,11 +406,8 @@ def create_unified_bill():
             is_quick_sale = product_id.startswith('nosave-')  # Quick sale - don't save to stock
 
             if not is_new_product and not is_quick_sale:
-                # Verify product belongs to this client
-                product = StockEntry.query.filter_by(
-                    product_id=product_id,
-                    client_id=client_id
-                ).first()
+                # OPTIMIZED: Use pre-fetched product from batch query
+                product = product_map.get(product_id)
 
                 if not product:
                     return jsonify({'error': f"Product {item.get('product_name', 'Unknown')} not found"}), 404
@@ -497,6 +555,10 @@ def create_unified_bill():
             db.session.add(new_bill)
             db.session.commit()
 
+            # Invalidate caches after bill creation
+            invalidate_billing_cache(client_id)
+            invalidate_stock_cache(client_id)
+
             log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
 
             # Calculate discount amount if discount percentage is provided
@@ -565,6 +627,10 @@ def create_unified_bill():
 
             db.session.add(new_bill)
             db.session.commit()
+
+            # Invalidate caches after bill creation
+            invalidate_billing_cache(client_id)
+            invalidate_stock_cache(client_id)
 
             log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
 
@@ -647,23 +713,29 @@ def update_bill(bill_id):
         if not is_valid:
             return jsonify({'error': error_msg}), 400
 
+        # OPTIMIZED: Batch fetch all products in single query (fixes N+1)
+        all_product_ids = set()
+        for old_item in old_items:
+            all_product_ids.add(old_item['product_id'])
+        for new_item in new_items:
+            all_product_ids.add(new_item['product_id'])
+
+        products = StockEntry.query.filter(
+            StockEntry.product_id.in_(list(all_product_ids)),
+            StockEntry.client_id == client_id
+        ).all()
+        product_map = {p.product_id: p for p in products}
+
         # Step 1: Reverse stock for old items
         for old_item in old_items:
-            product = StockEntry.query.filter_by(
-                product_id=old_item['product_id'],
-                client_id=client_id
-            ).first()
-
+            product = product_map.get(old_item['product_id'])
             if product:
                 # Add back the quantity from old bill
                 product.quantity += old_item['quantity']
 
         # Step 2: Deduct stock for new items
         for new_item in new_items:
-            product = StockEntry.query.filter_by(
-                product_id=new_item['product_id'],
-                client_id=client_id
-            ).first()
+            product = product_map.get(new_item['product_id'])
 
             if not product:
                 db.session.rollback()
@@ -772,24 +844,46 @@ def exchange_bill(bill_id):
 
         old_bill_data = bill.to_dict()
 
+        # Fetch all client products for lookup by ID or name
+        all_client_products = StockEntry.query.filter_by(client_id=client_id).all()
+        product_map_by_id = {p.product_id: p for p in all_client_products}
+        product_map_by_name = {p.product_name.lower(): p for p in all_client_products}
+
+        # Helper function to find product by ID or name
+        def find_product(item):
+            product_id = item.get('product_id', '')
+            product_name = item.get('product_name', '')
+
+            # Skip nosave items
+            if product_id.startswith('nosave-'):
+                return None, True  # None product, but skip (not error)
+
+            # Try by ID first
+            if product_id and product_id in product_map_by_id:
+                return product_map_by_id[product_id], False
+
+            # Fallback: try by name (case-insensitive)
+            if product_name and product_name.lower() in product_map_by_name:
+                return product_map_by_name[product_name.lower()], False
+
+            return None, False  # Not found, not skip
+
         # Step 1: Add returned items back to stock
         for returned_item in returned_items:
-            product_id = returned_item.get('product_id', '')
-            if product_id.startswith('nosave-'):
+            product, should_skip = find_product(returned_item)
+            if should_skip:
                 continue
-            product = StockEntry.query.filter_by(product_id=product_id, client_id=client_id).first()
             if product:
                 product.quantity += returned_item['quantity']
 
         # Step 2: Deduct new items from stock
         for new_item in new_items:
-            product_id = new_item.get('product_id', '')
-            if product_id.startswith('nosave-'):
+            product, should_skip = find_product(new_item)
+            if should_skip:
                 continue
-            product = StockEntry.query.filter_by(product_id=product_id, client_id=client_id).first()
             if not product:
                 db.session.rollback()
-                return jsonify({'error': f"Product {new_item['product_name']} not found"}), 404
+                return jsonify({'error': f"Product {new_item['product_name']} not found in stock"}), 404
             if product.quantity < new_item['quantity']:
                 db.session.rollback()
                 return jsonify({'error': f"Insufficient stock for {new_item['product_name']}. Available: {product.quantity}"}), 400
@@ -874,6 +968,20 @@ def cancel_bill(bill_id):
 
         old_bill_data = bill.to_dict()
 
+        # OPTIMIZED: Batch fetch all products in single query (fixes N+1)
+        product_ids = [
+            item.get('product_id', '') for item in bill.items
+            if not item.get('product_id', '').startswith('nosave-')
+        ]
+        if product_ids:
+            products = StockEntry.query.filter(
+                StockEntry.product_id.in_(product_ids),
+                StockEntry.client_id == client_id
+            ).all()
+            product_map = {p.product_id: p for p in products}
+        else:
+            product_map = {}
+
         # Restore stock quantities for all items
         for item in bill.items:
             product_id = item.get('product_id', '')
@@ -881,11 +989,7 @@ def cancel_bill(bill_id):
             if product_id.startswith('nosave-'):
                 continue
 
-            product = StockEntry.query.filter_by(
-                product_id=product_id,
-                client_id=client_id
-            ).first()
-
+            product = product_map.get(product_id)
             if product:
                 product.quantity += item['quantity']
 
@@ -998,5 +1102,98 @@ def list_printers():
         return jsonify({
             'success': False,
             'error': 'Failed to list printers',
+            'message': str(e)
+        }), 500
+
+
+@billing_bp.route('/print-labels', methods=['POST'])
+@authenticate
+@require_permission('print_bills')
+def print_labels():
+    """
+    Print barcode labels for items (50mm x 25mm labels)
+
+    Request body:
+    {
+        "items": [
+            {
+                "item_code": "LAP-550-001",
+                "product_name": "Laptop Dell",
+                "rate": 45000,
+                "mrp": 50000,
+                "quantity": 10  # Print 10 labels (one per item in stock)
+            }
+        ],
+        "printerName": "optional_printer_name"
+    }
+
+    Prints labels based on quantity - if quantity=10, prints 10 labels
+    """
+    try:
+        from utils.thermal_printer import ThermalPrinter
+
+        data = request.get_json()
+
+        # Validate required data
+        if 'items' not in data or not isinstance(data['items'], list) or len(data['items']) == 0:
+            return jsonify({'error': 'Missing or empty items array'}), 400
+
+        items = data['items']
+
+        # Validate each item has required fields
+        for i, item in enumerate(items):
+            if not item.get('item_code'):
+                return jsonify({'error': f'Item {i+1} missing item_code'}), 400
+            if not item.get('product_name'):
+                return jsonify({'error': f'Item {i+1} missing product_name'}), 400
+
+            # Ensure quantity is at least 1
+            if 'quantity' not in item or int(item.get('quantity', 0)) < 1:
+                items[i]['quantity'] = 1
+
+        # Get printer name from request or use default
+        printer_name = data.get('printerName', None)
+
+        # Calculate total labels
+        total_labels = sum(int(item.get('quantity', 1)) for item in items)
+
+        # Initialize thermal printer
+        printer = ThermalPrinter(printer_name=printer_name)
+
+        # Print the labels
+        success = printer.print_labels(items)
+
+        if success:
+            # Log the print action
+            log_action(
+                'PRINT_LABELS',
+                'billing',
+                f'labels_{len(items)}_items',
+                None,
+                {
+                    'items_count': len(items),
+                    'total_labels': total_labels,
+                    'printed_at': datetime.utcnow().isoformat()
+                }
+            )
+
+            return jsonify({
+                'success': True,
+                'message': f'{total_labels} barcode labels printed successfully',
+                'printer': printer.printer_name,
+                'items_count': len(items),
+                'total_labels': total_labels
+            }), 200
+        else:
+            return jsonify({
+                'success': False,
+                'error': 'Failed to print labels',
+                'message': 'Printer may be offline or not configured'
+            }), 500
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': 'Label print failed',
             'message': str(e)
         }), 500

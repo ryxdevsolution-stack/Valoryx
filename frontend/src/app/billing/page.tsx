@@ -5,7 +5,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { useClient } from '@/contexts/ClientContext'
-import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, Edit, RefreshCw, XCircle } from 'lucide-react'
+import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 interface BillItem {
@@ -349,10 +349,6 @@ export default function AllBillsPage() {
     }
   }
 
-  const handleEditBill = (billId: string) => {
-    router.push(`/billing/edit/${billId}`)
-  }
-
   const handleExchangeBill = (billId: string) => {
     router.push(`/billing/exchange/${billId}`)
   }
@@ -598,7 +594,7 @@ export default function AllBillsPage() {
                     const displayNumber = filteredBillNumbers.size
 
                     return (
-                      <tr key={`${bill.bill_id}-${bill.displayPaymentType}`}
+                      <tr key={`${bill.bill_id}-${bill.displayPaymentType}-${index}`}
                           className={`hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${!bill.isFirstPayment && isSplitPayment ? 'border-t-0' : ''}`}>
                         <td className="px-2 py-1.5 whitespace-nowrap">
                           {bill.isFirstPayment ? (
@@ -663,15 +659,6 @@ export default function AllBillsPage() {
                               >
                                 <RefreshCw className="w-3 h-3" />
                                 Exchange
-                              </button>
-                              <button
-                                type="button"
-                                onClick={() => handleEditBill(bill.bill_id)}
-                                className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-all"
-                                title="Edit Bill"
-                              >
-                                <Edit className="w-3 h-3" />
-                                Edit
                               </button>
                               <button
                                 type="button"

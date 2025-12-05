@@ -4,20 +4,31 @@ from models.billing_model import GSTBilling, NonGSTBilling
 from models.stock_model import StockEntry
 from models.payment_model import PaymentType
 from utils.auth_middleware import authenticate
+from utils.cache_helper import get_cache_manager
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta
 from collections import defaultdict
 
 analytics_bp = Blueprint('analytics', __name__)
 
+# Cache timeouts in seconds
+ANALYTICS_CACHE_TIMEOUT = 60  # 1 minute for dashboard data
+
 
 @analytics_bp.route('/dashboard', methods=['GET'])
 @authenticate
 def get_dashboard_analytics():
-    """Get comprehensive analytics for dashboard with real data - OPTIMIZED with SQL"""
+    """Get comprehensive analytics for dashboard with real data - OPTIMIZED with SQL and caching"""
     try:
         client_id = g.user['client_id']
         time_range = request.args.get('range', 'today')
+
+        # Try to get from cache first
+        cache = get_cache_manager()
+        cache_key = f"analytics:dashboard:{client_id}:{time_range}"
+        cached_data = cache.get(cache_key)
+        if cached_data is not None:
+            return jsonify(cached_data), 200
 
         # Calculate date range
         now = datetime.utcnow()
@@ -444,7 +455,8 @@ def get_dashboard_analytics():
         if total_revenue_for_margin > 0:
             profit_margin = ((total_revenue_for_margin - total_cost) / total_revenue_for_margin) * 100
 
-        return jsonify({
+        # Build response data
+        response_data = {
             'revenue': {
                 'today': round(revenue_today, 2),
                 'thisWeek': round(revenue_week, 2),
@@ -478,7 +490,12 @@ def get_dashboard_analytics():
                 'profitMargin': round(profit_margin, 2),
                 'totalProfit': round(total_revenue_for_margin - total_cost, 2)
             }
-        }), 200
+        }
+
+        # Cache the response for faster subsequent requests
+        cache.set(cache_key, response_data, ANALYTICS_CACHE_TIMEOUT)
+
+        return jsonify(response_data), 200
 
     except Exception as e:
         print(f"Analytics error: {str(e)}")

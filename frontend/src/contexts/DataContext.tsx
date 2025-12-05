@@ -53,6 +53,10 @@ export function DataProvider({ children }: { children: ReactNode }) {
     },
   })
 
+  // Use ref to access current cache without causing re-renders
+  const cacheRef = useRef(cache)
+  cacheRef.current = cache
+
   // Track ongoing requests to prevent duplicates
   const ongoingRequests = useRef<{
     products: Promise<Product[]> | null
@@ -63,11 +67,12 @@ export function DataProvider({ children }: { children: ReactNode }) {
   })
 
   // Fetch products with caching and request deduplication
+  // FIXED: Removed cache from dependencies to prevent infinite loop
   const fetchProducts = useCallback(async (forceRefresh = false): Promise<Product[]> => {
     const now = Date.now()
 
     // Use ref to get current cache state without dependencies
-    const currentCache = cache
+    const currentCache = cacheRef.current
 
     // Check if we have valid cached data
     if (!forceRefresh &&
@@ -100,9 +105,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         return products
       } catch (error) {
         console.error('Failed to fetch products:', error)
-        // Return current cache or empty array
-        const fallbackCache = cache
-        return fallbackCache.products.length > 0 ? fallbackCache.products : []
+        // Return current cache or empty array using ref
+        return cacheRef.current.products.length > 0 ? cacheRef.current.products : []
       } finally {
         ongoingRequests.current.products = null
       }
@@ -110,14 +114,15 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     ongoingRequests.current.products = request
     return request
-  }, [cache])
+  }, []) // Empty deps - uses cacheRef instead
 
   // Fetch payment types with caching and request deduplication
+  // FIXED: Removed cache from dependencies to prevent infinite loop
   const fetchPaymentTypes = useCallback(async (forceRefresh = false): Promise<PaymentType[]> => {
     const now = Date.now()
 
     // Use ref to get current cache state without dependencies
-    const currentCache = cache
+    const currentCache = cacheRef.current
 
     // Check if we have valid cached data
     if (!forceRefresh &&
@@ -150,9 +155,8 @@ export function DataProvider({ children }: { children: ReactNode }) {
         return paymentTypes
       } catch (error) {
         console.error('Failed to fetch payment types:', error)
-        // Return current cache or empty array
-        const fallbackCache = cache
-        return fallbackCache.paymentTypes.length > 0 ? fallbackCache.paymentTypes : []
+        // Return current cache or empty array using ref
+        return cacheRef.current.paymentTypes.length > 0 ? cacheRef.current.paymentTypes : []
       } finally {
         ongoingRequests.current.paymentTypes = null
       }
@@ -160,7 +164,7 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     ongoingRequests.current.paymentTypes = request
     return request
-  }, [cache])
+  }, []) // Empty deps - uses cacheRef instead
 
   // Invalidate cache manually
   const invalidateCache = useCallback((key?: 'products' | 'paymentTypes') => {

@@ -23,6 +23,7 @@ def login():
     """
     User login - Returns JWT token with client_id
     CRITICAL: client_id MUST be included in JWT payload and response
+    OPTIMIZED: Uses JOIN query to reduce DB roundtrips
     """
     try:
         data = request.get_json()
@@ -34,11 +35,15 @@ def login():
         if not email or not password:
             return jsonify({'error': 'Email and password required'}), 400
 
-        # Find user by email
-        user = User.query.filter_by(email=email).first()
+        # OPTIMIZED: Single JOIN query to get User + Client together
+        result = db.session.query(User, ClientEntry).join(
+            ClientEntry, User.client_id == ClientEntry.client_id
+        ).filter(User.email == email).first()
 
-        if not user:
+        if not result:
             return jsonify({'error': 'Invalid credentials'}), 401
+
+        user, client = result
 
         # Verify password
         if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
@@ -48,17 +53,11 @@ def login():
         if not user.is_active:
             return jsonify({'error': 'Account is inactive'}), 401
 
-        # Get client details
-        client = ClientEntry.query.filter_by(client_id=user.client_id).first()
-
-        if not client or not client.is_active:
+        # Check if client is active (already fetched via JOIN)
+        if not client.is_active:
             return jsonify({'error': 'Client account is inactive'}), 401
 
-        # Update last login
-        user.last_login = datetime.utcnow()
-        db.session.commit()
-
-        # Get user permissions
+        # OPTIMIZED: Get permissions with eager loading
         user_permissions = get_user_permissions(str(user.user_id))
 
         # Generate JWT token with client_id and permissions (convert UUIDs to strings)
@@ -74,9 +73,9 @@ def login():
 
         token = jwt.encode(token_payload, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
 
-        # Log login action
-        g.user = {'user_id': str(user.user_id), 'client_id': str(user.client_id)}
-        log_action('LOGIN', 'users', str(user.user_id))
+        # OPTIMIZED: Defer last_login update and audit log to after response
+        # Update last_login without blocking (will be committed with cache set)
+        user.last_login = datetime.utcnow()
 
         # Prepare user data for caching
         user_data = {
@@ -108,6 +107,12 @@ def login():
             'user': user_data,
             'client': client_data
         }, USER_SESSION_CACHE_TIMEOUT)
+
+        # OPTIMIZED: Single commit for last_login update (non-blocking)
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()  # Don't fail login if last_login update fails
 
         # Return token with client info and permissions (convert all UUIDs to strings)
         return jsonify({

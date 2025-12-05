@@ -10,8 +10,12 @@ from models.stock_model import StockEntry
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission
 from utils.audit_logger import log_action
+from utils.cache_helper import get_cache_manager, invalidate_stock_cache
 
 stock_bp = Blueprint('stock', __name__)
+
+# Cache timeout for stock list (2 minutes - short since stock changes frequently)
+STOCK_CACHE_TIMEOUT = 120
 
 
 def generate_item_code(client_id, product_name):
@@ -125,6 +129,9 @@ def add_stock():
 
             db.session.commit()
 
+            # Invalidate stock cache
+            invalidate_stock_cache(client_id)
+
             # Log action
             log_action('UPDATE', 'stock_entry', existing_product.product_id, old_data, existing_product.to_dict())
 
@@ -170,6 +177,9 @@ def add_stock():
             db.session.add(new_product)
             db.session.commit()
 
+            # Invalidate stock cache
+            invalidate_stock_cache(client_id)
+
             # Log action
             log_action('CREATE', 'stock_entry', new_product.product_id, None, new_product.to_dict())
 
@@ -189,7 +199,7 @@ def add_stock():
 @authenticate
 @require_permission('view_stock')
 def get_stock():
-    """List stock entries filtered by client_id"""
+    """List stock entries filtered by client_id - OPTIMIZED with caching"""
     try:
         client_id = g.user['client_id']
 
@@ -197,6 +207,17 @@ def get_stock():
         category = request.args.get('category')
         search = request.args.get('search')
         limit = request.args.get('limit', type=int)  # Optional limit
+
+        # Try cache for full list requests (no search/category filter)
+        cache = get_cache_manager()
+        if not category and not search and not limit:
+            cache_key = f"stock:list:{client_id}"
+            cached_data = cache.get(cache_key)
+            if cached_data is not None:
+                return jsonify({
+                    'success': True,
+                    'stock': cached_data
+                }), 200
 
         # Build query
         query = StockEntry.query.filter_by(client_id=client_id)
@@ -216,10 +237,15 @@ def get_stock():
 
         # Get results
         stock_entries = query.all()
+        stock_data = [entry.to_dict() for entry in stock_entries]
+
+        # Cache full list for future requests
+        if not category and not search and not limit:
+            cache.set(f"stock:list:{client_id}", stock_data, STOCK_CACHE_TIMEOUT)
 
         return jsonify({
             'success': True,
-            'stock': [entry.to_dict() for entry in stock_entries]
+            'stock': stock_data
         }), 200
 
     except Exception as e:
@@ -302,6 +328,11 @@ def update_stock(product_id):
         if 'item_code' in data:
             item_code_value = data['item_code'].strip() if isinstance(data['item_code'], str) else data['item_code']
             product.item_code = item_code_value if item_code_value else product.item_code
+
+        # Auto-generate item_code if still missing
+        if not product.item_code:
+            product.item_code = generate_item_code(client_id, product.product_name)
+
         if 'barcode' in data:
             barcode_value = data['barcode'].strip() if isinstance(data['barcode'], str) else data['barcode']
             product.barcode = barcode_value if barcode_value else None

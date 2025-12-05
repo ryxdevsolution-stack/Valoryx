@@ -634,3 +634,101 @@ class ThermalPrinter:
             subprocess.run(['lp', '-d', self.printer_name, '-o', 'media=Custom.80x297mm', html_file], timeout=10)
         else:
             subprocess.run(['lp', '-o', 'media=Custom.80x297mm', html_file], timeout=10)
+
+    def print_labels(self, items: List[Dict[str, Any]]) -> bool:
+        """
+        Print barcode labels for items (50mm x 25mm labels)
+
+        Args:
+            items: List of items with item_code, product_name, rate, mrp, quantity
+                   quantity determines how many labels to print for each item
+
+        Returns:
+            True if print successful, False otherwise
+        """
+        try:
+            from utils.barcode_label import generate_labels_html, generate_text_labels
+
+            # Check if printer is available
+            if not self.printer_name:
+                print("[THERMAL_PRINTER] ERROR: No printer configured for labels")
+                return False
+
+            total_labels = sum(int(item.get('quantity', 1)) for item in items)
+            print(f"[THERMAL_PRINTER] Starting label print job - {total_labels} labels for {len(items)} items")
+
+            # For Linux thermal printers, use ESC/POS commands for barcode printing
+            if self.system == "Linux":
+                try:
+                    from utils.barcode_label import generate_escpos_labels
+
+                    print("[THERMAL_PRINTER] Using ESC/POS barcode label printing for thermal printer...")
+                    escpos_data = generate_escpos_labels(items)
+
+                    # Create temporary binary file
+                    with tempfile.NamedTemporaryFile(mode='wb', suffix='.bin', delete=False) as f:
+                        f.write(escpos_data)
+                        temp_file = f.name
+
+                    try:
+                        # Print binary ESC/POS data directly to thermal printer
+                        print(f"[THERMAL_PRINTER] Sending {total_labels} ESC/POS barcode labels to printer: {self.printer_name}")
+
+                        result = subprocess.run(
+                            ['lp', '-d', self.printer_name, '-o', 'raw', temp_file],
+                            timeout=30,
+                            capture_output=True,
+                            text=True
+                        )
+
+                        if result.returncode == 0:
+                            print(f"[THERMAL_PRINTER] SUCCESS: {total_labels} barcode labels sent to {self.printer_name}")
+                            return True
+                        else:
+                            error_msg = result.stderr.strip()
+                            print(f"[THERMAL_PRINTER] ERROR: Label print failed - {error_msg}")
+                            return False
+                    finally:
+                        try:
+                            os.unlink(temp_file)
+                        except:
+                            pass
+
+                except Exception as e:
+                    print(f"[THERMAL_PRINTER] ERROR: ESC/POS label printing failed - {e}")
+                    import traceback
+                    traceback.print_exc()
+                    return False
+
+            # For Windows/macOS, use HTML labels
+            html_content = generate_labels_html(items)
+
+            # Create temporary HTML file
+            with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+                f.write(html_content)
+                temp_file = f.name
+
+            try:
+                if self.system == "Windows":
+                    self._print_windows(temp_file)
+                elif self.system == "Darwin":
+                    # Use custom size for 40mm x 30mm labels
+                    if self.printer_name and self.printer_name != "default":
+                        subprocess.run(['lp', '-d', self.printer_name, '-o', 'media=Custom.40x30mm', temp_file], timeout=30)
+                    else:
+                        subprocess.run(['lp', '-o', 'media=Custom.40x30mm', temp_file], timeout=30)
+
+                print(f"[THERMAL_PRINTER] SUCCESS: {total_labels} labels printed")
+                return True
+
+            finally:
+                try:
+                    os.unlink(temp_file)
+                except:
+                    pass
+
+        except Exception as e:
+            print(f"[THERMAL_PRINTER] Label print error: {e}")
+            import traceback
+            traceback.print_exc()
+            return False

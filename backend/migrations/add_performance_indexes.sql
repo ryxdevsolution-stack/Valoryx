@@ -5,6 +5,10 @@
 -- STOCK_ENTRY TABLE INDEXES
 -- ============================================
 
+-- CRITICAL: Composite index for product_id lookups in billing (fixes N+1)
+CREATE INDEX IF NOT EXISTS idx_stock_client_productid
+ON stock_entry(client_id, product_id);
+
 -- Composite index for client + product name lookups (for duplicate checking)
 CREATE INDEX IF NOT EXISTS idx_stock_client_product
 ON stock_entry(client_id, product_name);
@@ -120,6 +124,17 @@ ON users(username);
 -- Index for client_id filtering
 CREATE INDEX IF NOT EXISTS idx_users_client
 ON users(client_id);
+
+-- ============================================
+-- USER_PERMISSIONS TABLE INDEXES (for login)
+-- ============================================
+
+-- CRITICAL: Index for user permissions lookup during login
+CREATE INDEX IF NOT EXISTS idx_user_permissions_user
+ON user_permissions(user_id);
+
+CREATE INDEX IF NOT EXISTS idx_user_permissions_perm
+ON user_permissions(permission_id);
 
 -- ============================================
 -- PERFORMANCE OPTIMIZATION SETTINGS

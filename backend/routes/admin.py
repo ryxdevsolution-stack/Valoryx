@@ -87,10 +87,25 @@ def get_all_users():
         offset = (page - 1) * limit
         users = query.offset(offset).limit(limit).all()
 
-        # Get permissions for each user
+        # Batch fetch all permissions for all users at once (avoid N+1)
+        user_ids = [u.user_id for u in users]
+        user_permissions = db.session.query(
+            UserPermission.user_id,
+            Permission.permission_name
+        ).join(Permission, UserPermission.permission_id == Permission.permission_id).filter(
+            UserPermission.user_id.in_(user_ids)
+        ).all() if user_ids else []
+
+        # Create permission map: user_id -> [permission_names]
+        perm_map = {}
+        for user_id, perm_name in user_permissions:
+            if user_id not in perm_map:
+                perm_map[user_id] = []
+            perm_map[user_id].append(perm_name)
+
+        # Build user data with pre-fetched permissions
         users_data = []
         for user in users:
-            permissions = get_user_permissions(user.user_id)
             user_dict = {
                 'user_id': user.user_id,
                 'email': user.email,
@@ -102,7 +117,7 @@ def get_all_users():
                 'is_active': user.is_active,
                 'created_at': user.created_at.isoformat() if user.created_at else None,
                 'last_login': user.last_login.isoformat() if user.last_login else None,
-                'permissions': permissions
+                'permissions': perm_map.get(user.user_id, [])
             }
             users_data.append(user_dict)
 
@@ -483,14 +498,19 @@ def toggle_super_admin(user_id):
         if user.is_super_admin:
             # Get all permissions
             all_permissions = Permission.query.all()
-            for permission in all_permissions:
-                # Check if permission already exists
-                existing = UserPermission.query.filter_by(
-                    user_id=user_id,
-                    permission_id=permission.permission_id
-                ).first()
+            permission_ids = [p.permission_id for p in all_permissions]
 
-                if not existing:
+            # Batch fetch existing permissions for this user (avoid N+1)
+            existing_perm_ids = set(
+                up.permission_id for up in db.session.query(UserPermission.permission_id).filter(
+                    UserPermission.user_id == user_id,
+                    UserPermission.permission_id.in_(permission_ids)
+                ).all()
+            ) if permission_ids else set()
+
+            # Add only missing permissions
+            for permission in all_permissions:
+                if permission.permission_id not in existing_perm_ids:
                     user_permission = UserPermission(
                         id=str(uuid.uuid4()),
                         user_id=user_id,
@@ -541,9 +561,13 @@ def bulk_user_operations():
 
         results = {'success': [], 'failed': []}
 
+        # Batch fetch all users at once (avoid N+1)
+        users = User.query.filter(User.user_id.in_(user_ids)).all()
+        user_map = {u.user_id: u for u in users}
+
         if operation == 'activate':
             for user_id in user_ids:
-                user = User.query.filter_by(user_id=user_id).first()
+                user = user_map.get(user_id)
                 if user:
                     user.is_active = True
                     user.updated_at = datetime.utcnow()
@@ -554,7 +578,7 @@ def bulk_user_operations():
 
         elif operation == 'deactivate':
             for user_id in user_ids:
-                user = User.query.filter_by(user_id=user_id).first()
+                user = user_map.get(user_id)
                 if user:
                     user.is_active = False
                     user.updated_at = datetime.utcnow()
@@ -565,7 +589,7 @@ def bulk_user_operations():
 
         elif operation == 'delete':
             for user_id in user_ids:
-                user = User.query.filter_by(user_id=user_id).first()
+                user = user_map.get(user_id)
                 if user:
                     # Soft delete by setting deleted_at timestamp
                     user.is_active = False
@@ -576,19 +600,32 @@ def bulk_user_operations():
                     results['failed'].append(user_id)
 
         elif operation == 'assign_permissions':
-            permissions = data.get('permissions', [])
-            for user_id in user_ids:
-                user = User.query.filter_by(user_id=user_id).first()
-                if user:
-                    for perm_name in permissions:
-                        permission = Permission.query.filter_by(permission_name=perm_name).first()
-                        if permission:
-                            existing = UserPermission.query.filter_by(
-                                user_id=user_id,
-                                permission_id=permission.permission_id
-                            ).first()
+            perm_names = data.get('permissions', [])
 
-                            if not existing:
+            # Batch fetch all permissions at once (avoid N+1)
+            permissions = Permission.query.filter(
+                Permission.permission_name.in_(perm_names)
+            ).all() if perm_names else []
+            perm_map = {p.permission_name: p for p in permissions}
+
+            # Batch fetch existing user permissions for all users (avoid N+1)
+            permission_ids = [p.permission_id for p in permissions]
+            existing_user_perms = db.session.query(
+                UserPermission.user_id,
+                UserPermission.permission_id
+            ).filter(
+                UserPermission.user_id.in_(user_ids),
+                UserPermission.permission_id.in_(permission_ids)
+            ).all() if permission_ids else []
+            existing_perm_set = {(up.user_id, up.permission_id) for up in existing_user_perms}
+
+            for user_id in user_ids:
+                user = user_map.get(user_id)
+                if user:
+                    for perm_name in perm_names:
+                        permission = perm_map.get(perm_name)
+                        if permission:
+                            if (user_id, permission.permission_id) not in existing_perm_set:
                                 user_permission = UserPermission(
                                     id=str(uuid.uuid4()),
                                     user_id=user_id,
@@ -596,6 +633,8 @@ def bulk_user_operations():
                                     granted_by=g.user['user_id']
                                 )
                                 db.session.add(user_permission)
+                                # Add to set to avoid duplicates in same batch
+                                existing_perm_set.add((user_id, permission.permission_id))
                     results['success'].append(user_id)
                 else:
                     results['failed'].append(user_id)
@@ -1069,18 +1108,29 @@ def get_all_clients():
         offset = (page - 1) * limit
         clients = query.offset(offset).limit(limit).all()
 
-        # Get user count for each client
+        # Batch fetch user counts for all clients (avoid N+1)
+        client_ids = [c.client_id for c in clients]
+        user_counts = db.session.query(
+            User.client_id,
+            func.count(User.user_id).label('count')
+        ).filter(
+            User.client_id.in_(client_ids)
+        ).group_by(User.client_id).all() if client_ids else []
+        user_count_map = {client_id: count for client_id, count in user_counts}
+
+        # Batch fetch super admins for all clients (avoid N+1)
+        super_admins = User.query.filter(
+            User.client_id.in_(client_ids),
+            User.is_super_admin == True
+        ).all() if client_ids else []
+        super_admin_map = {u.client_id: u.email for u in super_admins}
+
+        # Build client data with pre-fetched counts and super admins
         clients_data = []
         for client in clients:
-            user_count = User.query.filter_by(client_id=client.client_id).count()
             client_dict = client.to_dict()
-            client_dict['user_count'] = user_count
-            # Get super admin for this client
-            super_admin = User.query.filter_by(
-                client_id=client.client_id,
-                is_super_admin=True
-            ).first()
-            client_dict['admin_email'] = super_admin.email if super_admin else None
+            client_dict['user_count'] = user_count_map.get(client.client_id, 0)
+            client_dict['admin_email'] = super_admin_map.get(client.client_id, None)
             clients_data.append(client_dict)
 
         return jsonify({
@@ -1486,11 +1536,27 @@ def get_client_users(client_id):
         # Get all users for this client (exclude deleted users)
         users = User.query.filter_by(client_id=client_id).filter(User.deleted_at.is_(None)).all()
 
+        # Batch fetch all permissions for all users at once (avoid N+1)
+        user_ids = [u.user_id for u in users]
+        user_permissions = db.session.query(
+            UserPermission.user_id,
+            Permission.permission_name
+        ).join(Permission, UserPermission.permission_id == Permission.permission_id).filter(
+            UserPermission.user_id.in_(user_ids)
+        ).all() if user_ids else []
+
+        # Create permission map: user_id -> [permission_names]
+        perm_map = {}
+        for user_id, perm_name in user_permissions:
+            if user_id not in perm_map:
+                perm_map[user_id] = []
+            perm_map[user_id].append(perm_name)
+
+        # Build user data with pre-fetched permissions
         users_data = []
         for user in users:
-            permissions = get_user_permissions(user.user_id)
             user_dict = user.to_dict()
-            user_dict['permissions'] = permissions
+            user_dict['permissions'] = perm_map.get(user.user_id, [])
             users_data.append(user_dict)
 
         return jsonify({

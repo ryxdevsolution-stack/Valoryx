@@ -12,7 +12,7 @@ interface Product {
   product_id: string
   product_name: string
   rate: number | string
-  quantity: number
+  quantity: number  // stock quantity
   item_code: string
   gst_percentage: number | string
   hsn_code: string
@@ -67,7 +67,7 @@ export default function ExchangeBillPage() {
   const productSearchRef = useRef<HTMLInputElement>(null)
 
   const billId = params.billId as string
-  const paymentTypes = ['Cash', 'Card', 'UPI', 'Net Banking', 'Cheque', 'Credit', 'Wallet', 'Other']
+  const paymentTypes = ['Cash', 'Card', 'UPI']
 
   const [bill, setBill] = useState<Bill | null>(null)
   const [products, setProducts] = useState<Product[]>([])
@@ -135,7 +135,9 @@ export default function ExchangeBillPage() {
 
   const loadProducts = useCallback(async () => {
     try {
-      const fetchedProducts = await fetchProducts()
+      // Force refresh to get latest product data with correct product_ids
+      const fetchedProducts = await fetchProducts(true)
+      console.log('Loaded products:', fetchedProducts.map(p => ({ id: p.product_id, name: p.product_name })))
       setProducts(fetchedProducts)
     } catch (error) {
       console.error('Failed to load products:', error)
@@ -204,11 +206,59 @@ export default function ExchangeBillPage() {
 
   const handleAddNewItem = () => {
     if (!currentItem.product_id) {
-      alert('Please select a product')
+      alert('Please select a product from the dropdown')
+      return
+    }
+
+    // Verify product still exists in products list
+    const productExists = products.find(p => p.product_id === currentItem.product_id)
+    if (!productExists) {
+      alert('Selected product not found. Please refresh and try again.')
+      setCurrentItem({
+        product_id: '',
+        product_name: '',
+        item_code: '',
+        hsn_code: '',
+        unit: '',
+        quantity: 1,
+        rate: 0,
+        gst_percentage: 0,
+        gst_amount: 0,
+        amount: 0,
+        cost_price: 0,
+        mrp: 0,
+      })
+      return
+    }
+
+    if (currentItem.quantity <= 0) {
+      alert('Quantity must be greater than 0')
+      return
+    }
+
+    if (currentItem.rate < 0) {
+      alert('Rate cannot be negative')
+      return
+    }
+
+    // Check stock availability
+    const alreadyAddedQty = newItems
+      .filter(item => item.product_id === currentItem.product_id)
+      .reduce((sum, item) => sum + item.quantity, 0)
+
+    const availableStock = productExists.quantity - alreadyAddedQty
+    if (currentItem.quantity > availableStock) {
+      alert(`Insufficient stock for ${currentItem.product_name}. Available: ${availableStock}`)
       return
     }
 
     const calculatedItem = calculateItemTotals(currentItem)
+    console.log('Adding item to newItems:', {
+      product_id: calculatedItem.product_id,
+      product_name: calculatedItem.product_name,
+      quantity: calculatedItem.quantity,
+      rate: calculatedItem.rate
+    })
     setNewItems([...newItems, calculatedItem])
 
     setCurrentItem({
@@ -611,91 +661,146 @@ export default function ExchangeBillPage() {
               </p>
 
               {/* Product Search */}
-              <div className="relative mb-3">
-                <input
-                  ref={productSearchRef}
-                  type="text"
-                  placeholder="Search products..."
-                  value={currentItem.product_id ? currentItem.product_name : productSearch}
-                  onChange={(e) => {
-                    setProductSearch(e.target.value)
-                    setShowProductDropdown(true)
-                  }}
-                  onFocus={() => setShowProductDropdown(true)}
-                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                />
-                {showProductDropdown && productSearch && (
-                  <div className="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-48 overflow-auto">
-                    {filteredProducts.length > 0 ? (
-                      filteredProducts.map((product) => (
-                        <div
-                          key={product.product_id}
-                          onClick={() => handleProductSelect(product)}
-                          className="px-3 py-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 text-sm"
-                        >
-                          <p className="font-medium text-gray-900 dark:text-white">{product.product_name}</p>
-                          <p className="text-xs text-gray-600 dark:text-gray-400">{product.item_code} - ₹{Number(product.rate).toFixed(2)}</p>
-                        </div>
-                      ))
-                    ) : (
-                      <div className="px-3 py-2 text-sm text-gray-500">No products found</div>
-                    )}
-                  </div>
-                )}
-              </div>
+              {!currentItem.product_id && (
+                <div className="relative mb-3">
+                  <input
+                    ref={productSearchRef}
+                    type="text"
+                    placeholder="Search products by name or code..."
+                    value={productSearch}
+                    onChange={(e) => {
+                      setProductSearch(e.target.value)
+                      setShowProductDropdown(true)
+                    }}
+                    onFocus={() => setShowProductDropdown(true)}
+                    onBlur={() => setTimeout(() => setShowProductDropdown(false), 200)}
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-gray-400 focus:border-transparent"
+                  />
+                  {showProductDropdown && productSearch && (
+                    <div className="absolute z-10 w-full mt-1 bg-white dark:bg-gray-800 border border-gray-300 dark:border-gray-600 rounded-lg shadow-lg max-h-48 overflow-auto">
+                      {filteredProducts.length > 0 ? (
+                        filteredProducts.slice(0, 10).map((product) => (
+                          <div
+                            key={product.product_id}
+                            onClick={() => handleProductSelect(product)}
+                            className={`px-3 py-2 cursor-pointer hover:bg-gray-100 dark:hover:bg-gray-700 text-sm border-b border-gray-100 dark:border-gray-700 last:border-0 ${product.quantity <= 0 ? 'opacity-50' : ''}`}
+                          >
+                            <div className="flex justify-between items-start">
+                              <div>
+                                <p className="font-medium text-gray-900 dark:text-white">{product.product_name}</p>
+                                <p className="text-xs text-gray-600 dark:text-gray-400">{product.item_code} - ₹{Number(product.rate).toFixed(2)}</p>
+                              </div>
+                              <span className={`text-xs px-1.5 py-0.5 rounded ${product.quantity > 0 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
+                                {product.quantity > 0 ? `${product.quantity} in stock` : 'Out of stock'}
+                              </span>
+                            </div>
+                          </div>
+                        ))
+                      ) : (
+                        <div className="px-3 py-2 text-sm text-gray-500">No products found</div>
+                      )}
+                    </div>
+                  )}
+                </div>
+              )}
 
               {currentItem.product_id && (
-                <div className="grid grid-cols-4 gap-2 mb-3">
-                  <input
-                    type="number"
-                    placeholder="Qty"
-                    value={currentItem.quantity}
-                    onChange={(e) => setCurrentItem({ ...currentItem, quantity: Number(e.target.value) })}
-                    className="px-2 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                  />
-                  <input
-                    type="number"
-                    placeholder="Rate"
-                    value={currentItem.rate}
-                    onChange={(e) => setCurrentItem({ ...currentItem, rate: Number(e.target.value) })}
-                    className="px-2 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                  />
-                  <input
-                    type="number"
-                    placeholder="GST %"
-                    value={currentItem.gst_percentage}
-                    onChange={(e) => setCurrentItem({ ...currentItem, gst_percentage: Number(e.target.value) })}
-                    className="px-2 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
-                  />
-                  <button
-                    onClick={handleAddNewItem}
-                    className="px-2 py-2 bg-gray-700 dark:bg-gray-600 text-white rounded hover:bg-gray-800 dark:hover:bg-gray-500 transition text-sm font-medium"
-                  >
-                    Add
-                  </button>
+                <div className="mb-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-lg border border-gray-200 dark:border-gray-600">
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-sm font-medium text-gray-900 dark:text-white truncate flex-1">
+                      {currentItem.product_name}
+                    </span>
+                    <button
+                      onClick={() => {
+                        setCurrentItem({
+                          product_id: '',
+                          product_name: '',
+                          item_code: '',
+                          hsn_code: '',
+                          unit: '',
+                          quantity: 1,
+                          rate: 0,
+                          gst_percentage: 0,
+                          gst_amount: 0,
+                          amount: 0,
+                          cost_price: 0,
+                          mrp: 0,
+                        })
+                        setProductSearch('')
+                      }}
+                      className="ml-2 text-xs text-red-500 hover:text-red-600"
+                    >
+                      Clear
+                    </button>
+                  </div>
+                  <div className="grid grid-cols-2 sm:grid-cols-4 gap-2">
+                    <div>
+                      <label className="block text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mb-1">Qty</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={currentItem.quantity}
+                        onChange={(e) => setCurrentItem({ ...currentItem, quantity: Number(e.target.value) || 1 })}
+                        className="w-full px-2 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mb-1">Rate (₹)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        step="0.01"
+                        value={currentItem.rate}
+                        onChange={(e) => setCurrentItem({ ...currentItem, rate: Number(e.target.value) || 0 })}
+                        className="w-full px-2 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="block text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mb-1">GST %</label>
+                      <input
+                        type="number"
+                        min="0"
+                        max="100"
+                        value={currentItem.gst_percentage}
+                        onChange={(e) => setCurrentItem({ ...currentItem, gst_percentage: Number(e.target.value) || 0 })}
+                        className="w-full px-2 py-2 border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-700 text-gray-900 dark:text-white text-sm"
+                      />
+                    </div>
+                    <div className="col-span-2 sm:col-span-1 flex items-end">
+                      <button
+                        onClick={handleAddNewItem}
+                        className="w-full px-3 py-2 bg-gray-700 dark:bg-gray-600 text-white rounded hover:bg-gray-800 dark:hover:bg-gray-500 transition text-sm font-medium"
+                      >
+                        Add Item
+                      </button>
+                    </div>
+                  </div>
+                  <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
+                    Subtotal: ₹{(currentItem.quantity * currentItem.rate).toFixed(2)} + GST: ₹{((currentItem.quantity * currentItem.rate * currentItem.gst_percentage) / 100).toFixed(2)} = <span className="font-semibold text-gray-900 dark:text-white">₹{((currentItem.quantity * currentItem.rate) + (currentItem.quantity * currentItem.rate * currentItem.gst_percentage) / 100).toFixed(2)}</span>
+                  </div>
                 </div>
               )}
 
               {/* New Items List */}
               <div className="space-y-2">
                 {newItems.map((item, index) => (
-                  <div key={index} className="p-3 rounded-lg bg-gray-50 dark:bg-gray-700 border border-gray-200 dark:border-gray-600">
-                    <div className="flex justify-between items-start">
-                      <div className="flex-1">
-                        <p className="font-semibold text-gray-900 dark:text-white text-sm">
+                  <div key={index} className="p-2 sm:p-3 rounded-lg bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800">
+                    <div className="flex justify-between items-start gap-2">
+                      <div className="flex-1 min-w-0">
+                        <p className="font-semibold text-gray-900 dark:text-white text-xs sm:text-sm truncate">
                           {item.product_name}
                         </p>
-                        <p className="text-xs text-gray-600 dark:text-gray-400">
-                          Qty: {item.quantity} × ₹{item.rate.toFixed(2)} | GST: {item.gst_percentage}%
+                        <p className="text-[10px] sm:text-xs text-gray-600 dark:text-gray-400 mt-0.5">
+                          {item.quantity} × ₹{item.rate.toFixed(2)} + {item.gst_percentage}% GST
                         </p>
                       </div>
-                      <div className="text-right">
-                        <p className="text-sm font-bold text-gray-900 dark:text-white">
+                      <div className="text-right flex-shrink-0">
+                        <p className="text-xs sm:text-sm font-bold text-green-700 dark:text-green-400">
                           ₹{item.amount.toFixed(2)}
                         </p>
                         <button
                           onClick={() => handleRemoveNewItem(index)}
-                          className="text-xs text-red-600 hover:text-red-700 mt-1"
+                          className="text-[10px] sm:text-xs text-red-600 hover:text-red-700 mt-1"
                         >
                           Remove
                         </button>
@@ -705,7 +810,7 @@ export default function ExchangeBillPage() {
                 ))}
 
                 {newItems.length === 0 && (
-                  <div className="text-center py-6 text-gray-500 dark:text-gray-400 text-sm">
+                  <div className="text-center py-4 sm:py-6 text-gray-500 dark:text-gray-400 text-xs sm:text-sm border-2 border-dashed border-gray-200 dark:border-gray-700 rounded-lg">
                     No items added yet
                   </div>
                 )}

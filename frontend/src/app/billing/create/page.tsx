@@ -185,6 +185,7 @@ export default function UnifiedBillingPage() {
   const [selectedCustomerIndex, setSelectedCustomerIndex] = useState(0)
   const customerSearchTimeout = useRef<NodeJS.Timeout | null>(null)
 
+
   // Show draft restored notification
   useEffect(() => {
     if (typeof window !== 'undefined') {
@@ -698,18 +699,39 @@ export default function UnifiedBillingPage() {
     const rate = Number(product.rate)
     // Non-GST only users: Force GST to 0
     const productGstPct = nonGstOnly ? 0 : Number(product.gst_percentage || 0)
+    const productId = String(product.product_id)
+    const itemCode = product.item_code || ''
 
-    const existingItemIndex = activeTab.items.findIndex(
-      (item) =>
-        item.product_id === product.product_id &&
-        item.rate === rate &&
-        item.gst_percentage === productGstPct
-    )
+    // Check if product already exists in items (by product_id or item_code)
+    // Match by product_id OR item_code - same product should increment quantity
+    const existingItemIndex = activeTab.items.findIndex((item) => {
+      const itemProductId = String(item.product_id)
+      const itemItemCode = item.item_code || ''
+
+      // Match by product_id
+      if (itemProductId === productId && productId !== '' && productId !== 'undefined') {
+        return true
+      }
+      // Match by item_code (for barcode scans)
+      if (itemItemCode === itemCode && itemCode !== '') {
+        return true
+      }
+      return false
+    })
 
     if (existingItemIndex !== -1) {
+      // Product already in bill - increment quantity
       const updatedItems = [...activeTab.items]
       const existingItem = updatedItems[existingItemIndex]
+      const availableQty = Number(product.quantity || product.available_quantity || 999999)
       const newQuantity = existingItem.quantity + qty
+
+      // Check stock availability
+      if (newQuantity > availableQty) {
+        alert(`⚠️ Stock limit reached! Only ${availableQty} available for ${existingItem.product_name}`)
+        return
+      }
+
       const subtotal = newQuantity * existingItem.rate
       const gstAmt = (subtotal * existingItem.gst_percentage) / 100
       const total = subtotal + gstAmt
@@ -722,7 +744,9 @@ export default function UnifiedBillingPage() {
       }
 
       updateActiveTab({ items: updatedItems })
+      console.log(`[BARCODE] Incremented quantity for ${existingItem.product_name} to ${newQuantity}`)
     } else {
+      // New product - add to bill
       const subtotal = qty * rate
       const gstAmt = (subtotal * productGstPct) / 100
       const total = subtotal + gstAmt
@@ -743,6 +767,7 @@ export default function UnifiedBillingPage() {
       }
 
       updateActiveTab({ items: [...activeTab.items, newItem] })
+      console.log(`[BARCODE] Added new product: ${product.product_name}`)
     }
   }
 

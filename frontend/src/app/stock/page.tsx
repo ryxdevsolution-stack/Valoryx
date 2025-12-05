@@ -52,6 +52,9 @@ export default function StockManagementPage() {
   const [showReceiveModal, setShowReceiveModal] = useState(false)
   const [selectedOrder, setSelectedOrder] = useState<any>(null)
 
+  // Barcode printing state
+  const [printingLabels, setPrintingLabels] = useState<string | null>(null)
+
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ show: true, message, type })
     setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3000)
@@ -410,6 +413,53 @@ export default function StockManagementPage() {
     setShowReceiveModal(false)
     setSelectedOrder(null)
     fetchStocks()
+  }
+
+  const handlePrintBarcode = async (stock: Stock) => {
+    if (printingLabels) return // Prevent multiple prints
+
+    setPrintingLabels(stock.product_id)
+    try {
+      let itemCode = stock.item_code
+
+      // If no item_code, update the product to generate one
+      if (!itemCode) {
+        showToast('Generating item code...', 'success')
+        const updateResponse = await api.put(`/stock/${stock.product_id}`, {
+          product_name: stock.product_name,
+          quantity: stock.quantity,
+          rate: stock.rate,
+          // Don't send item_code - backend will auto-generate
+        })
+        itemCode = updateResponse.data.product?.item_code
+        if (!itemCode) {
+          throw new Error('Failed to generate item code')
+        }
+        // Refresh stock list to get updated item_code
+        fetchStocks()
+      }
+
+      const response = await api.post('/billing/print-labels', {
+        items: [{
+          item_code: itemCode,
+          product_name: stock.product_name,
+          rate: Number(stock.rate),
+          mrp: stock.mrp ? Number(stock.mrp) : Number(stock.rate),
+          quantity: stock.quantity // Print labels based on stock quantity
+        }]
+      })
+
+      if (response.data.success) {
+        showToast(`${response.data.total_labels} barcode labels printed!`, 'success')
+      } else {
+        throw new Error(response.data.error || 'Failed to print labels')
+      }
+    } catch (error: any) {
+      console.error('Failed to print barcode labels:', error)
+      showToast(error.response?.data?.error || error.message || 'Failed to print barcode labels', 'error')
+    } finally {
+      setPrintingLabels(null)
+    }
   }
 
   const lowStockCount = stocks.filter(isLowStock).length
@@ -1101,6 +1151,24 @@ export default function StockManagementPage() {
                   </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm">
                     <div className="flex gap-3">
+                      <button
+                        onClick={() => handlePrintBarcode(stock)}
+                        disabled={printingLabels === stock.product_id}
+                        className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 font-medium disabled:opacity-50 disabled:cursor-wait flex items-center gap-1"
+                        title={`Print ${stock.quantity} barcode labels`}
+                      >
+                        {printingLabels === stock.product_id ? (
+                          <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+                          </svg>
+                        ) : (
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+                          </svg>
+                        )}
+                        Barcode
+                      </button>
                       <button
                         onClick={() => handleEdit(stock)}
                         className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 font-medium"
