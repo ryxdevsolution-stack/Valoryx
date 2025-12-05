@@ -23,7 +23,7 @@ def run_migration():
             # Create tables
             db.create_all()
 
-            print("✅ Successfully created bulk stock order tables:")
+            print("[OK] Successfully created bulk stock order tables:")
             print("   - bulk_stock_order")
             print("   - bulk_stock_order_item")
             print("\n✨ Migration completed successfully!")

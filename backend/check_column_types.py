@@ -45,4 +45,4 @@ for row in cursor.fetchall():
 
 cursor.close()
 conn.close()
-print("\n✅ Done")
+print("\n[OK] Done")

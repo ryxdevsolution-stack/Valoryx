@@ -30,7 +30,7 @@ try:
             cursor.execute(statement)
 
     conn.commit()
-    print("✅ Migration completed successfully!")
+    print("[OK] Migration completed successfully!")
 
     # Verify tables exist
     cursor.execute("""
@@ -41,9 +41,9 @@ try:
     """)
     tables = cursor.fetchall()
     if tables:
-        print(f"✅ Tables created: {[t[0] for t in tables]}")
+        print(f"[OK] Tables created: {[t[0] for t in tables]}")
     else:
-        print("⚠️  Tables not found")
+        print("[WARNING]  Tables not found")
 
 except Exception as e:
     conn.rollback()

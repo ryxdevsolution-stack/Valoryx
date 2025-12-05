@@ -826,7 +826,7 @@ def export_low_stock():
             </head>
             <body>
                 <div class="header">
-                    <h1>⚠️ Low Stock Report - Order Required</h1>
+                    <h1>[WARNING] Low Stock Report - Order Required</h1>
                     <p><strong>Generated on:</strong> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}</p>
                     <p><strong>Total Items:</strong> {len(low_stock)}</p>
                 </div>

@@ -45,9 +45,9 @@ def create_app():
     app.config['DB_INITIALIZED'] = db_initialized
 
     if not db_initialized:
-        logging.warning("⚠️  Database initialization failed - API will run with limited functionality")
+        logging.warning("[WARNING]  Database initialization failed - API will run with limited functionality")
     else:
-        logging.info("✅ Database initialized successfully")
+        logging.info("[OK] Database initialized successfully")
 
     # Register blueprints with error handling
     blueprints_registered = []
@@ -416,9 +416,9 @@ if __name__ == '__main__':
         try:
             db.create_all()
         except Exception as e:
-            print(f"⚠️  db.create_all() skipped: {e}")
+            print(f"[WARNING]  db.create_all() skipped: {e}")
             print("Database tables likely already exist - continuing...")
 
-    # ✅ Use environment PORT if available (Render/Railway sets this)
+    # [OK] Use environment PORT if available (Render/Railway sets this)
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=app.config.get('DEBUG', False))

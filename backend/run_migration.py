@@ -30,7 +30,7 @@ try:
             cursor.execute(statement)
 
     conn.commit()
-    print("✅ Migration completed successfully!")
+    print("[OK] Migration completed successfully!")
 
     # Verify
     cursor.execute("""
@@ -40,9 +40,9 @@ try:
     """)
     result = cursor.fetchone()
     if result:
-        print(f"✅ Constraint exists: {result[0]}")
+        print(f"[OK] Constraint exists: {result[0]}")
     else:
-        print("⚠️  Constraint not found")
+        print("[WARNING]  Constraint not found")
 
 except Exception as e:
     conn.rollback()
