@@ -87,7 +87,8 @@ dist/
 deb-extract/
 squashfs-root/
 desktop/resources/python/
-
+resources
+desktop
 # Test files in root
 test*.js
 simple-test.js
