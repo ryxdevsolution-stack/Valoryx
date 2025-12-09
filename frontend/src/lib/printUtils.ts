@@ -103,32 +103,57 @@ export function generateReceiptHtml(bill: BillData, clientInfo: ClientInfo, show
   <meta charset="UTF-8">
   <title>Bill #${bill.bill_number}</title>
   <style>
-    @page { size: 80mm auto; margin: 0; }
+    @page {
+      size: 80mm auto;
+      margin: 0mm 2mm;
+    }
     @media print {
-      body { margin: 0; padding: 0; }
+      html, body {
+        margin: 0 !important;
+        padding: 0 !important;
+        width: 76mm !important;
+        max-width: 76mm !important;
+      }
       .no-print { display: none !important; }
+      * {
+        -webkit-print-color-adjust: exact !important;
+        print-color-adjust: exact !important;
+        color-adjust: exact !important;
+        box-sizing: border-box !important;
+      }
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    body {
-      font-family: 'Courier New', monospace;
+    html {
       width: 80mm;
       max-width: 80mm;
+    }
+    body {
+      font-family: 'Courier New', 'Lucida Console', monospace;
+      width: 76mm;
+      max-width: 76mm;
+      margin: 0 auto;
       background: white;
-      color: black;
-      font-size: 9pt;
-      line-height: 1.3;
-      padding: 3mm;
+      color: #000000;
+      font-size: 10pt;
+      font-weight: 600;
+      line-height: 1.4;
+      padding: 2mm;
+      -webkit-font-smoothing: none;
+      text-rendering: geometricPrecision;
+      overflow-x: hidden;
     }
     .center { text-align: center; }
-    .bold { font-weight: bold; }
-    .large { font-size: 11pt; }
-    .small { font-size: 8pt; }
-    .dashed { border-bottom: 1px dashed #000; margin: 2mm 0; }
-    .solid { border-bottom: 2px solid #000; margin: 2mm 0; }
-    .flex { display: flex; justify-content: space-between; }
-    .grand-total { border: 2px solid #000; padding: 2mm; margin: 2mm 0; font-size: 10pt; font-weight: bold; }
-    .savings-box { border: 2px double #000; padding: 2mm; margin: 2mm 0; text-align: center; }
-    .no-exchange { border: 1px solid #000; padding: 1mm; margin: 2mm 0; text-align: center; font-weight: bold; }
+    .bold { font-weight: 900; }
+    .large { font-size: 12pt; font-weight: 900; }
+    .small { font-size: 9pt; font-weight: 600; }
+    .dashed { border-bottom: 2px dashed #000000; margin: 2mm 0; }
+    .solid { border-bottom: 3px solid #000000; margin: 2mm 0; }
+    .flex { display: flex; justify-content: space-between; flex-wrap: nowrap; }
+    .grand-total { border: 3px solid #000000; padding: 2mm; margin: 2mm 0; font-size: 12pt; font-weight: 900; }
+    .savings-box { border: 3px double #000000; padding: 2mm; margin: 2mm 0; text-align: center; font-weight: 700; }
+    .no-exchange { border: 2px solid #000000; padding: 1mm; margin: 2mm 0; text-align: center; font-weight: 900; }
+    .item-row { display: flex; flex-wrap: nowrap; width: 100%; }
+    .item-row span { flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -155,26 +180,26 @@ export function generateReceiptHtml(bill: BillData, clientInfo: ClientInfo, show
   <div class="dashed"></div>
 
   <!-- Items Header -->
-  <div class="small" style="display: flex; font-weight: bold; margin-bottom: 1mm;">
-    <span style="flex: 2;">Item</span>
-    <span style="width: 8mm; text-align: center;">Qty</span>
-    <span style="width: 14mm; text-align: right;">MRP</span>
-    <span style="width: 14mm; text-align: right;">Rate</span>
-    <span style="width: 14mm; text-align: right;">Amt</span>
+  <div class="small item-row" style="font-weight: bold; margin-bottom: 1mm;">
+    <span style="flex: 1; min-width: 0; overflow: hidden;">Item</span>
+    <span style="width: 7mm; text-align: center;">Qty</span>
+    <span style="width: 11mm; text-align: right;">MRP</span>
+    <span style="width: 11mm; text-align: right;">Rate</span>
+    <span style="width: 13mm; text-align: right;">Amt</span>
   </div>
   <div class="dashed"></div>
 
   <!-- Items -->
   ${bill.items.map(item => {
-    const name = item.product_name.length > 18 ? item.product_name.substring(0, 15) + '...' : item.product_name;
-    const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
+    const name = item.product_name.length > 14 ? item.product_name.substring(0, 12) + '..' : item.product_name;
+    const mrp = item.mrp && item.mrp > 0 ? item.mrp : item.rate;
     return `
-    <div class="small" style="display: flex; margin-bottom: 1mm;">
-      <span style="flex: 2;">${name}</span>
-      <span style="width: 8mm; text-align: center;">${item.quantity}</span>
-      <span style="width: 14mm; text-align: right;">${mrp.toFixed(2)}</span>
-      <span style="width: 14mm; text-align: right;">${Number(item.rate).toFixed(2)}</span>
-      <span style="width: 14mm; text-align: right; font-weight: bold;">${Number(item.amount).toFixed(2)}</span>
+    <div class="small item-row" style="margin-bottom: 1mm;">
+      <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${name}</span>
+      <span style="width: 7mm; text-align: center;">${item.quantity}</span>
+      <span style="width: 11mm; text-align: right;">${mrp.toFixed(2)}</span>
+      <span style="width: 11mm; text-align: right;">${item.rate.toFixed(2)}</span>
+      <span style="width: 13mm; text-align: right; font-weight: bold;">${item.amount.toFixed(2)}</span>
     </div>`;
   }).join('')}
 
@@ -191,24 +216,24 @@ export function generateReceiptHtml(bill: BillData, clientInfo: ClientInfo, show
 
   ${bill.type === 'gst' && Object.keys(gstBreakdown).length > 0 ? `
   <div class="center small bold">GST BREAKDOWN</div>
-  <table style="width: 100%; font-size: 7pt; border-collapse: collapse; margin: 2mm 0;">
+  <table style="width: 100%; font-size: 7pt; border-collapse: collapse; margin: 2mm 0; table-layout: fixed;">
     <tr style="border: 1px solid #000;">
-      <th style="border: 1px solid #000; padding: 1mm;">Tax%</th>
-      <th style="border: 1px solid #000; padding: 1mm;">Taxable</th>
-      <th style="border: 1px solid #000; padding: 1mm;">CGST</th>
-      <th style="border: 1px solid #000; padding: 1mm;">SGST</th>
-      <th style="border: 1px solid #000; padding: 1mm;">Total</th>
+      <th style="border: 1px solid #000; padding: 0.5mm; width: 12mm;">Tax%</th>
+      <th style="border: 1px solid #000; padding: 0.5mm;">Taxable</th>
+      <th style="border: 1px solid #000; padding: 0.5mm;">CGST</th>
+      <th style="border: 1px solid #000; padding: 0.5mm;">SGST</th>
+      <th style="border: 1px solid #000; padding: 0.5mm;">Total</th>
     </tr>
     ${Object.keys(gstBreakdown).map(Number).sort().map(gstPct => {
       const data = gstBreakdown[gstPct];
       const cgst = data.gst / 2;
       return `
       <tr>
-        <td style="border: 1px solid #000; padding: 1mm; text-align: center;">${gstPct}%</td>
-        <td style="border: 1px solid #000; padding: 1mm; text-align: right;">${data.taxable.toFixed(2)}</td>
-        <td style="border: 1px solid #000; padding: 1mm; text-align: right;">${cgst.toFixed(2)}</td>
-        <td style="border: 1px solid #000; padding: 1mm; text-align: right;">${cgst.toFixed(2)}</td>
-        <td style="border: 1px solid #000; padding: 1mm; text-align: right;">${data.gst.toFixed(2)}</td>
+        <td style="border: 1px solid #000; padding: 0.5mm; text-align: center;">${gstPct}%</td>
+        <td style="border: 1px solid #000; padding: 0.5mm; text-align: right;">${data.taxable.toFixed(2)}</td>
+        <td style="border: 1px solid #000; padding: 0.5mm; text-align: right;">${cgst.toFixed(2)}</td>
+        <td style="border: 1px solid #000; padding: 0.5mm; text-align: right;">${cgst.toFixed(2)}</td>
+        <td style="border: 1px solid #000; padding: 0.5mm; text-align: right;">${data.gst.toFixed(2)}</td>
       </tr>`;
     }).join('')}
   </table>

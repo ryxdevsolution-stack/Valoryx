@@ -113,7 +113,7 @@ html {
   animation: pulse-strong 1s ease-in-out infinite;
 }
 
-/* Print Media Reset - Ensure clean printing */
+/* Print Media Reset - Ensure clean printing for thermal printers */
 @media print {
   /* Reset all animations and transitions for print */
   * {
@@ -121,15 +121,21 @@ html {
     transition: none !important;
     -webkit-animation: none !important;
     -webkit-transition: none !important;
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+    color-adjust: exact !important;
   }
 
-  /* Reset body styles for print */
+  /* Reset body styles for print - optimized for thermal printers */
   body {
     background: white !important;
-    color: black !important;
-    font-size: 12pt !important;
+    color: #000000 !important;
+    font-size: 10pt !important;
+    font-weight: 600 !important;
     margin: 0 !important;
     padding: 0 !important;
+    -webkit-font-smoothing: none !important;
+    text-rendering: geometricPrecision !important;
   }
 
   /* Hide non-printable elements */
@@ -137,12 +143,18 @@ html {
     display: none !important;
   }
 
-  /* Ensure bill receipt is visible */
+  /* Ensure bill receipt is visible and dark */
   .bill-receipt {
     display: block !important;
     position: static !important;
     visibility: visible !important;
     opacity: 1 !important;
+    color: #000000 !important;
+    font-weight: 600 !important;
+  }
+
+  .bill-receipt * {
+    color: #000000 !important;
   }
 }
 
