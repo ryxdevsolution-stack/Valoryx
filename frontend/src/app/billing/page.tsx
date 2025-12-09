@@ -297,49 +297,76 @@ export default function AllBillsPage() {
       const response = await api.get(`/billing/${billId}`)
       const billData = response.data.bill
 
-      // Directly send to printer without showing preview
-      const printResponse = await api.post('/billing/print', {
-        bill: {
-          bill_number: billData.bill_number,
-          customer_name: billData.customer_name,
-          customer_phone: billData.customer_phone,
-          items: billData.items,
-          subtotal: billData.subtotal,
-          discount_percentage: billData.discount_percentage,
-          discount_amount: billData.discount_amount,
-          gst_amount: billData.gst_amount,
-          final_amount: billData.final_amount,
-          total_amount: billData.total_amount,
-          payment_type: billData.payment_type,
-          created_at: billData.created_at,
-          type: billData.type,
-          cgst: billData.cgst,
-          sgst: billData.sgst,
-          igst: billData.igst,
-          user_name: billData.user_name || billData.created_by || 'Admin'
-        },
-        clientInfo: client ? {
-          client_name: client.client_name,
-          address: client.address,
-          phone: client.phone,
-          email: client.email,
-          gstin: client.gstin,
-          logo_url: client.logo_url
-        } : {
-          client_name: 'Business Name',
-          address: '',
-          phone: '',
-          email: '',
-          gstin: '',
-          logo_url: ''
-        }
-      })
+      const billForPrint = {
+        bill_number: billData.bill_number,
+        customer_name: billData.customer_name,
+        customer_phone: billData.customer_phone,
+        items: billData.items,
+        subtotal: billData.subtotal,
+        discount_percentage: billData.discount_percentage,
+        discount_amount: billData.discount_amount,
+        gst_amount: billData.gst_amount,
+        final_amount: billData.final_amount,
+        total_amount: billData.total_amount,
+        payment_type: billData.payment_type,
+        created_at: billData.created_at,
+        type: billData.type,
+        cgst: billData.cgst,
+        sgst: billData.sgst,
+        igst: billData.igst,
+        user_name: billData.user_name || billData.created_by || 'Admin'
+      }
 
-      if (printResponse.data.success) {
-        console.log('Print successful!')
-        // Optionally show a success toast/notification
+      const clientInfo = client ? {
+        client_name: client.client_name,
+        address: client.address,
+        phone: client.phone,
+        email: client.email,
+        gstin: client.gstin,
+        logo_url: client.logo_url
+      } : {
+        client_name: 'Business Name',
+        address: '',
+        phone: '',
+        email: '',
+        gstin: '',
+        logo_url: ''
+      }
+
+      // Check if running in Electron desktop app
+      const electronAPI = typeof window !== 'undefined' ? (window as any).electronAPI : null
+      const hasElectronPrint = electronAPI && typeof electronAPI.silentPrint === 'function'
+
+      if (hasElectronPrint) {
+        // Use Electron's silent print for desktop app
+        console.log('[BILLING] Electron detected - using Electron print API...')
+        try {
+          const { generateReceiptHtml } = await import('@/lib/printUtils')
+          const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo)
+          const printResult = await electronAPI.silentPrint(receiptHtml, null)
+
+          if (printResult.success) {
+            console.log('Print successful!')
+          } else {
+            throw new Error(printResult.error || 'Print failed')
+          }
+        } catch (electronPrintError: any) {
+          console.error('Electron print failed:', electronPrintError)
+          alert('Print failed: ' + (electronPrintError.message || 'Unknown error'))
+        }
       } else {
-        throw new Error(printResponse.data.error || 'Print failed')
+        // Use backend print API for web/cloud deployment
+        console.log('[BILLING] Web mode - using backend print API...')
+        const printResponse = await api.post('/billing/print', {
+          bill: billForPrint,
+          clientInfo
+        })
+
+        if (printResponse.data.success) {
+          console.log('Print successful!')
+        } else {
+          throw new Error(printResponse.data.error || 'Print failed')
+        }
       }
     } catch (error: any) {
       console.error('Failed to print bill:', error)

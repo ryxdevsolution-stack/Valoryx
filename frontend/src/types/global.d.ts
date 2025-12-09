@@ -1,10 +1,11 @@
 /**
- * Global TypeScript declarations
+ * Global TypeScript declarations for Electron API
  */
 
 interface ElectronAPI {
   // Print queue management
-  getPrintQueueStatus?: () => Promise<{
+  addPrintJob?: (billData: any) => Promise<{ success: boolean; jobId: string }>;
+  getPrintQueue?: () => Promise<{
     pending: number;
     failed: number;
     completed: number;
@@ -20,18 +21,36 @@ interface ElectronAPI {
       failed: Array<{ id: string; status: string; error: string; retryCount: number; billNumber?: number }>;
     };
   }>;
-  retryFailedPrintJobs?: () => Promise<{ success: boolean; message?: string }>;
-  clearPrintQueue?: () => Promise<void>;
+  retryFailedJobs?: () => Promise<{ retriedCount: number }>;
+  clearPrintQueue?: () => Promise<boolean>;
+
+  // Event listeners
+  onPrintJobUpdate?: (callback: (data: any) => void) => void;
   onPrintQueueChange?: (callback: (data: any) => void) => void;
+  onPrinterStatusChange?: (callback: (data: any) => void) => void;
   removeListener?: (channel: string) => void;
 
   // Printer management
-  getPrinters?: () => Promise<Array<{ name: string; isDefault: boolean }>>;
-  getDefaultPrinter?: () => string | null;
-  setDefaultPrinter?: (printerName: string) => Promise<{ success: boolean; message?: string }>;
+  getPrinters?: () => Promise<Array<{ name: string; displayName?: string; isDefault: boolean; status: number }>>;
+  setDefaultPrinter?: (printerName: string) => Promise<boolean>;
 
-  // Print functions
-  print?: (html: string, options?: { silent?: boolean; copies?: number }) => Promise<{ success: boolean; error?: string }>;
+  // Silent print - MAIN PRINT FUNCTION
+  silentPrint?: (html: string, printerName: string | null) => Promise<{ success: boolean; error?: string }>;
+
+  // App info
+  getVersion?: () => Promise<string>;
+  getPath?: (name: string) => Promise<string>;
+  isElectron?: () => boolean;
+
+  // Window controls
+  minimizeWindow?: () => void;
+  maximizeWindow?: () => void;
+  closeWindow?: () => void;
+
+  // Platform info (not functions, static values)
+  platform?: string;
+  nodeVersion?: string;
+  electronVersion?: string;
 }
 
 declare global {

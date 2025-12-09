@@ -105,21 +105,15 @@ export default function Sidebar() {
       <div className="md:hidden fixed top-0 left-0 right-0 z-40 bg-white/80 dark:bg-gray-900/80 backdrop-blur-xl border-b border-slate-200/50 dark:border-gray-700/50 shadow-lg">
         <div className="flex items-center justify-between h-14 sm:h-16 px-3 sm:px-4">
           <div className="flex items-center gap-3">
-            {client?.logo_url ? (
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl shadow-md overflow-hidden bg-white dark:bg-gray-800 flex items-center justify-center p-1 relative">
-                <Image
-                  src={client.logo_url}
-                  alt={client.client_name}
-                  fill
-                  className="object-contain"
-                  unoptimized
-                />
-              </div>
-            ) : (
-              <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-md">
-                <span className="text-white font-bold text-sm sm:text-base">RB</span>
-              </div>
-            )}
+            <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl shadow-md overflow-hidden bg-white dark:bg-gray-800 flex items-center justify-center p-1 relative">
+              <Image
+                src={client?.logo_url || '/RYX_Logo.png'}
+                alt={client?.client_name || 'RYX Billing'}
+                fill
+                className="object-contain"
+                unoptimized
+              />
+            </div>
             <h1 className="text-lg sm:text-xl font-bold bg-gradient-to-r from-slate-700 via-slate-600 to-slate-500 dark:from-gray-200 dark:via-gray-300 dark:to-gray-400 bg-clip-text text-transparent">
               {client?.client_name || 'RYX Billing'}
             </h1>
@@ -158,21 +152,15 @@ export default function Sidebar() {
           {/* Header with Logo */}
           <div className="flex items-center h-16 xs:h-18 flex-shrink-0 px-4 xs:px-5 bg-white/60 dark:bg-gray-800/60 backdrop-blur-xl border-b border-slate-200/50 dark:border-gray-700/50">
             <div className="flex items-center gap-3">
-              {client?.logo_url ? (
-                <div className="w-9 h-9 xs:w-10 xs:h-10 rounded-xl shadow-md overflow-hidden bg-white dark:bg-gray-800 flex items-center justify-center p-1 ring-2 ring-blue-500/20 relative">
-                  <Image
-                    src={client.logo_url}
-                    alt={client.client_name}
-                    fill
-                    className="object-contain"
-                    unoptimized
-                  />
-                </div>
-              ) : (
-                <div className="w-9 h-9 xs:w-10 xs:h-10 rounded-xl bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center shadow-md ring-2 ring-blue-500/20">
-                  <span className="text-white font-bold text-sm xs:text-base">RB</span>
-                </div>
-              )}
+              <div className="w-9 h-9 xs:w-10 xs:h-10 rounded-xl shadow-md overflow-hidden bg-white dark:bg-gray-800 flex items-center justify-center p-1 ring-2 ring-blue-500/20 relative">
+                <Image
+                  src={client?.logo_url || '/RYX_Logo.png'}
+                  alt={client?.client_name || 'RYX Billing'}
+                  fill
+                  className="object-contain"
+                  unoptimized
+                />
+              </div>
               <h1 className="text-lg xs:text-xl font-bold bg-gradient-to-r from-slate-700 via-slate-600 to-slate-500 dark:from-gray-200 dark:via-gray-300 dark:to-gray-400 bg-clip-text text-transparent">
                 {client?.client_name || 'RYX Billing'}
               </h1>
@@ -182,21 +170,15 @@ export default function Sidebar() {
           {/* Client Info Card */}
           <div className="mx-3 xs:mx-4 my-3 xs:my-4 p-3 xs:p-4 bg-white/60 dark:bg-gray-800/60 backdrop-blur-xl rounded-2xl border border-slate-200/50 dark:border-gray-700/50 shadow-lg">
             <div className="flex items-start gap-3">
-              {client?.logo_url ? (
-                <div className="w-10 h-10 xs:w-12 xs:h-12 rounded-xl overflow-hidden bg-white dark:bg-gray-800 flex items-center justify-center flex-shrink-0 border border-slate-200/50 dark:border-gray-700/50 p-1.5 relative">
-                  <Image
-                    src={client.logo_url}
-                    alt={client.client_name}
-                    fill
-                    className="object-contain"
-                    unoptimized
-                  />
-                </div>
-              ) : (
-                <div className="w-10 h-10 xs:w-12 xs:h-12 rounded-xl bg-gradient-to-br from-blue-500/10 to-purple-500/10 flex items-center justify-center flex-shrink-0 border border-slate-200/50 dark:border-gray-700/50">
-                  <span className="text-xl xs:text-2xl">👤</span>
-                </div>
-              )}
+              <div className="w-10 h-10 xs:w-12 xs:h-12 rounded-xl overflow-hidden bg-white dark:bg-gray-800 flex items-center justify-center flex-shrink-0 border border-slate-200/50 dark:border-gray-700/50 p-1.5 relative">
+                <Image
+                  src={client?.logo_url || '/RYX_Logo.png'}
+                  alt={client?.client_name || 'RYX Billing'}
+                  fill
+                  className="object-contain"
+                  unoptimized
+                />
+              </div>
               <div className="flex-1 min-w-0">
                 <p className="text-[10px] xs:text-xs font-semibold text-slate-500 dark:text-gray-400 uppercase tracking-wider">Client Account</p>
                 <p className="text-sm xs:text-base text-slate-800 dark:text-white font-bold truncate mt-0.5">{client?.client_name}</p>

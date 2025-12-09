@@ -20,64 +20,37 @@ class QZPrinter {
    * Get print queue status from Electron
    */
   async getElectronQueueStatus() {
+    const defaultStatus = {
+      pending: 0,
+      failed: 0,
+      completed: 0,
+      isProcessing: false,
+      defaultPrinter: null,
+      stats: {
+        totalPrinted: 0,
+        totalFailed: 0,
+        totalRetries: 0,
+      },
+      jobs: {
+        pending: [],
+        failed: [],
+      },
+    };
+
     if (typeof window === 'undefined' || !(window as any).electronAPI) {
-      return {
-        pending: 0,
-        failed: 0,
-        completed: 0,
-        isProcessing: false,
-        defaultPrinter: null,
-        stats: {
-          totalPrinted: 0,
-          totalFailed: 0,
-          totalRetries: 0,
-        },
-        jobs: {
-          pending: [],
-          failed: [],
-        },
-      };
+      return defaultStatus;
     }
 
     try {
       const electronAPI = (window as any).electronAPI;
-      if (electronAPI.getPrintQueueStatus) {
-        return await electronAPI.getPrintQueueStatus();
+      // Use getPrintQueue (correct method name from preload.js)
+      if (electronAPI.getPrintQueue) {
+        return await electronAPI.getPrintQueue();
       }
-      return {
-        pending: 0,
-        failed: 0,
-        completed: 0,
-        isProcessing: false,
-        defaultPrinter: electronAPI.getDefaultPrinter?.() || null,
-        stats: {
-          totalPrinted: 0,
-          totalFailed: 0,
-          totalRetries: 0,
-        },
-        jobs: {
-          pending: [],
-          failed: [],
-        },
-      };
+      return defaultStatus;
     } catch (error) {
       console.error('Failed to get Electron queue status:', error);
-      return {
-        pending: 0,
-        failed: 0,
-        completed: 0,
-        isProcessing: false,
-        defaultPrinter: null,
-        stats: {
-          totalPrinted: 0,
-          totalFailed: 0,
-          totalRetries: 0,
-        },
-        jobs: {
-          pending: [],
-          failed: [],
-        },
-      };
+      return defaultStatus;
     }
   }
 
@@ -91,8 +64,9 @@ class QZPrinter {
 
     try {
       const electronAPI = (window as any).electronAPI;
-      if (electronAPI.retryFailedPrintJobs) {
-        return await electronAPI.retryFailedPrintJobs();
+      // Use retryFailedJobs (correct method name from preload.js)
+      if (electronAPI.retryFailedJobs) {
+        return await electronAPI.retryFailedJobs();
       }
       return { success: false, message: 'Retry function not available' };
     } catch (error) {
@@ -104,14 +78,15 @@ class QZPrinter {
   /**
    * Print using Electron's native printing
    */
-  async printViaElectron(html: string, options?: { silent?: boolean; copies?: number }) {
+  async printViaElectron(html: string, printerName?: string | null) {
     if (typeof window === 'undefined' || !(window as any).electronAPI) {
       throw new Error('Not running in Electron');
     }
 
     const electronAPI = (window as any).electronAPI;
-    if (electronAPI.print) {
-      return await electronAPI.print(html, options);
+    // Use silentPrint (correct method name from preload.js)
+    if (electronAPI.silentPrint) {
+      return await electronAPI.silentPrint(html, printerName || null);
     }
     throw new Error('Print function not available');
   }

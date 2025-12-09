@@ -18,7 +18,7 @@ export default function Notification({
   title,
   message,
   onClose,
-  duration = 5000
+  duration = 3000
 }: NotificationProps) {
   useEffect(() => {
     if (duration > 0) {

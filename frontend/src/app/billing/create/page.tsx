@@ -195,7 +195,7 @@ export default function UnifiedBillingPage() {
           const parsed = JSON.parse(saved)
           if (parsed.tabs && parsed.tabs.length > 0 && parsed.tabs.some((t: BillTab) => t.items.length > 0 || t.customer_name)) {
             setShowDraftRestored(true)
-            setTimeout(() => setShowDraftRestored(false), 4000)
+            setTimeout(() => setShowDraftRestored(false), 2500)
           }
         }
       } catch (e) {
@@ -225,7 +225,7 @@ export default function UnifiedBillingPage() {
         console.log(`Products empty, retrying (attempt ${retryCount + 1}/3)...`)
         setTimeout(() => {
           loadInitialData(retryCount + 1)
-        }, 2000)
+        }, 1000)
       }
     } catch (error) {
       console.error('Failed to load initial data:', error)
@@ -236,7 +236,7 @@ export default function UnifiedBillingPage() {
         console.log(`Error loading data, retrying (attempt ${retryCount + 1}/3)...`)
         setTimeout(() => {
           loadInitialData(retryCount + 1)
-        }, 2000)
+        }, 1000)
       } else {
         setProductsLoading(false) // Stop loading indicator after max retries
       }
@@ -311,16 +311,21 @@ export default function UnifiedBillingPage() {
 
     const handleClickOutside = (e: MouseEvent) => {
       const target = e.target as HTMLElement
+      // Close product dropdown if clicking outside product search container
       if (!target.closest('.product-search-container')) {
         setShowProductDropdown(false)
+      }
+      // Close customer dropdown if clicking outside customer search containers
+      if (!target.closest('.customer-search-container')) {
+        setShowCustomerDropdown(false)
       }
     }
 
     window.addEventListener('keydown', handleKeyDown)
-    document.addEventListener('mousedown', handleClickOutside)
+    document.addEventListener('click', handleClickOutside)
     return () => {
       window.removeEventListener('keydown', handleKeyDown)
-      document.removeEventListener('mousedown', handleClickOutside)
+      document.removeEventListener('click', handleClickOutside)
       if (barcodeTimeout.current) {
         clearTimeout(barcodeTimeout.current)
       }
@@ -492,10 +497,10 @@ export default function UnifiedBillingPage() {
     // Set field being searched
     setCustomerSearchField(field)
 
-    // Debounced search
+    // Debounced search (optimized from 300ms)
     customerSearchTimeout.current = setTimeout(() => {
       searchCustomers(value)
-    }, 300)
+    }, 150)
   }
 
   // Lookup customer by exact code and auto-fill
@@ -1010,6 +1015,7 @@ export default function UnifiedBillingPage() {
     // Directly create and print the bill
     try {
       setLoading(true)
+      console.log('[BILLING] Starting bill creation and print process...')
 
       // Auto-save new customer if phone is provided but no customer code (new customer)
       if (activeTab.customer_phone && !activeTab.customer_code && activeTab.customer_name) {
@@ -1019,10 +1025,10 @@ export default function UnifiedBillingPage() {
             customer_phone: activeTab.customer_phone,
             customer_gstin: activeTab.customer_gstin || '',
           })
-          console.log('New customer saved automatically')
+          console.log('[BILLING] New customer saved automatically')
         } catch (customerError: any) {
           // Don't fail the bill if customer creation fails (customer might already exist)
-          console.log('Customer save skipped:', customerError.response?.data?.message || 'Already exists or error')
+          console.log('[BILLING] Customer save skipped:', customerError.response?.data?.message || 'Already exists or error')
         }
       }
 
@@ -1031,6 +1037,7 @@ export default function UnifiedBillingPage() {
       // Format payment_type as JSON string of splits
       const paymentData = JSON.stringify(activeTab.payment_splits)
 
+      console.log('[BILLING] Creating bill...')
       const response = await api.post('/billing/create', {
         customer_name: activeTab.customer_name || 'Walk-in Customer',
         customer_phone: activeTab.customer_phone || '',
@@ -1040,6 +1047,7 @@ export default function UnifiedBillingPage() {
         amount_received: activeTab.amountReceived,
         discount_percentage: activeTab.discountPercentage,
       })
+      console.log('[BILLING] Bill created successfully:', response.data.bill?.bill_number)
 
       // Check for stock warnings and show system notifications
       if (response.data.stock_warnings && response.data.stock_warnings.length > 0) {
@@ -1049,37 +1057,86 @@ export default function UnifiedBillingPage() {
       // Use bill data directly from create response (no need for additional fetch)
       const billData = response.data.bill
 
-      // Directly print the bill
-      const printResponse = await api.post('/billing/print', {
-        bill: billData,
-        clientInfo: client ? {
-          client_name: client.client_name,
-          address: client.address,
-          phone: client.phone,
-          email: client.email,
-          gstin: client.gstin,
-          logo_url: client.logo_url
-        } : {
-          client_name: 'Business Name',
-          address: '',
-          phone: '',
-          email: '',
-          gstin: '',
-          logo_url: ''
-        }
+      // Prepare client info for printing
+      const clientInfo = client ? {
+        client_name: client.client_name,
+        address: client.address,
+        phone: client.phone,
+        email: client.email,
+        gstin: client.gstin,
+        logo_url: client.logo_url
+      } : {
+        client_name: 'Business Name',
+        address: '',
+        phone: '',
+        email: '',
+        gstin: '',
+        logo_url: ''
+      }
+
+      // Check if running in Electron desktop app
+      const electronAPI = typeof window !== 'undefined' ? (window as any).electronAPI : null
+      const hasElectronPrint = electronAPI && typeof electronAPI.silentPrint === 'function'
+
+      console.log('[BILLING] Environment check:', {
+        hasWindow: typeof window !== 'undefined',
+        electronAPI: electronAPI ? 'available' : 'not available',
+        hasElectronPrint,
+        electronVersion: electronAPI?.electronVersion || 'N/A',
+        platform: electronAPI?.platform || 'N/A',
+        userAgent: typeof navigator !== 'undefined' ? navigator.userAgent : 'N/A'
       })
 
-      if (printResponse.data.success) {
-        console.log('Print successful!')
+      if (hasElectronPrint) {
+        // Use Electron's silent print for desktop app
+        console.log('[BILLING] Electron detected - using Electron print API...')
+
+        try {
+          // Import and generate receipt HTML
+          const { generateReceiptHtml } = await import('@/lib/printUtils')
+          const receiptHtml = generateReceiptHtml(billData, clientInfo)
+
+          console.log('[BILLING] Sending to Electron printer...')
+          const printResult = await electronAPI.silentPrint(receiptHtml, null)
+
+          if (printResult.success) {
+            console.log('[BILLING] Electron print successful!')
+          } else {
+            console.error('[BILLING] Electron print failed:', printResult.error)
+            alert('Bill created but print failed: ' + (printResult.error || 'Unknown error'))
+          }
+        } catch (electronPrintError: any) {
+          console.error('[BILLING] Electron print exception:', electronPrintError)
+          alert('Bill created but print failed: ' + (electronPrintError.message || 'Unknown error'))
+        }
       } else {
-        throw new Error(printResponse.data.error || 'Print failed')
+        // Use backend print API for web/cloud deployment
+        console.log('[BILLING] Web mode - using backend print API...')
+        try {
+          const printResponse = await api.post('/billing/print', {
+            bill: billData,
+            clientInfo
+          })
+
+          if (printResponse.data.success) {
+            console.log('[BILLING] Backend print successful!')
+          } else {
+            console.error('[BILLING] Backend print failed:', printResponse.data)
+            alert('Bill created but print failed: ' + (printResponse.data.message || 'Printer error'))
+          }
+        } catch (backendPrintError: any) {
+          console.error('[BILLING] Backend print exception:', backendPrintError)
+          // Don't throw - bill was created successfully
+          alert('Bill created but print failed: ' + (backendPrintError.response?.data?.message || backendPrintError.message || 'Printer error'))
+        }
       }
 
       // Clear the completed tab from storage and remove it
       clearDraftFromStorage(activeTabId)
       closeTab(activeTabId)
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to create bill')
+      console.error('[BILLING] Error:', error)
+      alert(error.response?.data?.error || error.message || 'Failed to create bill')
     } finally {
       setLoading(false)
     }
@@ -1212,7 +1269,7 @@ export default function UnifiedBillingPage() {
                     if (activeTab.customer_code && !activeTab.customer_name) {
                       await lookupCustomerByCode(activeTab.customer_code)
                     }
-                    setTimeout(() => setShowCustomerDropdown(false), 200)
+                    setTimeout(() => setShowCustomerDropdown(false), 100)
                   }}
                   onKeyDown={async (e) => {
                     // First check if dropdown navigation should handle it
@@ -1270,7 +1327,7 @@ export default function UnifiedBillingPage() {
                   value={activeTab.customer_name}
                   onChange={(e) => handleCustomerFieldChange('name', e.target.value)}
                   onFocus={() => activeTab.customer_name && searchCustomers(activeTab.customer_name)}
-                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
+                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 100)}
                   onKeyDown={(e) => {
                     if (!handleCustomerKeyDown(e, 'name')) {
                       handleEnterNavigation(e, customerPhoneRef)
@@ -1316,7 +1373,7 @@ export default function UnifiedBillingPage() {
                   value={activeTab.customer_phone}
                   onChange={(e) => handleCustomerFieldChange('phone', e.target.value)}
                   onFocus={() => activeTab.customer_phone && searchCustomers(activeTab.customer_phone)}
-                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 200)}
+                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 100)}
                   onKeyDown={(e) => {
                     if (!handleCustomerKeyDown(e, 'phone')) {
                       handleEnterNavigation(e, customerGstinRef)

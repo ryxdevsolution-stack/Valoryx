@@ -42,7 +42,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
     try {
       browserPrint(bill as BillData, safeClientInfo as ClientInfo, false)
       setPrintError(null)
-      setTimeout(() => onClose(), 500)
+      setTimeout(() => onClose(), 150)
     } catch (error: any) {
       setPrintError(error.message || 'Print failed')
     }
@@ -54,7 +54,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
       hasAutoPrinted.current = true
       const timer = setTimeout(() => {
         handlePrint()
-      }, 500)
+      }, 150)
       return () => clearTimeout(timer)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -78,7 +78,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
     }).toUpperCase()
   }
 
-  const totalQuantity = bill.items.reduce((sum, item) => sum + item.quantity, 0)
+  const totalQuantity = bill.items.reduce((sum, item) => sum + Number(item.quantity), 0)
   const totalItems = bill.items.length
 
   return (
@@ -194,7 +194,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                       {item.mrp ? parseFloat(String(item.mrp)).toFixed(2) : '-'}
                     </span>
                     <span style={{ width: '13mm', textAlign: 'right' }}>{parseFloat(String(item.rate)).toFixed(2)}</span>
-                    <span style={{ width: '15mm', textAlign: 'right', fontWeight: 'bold' }}>{item.amount.toFixed(2)}</span>
+                    <span style={{ width: '15mm', textAlign: 'right', fontWeight: 'bold' }}>{Number(item.amount).toFixed(2)}</span>
                   </div>
                 </div>
               ))}
@@ -205,7 +205,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
               {/* Items summary */}
               <div style={{ fontSize: '7pt', display: 'flex', justifyContent: 'space-between', marginBottom: '2mm' }}>
                 <span>Items :{totalItems}  Total Qty : {totalQuantity}</span>
-                <span style={{ fontWeight: 'bold' }}>{(bill?.subtotal ?? 0).toFixed(2)}</span>
+                <span style={{ fontWeight: 'bold' }}>{Number(bill?.subtotal ?? 0).toFixed(2)}</span>
               </div>
 
               {/* Dashed line */}
@@ -215,18 +215,18 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
               <div style={{ fontSize: '7pt', marginBottom: '2mm' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5mm' }}>
                   <span>Sub Total :</span>
-                  <span>{(bill?.subtotal ?? 0).toFixed(2)}</span>
+                  <span>{Number(bill?.subtotal ?? 0).toFixed(2)}</span>
                 </div>
 
-                {bill.discount_amount && bill.discount_amount > 0 && (
+                {bill.discount_amount && Number(bill.discount_amount) > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5mm' }}>
                     <span>Discount{bill.discount_percentage ? ` (${bill.discount_percentage}%)` : ''} :</span>
-                    <span>-{bill.discount_amount.toFixed(2)}</span>
+                    <span>-{Number(bill.discount_amount).toFixed(2)}</span>
                   </div>
                 )}
 
                 {(() => {
-                  const totalAmount = bill.type === 'gst' ? bill.final_amount : bill.total_amount
+                  const totalAmount = Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount) || 0
                   const roundOff = Math.round(totalAmount) - totalAmount
                   return roundOff !== 0 && (
                     <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
@@ -241,12 +241,12 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
               <div style={{ borderTop: '2px solid #000', borderBottom: '2px solid #000', padding: '2mm 0', marginBottom: '2mm' }}>
                 <div style={{ fontSize: '11pt', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', fontStyle: 'italic' }}>
                   <span>GRAND TOTAL :</span>
-                  <span>{Math.round(bill.type === 'gst' ? bill.final_amount : bill.total_amount).toFixed(2)}</span>
+                  <span>{Math.round(Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount) || 0).toFixed(2)}</span>
                 </div>
               </div>
 
               {/* GST Breakdown for Tax Invoice */}
-              {bill.type === 'gst' && bill.gst_amount && bill.gst_amount > 0 && (
+              {bill.type === 'gst' && bill.gst_amount && Number(bill.gst_amount) > 0 && (
                 <>
                   {/* Dashed line */}
                   <div style={{ borderBottom: '2px dashed #000', margin: '2mm 0' }}></div>
@@ -264,11 +264,11 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                     {/* Group items by GST rate */}
                     {Object.entries(
                       bill.items.reduce((acc, item) => {
-                        const gstRate = item.gst_percentage || 0
+                        const gstRate = Number(item.gst_percentage) || 0
                         if (!acc[gstRate]) {
                           acc[gstRate] = { taxable: 0 }
                         }
-                        acc[gstRate].taxable += item.amount
+                        acc[gstRate].taxable += Number(item.amount) || 0
                         return acc
                       }, {} as Record<number, { taxable: number }>)
                     ).map(([rate, data]) => {
@@ -290,15 +290,15 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                     {/* Total row */}
                     <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', paddingTop: '1mm', borderTop: '1px solid #000', marginTop: '1mm' }}>
                       <div style={{ width: '15mm', textAlign: 'center' }}></div>
-                      <div style={{ width: '18mm', textAlign: 'right' }}>{(bill?.subtotal ?? 0).toFixed(2)}</div>
-                      <div style={{ width: '18mm', textAlign: 'right' }}>{(bill.gst_amount / 2).toFixed(2)}</div>
-                      <div style={{ width: '15mm', textAlign: 'right' }}>{(bill.gst_amount / 2).toFixed(2)}</div>
+                      <div style={{ width: '18mm', textAlign: 'right' }}>{Number(bill?.subtotal ?? 0).toFixed(2)}</div>
+                      <div style={{ width: '18mm', textAlign: 'right' }}>{(Number(bill.gst_amount) / 2).toFixed(2)}</div>
+                      <div style={{ width: '15mm', textAlign: 'right' }}>{(Number(bill.gst_amount) / 2).toFixed(2)}</div>
                     </div>
                   </div>
 
                   {/* Total tax line */}
                   <div style={{ fontSize: '7pt', textAlign: 'right', marginBottom: '2mm' }}>
-                    <strong>{bill.gst_amount.toFixed(2)}</strong>
+                    <strong>{Number(bill.gst_amount).toFixed(2)}</strong>
                   </div>
                 </>
               )}
@@ -340,8 +340,8 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                 {/* Savings Section */}
                 {(() => {
                   const totalSavings = bill.items.reduce((sum, item) => {
-                    const mrpAmount = item.mrp ? item.mrp * item.quantity : 0
-                    const actualAmount = item.rate * item.quantity
+                    const mrpAmount = Number(item.mrp) ? Number(item.mrp) * Number(item.quantity) : 0
+                    const actualAmount = Number(item.rate) * Number(item.quantity)
                     return sum + (mrpAmount - actualAmount)
                   }, 0)
 

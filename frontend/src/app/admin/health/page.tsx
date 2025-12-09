@@ -72,14 +72,14 @@ export default function SystemHealthPage() {
     if (autoRefresh) {
       interval = setInterval(() => {
         refreshData();
-      }, 30000); // Refresh every 30 seconds
+      }, 15000); // Refresh every 15 seconds (optimized from 30s)
     }
     return () => clearInterval(interval);
   }, [autoRefresh]);
 
   const refreshData = () => {
     setRefreshing(true);
-    // Simulate data refresh
+    // Data refresh (optimized from 1000ms)
     setTimeout(() => {
       setMetrics(prev => prev.map(m => ({
         ...m,
@@ -88,7 +88,7 @@ export default function SystemHealthPage() {
       })));
       setLastUpdated(new Date());
       setRefreshing(false);
-    }, 1000);
+    }, 200);
   };
 
   const overallHealth = services.every(s => s.status === 'operational')

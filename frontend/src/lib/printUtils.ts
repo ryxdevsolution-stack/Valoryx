@@ -53,9 +53,9 @@ export function generateReceiptHtml(bill: BillData, clientInfo: ClientInfo, show
     return date.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true });
   };
 
-  const totalQty = bill.items.reduce((sum, item) => sum + item.quantity, 0);
+  const totalQty = bill.items.reduce((sum, item) => sum + Number(item.quantity), 0);
   const totalItems = bill.items.length;
-  const finalAmount = bill.type === 'gst' ? bill.final_amount : bill.total_amount;
+  const finalAmount = Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount) || 0;
   const roundOff = Math.round(finalAmount) - finalAmount;
 
   // Calculate savings
@@ -63,13 +63,15 @@ export function generateReceiptHtml(bill: BillData, clientInfo: ClientInfo, show
   const gstBreakdown: Record<number, { taxable: number; gst: number }> = {};
 
   for (const item of bill.items) {
-    const mrp = item.mrp && item.mrp > 0 ? item.mrp : item.rate;
-    if (mrp > item.rate) {
-      totalSavings += (mrp - item.rate) * item.quantity;
+    const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
+    const rate = Number(item.rate);
+    const qty = Number(item.quantity);
+    if (mrp > rate) {
+      totalSavings += (mrp - rate) * qty;
     }
-    const gstPct = item.gst_percentage || 0;
+    const gstPct = Number(item.gst_percentage) || 0;
     if (gstPct > 0) {
-      const taxableAmt = item.quantity * item.rate;
+      const taxableAmt = qty * rate;
       const gstForItem = taxableAmt * gstPct / 100;
       if (!gstBreakdown[gstPct]) {
         gstBreakdown[gstPct] = { taxable: 0, gst: 0 };
@@ -165,21 +167,21 @@ export function generateReceiptHtml(bill: BillData, clientInfo: ClientInfo, show
   <!-- Items -->
   ${bill.items.map(item => {
     const name = item.product_name.length > 18 ? item.product_name.substring(0, 15) + '...' : item.product_name;
-    const mrp = item.mrp && item.mrp > 0 ? item.mrp : item.rate;
+    const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
     return `
     <div class="small" style="display: flex; margin-bottom: 1mm;">
       <span style="flex: 2;">${name}</span>
       <span style="width: 8mm; text-align: center;">${item.quantity}</span>
       <span style="width: 14mm; text-align: right;">${mrp.toFixed(2)}</span>
-      <span style="width: 14mm; text-align: right;">${item.rate.toFixed(2)}</span>
-      <span style="width: 14mm; text-align: right; font-weight: bold;">${item.amount.toFixed(2)}</span>
+      <span style="width: 14mm; text-align: right;">${Number(item.rate).toFixed(2)}</span>
+      <span style="width: 14mm; text-align: right; font-weight: bold;">${Number(item.amount).toFixed(2)}</span>
     </div>`;
   }).join('')}
 
   <div class="dashed"></div>
-  <div class="small flex"><span>Items: ${totalItems} &nbsp; Total Qty: ${totalQty}</span><span>Sub Total: ${bill.subtotal.toFixed(2)}</span></div>
-  ${(bill.discount_amount || 0) > 0 ? `<div class="small flex"><span>Discount:</span><span>-${(bill.discount_amount || 0).toFixed(2)}</span></div>` : ''}
-  ${(bill.gst_amount || 0) > 0 ? `<div class="small flex"><span>GST Amount:</span><span>${(bill.gst_amount || 0).toFixed(2)}</span></div>` : ''}
+  <div class="small flex"><span>Items: ${totalItems} &nbsp; Total Qty: ${totalQty}</span><span>Sub Total: ${Number(bill.subtotal || 0).toFixed(2)}</span></div>
+  ${Number(bill.discount_amount || 0) > 0 ? `<div class="small flex"><span>Discount:</span><span>-${Number(bill.discount_amount || 0).toFixed(2)}</span></div>` : ''}
+  ${Number(bill.gst_amount || 0) > 0 ? `<div class="small flex"><span>GST Amount:</span><span>${Number(bill.gst_amount || 0).toFixed(2)}</span></div>` : ''}
   ${Math.abs(roundOff) >= 0.01 ? `<div class="small flex"><span>Round Off:</span><span>${roundOff > 0 ? '+' : ''}${roundOff.toFixed(2)}</span></div>` : ''}
 
   <div class="grand-total flex">
@@ -251,7 +253,7 @@ export function browserPrint(bill: BillData, clientInfo: ClientInfo, showNoExcha
     setTimeout(() => {
       printWindow.print();
       printWindow.close();
-    }, 250);
+    }, 100);
   };
 }
 

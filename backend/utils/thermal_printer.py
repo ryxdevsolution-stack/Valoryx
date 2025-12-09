@@ -10,6 +10,20 @@ from typing import Dict, Any, List, Optional
 import subprocess
 import tempfile
 
+# Cache for printer detection (avoids repeated slow PowerShell calls)
+_printer_cache = {
+    'default_printer': None,
+    'printer_list': None,
+    'cache_time': None
+}
+_CACHE_DURATION = 300  # Cache for 5 minutes
+
+def _is_cache_valid():
+    """Check if cache is still valid"""
+    if _printer_cache['cache_time'] is None:
+        return False
+    return (datetime.now() - _printer_cache['cache_time']).total_seconds() < _CACHE_DURATION
+
 class ThermalPrinter:
     """
     Thermal printer service for silent printing
@@ -34,18 +48,58 @@ class ThermalPrinter:
         print(f"[THERMAL_PRINTER] Initialized with printer: {self.printer_name}")
 
     def _get_default_printer(self) -> str:
-        """Get the system's default printer"""
+        """Get the system's default printer (with caching for speed)"""
+        global _printer_cache
+
+        # Check cache first
+        if _is_cache_valid() and _printer_cache['default_printer']:
+            print(f"[THERMAL_PRINTER] Using cached printer: {_printer_cache['default_printer']}")
+            return _printer_cache['default_printer']
+
         try:
             if self.system == "Windows":
-                # Windows: Get default printer
+                # Windows: Try pywin32 first (most reliable and FAST)
+                try:
+                    import win32print
+                    printer = win32print.GetDefaultPrinter()
+                    if printer:
+                        print(f"[THERMAL_PRINTER] Default printer via win32print: {printer}")
+                        _printer_cache['default_printer'] = printer
+                        _printer_cache['cache_time'] = datetime.now()
+                        return printer
+                except ImportError:
+                    print("[THERMAL_PRINTER] pywin32 not available, trying PowerShell...")
+                except Exception as e:
+                    print(f"[THERMAL_PRINTER] win32print failed: {e}, trying PowerShell...")
+
+                # Fallback: PowerShell with Get-Printer (reduced timeout)
                 result = subprocess.run(
-                    ['powershell', '-Command', 'Get-WmiObject -Class Win32_Printer | Where-Object {$_.Default -eq $true} | Select-Object -ExpandProperty Name'],
+                    ['powershell', '-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command',
+                     'Get-Printer | Where-Object {$_.Default -eq $true} | Select-Object -ExpandProperty Name'],
                     capture_output=True,
                     text=True,
-                    timeout=5
+                    timeout=3
                 )
                 printer = result.stdout.strip()
                 if printer:
+                    print(f"[THERMAL_PRINTER] Default printer via PowerShell: {printer}")
+                    _printer_cache['default_printer'] = printer
+                    _printer_cache['cache_time'] = datetime.now()
+                    return printer
+
+                # Last fallback: WMI (older method, reduced timeout)
+                result = subprocess.run(
+                    ['powershell', '-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command',
+                     'Get-WmiObject -Class Win32_Printer | Where-Object {$_.Default -eq $true} | Select-Object -ExpandProperty Name'],
+                    capture_output=True,
+                    text=True,
+                    timeout=3
+                )
+                printer = result.stdout.strip()
+                if printer:
+                    print(f"[THERMAL_PRINTER] Default printer via WMI: {printer}")
+                    _printer_cache['default_printer'] = printer
+                    _printer_cache['cache_time'] = datetime.now()
                     return printer
             elif self.system == "Linux":
                 # Linux: Get default printer using lpstat
@@ -88,13 +142,29 @@ class ThermalPrinter:
         """List all available printers"""
         try:
             if self.system == "Windows":
+                # Try pywin32 first
+                try:
+                    import win32print
+                    printers = win32print.EnumPrinters(win32print.PRINTER_ENUM_LOCAL | win32print.PRINTER_ENUM_CONNECTIONS)
+                    printer_names = [p[2] for p in printers]  # p[2] is the printer name
+                    print(f"[THERMAL_PRINTER] Found {len(printer_names)} printers via win32print")
+                    return printer_names
+                except ImportError:
+                    print("[THERMAL_PRINTER] pywin32 not available for listing printers")
+                except Exception as e:
+                    print(f"[THERMAL_PRINTER] win32print.EnumPrinters failed: {e}")
+
+                # Fallback to PowerShell
                 result = subprocess.run(
-                    ['powershell', '-Command', 'Get-Printer | Select-Object -ExpandProperty Name'],
+                    ['powershell', '-ExecutionPolicy', 'Bypass', '-Command',
+                     'Get-Printer | Select-Object -ExpandProperty Name'],
                     capture_output=True,
                     text=True,
-                    timeout=5
+                    timeout=10
                 )
-                return [p.strip() for p in result.stdout.split('\n') if p.strip()]
+                printers = [p.strip() for p in result.stdout.split('\n') if p.strip()]
+                print(f"[THERMAL_PRINTER] Found {len(printers)} printers via PowerShell")
+                return printers
             elif self.system in ["Linux", "Darwin"]:
                 result = subprocess.run(
                     ['lpstat', '-p'],
@@ -303,6 +373,14 @@ class ThermalPrinter:
     <div class="dashed"></div>
     <div class="center bold" style="margin: 2mm 0;">THANK YOU VISIT AGAIN!</div>
     <div class="solid"></div>
+    <script>
+        // Auto-print when opened in browser
+        window.onload = function() {
+            setTimeout(function() {
+                window.print();
+            }, 500);
+        };
+    </script>
 </body>
 </html>
 """
@@ -570,31 +648,43 @@ class ThermalPrinter:
                     print(f"[THERMAL_PRINTER] ERROR: Text printing failed - {e}")
                     return False  # Don't fall back to HTML for thermal printers
 
-            # For non-Linux systems, use HTML
+            # For non-Linux systems (Windows/macOS), use persistent HTML file
             if self.system != "Linux":
                 html_content = self._generate_receipt_html(bill_data, client_info)
 
-                # Create temporary HTML file
-                with tempfile.NamedTemporaryFile(mode='w', suffix='.html', delete=False, encoding='utf-8') as f:
+                # Create persistent print file directory (won't be auto-deleted)
+                import shutil
+                persistent_temp_dir = os.path.join(tempfile.gettempdir(), 'ryx_billing_print')
+                os.makedirs(persistent_temp_dir, exist_ok=True)
+
+                # Create unique filename with timestamp
+                bill_num = bill_data.get('bill_number', 'unknown')
+                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+                persistent_file = os.path.join(persistent_temp_dir, f'receipt_{bill_num}_{timestamp}.html')
+
+                # Write HTML to persistent file
+                with open(persistent_file, 'w', encoding='utf-8') as f:
                     f.write(html_content)
-                    temp_file = f.name
+
+                print(f"[THERMAL_PRINTER] Created persistent print file: {persistent_file}")
 
                 try:
                     # Print based on OS
                     if self.system == "Windows":
-                        self._print_windows(temp_file)
+                        self._print_windows(persistent_file)
                     elif self.system == "Darwin":
-                        self._print_macos(temp_file)
+                        self._print_macos(persistent_file)
                     else:
                         raise Exception(f"Unsupported operating system: {self.system}")
 
+                    # Clean up old print files (older than 1 hour) to prevent buildup
+                    self._cleanup_old_print_files(persistent_temp_dir, max_age_seconds=3600)
+
                     return True
-                finally:
-                    # Clean up temp file
-                    try:
-                        os.unlink(temp_file)
-                    except:
-                        pass
+                except Exception as e:
+                    print(f"[THERMAL_PRINTER] Print error: {e}")
+                    # Don't delete the file - it might still be needed
+                    raise
 
             # For Linux, we already handled printing above
             return True
@@ -606,20 +696,91 @@ class ThermalPrinter:
             traceback.print_exc()
             return False
 
+    def _cleanup_old_print_files(self, directory: str, max_age_seconds: int = 3600):
+        """Clean up old print files to prevent buildup"""
+        try:
+            import time
+            current_time = time.time()
+            for filename in os.listdir(directory):
+                filepath = os.path.join(directory, filename)
+                if os.path.isfile(filepath):
+                    file_age = current_time - os.path.getmtime(filepath)
+                    if file_age > max_age_seconds:
+                        try:
+                            os.unlink(filepath)
+                            print(f"[THERMAL_PRINTER] Cleaned up old file: {filename}")
+                        except:
+                            pass
+        except Exception as e:
+            print(f"[THERMAL_PRINTER] Cleanup error: {e}")
+
     def _print_windows(self, html_file: str):
-        """Print on Windows using default browser"""
-        # Use PowerShell to print HTML file
-        ps_script = f"""
-        $IE = New-Object -ComObject InternetExplorer.Application
-        $IE.Visible = $false
-        $IE.Navigate('{html_file}')
-        while($IE.Busy) {{ Start-Sleep -Milliseconds 100 }}
-        Start-Sleep -Milliseconds 500
-        $IE.ExecWB(6, 2)
-        Start-Sleep -Milliseconds 1000
-        $IE.Quit()
-        """
-        subprocess.run(['powershell', '-Command', ps_script], timeout=30)
+        """Print on Windows using native print APIs"""
+        try:
+            # Method 1: Try using win32print (if pywin32 is installed)
+            try:
+                import win32print
+                import win32api
+
+                # Get the default printer
+                printer_name = self.printer_name or win32print.GetDefaultPrinter()
+                print(f"[THERMAL_PRINTER] Using win32api to print to: {printer_name}")
+
+                # ShellExecute with "print" verb
+                win32api.ShellExecute(0, "print", html_file, None, ".", 0)
+                print("[THERMAL_PRINTER] Print command sent via ShellExecute")
+                return
+            except ImportError:
+                print("[THERMAL_PRINTER] pywin32 not installed, trying alternative method...")
+            except Exception as e:
+                print(f"[THERMAL_PRINTER] win32api print failed: {e}, trying alternative...")
+
+            # Method 2: Try using PowerShell with -Verb Print (fire and forget - don't wait)
+            try:
+                # Use PowerShell's Start-Process with -Verb Print - DON'T wait for completion
+                ps_script = f'''
+                try {{
+                    Start-Process -FilePath "{html_file}" -Verb Print
+                    Write-Output "SUCCESS"
+                }} catch {{
+                    Write-Output "FAILED: $($_.Exception.Message)"
+                }}
+                '''
+                result = subprocess.run(
+                    ['powershell', '-ExecutionPolicy', 'Bypass', '-NoProfile', '-Command', ps_script],
+                    capture_output=True,
+                    text=True,
+                    timeout=5
+                )
+                if "SUCCESS" in result.stdout:
+                    print("[THERMAL_PRINTER] Print command sent via PowerShell Start-Process")
+                    return
+                else:
+                    print(f"[THERMAL_PRINTER] PowerShell print output: {result.stdout} {result.stderr}")
+            except Exception as e:
+                print(f"[THERMAL_PRINTER] PowerShell Start-Process failed: {e}")
+
+            # Method 3: Open with default browser - file is already in persistent location
+            try:
+                import webbrowser
+
+                # The html_file is already in a persistent location (ryx_billing_print folder)
+                # So we can directly open it without worrying about deletion
+                print(f"[THERMAL_PRINTER] Falling back to browser print dialog...")
+                print(f"[THERMAL_PRINTER] Opening: {html_file}")
+
+                # Open the file in browser - the HTML has auto-print JavaScript
+                webbrowser.open(f'file:///{html_file}', new=2)
+                print("[THERMAL_PRINTER] Opened in browser - auto-print will trigger")
+                return
+            except Exception as e:
+                print(f"[THERMAL_PRINTER] Browser fallback failed: {e}")
+
+            raise Exception("All Windows print methods failed")
+
+        except subprocess.TimeoutExpired:
+            print("[THERMAL_PRINTER] Print operation timed out")
+            raise Exception("Print operation timed out")
 
     def _print_linux(self, html_file: str):
         """This method should not be called for Linux thermal printers"""

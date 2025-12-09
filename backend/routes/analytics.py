@@ -11,8 +11,8 @@ from collections import defaultdict
 
 analytics_bp = Blueprint('analytics', __name__)
 
-# Cache timeouts in seconds
-ANALYTICS_CACHE_TIMEOUT = 60  # 1 minute for dashboard data
+# Cache timeouts in seconds - optimized for better performance
+ANALYTICS_CACHE_TIMEOUT = 300  # 5 minutes for dashboard data (was 1 minute - too short)
 
 
 @analytics_bp.route('/dashboard', methods=['GET'])

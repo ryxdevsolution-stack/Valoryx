@@ -16,3 +16,4 @@ numpy==1.26.4
 reportlab==4.2.5
 redis==5.0.1
 python-barcode==0.15.1
+pywin32==306; sys_platform == 'win32'

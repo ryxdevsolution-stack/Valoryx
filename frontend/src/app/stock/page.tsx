@@ -57,7 +57,7 @@ export default function StockManagementPage() {
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ show: true, message, type })
-    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 3000)
+    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 2000)
   }
 
   const [formData, setFormData] = useState({
@@ -275,8 +275,8 @@ export default function StockManagementPage() {
       formData.append('file', file)
 
       try {
-        // Simulate reading phase
-        await new Promise(resolve => setTimeout(resolve, 300))
+        // Reading phase (optimized from 300ms)
+        await new Promise(resolve => setTimeout(resolve, 50))
         setUploadStatus('uploading')
         setUploadProgress(30)
 
@@ -294,7 +294,7 @@ export default function StockManagementPage() {
 
         setUploadStatus('processing')
         setUploadProgress(85)
-        await new Promise(resolve => setTimeout(resolve, 500))
+        await new Promise(resolve => setTimeout(resolve, 100))
 
         setUploadProgress(100)
         setUploadStatus('complete')
@@ -319,9 +319,9 @@ export default function StockManagementPage() {
         showToast(`Error importing ${file.name}: ${error.response?.data?.error || 'Failed'}`, 'error')
       }
 
-      // Small delay between files
+      // Small delay between files (optimized from 500ms)
       if (i < fileArray.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 500))
+        await new Promise(resolve => setTimeout(resolve, 100))
       }
     }
 

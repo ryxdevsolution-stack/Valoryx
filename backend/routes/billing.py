@@ -1046,6 +1046,20 @@ def print_bill():
         # Initialize thermal printer
         printer = ThermalPrinter(printer_name=printer_name)
 
+        # Log printer detection (skip list_printers for speed)
+        print(f"[PRINT] Using printer: {printer.printer_name}")
+
+        # Check if printer was detected
+        if not printer.printer_name:
+            # Only list printers when there's an error (not on every print)
+            available = printer.list_printers()
+            return jsonify({
+                'success': False,
+                'error': 'No printer detected',
+                'message': f'No default printer configured. Available printers: {available or "None found"}',
+                'available_printers': available
+            }), 500
+
         # Print the bill
         success = printer.print_bill(bill_data, client_info)
 
@@ -1068,7 +1082,8 @@ def print_bill():
             return jsonify({
                 'success': False,
                 'error': 'Failed to print bill',
-                'message': 'Printer may be offline or not configured'
+                'message': f'Print failed for printer: {printer.printer_name}. Check if printer is online and connected.',
+                'printer': printer.printer_name
             }), 500
 
     except Exception as e:

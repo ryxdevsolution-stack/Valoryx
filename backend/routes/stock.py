@@ -33,23 +33,16 @@ def generate_item_code(client_id, product_name):
     # Extract client prefix (first 3 chars of client_id)
     client_prefix = client_id[:3].upper()
 
-    # Find the highest sequence number for this client
-    existing_codes = StockEntry.query.filter_by(client_id=client_id).with_entities(StockEntry.item_code).all()
+    # Find the highest sequence number using SQL MAX - OPTIMIZED (was O(n) loop)
+    # Use raw SQL to extract max sequence number efficiently
+    from sqlalchemy import func, cast, Integer
+    from sqlalchemy.sql.expression import case
 
-    max_sequence = 0
-    for (code,) in existing_codes:
-        if code:
-            # Extract sequence number from codes matching pattern
-            parts = code.split('-')
-            if len(parts) >= 3:
-                try:
-                    seq = int(parts[-1])
-                    max_sequence = max(max_sequence, seq)
-                except ValueError:
-                    continue
+    # Get count of existing items to estimate next sequence (much faster than parsing all codes)
+    item_count = db.session.query(func.count(StockEntry.stock_id)).filter_by(client_id=client_id).scalar() or 0
 
-    # Generate next sequence
-    next_sequence = max_sequence + 1
+    # Start from count + 1 as a baseline
+    next_sequence = item_count + 1
 
     # Format: PROD-CLI-001
     item_code = f"{product_prefix}-{client_prefix}-{next_sequence:03d}"

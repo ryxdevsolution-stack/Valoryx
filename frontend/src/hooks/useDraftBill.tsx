@@ -39,7 +39,7 @@ interface DraftBill {
 }
 
 const DRAFT_KEY = 'billing_draft'
-const AUTO_SAVE_INTERVAL = 3000 // Auto-save every 3 seconds
+const AUTO_SAVE_INTERVAL = 1500 // Auto-save every 1.5 seconds (optimized from 3s)
 
 export function useDraftBill() {
   const router = useRouter()

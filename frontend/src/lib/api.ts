@@ -13,7 +13,7 @@ let showLoadingFn: ((message?: string) => void) | null = null
 let hideLoadingFn: (() => void) | null = null
 let activeRequests = 0
 let loadingTimeout: NodeJS.Timeout | null = null
-const LOADING_DELAY = 300 // Only show loading after 300ms delay
+const LOADING_DELAY = 100 // Only show loading after 100ms delay (optimized from 300ms)
 
 // Function to set loading handlers from React context
 export function setLoadingHandlers(

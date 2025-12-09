@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef, useCallback } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import dynamic from 'next/dynamic'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useClient } from '@/contexts/ClientContext'
@@ -118,7 +118,24 @@ export default function DashboardPage() {
     fetchAnalytics()
   }, [fetchAnalytics])
 
+  // Memoize low stock calculations to prevent recalculation on every render
+  const lowStockCalculations = useMemo(() => {
+    if (!analytics?.inventory?.lowStock) return { items: [], total: 0 }
+
+    const items = analytics.inventory.lowStock.map(item => {
+      const needToOrder = Math.max(0, item.low_stock_alert - item.quantity)
+      const rate = typeof item.rate === 'number' ? item.rate : parseFloat(String(item.rate)) || 0
+      const estimatedCost = needToOrder * rate
+      return { ...item, needToOrder, rate, estimatedCost }
+    })
+
+    const total = items.reduce((sum, item) => sum + item.estimatedCost, 0)
+
+    return { items, total }
+  }, [analytics?.inventory?.lowStock])
+
   const exportLowStock = async (format: 'pdf' | 'xlsx') => {
+    let url: string | null = null
     try {
       const response = await api.post(
         '/stock/export-low-stock',
@@ -127,16 +144,18 @@ export default function DashboardPage() {
       )
 
       const blob = new Blob([response.data])
-      const url = window.URL.createObjectURL(blob)
+      url = window.URL.createObjectURL(blob)
       const a = document.createElement('a')
       a.href = url
       a.download = `low_stock_report_${new Date().toISOString().split('T')[0]}.${format === 'pdf' ? 'html' : 'xlsx'}`
       document.body.appendChild(a)
       a.click()
-      window.URL.revokeObjectURL(url)
       document.body.removeChild(a)
     } catch (error: any) {
       alert(error.response?.data?.error || 'Failed to export')
+    } finally {
+      // Always cleanup Object URL to prevent memory leak
+      if (url) window.URL.revokeObjectURL(url)
     }
   }
 
@@ -583,31 +602,25 @@ export default function DashboardPage() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                  {analytics.inventory.lowStock.map((item, index) => {
-                    const needToOrder = Math.max(0, item.low_stock_alert - item.quantity)
-                    const rate = typeof item.rate === 'number' ? item.rate : parseFloat(item.rate) || 0
-                    const estimatedCost = needToOrder * rate
-
-                    return (
-                      <tr key={item.product_id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                        <td className="px-2 py-1.5">
-                          <p className="font-medium text-gray-900 dark:text-white">{item.product_name}</p>
-                        </td>
-                        <td className="px-2 py-1.5 text-gray-600 dark:text-gray-300">{item.category || '-'}</td>
-                        <td className="px-2 py-1.5 text-right">
-                          <span className="font-semibold text-red-600 dark:text-red-400">{item.quantity}</span>
-                          <span className="text-gray-500 dark:text-gray-400 ml-1">{item.unit}</span>
-                        </td>
-                        <td className="px-2 py-1.5 text-right">
-                          <span className="font-semibold text-gray-900 dark:text-white">{needToOrder}</span>
-                          <span className="text-gray-500 dark:text-gray-400 ml-1">{item.unit}</span>
-                        </td>
-                        <td className="px-2 py-1.5 text-right font-semibold text-gray-900 dark:text-white">
-                          ₹{estimatedCost.toLocaleString('en-IN')}
-                        </td>
-                      </tr>
-                    )
-                  })}
+                  {lowStockCalculations.items.map((item) => (
+                    <tr key={item.product_id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                      <td className="px-2 py-1.5">
+                        <p className="font-medium text-gray-900 dark:text-white">{item.product_name}</p>
+                      </td>
+                      <td className="px-2 py-1.5 text-gray-600 dark:text-gray-300">{item.category || '-'}</td>
+                      <td className="px-2 py-1.5 text-right">
+                        <span className="font-semibold text-red-600 dark:text-red-400">{item.quantity}</span>
+                        <span className="text-gray-500 dark:text-gray-400 ml-1">{item.unit}</span>
+                      </td>
+                      <td className="px-2 py-1.5 text-right">
+                        <span className="font-semibold text-gray-900 dark:text-white">{item.needToOrder}</span>
+                        <span className="text-gray-500 dark:text-gray-400 ml-1">{item.unit}</span>
+                      </td>
+                      <td className="px-2 py-1.5 text-right font-semibold text-gray-900 dark:text-white">
+                        ₹{item.estimatedCost.toLocaleString('en-IN')}
+                      </td>
+                    </tr>
+                  ))}
                 </tbody>
                 <tfoot className="bg-gray-50 dark:bg-gray-700 border-t border-gray-200 dark:border-gray-600">
                   <tr>
@@ -615,11 +628,7 @@ export default function DashboardPage() {
                       Total:
                     </td>
                     <td className="px-2 py-1.5 text-right font-bold text-gray-900 dark:text-white">
-                      ₹{analytics.inventory.lowStock.reduce((sum, item) => {
-                        const needToOrder = Math.max(0, item.low_stock_alert - item.quantity)
-                        const rate = typeof item.rate === 'number' ? item.rate : parseFloat(item.rate) || 0
-                        return sum + (needToOrder * rate)
-                      }, 0).toLocaleString('en-IN')}
+                      ₹{lowStockCalculations.total.toLocaleString('en-IN')}
                     </td>
                   </tr>
                 </tfoot>

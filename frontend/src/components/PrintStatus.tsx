@@ -43,8 +43,8 @@ export default function PrintStatus() {
     // Initial fetch
     fetchQueueStatus();
 
-    // Set up polling for queue status
-    const interval = setInterval(fetchQueueStatus, 3000);
+    // Set up polling for queue status (optimized from 3s)
+    const interval = setInterval(fetchQueueStatus, 1500);
 
     // Listen for queue changes
     if (window.electronAPI?.onPrintQueueChange) {
