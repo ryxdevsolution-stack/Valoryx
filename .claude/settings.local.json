@@ -122,7 +122,8 @@
       "Bash(./venv/bin/locust:*)",
       "Bash(dpkg:*)",
       "Bash(rpm:*)",
-      "Bash(sudo /home/development1/Desktop/mj-billing/qz-tray-2.2.5-x86_64.run:*)"
+      "Bash(sudo /home/development1/Desktop/mj-billing/qz-tray-2.2.5-x86_64.run:*)",
+      "Skill(doc-audit)"
     ],
     "deny": [],
     "ask": [],
