@@ -2,7 +2,10 @@
 const nextConfig = {
   reactStrictMode: true,
   output: 'standalone',
-  devIndicators: false,
+  devIndicators: {
+    appIsrStatus: false,
+    buildActivity: false,
+  },
   images: {
     remotePatterns: [
       {

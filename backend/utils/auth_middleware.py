@@ -123,11 +123,14 @@ def authenticate(f):
             return f(*args, **kwargs)
 
         except jwt.ExpiredSignatureError:
-            return jsonify({'error': 'Token has expired'}), 401
-        except jwt.InvalidTokenError:
-            return jsonify({'error': 'Invalid token'}), 401
+            return jsonify({'error': 'Token has expired', 'message': 'Please login again'}), 401
+        except jwt.InvalidTokenError as e:
+            return jsonify({'error': 'Invalid token', 'message': str(e)}), 401
         except Exception as e:
-            return jsonify({'error': 'Authentication failed'}), 401
+            import traceback
+            print(f"[AUTH ERROR] {str(e)}")
+            print(traceback.format_exc())
+            return jsonify({'error': 'Authentication failed', 'message': str(e)}), 401
 
     return decorated_function
 

@@ -14,8 +14,9 @@ from utils.cache_helper import get_cache_manager, invalidate_stock_cache
 
 stock_bp = Blueprint('stock', __name__)
 
-# Cache timeout for stock list (2 minutes - short since stock changes frequently)
-STOCK_CACHE_TIMEOUT = 120
+# Cache timeout for stock list (5 minutes - cache is invalidated on stock changes anyway)
+# OPTIMIZED: Increased from 2 min to 5 min since we have proper cache invalidation
+STOCK_CACHE_TIMEOUT = 300
 
 
 def generate_item_code(client_id, product_name):

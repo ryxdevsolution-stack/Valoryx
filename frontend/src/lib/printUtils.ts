@@ -17,6 +17,7 @@ interface BillData {
   bill_number: number;
   customer_name?: string;
   customer_phone?: string;
+  customer_gstin?: string;
   items: BillItem[];
   subtotal: number;
   discount_percentage?: number;
@@ -176,6 +177,7 @@ export function generateReceiptHtml(bill: BillData, clientInfo: ClientInfo, show
     <div class="flex"><span>Bill No: ${bill.bill_number}</span><span>Date: ${formatDate(bill.created_at)}</span></div>
     ${bill.customer_name ? `<div>Customer: ${bill.customer_name}</div>` : ''}
     ${bill.customer_phone ? `<div>Phone: ${bill.customer_phone}</div>` : ''}
+    ${bill.type === 'gst' && bill.customer_gstin ? `<div>GSTIN: ${bill.customer_gstin}</div>` : ''}
   </div>
   <div class="dashed"></div>
 
@@ -215,28 +217,10 @@ export function generateReceiptHtml(bill: BillData, clientInfo: ClientInfo, show
   </div>
 
   ${bill.type === 'gst' && Object.keys(gstBreakdown).length > 0 ? `
-  <div class="center small bold">GST BREAKDOWN</div>
-  <table style="width: 100%; font-size: 7pt; border-collapse: collapse; margin: 2mm 0; table-layout: fixed;">
-    <tr style="border: 1px solid #000;">
-      <th style="border: 1px solid #000; padding: 0.5mm; width: 12mm;">Tax%</th>
-      <th style="border: 1px solid #000; padding: 0.5mm;">Taxable</th>
-      <th style="border: 1px solid #000; padding: 0.5mm;">CGST</th>
-      <th style="border: 1px solid #000; padding: 0.5mm;">SGST</th>
-      <th style="border: 1px solid #000; padding: 0.5mm;">Total</th>
-    </tr>
-    ${Object.keys(gstBreakdown).map(Number).sort().map(gstPct => {
-      const data = gstBreakdown[gstPct];
-      const cgst = data.gst / 2;
-      return `
-      <tr>
-        <td style="border: 1px solid #000; padding: 0.5mm; text-align: center;">${gstPct}%</td>
-        <td style="border: 1px solid #000; padding: 0.5mm; text-align: right;">${data.taxable.toFixed(2)}</td>
-        <td style="border: 1px solid #000; padding: 0.5mm; text-align: right;">${cgst.toFixed(2)}</td>
-        <td style="border: 1px solid #000; padding: 0.5mm; text-align: right;">${cgst.toFixed(2)}</td>
-        <td style="border: 1px solid #000; padding: 0.5mm; text-align: right;">${data.gst.toFixed(2)}</td>
-      </tr>`;
-    }).join('')}
-  </table>
+  <div class="small flex" style="margin: 1mm 0;">
+    <span>GST (${Object.keys(gstBreakdown).map(Number).sort().map(gstPct => `${gstPct}%: Rs.${gstBreakdown[gstPct].gst.toFixed(2)}`).join(', ')})</span>
+    <span><strong>Rs.${Object.values(gstBreakdown).reduce((sum, d) => sum + d.gst, 0).toFixed(2)}</strong></span>
+  </div>
   ` : ''}
 
   <div class="dashed"></div>
@@ -273,13 +257,9 @@ export function browserPrint(bill: BillData, clientInfo: ClientInfo, showNoExcha
   printWindow.document.write(html);
   printWindow.document.close();
 
-  // Wait for content to load then print
-  printWindow.onload = () => {
-    setTimeout(() => {
-      printWindow.print();
-      printWindow.close();
-    }, 100);
-  };
+  // Print immediately - no delay needed for simple HTML
+  printWindow.print();
+  printWindow.close();
 }
 
 /**

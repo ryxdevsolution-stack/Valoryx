@@ -144,6 +144,24 @@ export const BILLING_CONFIG = {
 } as const;
 
 // ============================================================================
+// PRINT CONFIGURATION (Web Only)
+// ============================================================================
+
+export const PRINT_CONFIG = {
+  /** Receipt width for thermal printers */
+  receiptWidth: '80mm',
+  /** Content width (accounting for margins) */
+  contentWidth: '76mm',
+  /** Default font for receipts */
+  receiptFont: "'Courier New', 'Lucida Console', monospace",
+  /** Auto-close print window after printing */
+  autoClosePrintWindow: true,
+  /** Print window dimensions */
+  printWindowWidth: 320,
+  printWindowHeight: 600,
+} as const;
+
+// ============================================================================
 // EXPORTS
 // ============================================================================
 
@@ -157,6 +175,7 @@ const config = {
   VALIDATION,
   FEATURES,
   BILLING_CONFIG,
+  PRINT_CONFIG,
   IS_BROWSER,
   IS_PRODUCTION,
   IS_DEVELOPMENT,

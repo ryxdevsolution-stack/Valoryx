@@ -4,10 +4,14 @@ from flask import g, request
 from extensions import db
 from models.audit_model import AuditLog
 
-def log_action(action_type, table_name=None, record_id=None, old_data=None, new_data=None):
+def log_action(action_type, table_name=None, record_id=None, old_data=None, new_data=None, auto_commit=False):
     """
     Log action to audit_log table with client_id
     MUST be called after any CREATE, UPDATE, DELETE operation
+
+    Note: By default, audit logs are added to the session but NOT committed.
+    The calling code should commit as part of its transaction.
+    Set auto_commit=True only if you need a standalone audit log.
     """
     try:
         # Get client_id from g.user (set by authenticate decorator)
@@ -33,9 +37,13 @@ def log_action(action_type, table_name=None, record_id=None, old_data=None, new_
         )
 
         db.session.add(audit_entry)
-        db.session.commit()
+
+        # Only commit if explicitly requested (for performance - avoid extra round trips)
+        if auto_commit:
+            db.session.commit()
 
     except Exception as e:
         # Don't fail the main operation if audit logging fails
         print(f"Audit log error: {str(e)}")
-        db.session.rollback()
+        if auto_commit:
+            db.session.rollback()

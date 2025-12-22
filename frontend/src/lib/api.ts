@@ -6,7 +6,70 @@ const api = axios.create({
   headers: {
     'Content-Type': 'application/json',
   },
+  // PERFORMANCE: Set aggressive timeouts for faster failure detection
+  timeout: 30000, // 30 second max (was unlimited)
 })
+
+// ==================== REQUEST CACHE FOR PERFORMANCE ====================
+// Cache GET requests for frequently accessed data
+interface CacheEntry {
+  data: any
+  timestamp: number
+  ttl: number
+}
+
+const requestCache = new Map<string, CacheEntry>()
+
+// Cache TTLs in milliseconds - OPTIMIZED: aligned with backend cache durations
+// Frontend cache should be slightly shorter than backend to avoid stale data
+const CACHE_TTLS: Record<string, number> = {
+  '/stock': 240000,          // 4 min (backend: 5 min) - stock list
+  '/stock/lookup': 120000,   // 2 min - product lookups
+  '/customer/search': 60000, // 1 min - customer search results
+  '/payment': 300000,        // 5 min - payment types rarely change
+  '/billing/printers': 120000 // 2 min - printer list
+}
+
+// Get cache TTL based on URL pattern
+function getCacheTTL(url: string): number {
+  for (const [pattern, ttl] of Object.entries(CACHE_TTLS)) {
+    if (url.includes(pattern)) return ttl
+  }
+  return 0 // No caching by default
+}
+
+// Get from cache if valid
+function getFromCache(url: string): any | null {
+  const entry = requestCache.get(url)
+  if (entry && Date.now() - entry.timestamp < entry.ttl) {
+    return entry.data
+  }
+  // Expired - remove it
+  if (entry) requestCache.delete(url)
+  return null
+}
+
+// Save to cache
+function saveToCache(url: string, data: any, ttl: number): void {
+  if (ttl > 0) {
+    requestCache.set(url, { data, timestamp: Date.now(), ttl })
+  }
+}
+
+// Clear cache for a pattern (call after mutations)
+export function invalidateCache(pattern?: string): void {
+  if (pattern) {
+    for (const key of requestCache.keys()) {
+      if (key.includes(pattern)) {
+        requestCache.delete(key)
+      }
+    }
+  } else {
+    requestCache.clear()
+  }
+}
+
+// ==================== END REQUEST CACHE ====================
 
 // Loading state management
 let showLoadingFn: ((message?: string) => void) | null = null
@@ -88,10 +151,20 @@ export function setLogoutHandler(handler: () => void) {
   logoutHandlerFn = handler
 }
 
-// Add response interceptor to handle token expiration and hide loading
+// Add response interceptor to handle token expiration, caching, and hide loading
 api.interceptors.response.use(
   (response) => {
     decrementLoading(response.config)
+
+    // Cache successful GET responses
+    if (response.config.method === 'get' && response.config.url) {
+      const url = response.config.url
+      const ttl = getCacheTTL(url)
+      if (ttl > 0) {
+        saveToCache(url, response.data, ttl)
+      }
+    }
+
     return response
   },
   (error) => {
@@ -120,5 +193,32 @@ api.interceptors.response.use(
     return Promise.reject(error)
   }
 )
+
+// ==================== OPTIMIZED CACHED API METHODS ====================
+// Use these for frequently accessed read-only data
+
+// Cached GET - returns from cache if available, otherwise fetches
+// Includes error handling for corrupted cache entries
+export async function cachedGet<T = any>(url: string, config?: AxiosRequestConfig): Promise<{ data: T }> {
+  try {
+    const cached = getFromCache(url)
+    if (cached) {
+      return { data: cached as T }
+    }
+  } catch (error) {
+    // Cache read failed (corrupted data) - invalidate and fetch fresh
+    console.warn(`[API Cache] Read failed for ${url}, fetching fresh`)
+    invalidateCache(url)
+  }
+  return api.get<T>(url, config)
+}
+
+// Force invalidate and refetch
+export async function invalidateAndGet<T = any>(url: string, config?: AxiosRequestConfig): Promise<{ data: T }> {
+  invalidateCache(url)
+  return api.get<T>(url, config)
+}
+
+// ==================== END OPTIMIZED API METHODS ====================
 
 export default api

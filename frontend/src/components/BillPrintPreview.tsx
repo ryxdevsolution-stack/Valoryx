@@ -2,13 +2,14 @@
 
 import { useRef, useEffect, useState } from 'react'
 import NextImage from 'next/image'
-import { browserPrint, downloadPdf, shareWhatsApp, BillData, ClientInfo } from '@/lib/printUtils'
+import { printBill, downloadPdf, shareWhatsApp, BillData, ClientInfo } from '@/lib/webPrintService'
 
 // Extended types for component props (extends imported types)
 interface BillDataExtended extends BillData {
   cgst?: number
   sgst?: number
   igst?: number
+  customer_gstin?: string
 }
 
 interface ClientInfoExtended extends ClientInfo {
@@ -39,12 +40,12 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
 
   // Handle print via browser
   const handlePrint = () => {
-    try {
-      browserPrint(bill as BillData, safeClientInfo as ClientInfo, false)
+    const result = printBill(bill as BillData, safeClientInfo as ClientInfo, false)
+    if (result.success) {
       setPrintError(null)
-      setTimeout(() => onClose(), 150)
-    } catch (error: any) {
-      setPrintError(error.message || 'Print failed')
+      onClose()
+    } else {
+      setPrintError(result.message || 'Print failed')
     }
   }
 
@@ -52,10 +53,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
   useEffect(() => {
     if (autoPrint && !hasAutoPrinted.current) {
       hasAutoPrinted.current = true
-      const timer = setTimeout(() => {
-        handlePrint()
-      }, 150)
-      return () => clearTimeout(timer)
+      handlePrint()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoPrint])
@@ -128,7 +126,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                     />
                   </div>
                 )}
-                <div style={{ fontSize: '12pt', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '1px', marginBottom: '1mm' }}>
+                <div style={{ fontSize: '16pt', fontWeight: '900', textTransform: 'uppercase', letterSpacing: '2px', marginBottom: '2mm' }}>
                   {safeClientInfo.client_name}
                 </div>
                 {safeClientInfo.address && (
@@ -137,7 +135,6 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                   </div>
                 )}
                 <div style={{ fontSize: '7pt', lineHeight: '1.3' }}>
-                  {safeClientInfo.phone && <div>Ph: {safeClientInfo.phone}</div>}
                   {safeClientInfo.gstin && <div>GSTIN: {safeClientInfo.gstin}</div>}
                 </div>
                 <div style={{ fontSize: '9pt', fontWeight: 'bold', marginTop: '2mm', textTransform: 'uppercase' }}>
@@ -161,7 +158,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                 {bill.customer_name && (
                   <div style={{ marginTop: '2mm', borderTop: '1px solid #ccc', paddingTop: '1mm' }}>
                     <div><strong>Customer:</strong> {bill.customer_name}</div>
-                    {bill.customer_phone && <div><strong>Phone:</strong> {bill.customer_phone}</div>}
+                    {bill.type === 'gst' && bill.customer_gstin && <div><strong>GSTIN:</strong> {bill.customer_gstin}</div>}
                   </div>
                 )}
               </div>
@@ -225,80 +222,45 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                   </div>
                 )}
 
-                {(() => {
-                  const totalAmount = Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount) || 0
-                  const roundOff = Math.round(totalAmount) - totalAmount
-                  return roundOff !== 0 && (
-                    <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
-                      <span>Round Off :</span>
-                      <span>{roundOff > 0 ? '+' : ''}{roundOff.toFixed(2)}</span>
-                    </div>
-                  )
-                })()}
               </div>
 
               {/* Grand Total */}
-              <div style={{ borderTop: '2px solid #000', borderBottom: '2px solid #000', padding: '2mm 0', marginBottom: '2mm' }}>
-                <div style={{ fontSize: '11pt', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', fontStyle: 'italic' }}>
-                  <span>GRAND TOTAL :</span>
-                  <span>{Math.round(Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount) || 0).toFixed(2)}</span>
+              <div style={{ borderTop: '3px solid #000', borderBottom: '3px solid #000', padding: '3mm 0', marginBottom: '2mm', background: '#f0f0f0' }}>
+                <div style={{ fontSize: '14pt', fontWeight: '900', display: 'flex', justifyContent: 'space-between', letterSpacing: '0.5px' }}>
+                  <span>GRAND TOTAL</span>
+                  <span style={{ fontSize: '16pt' }}>₹{Math.round(Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount) || 0).toFixed(2)}</span>
                 </div>
               </div>
 
-              {/* GST Breakdown for Tax Invoice */}
-              {bill.type === 'gst' && bill.gst_amount && Number(bill.gst_amount) > 0 && (
+              {/* GST Breakdown for Tax Invoice - Compact */}
+              {bill.type === 'gst' && bill.items.some(item => Number(item.gst_percentage) > 0) && (
                 <>
-                  {/* Dashed line */}
-                  <div style={{ borderBottom: '2px dashed #000', margin: '2mm 0' }}></div>
-
-                  {/* Tax breakdown table */}
-                  <div style={{ fontSize: '6pt', marginBottom: '2mm', width: '100%', overflow: 'hidden' }}>
-                    {/* Header row with underlines */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', paddingBottom: '0.5mm', borderBottom: '1px solid #000', marginBottom: '1mm', flexWrap: 'nowrap' }}>
-                      <div style={{ width: '12mm', textAlign: 'center', flexShrink: 0 }}>Tax%</div>
-                      <div style={{ width: '16mm', textAlign: 'right', flexShrink: 0 }}>Taxable<br/>CGST%</div>
-                      <div style={{ width: '16mm', textAlign: 'right', flexShrink: 0 }}>CGSTAmt<br/>SGST%</div>
-                      <div style={{ width: '14mm', textAlign: 'right', flexShrink: 0 }}>SGSTAmt<br/>Tnk</div>
-                    </div>
-
-                    {/* Group items by GST rate */}
-                    {Object.entries(
-                      bill.items.reduce((acc, item) => {
+                  <div style={{ fontSize: '7pt', marginTop: '1mm' }}>
+                    {(() => {
+                      const gstGroups = bill.items.reduce((acc, item) => {
                         const gstRate = Number(item.gst_percentage) || 0
-                        if (!acc[gstRate]) {
-                          acc[gstRate] = { taxable: 0 }
+                        if (gstRate > 0) {
+                          if (!acc[gstRate]) acc[gstRate] = { taxable: 0 }
+                          acc[gstRate].taxable += Number(item.amount) || 0
                         }
-                        acc[gstRate].taxable += Number(item.amount) || 0
                         return acc
                       }, {} as Record<number, { taxable: number }>)
-                    ).map(([rate, data]) => {
-                      const gstRate = parseFloat(rate)
-                      const halfRate = gstRate / 2
-                      const cgstAmount = (data.taxable * halfRate) / 100
-                      const sgstAmount = (data.taxable * halfRate) / 100
+
+                      let totalGst = 0
+                      const parts = Object.entries(gstGroups).map(([rate, data]) => {
+                        const gstRate = parseFloat(rate)
+                        const gstAmt = (data.taxable * gstRate) / 100
+                        totalGst += gstAmt
+                        return `${gstRate}%: ₹${gstAmt.toFixed(2)}`
+                      })
 
                       return (
-                        <div key={rate} style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5mm', flexWrap: 'nowrap' }}>
-                          <div style={{ width: '12mm', textAlign: 'center', flexShrink: 0 }}>{gstRate}%</div>
-                          <div style={{ width: '16mm', textAlign: 'right', flexShrink: 0 }}>{data.taxable.toFixed(2)}<br/>{halfRate.toFixed(2)}%</div>
-                          <div style={{ width: '16mm', textAlign: 'right', flexShrink: 0 }}>{cgstAmount.toFixed(2)}<br/>{halfRate.toFixed(2)}%</div>
-                          <div style={{ width: '14mm', textAlign: 'right', flexShrink: 0 }}>{sgstAmount.toFixed(2)}<br/>{(cgstAmount + sgstAmount).toFixed(2)}</div>
+                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
+                          <span>GST ({parts.join(', ')})</span>
+                          <span><strong>₹{totalGst.toFixed(2)}</strong></span>
                         </div>
                       )
-                    })}
-
-                    {/* Total row */}
-                    <div style={{ display: 'flex', justifyContent: 'space-between', fontWeight: 'bold', paddingTop: '1mm', borderTop: '1px solid #000', marginTop: '1mm', flexWrap: 'nowrap' }}>
-                      <div style={{ width: '12mm', textAlign: 'center', flexShrink: 0 }}></div>
-                      <div style={{ width: '16mm', textAlign: 'right', flexShrink: 0 }}>{(bill?.subtotal ?? 0).toFixed(2)}</div>
-                      <div style={{ width: '16mm', textAlign: 'right', flexShrink: 0 }}>{(bill.gst_amount / 2).toFixed(2)}</div>
-                      <div style={{ width: '14mm', textAlign: 'right', flexShrink: 0 }}>{(bill.gst_amount / 2).toFixed(2)}</div>
-                    </div>
-                  </div>
-
-                  {/* Total tax line */}
-                  <div style={{ fontSize: '7pt', textAlign: 'right', marginBottom: '2mm' }}>
-                    <strong>{Number(bill.gst_amount).toFixed(2)}</strong>
+                    })()}
                   </div>
                 </>
               )}
@@ -377,6 +339,17 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                     </div>
                   )
                 })()}
+                {/* No Exchange Policy */}
+                <div style={{
+                  fontSize: '8pt',
+                  fontWeight: 'bold',
+                  marginBottom: '2mm',
+                  padding: '1.5mm 0',
+                  borderTop: '1px dashed #000',
+                  borderBottom: '1px dashed #000'
+                }}>
+                  ⚠ NO EXCHANGE / NO REFUND ⚠
+                </div>
                 <div style={{ fontSize: '9pt', fontWeight: 'bold', letterSpacing: '1px' }}>
                   ★★★ THANK YOU VISIT AGAIN ★★★
                 </div>
@@ -424,11 +397,11 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                 <button
                   type="button"
                   onClick={() => {
-                    try {
-                      downloadPdf(bill as BillData, safeClientInfo as ClientInfo, false)
+                    const result = downloadPdf(bill as BillData, safeClientInfo as ClientInfo, false)
+                    if (result.success) {
                       setPrintError(null)
-                    } catch (error: any) {
-                      setPrintError(error.message)
+                    } else {
+                      setPrintError(result.message)
                     }
                   }}
                   className="px-3 py-2 bg-gray-100 hover:bg-gray-200 text-gray-700 rounded-lg transition-colors text-sm font-medium flex items-center justify-center gap-1.5"
@@ -443,7 +416,10 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                 <button
                   type="button"
                   onClick={() => {
-                    shareWhatsApp(bill as BillData, safeClientInfo as ClientInfo)
+                    const result = shareWhatsApp(bill as BillData, safeClientInfo as ClientInfo)
+                    if (!result.success) {
+                      setPrintError(result.message)
+                    }
                   }}
                   className="px-3 py-2 bg-green-100 hover:bg-green-200 text-green-700 rounded-lg transition-colors text-sm font-medium flex items-center justify-center gap-1.5"
                 >

@@ -135,9 +135,9 @@ export default function ExchangeBillPage() {
 
   const loadProducts = useCallback(async () => {
     try {
-      // Force refresh to get latest product data with correct product_ids
-      const fetchedProducts = await fetchProducts(true)
-      console.log('Loaded products:', fetchedProducts.map(p => ({ id: p.product_id, name: p.product_name })))
+      // OPTIMIZED: Use cached products instead of force refresh
+      // Products are cached for 5 min and invalidated on stock changes
+      const fetchedProducts = await fetchProducts()
       setProducts(fetchedProducts)
     } catch (error) {
       console.error('Failed to load products:', error)
@@ -413,60 +413,68 @@ export default function ExchangeBillPage() {
       }
 
       console.log('Sending exchange request:', requestBody)
-      console.log('Returned items:', returnedItems)
-      console.log('New items:', newItems)
-      console.log('Payment data:', paymentData)
 
       const response = await api.post(`/billing/exchange/${billId}`, requestBody)
 
       alert('Bill updated successfully!')
 
-      // Fetch the updated bill and print
+      // OPTIMIZED: Fetch bill only once for printing (response doesn't include full bill data)
+      // Only fetch if we need to print, otherwise skip
       const billDetailsResponse = await api.get(`/billing/${billId}`)
       const billData = billDetailsResponse.data.bill
 
-      // Print the updated bill
-      const printResponse = await api.post('/billing/print', {
-        bill: {
-          bill_number: billData.bill_number,
-          customer_name: billData.customer_name,
-          customer_phone: billData.customer_phone,
-          items: billData.items,
-          subtotal: billData.subtotal,
-          discount_percentage: billData.discount_percentage,
-          discount_amount: billData.discount_amount,
-          gst_amount: billData.gst_amount,
-          final_amount: billData.final_amount,
-          total_amount: billData.total_amount,
-          payment_type: billData.payment_type,
-          created_at: billData.created_at,
-          type: billData.type,
-          cgst: billData.cgst,
-          sgst: billData.sgst,
-          igst: billData.igst
-        },
-        clientInfo: client ? {
-          client_name: client.client_name,
-          address: client.address,
-          phone: client.phone,
-          email: client.email,
-          gstin: client.gstin,
-          logo_url: client.logo_url
-        } : {
-          client_name: 'Business Name',
-          address: '',
-          phone: '',
-          email: '',
-          gstin: '',
-          logo_url: ''
-        }
-      })
-
-      if (printResponse.data.success) {
-        router.push('/billing')
-      } else {
-        throw new Error(printResponse.data.error || 'Print failed')
+      // Print the updated bill using browser print dialog
+      const billForPrint = {
+        bill_number: billData.bill_number,
+        customer_name: billData.customer_name,
+        customer_phone: billData.customer_phone,
+        items: billData.items,
+        subtotal: billData.subtotal,
+        discount_percentage: billData.discount_percentage,
+        discount_amount: billData.discount_amount,
+        gst_amount: billData.gst_amount,
+        final_amount: billData.final_amount,
+        total_amount: billData.total_amount,
+        payment_type: billData.payment_type,
+        created_at: billData.created_at,
+        type: billData.type,
+        cgst: billData.cgst,
+        sgst: billData.sgst,
+        igst: billData.igst
       }
+
+      const clientInfo = client ? {
+        client_name: client.client_name,
+        address: client.address,
+        phone: client.phone,
+        email: client.email,
+        gstin: client.gstin,
+        logo_url: client.logo_url
+      } : {
+        client_name: 'Business Name',
+        address: '',
+        phone: '',
+        email: '',
+        gstin: '',
+        logo_url: ''
+      }
+
+      // Check if running in Electron desktop app
+      const electronAPI = typeof window !== 'undefined' ? (window as any).electronAPI : null
+      const hasElectronPrint = electronAPI && typeof electronAPI.silentPrint === 'function'
+
+      if (hasElectronPrint) {
+        // Use Electron's silent print for desktop app
+        const { generateReceiptHtml } = await import('@/lib/printUtils')
+        const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo)
+        await electronAPI.silentPrint(receiptHtml, null)
+      } else {
+        // Use browser print dialog for web deployment
+        const { printBill } = await import('@/lib/webPrintService')
+        printBill(billForPrint as any, clientInfo, false)
+      }
+
+      router.push('/billing')
     } catch (error: any) {
       console.error('Failed to process exchange:', error)
       console.error('Error response:', error.response?.data)

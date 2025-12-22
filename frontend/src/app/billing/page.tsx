@@ -37,6 +37,8 @@ interface Bill {
   sgst?: number
   igst?: number
   status?: string
+  user_name?: string
+  created_by?: string
 }
 
 interface PaymentType {
@@ -293,9 +295,18 @@ export default function AllBillsPage() {
     try {
       setLoadingBillDetails(true)
 
-      // Fetch bill details
-      const response = await api.get(`/billing/${billId}`)
-      const billData = response.data.bill
+      // OPTIMIZED: Try to use bill from local state first, only fetch if items missing
+      let billData = bills.find(b => b.bill_id === billId)
+
+      // Fetch from API only if items are missing (list might not include full items)
+      if (!billData?.items || billData.items.length === 0) {
+        const response = await api.get(`/billing/${billId}`)
+        billData = response.data.bill
+      }
+
+      if (!billData) {
+        throw new Error('Bill data not found')
+      }
 
       const billForPrint = {
         bill_number: billData.bill_number,
@@ -355,22 +366,20 @@ export default function AllBillsPage() {
           alert('Print failed: ' + (electronPrintError.message || 'Unknown error'))
         }
       } else {
-        // Use backend print API for web/cloud deployment
-        console.log('[BILLING] Web mode - using backend print API...')
-        const printResponse = await api.post('/billing/print', {
-          bill: billForPrint,
-          clientInfo
-        })
+        // Use browser print dialog for web deployment
+        console.log('[BILLING] Web mode - using browser print dialog...')
+        const { printBill } = await import('@/lib/webPrintService')
+        const printResult = printBill(billForPrint as any, clientInfo, false)
 
-        if (printResponse.data.success) {
-          console.log('Print successful!')
+        if (printResult.success) {
+          console.log('Print dialog opened successfully!')
         } else {
-          throw new Error(printResponse.data.error || 'Print failed')
+          throw new Error(printResult.message || 'Print failed')
         }
       }
     } catch (error: any) {
       console.error('Failed to print bill:', error)
-      alert(error.response?.data?.message || error.message || 'Printer not connected. Please check printer and try again.')
+      alert(error.message || 'Print failed. Please try again.')
     } finally {
       setLoadingBillDetails(false)
     }

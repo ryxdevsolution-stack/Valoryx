@@ -12,7 +12,13 @@ from collections import defaultdict
 analytics_bp = Blueprint('analytics', __name__)
 
 # Cache timeouts in seconds - optimized for better performance
-ANALYTICS_CACHE_TIMEOUT = 300  # 5 minutes for dashboard data (was 1 minute - too short)
+# Dynamic cache timeouts based on time range for optimal performance
+ANALYTICS_CACHE_TIMEOUTS = {
+    'today': 180,   # 3 minutes - more frequent updates for daily data
+    'week': 600,    # 10 minutes - weekly data changes less frequently
+    'month': 1800   # 30 minutes - monthly data is relatively stable
+}
+ANALYTICS_CACHE_TIMEOUT = 300  # Default fallback
 
 
 @analytics_bp.route('/dashboard', methods=['GET'])
@@ -23,9 +29,10 @@ def get_dashboard_analytics():
         client_id = g.user['client_id']
         time_range = request.args.get('range', 'today')
 
-        # Try to get from cache first
+        # Try to get from cache first - use dynamic timeout based on time range
         cache = get_cache_manager()
         cache_key = f"analytics:dashboard:{client_id}:{time_range}"
+        cache_timeout = ANALYTICS_CACHE_TIMEOUTS.get(time_range, ANALYTICS_CACHE_TIMEOUT)
         cached_data = cache.get(cache_key)
         if cached_data is not None:
             return jsonify(cached_data), 200
@@ -492,8 +499,8 @@ def get_dashboard_analytics():
             }
         }
 
-        # Cache the response for faster subsequent requests
-        cache.set(cache_key, response_data, ANALYTICS_CACHE_TIMEOUT)
+        # Cache the response for faster subsequent requests with dynamic timeout
+        cache.set(cache_key, response_data, cache_timeout)
 
         return jsonify(response_data), 200
 

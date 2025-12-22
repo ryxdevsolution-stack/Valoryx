@@ -69,7 +69,7 @@ interface BillTab {
 
 export default function UnifiedBillingPage() {
   const router = useRouter()
-  const { fetchProducts } = useData()
+  const { fetchProducts, invalidateCache: invalidateDataCache } = useData()
   const { client, hasPermission } = useClient()
 
   // Permission-based billing mode
@@ -210,15 +210,18 @@ export default function UnifiedBillingPage() {
   const loadInitialData = useCallback(async (retryCount = 0) => {
     try {
       setProductsLoading(true)
-      const [productsData, billsResponse] = await Promise.all([
-        fetchProducts(retryCount > 0), // Force refresh on retry
-        api.get('/billing/list?limit=1'),
+      // OPTIMIZED: Use lightweight /next-number endpoint instead of fetching full bill list
+      // Use cache normally - cache is invalidated after mutations (create/update/delete stock/bills)
+      // Backend has fallback lookup by product_name if product_id is stale
+      const [productsData, billNumberResponse] = await Promise.all([
+        fetchProducts(retryCount > 0), // Force refresh only on retry
+        api.get('/billing/next-number'),
       ])
       setProducts(productsData)
       setProductsLoading(false)
 
-      const bills = billsResponse.data.bills || []
-      setNextBillNumber(bills.length > 0 ? bills[0].bill_number + 1 : 1)
+      // Use dedicated endpoint response (much faster than list?limit=1)
+      setNextBillNumber(billNumberResponse.data.next_bill_number || 1)
 
       // If products is empty and we haven't retried too many times, retry after delay
       if (productsData.length === 0 && retryCount < 3) {
@@ -433,6 +436,32 @@ export default function UnifiedBillingPage() {
       setActiveTabId(newTabId)
       // Also update the bill number for the new bill
       loadInitialData()
+      return
+    }
+    const newTabs = billTabs.filter((tab) => tab.id !== tabId)
+    setBillTabs(newTabs)
+    if (activeTabId === tabId) {
+      setActiveTabId(newTabs[0].id)
+    }
+  }
+
+  // Close tab without reloading data (used after successful bill creation when we already have next bill number)
+  const closeTabWithoutReload = (tabId: string) => {
+    if (billTabs.length === 1) {
+      // Reset the single tab instead of closing - but don't reload data
+      const newTabId = Date.now().toString()
+      setBillTabs([{
+        id: newTabId,
+        customer_code: '',
+        customer_name: '',
+        customer_phone: '',
+        customer_gstin: '',
+        payment_splits: [],
+        items: [],
+        discountPercentage: 0,
+        amountReceived: 0,
+      }])
+      setActiveTabId(newTabId)
       return
     }
     const newTabs = billTabs.filter((tab) => tab.id !== tabId)
@@ -1110,30 +1139,38 @@ export default function UnifiedBillingPage() {
           alert('Bill created but print failed: ' + (electronPrintError.message || 'Unknown error'))
         }
       } else {
-        // Use backend print API for web/cloud deployment
-        console.log('[BILLING] Web mode - using backend print API...')
+        // Use browser print dialog for web deployment
+        console.log('[BILLING] Web mode - using browser print dialog...')
         try {
-          const printResponse = await api.post('/billing/print', {
-            bill: billData,
-            clientInfo
-          })
+          const { printBill } = await import('@/lib/webPrintService')
+          const printResult = printBill(billData, clientInfo, false)
 
-          if (printResponse.data.success) {
-            console.log('[BILLING] Backend print successful!')
+          if (printResult.success) {
+            console.log('[BILLING] Browser print dialog opened successfully!')
           } else {
-            console.error('[BILLING] Backend print failed:', printResponse.data)
-            alert('Bill created but print failed: ' + (printResponse.data.message || 'Printer error'))
+            console.error('[BILLING] Browser print failed:', printResult.message)
+            alert('Bill created but print failed: ' + (printResult.message || 'Print error'))
           }
-        } catch (backendPrintError: any) {
-          console.error('[BILLING] Backend print exception:', backendPrintError)
+        } catch (webPrintError: unknown) {
+          console.error('[BILLING] Web print exception:', webPrintError)
           // Don't throw - bill was created successfully
-          alert('Bill created but print failed: ' + (backendPrintError.response?.data?.message || backendPrintError.message || 'Printer error'))
+          const errorMessage = webPrintError instanceof Error ? webPrintError.message : 'Print error'
+          alert('Bill created but print failed: ' + errorMessage)
         }
       }
 
-      // Clear the completed tab from storage and remove it
+      // Invalidate product cache after successful bill creation (stock quantities changed)
+      invalidateDataCache('products')
+
+      // Set next bill number directly from response (avoid extra API call)
+      const createdBillNumber = response.data.bill?.bill_number || response.data.bill_number
+      if (createdBillNumber) {
+        setNextBillNumber(createdBillNumber + 1)
+      }
+
+      // Clear the completed tab from storage and remove it (skip loadInitialData since we already have next number)
       clearDraftFromStorage(activeTabId)
-      closeTab(activeTabId)
+      closeTabWithoutReload(activeTabId)
     } catch (error: any) {
       console.error('[BILLING] Error:', error)
       alert(error.response?.data?.error || error.message || 'Failed to create bill')

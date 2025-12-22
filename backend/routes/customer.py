@@ -62,6 +62,9 @@ def get_customers():
         ).all()
 
         # Get WALK-IN customers individually (each bill as separate entry)
+        # OPTIMIZED: Limit to recent 50 walk-in bills to prevent loading thousands of records
+        MAX_WALKIN_DISPLAY = 50
+
         walkin_gst_bills = GSTBilling.query.filter(
             GSTBilling.client_id == client_id,
             db.or_(
@@ -69,7 +72,7 @@ def get_customers():
                 GSTBilling.customer_name.ilike('walkin%'),
                 GSTBilling.customer_name.ilike('walk in%')
             )
-        ).order_by(desc(GSTBilling.created_at)).all()
+        ).order_by(desc(GSTBilling.created_at)).limit(MAX_WALKIN_DISPLAY).all()
 
         walkin_non_gst_bills = NonGSTBilling.query.filter(
             NonGSTBilling.client_id == client_id,
@@ -78,7 +81,7 @@ def get_customers():
                 NonGSTBilling.customer_name.ilike('walkin%'),
                 NonGSTBilling.customer_name.ilike('walk in%')
             )
-        ).order_by(desc(NonGSTBilling.created_at)).all()
+        ).order_by(desc(NonGSTBilling.created_at)).limit(MAX_WALKIN_DISPLAY).all()
 
         # Merge and aggregate REGULAR customers by phone
         customer_dict = {}

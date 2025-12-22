@@ -1,6 +1,6 @@
 import uuid
 from datetime import datetime
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify, g, current_app
 from extensions import db
 from models.billing_model import GSTBilling, NonGSTBilling
 from models.stock_model import StockEntry
@@ -8,7 +8,7 @@ from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission, require_any_permission
 from utils.audit_logger import log_action
 from utils.helpers import calculate_gst_amount, calculate_final_amount, validate_items
-from utils.cache_helper import invalidate_billing_cache, invalidate_stock_cache
+from utils.cache_helper import invalidate_billing_cache, invalidate_stock_cache, invalidate_analytics_cache
 
 billing_bp = Blueprint('billing', __name__)
 
@@ -184,6 +184,38 @@ def create_non_gst_bill():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to create Non-GST bill', 'message': str(e)}), 500
+
+
+@billing_bp.route('/next-number', methods=['GET'])
+@authenticate
+def get_next_bill_number():
+    """
+    Get the next bill number - OPTIMIZED lightweight endpoint
+    Replaces fetching full bill list just to get the last bill number
+    """
+    try:
+        client_id = g.user['client_id']
+
+        # Get max bill number from both tables using SQL MAX (very fast)
+        from sqlalchemy import func
+
+        gst_max = db.session.query(func.max(GSTBilling.bill_number)).filter(
+            GSTBilling.client_id == client_id
+        ).scalar() or 0
+
+        non_gst_max = db.session.query(func.max(NonGSTBilling.bill_number)).filter(
+            NonGSTBilling.client_id == client_id
+        ).scalar() or 0
+
+        next_number = max(gst_max, non_gst_max) + 1
+
+        return jsonify({
+            'success': True,
+            'next_bill_number': next_number
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to get next bill number', 'message': str(e)}), 500
 
 
 @billing_bp.route('/list', methods=['GET'])
@@ -382,12 +414,14 @@ def create_unified_bill():
             item['product_id'] for item in data['items']
             if not item['product_id'].startswith('temp-') and not item['product_id'].startswith('nosave-')
         ]
+
         if existing_product_ids:
             existing_products = StockEntry.query.filter(
                 StockEntry.product_id.in_(existing_product_ids),
                 StockEntry.client_id == client_id
             ).all()
-            product_map = {p.product_id: p for p in existing_products}
+            # FIX: Convert UUID to string for consistent key lookup (frontend sends string, DB returns UUID)
+            product_map = {str(p.product_id): p for p in existing_products}
         else:
             product_map = {}
 
@@ -410,7 +444,9 @@ def create_unified_bill():
                 product = product_map.get(product_id)
 
                 if not product:
-                    return jsonify({'error': f"Product {item.get('product_name', 'Unknown')} not found"}), 404
+                    return jsonify({
+                        'error': f"Product '{item.get('product_name', 'Unknown')}' not found. Please refresh the page and try again."
+                    }), 404
 
                 # Check stock availability
                 if product.quantity < item['quantity']:
@@ -553,13 +589,14 @@ def create_unified_bill():
             )
 
             db.session.add(new_bill)
+            # Log action BEFORE commit so it's part of the same transaction (performance optimization)
+            log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
             db.session.commit()
 
-            # Invalidate caches after bill creation
+            # Invalidate caches after bill creation - including analytics for real-time dashboard updates
             invalidate_billing_cache(client_id)
             invalidate_stock_cache(client_id)
-
-            log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
+            invalidate_analytics_cache(client_id)
 
             # Calculate discount amount if discount percentage is provided
             discount_amount = 0
@@ -586,6 +623,7 @@ def create_unified_bill():
                     'bill_number': bill_number,
                     'customer_name': data.get('customer_name', 'Walk-in Customer'),
                     'customer_phone': data.get('customer_phone', ''),
+                    'customer_gstin': data.get('customer_gstin', ''),
                     'items': processed_items,
                     'subtotal': round(subtotal, 2),
                     'discount_percentage': data.get('discount_percentage', 0),
@@ -599,7 +637,7 @@ def create_unified_bill():
                     'cgst': cgst,
                     'sgst': sgst,
                     'igst': 0,
-                    'user_name': g.user.get('email', 'Admin').split('@')[0]  # Use email username as user name
+                    'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0]  # Use full name if available
                 }
             }), 201
 
@@ -626,13 +664,14 @@ def create_unified_bill():
             )
 
             db.session.add(new_bill)
+            # Log action BEFORE commit so it's part of the same transaction (performance optimization)
+            log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
             db.session.commit()
 
-            # Invalidate caches after bill creation
+            # Invalidate caches after bill creation - including analytics for real-time dashboard updates
             invalidate_billing_cache(client_id)
             invalidate_stock_cache(client_id)
-
-            log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
+            invalidate_analytics_cache(client_id)
 
             # Calculate discount amount if discount percentage is provided
             discount_amount = 0
@@ -652,6 +691,7 @@ def create_unified_bill():
                     'bill_number': bill_number,
                     'customer_name': data.get('customer_name', 'Walk-in Customer'),
                     'customer_phone': data.get('customer_phone', ''),
+                    'customer_gstin': data.get('customer_gstin', ''),
                     'items': processed_items,
                     'subtotal': round(subtotal, 2),
                     'discount_percentage': data.get('discount_percentage', 0),
@@ -665,7 +705,7 @@ def create_unified_bill():
                     'cgst': 0,
                     'sgst': 0,
                     'igst': 0,
-                    'user_name': g.user.get('email', 'Admin').split('@')[0]  # Use email username as user name
+                    'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0]  # Use full name if available
                 }
             }), 201
 
@@ -775,6 +815,11 @@ def update_bill(bill_id):
             existing_bill.total_amount = data.get('total_amount', existing_bill.total_amount)
 
         db.session.commit()
+
+        # Invalidate caches after bill update - for real-time data consistency
+        invalidate_billing_cache(client_id)
+        invalidate_stock_cache(client_id)
+        invalidate_analytics_cache(client_id)
 
         # Log the update action
         log_action('UPDATE',
@@ -915,6 +960,11 @@ def exchange_bill(bill_id):
 
         db.session.commit()
 
+        # Invalidate caches after bill exchange - for real-time data consistency
+        invalidate_billing_cache(client_id)
+        invalidate_stock_cache(client_id)
+        invalidate_analytics_cache(client_id)
+
         # Log the exchange
         log_action(
             'EXCHANGE',
@@ -998,6 +1048,11 @@ def cancel_bill(bill_id):
         bill.updated_at = datetime.utcnow()
 
         db.session.commit()
+
+        # Invalidate caches after bill cancellation - for real-time data consistency
+        invalidate_billing_cache(client_id)
+        invalidate_stock_cache(client_id)
+        invalidate_analytics_cache(client_id)
 
         # Log the cancellation
         log_action(

@@ -247,6 +247,14 @@ def invalidate_billing_cache(client_id: str):
     logger.info(f"Invalidated billing cache for client {client_id}")
 
 
+def invalidate_analytics_cache(client_id: str):
+    """Invalidate all analytics-related cache for a client - for real-time updates"""
+    cache = get_cache_manager()
+    cache.delete_pattern(f"analytics:dashboard:{client_id}:*")
+    cache.delete_pattern(f"*analytics*:{client_id}:*")
+    logger.info(f"Invalidated analytics cache for client {client_id}")
+
+
 def warm_cache(client_id: str):
     """Pre-warm cache with frequently accessed data"""
     try:

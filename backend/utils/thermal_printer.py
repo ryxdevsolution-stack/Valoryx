@@ -263,6 +263,7 @@ class ThermalPrinter:
         <div class="flex"><span>Bill No: {bill_data.get('bill_number', 'N/A')}</span><span>Date: {date_str}</span></div>
         {"<div>Customer: " + bill_data.get('customer_name', '') + "</div>" if bill_data.get('customer_name') else ""}
         {"<div>Phone: " + bill_data.get('customer_phone', '') + "</div>" if bill_data.get('customer_phone') else ""}
+        {"<div>GSTIN: " + bill_data.get('customer_gstin', '') + "</div>" if bill_data.get('type', '').upper() == 'GST' and bill_data.get('customer_gstin') else ""}
     </div>
     <div class="dashed"></div>
 
@@ -438,6 +439,8 @@ class ThermalPrinter:
             lines.append(f"Customer: {bill_data['customer_name']}")
             if bill_data.get('customer_phone'):
                 lines.append(f"Phone: {bill_data['customer_phone']}")
+            if bill_data.get('type', '').upper() == 'GST' and bill_data.get('customer_gstin'):
+                lines.append(f"GSTIN: {bill_data['customer_gstin']}")
 
         lines.append("-" * W)
 

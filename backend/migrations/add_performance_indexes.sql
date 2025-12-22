@@ -57,6 +57,10 @@ ON gst_billing(client_id, payment_type);
 CREATE INDEX IF NOT EXISTS idx_gst_status
 ON gst_billing(client_id, status);
 
+-- Index for customer phone lookups (for customer list aggregation)
+CREATE INDEX IF NOT EXISTS idx_gst_customer_phone
+ON gst_billing(client_id, customer_phone);
+
 -- Partial index for recent bills (last 30 days) - most frequently accessed
 CREATE INDEX IF NOT EXISTS idx_gst_recent_bills
 ON gst_billing(client_id, created_at DESC)
@@ -85,6 +89,10 @@ ON non_gst_billing(client_id, payment_type);
 -- Index for status filtering
 CREATE INDEX IF NOT EXISTS idx_nongst_status
 ON non_gst_billing(client_id, status);
+
+-- Index for customer phone lookups (for customer list aggregation)
+CREATE INDEX IF NOT EXISTS idx_nongst_customer_phone
+ON non_gst_billing(client_id, customer_phone);
 
 -- Partial index for recent bills (last 30 days)
 CREATE INDEX IF NOT EXISTS idx_nongst_recent_bills
