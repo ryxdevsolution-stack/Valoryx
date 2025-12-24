@@ -1560,15 +1560,21 @@ export default function UnifiedBillingPage() {
                                   ? 'bg-blue-100 dark:bg-blue-900'
                                   : 'hover:bg-blue-50 dark:hover:bg-gray-700'
                               }`}
+                              style={{ fontFamily: "'Times New Roman', Times, serif" }}
                             >
                               <div className="flex justify-between items-center">
                                 <div>
-                                  <div className="text-sm font-medium text-gray-900 dark:text-white">
+                                  <div className="text-sm font-medium text-gray-900 dark:text-white uppercase">
                                     {product.product_name}
                                   </div>
                                   <div className="text-xs text-gray-500 dark:text-gray-400">
                                     Code: {product.item_code || 'N/A'} | Stock: {product.quantity} |
                                     GST: {product.gst_percentage}%
+                                    {product.mrp && (
+                                      <span className="ml-2 font-semibold text-green-600 dark:text-green-400">
+                                        | MRP: ₹{Number(product.mrp).toFixed(2)}
+                                      </span>
+                                    )}
                                   </div>
                                 </div>
                                 <div className="text-sm font-semibold text-blue-600 dark:text-blue-400">
