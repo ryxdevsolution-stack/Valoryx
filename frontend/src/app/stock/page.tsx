@@ -46,6 +46,12 @@ export default function StockManagementPage() {
   const [submitting, setSubmitting] = useState(false)
   const [toast, setToast] = useState<{ show: boolean; message: string; type: 'success' | 'error' }>({ show: false, message: '', type: 'success' })
 
+  // Search and filter states
+  const [searchQuery, setSearchQuery] = useState('')
+  const [categoryFilter, setCategoryFilter] = useState<string>('all')
+  const [statusFilter, setStatusFilter] = useState<'all' | 'low-stock' | 'in-stock'>('all')
+  const [unitFilter, setUnitFilter] = useState<string>('all')
+
   // Bulk order states
   const [showBulkOrderModal, setShowBulkOrderModal] = useState(false)
   const [showBulkOrderList, setShowBulkOrderList] = useState(false)
@@ -253,6 +259,34 @@ export default function StockManagementPage() {
     // Fallback calculation if is_low_stock is undefined
     return stock.is_low_stock ?? (stock.quantity <= stock.low_stock_alert)
   }
+
+  // Get unique categories and units for filters
+  const uniqueCategories = Array.from(new Set(stocks.map(s => s.category).filter(Boolean)))
+  const uniqueUnits = Array.from(new Set(stocks.map(s => s.unit).filter(Boolean)))
+
+  // Filter stocks based on search and filters
+  const filteredStocks = stocks.filter((stock) => {
+    // Search filter (product name, item code, barcode)
+    const searchLower = searchQuery.toLowerCase().trim()
+    const matchesSearch = searchLower === '' ||
+      stock.product_name.toLowerCase().includes(searchLower) ||
+      stock.item_code?.toLowerCase().includes(searchLower) ||
+      stock.barcode?.toLowerCase().includes(searchLower)
+
+    // Category filter
+    const matchesCategory = categoryFilter === 'all' || stock.category === categoryFilter
+
+    // Status filter
+    const matchesStatus =
+      statusFilter === 'all' ||
+      (statusFilter === 'low-stock' && isLowStock(stock)) ||
+      (statusFilter === 'in-stock' && !isLowStock(stock))
+
+    // Unit filter
+    const matchesUnit = unitFilter === 'all' || stock.unit === unitFilter
+
+    return matchesSearch && matchesCategory && matchesStatus && matchesUnit
+  })
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
@@ -1062,6 +1096,106 @@ export default function StockManagementPage() {
         </div>
       )}
 
+      {/* Search and Filter Bar */}
+      {!loading && stocks.length > 0 && (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900 p-4 mb-6">
+          <div className="flex flex-col lg:flex-row gap-4">
+            {/* Search Input */}
+            <div className="flex-1">
+              <div className="relative">
+                <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none">
+                  <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                </div>
+                <input
+                  type="text"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  placeholder="Search by product name, item code, or barcode..."
+                  className="block w-full pl-10 pr-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-500 dark:placeholder-gray-400 focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 focus:border-transparent transition"
+                />
+                {searchQuery && (
+                  <button
+                    onClick={() => setSearchQuery('')}
+                    className="absolute inset-y-0 right-0 pr-3 flex items-center text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  >
+                    <svg className="h-5 w-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </button>
+                )}
+              </div>
+            </div>
+
+            {/* Filters */}
+            <div className="flex flex-wrap gap-3">
+              {/* Category Filter */}
+              <select
+                value={categoryFilter}
+                onChange={(e) => setCategoryFilter(e.target.value)}
+                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 transition min-w-[140px]"
+              >
+                <option value="all">All Categories</option>
+                {uniqueCategories.sort().map((category) => (
+                  <option key={category} value={category}>
+                    {category}
+                  </option>
+                ))}
+              </select>
+
+              {/* Status Filter */}
+              <select
+                value={statusFilter}
+                onChange={(e) => setStatusFilter(e.target.value as 'all' | 'low-stock' | 'in-stock')}
+                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 transition min-w-[140px]"
+              >
+                <option value="all">All Status</option>
+                <option value="low-stock">🚨 Low Stock</option>
+                <option value="in-stock">✓ In Stock</option>
+              </select>
+
+              {/* Unit Filter */}
+              <select
+                value={unitFilter}
+                onChange={(e) => setUnitFilter(e.target.value)}
+                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 dark:focus:ring-indigo-400 transition min-w-[120px]"
+              >
+                <option value="all">All Units</option>
+                {uniqueUnits.sort().map((unit) => (
+                  <option key={unit} value={unit}>
+                    {unit}
+                  </option>
+                ))}
+              </select>
+
+              {/* Clear Filters Button */}
+              {(searchQuery || categoryFilter !== 'all' || statusFilter !== 'all' || unitFilter !== 'all') && (
+                <button
+                  onClick={() => {
+                    setSearchQuery('')
+                    setCategoryFilter('all')
+                    setStatusFilter('all')
+                    setUnitFilter('all')
+                  }}
+                  className="px-4 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition flex items-center gap-2"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                  Clear Filters
+                </button>
+              )}
+            </div>
+          </div>
+
+          {/* Results Count */}
+          <div className="mt-3 text-sm text-gray-600 dark:text-gray-400">
+            Showing <span className="font-semibold text-gray-900 dark:text-white">{filteredStocks.length}</span> of {stocks.length} products
+          </div>
+        </div>
+      )}
+
       {/* Stock Table */}
       {loading ? (
         <TableSkeleton rows={10} />
@@ -1069,6 +1203,23 @@ export default function StockManagementPage() {
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900 p-12 text-center">
           <p className="text-gray-500 dark:text-gray-400 text-lg">No stock items found</p>
           <p className="text-gray-400 dark:text-gray-500 mt-2">Add your first stock item to get started</p>
+        </div>
+      ) : filteredStocks.length === 0 ? (
+        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900 p-12 text-center">
+          <div className="text-6xl mb-4">🔍</div>
+          <p className="text-gray-500 dark:text-gray-400 text-lg font-semibold">No products match your filters</p>
+          <p className="text-gray-400 dark:text-gray-500 mt-2">Try adjusting your search or filters</p>
+          <button
+            onClick={() => {
+              setSearchQuery('')
+              setCategoryFilter('all')
+              setStatusFilter('all')
+              setUnitFilter('all')
+            }}
+            className="mt-4 px-6 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition"
+          >
+            Clear All Filters
+          </button>
         </div>
       ) : (
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900 overflow-hidden">
@@ -1099,7 +1250,7 @@ export default function StockManagementPage() {
               </tr>
             </thead>
             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-              {stocks.map((stock) => (
+              {filteredStocks.map((stock) => (
                 <tr
                   key={stock.product_id}
                   className={`transition ${

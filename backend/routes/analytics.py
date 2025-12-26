@@ -24,14 +24,27 @@ ANALYTICS_CACHE_TIMEOUT = 300  # Default fallback
 @analytics_bp.route('/dashboard', methods=['GET'])
 @authenticate
 def get_dashboard_analytics():
-    """Get comprehensive analytics for dashboard with real data - OPTIMIZED with SQL and caching"""
+    """
+    Get comprehensive analytics for dashboard with real data - OPTIMIZED with SQL and caching
+
+    Permission-based filtering:
+    - view_all_bills: User can see analytics for all bills in their client
+    - view_own_bills: User can only see analytics for bills they created
+    """
     try:
         client_id = g.user['client_id']
+        user_id = g.user['user_id']
         time_range = request.args.get('range', 'today')
 
-        # Try to get from cache first - use dynamic timeout based on time range
+        # Check user permissions for filtering
+        user_permissions = g.user.get('permissions', [])
+        is_super_admin = g.user.get('is_super_admin', False)
+        has_view_all = is_super_admin or 'view_all_bills' in user_permissions
+
+        # Try to get from cache first - include user context in cache key
         cache = get_cache_manager()
-        cache_key = f"analytics:dashboard:{client_id}:{time_range}"
+        user_context = 'all' if has_view_all else user_id
+        cache_key = f"analytics:dashboard:{client_id}:{user_context}:{time_range}"
         cache_timeout = ANALYTICS_CACHE_TIMEOUTS.get(time_range, ANALYTICS_CACHE_TIMEOUT)
         cached_data = cache.get(cache_key)
         if cached_data is not None:
@@ -53,80 +66,117 @@ def get_dashboard_analytics():
 
         # ==================== SQL AGGREGATIONS (N+1 FIX) ====================
         # Revenue calculations using SQL instead of loading all records
+        # SECURITY: Apply user-level filtering for view_own_bills permission
 
         # Today's revenue - GST
-        gst_today = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
+        gst_today_query = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
             GSTBilling.client_id == client_id,
             GSTBilling.created_at >= today_start
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            gst_today_query = gst_today_query.filter(GSTBilling.created_by == user_id)
+        gst_today = gst_today_query.scalar() or 0
 
         # Today's revenue - Non-GST
-        non_gst_today = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
+        non_gst_today_query = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
             NonGSTBilling.client_id == client_id,
             NonGSTBilling.created_at >= today_start
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            non_gst_today_query = non_gst_today_query.filter(NonGSTBilling.created_by == user_id)
+        non_gst_today = non_gst_today_query.scalar() or 0
 
         revenue_today = float(gst_today) + float(non_gst_today)
 
         # Week's revenue
-        gst_week = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
+        gst_week_query = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
             GSTBilling.client_id == client_id,
             GSTBilling.created_at >= week_start
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            gst_week_query = gst_week_query.filter(GSTBilling.created_by == user_id)
+        gst_week = gst_week_query.scalar() or 0
 
-        non_gst_week = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
+        non_gst_week_query = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
             NonGSTBilling.client_id == client_id,
             NonGSTBilling.created_at >= week_start
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            non_gst_week_query = non_gst_week_query.filter(NonGSTBilling.created_by == user_id)
+        non_gst_week = non_gst_week_query.scalar() or 0
 
         revenue_week = float(gst_week) + float(non_gst_week)
 
         # Month's revenue
-        gst_month = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
+        gst_month_query = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
             GSTBilling.client_id == client_id,
             GSTBilling.created_at >= month_start
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            gst_month_query = gst_month_query.filter(GSTBilling.created_by == user_id)
+        gst_month = gst_month_query.scalar() or 0
 
-        non_gst_month = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
+        non_gst_month_query = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
             NonGSTBilling.client_id == client_id,
             NonGSTBilling.created_at >= month_start
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            non_gst_month_query = non_gst_month_query.filter(NonGSTBilling.created_by == user_id)
+        non_gst_month = non_gst_month_query.scalar() or 0
 
         revenue_month = float(gst_month) + float(non_gst_month)
 
         # Previous month's revenue (for growth calculation)
-        gst_prev_month = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
+        gst_prev_month_query = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
             GSTBilling.client_id == client_id,
             GSTBilling.created_at >= prev_month_start,
             GSTBilling.created_at < month_start
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            gst_prev_month_query = gst_prev_month_query.filter(GSTBilling.created_by == user_id)
+        gst_prev_month = gst_prev_month_query.scalar() or 0
 
-        non_gst_prev_month = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
+        non_gst_prev_month_query = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
             NonGSTBilling.client_id == client_id,
             NonGSTBilling.created_at >= prev_month_start,
             NonGSTBilling.created_at < month_start
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            non_gst_prev_month_query = non_gst_prev_month_query.filter(NonGSTBilling.created_by == user_id)
+        non_gst_prev_month = non_gst_prev_month_query.scalar() or 0
 
         revenue_prev_month = float(gst_prev_month) + float(non_gst_prev_month)
 
         # Bill counts using SQL
-        total_gst_bills = db.session.query(func.count(GSTBilling.bill_id)).filter(
+        total_gst_bills_query = db.session.query(func.count(GSTBilling.bill_id)).filter(
             GSTBilling.client_id == client_id
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            total_gst_bills_query = total_gst_bills_query.filter(GSTBilling.created_by == user_id)
+        total_gst_bills = total_gst_bills_query.scalar() or 0
 
-        total_non_gst_bills = db.session.query(func.count(NonGSTBilling.bill_id)).filter(
+        total_non_gst_bills_query = db.session.query(func.count(NonGSTBilling.bill_id)).filter(
             NonGSTBilling.client_id == client_id
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            total_non_gst_bills_query = total_non_gst_bills_query.filter(NonGSTBilling.created_by == user_id)
+        total_non_gst_bills = total_non_gst_bills_query.scalar() or 0
 
-        today_gst_count = db.session.query(func.count(GSTBilling.bill_id)).filter(
+        today_gst_count_query = db.session.query(func.count(GSTBilling.bill_id)).filter(
             GSTBilling.client_id == client_id,
             GSTBilling.created_at >= today_start
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            today_gst_count_query = today_gst_count_query.filter(GSTBilling.created_by == user_id)
+        today_gst_count = today_gst_count_query.scalar() or 0
 
-        today_non_gst_count = db.session.query(func.count(NonGSTBilling.bill_id)).filter(
+        today_non_gst_count_query = db.session.query(func.count(NonGSTBilling.bill_id)).filter(
             NonGSTBilling.client_id == client_id,
             NonGSTBilling.created_at >= today_start
-        ).scalar() or 0
+        )
+        if not has_view_all:
+            today_non_gst_count_query = today_non_gst_count_query.filter(NonGSTBilling.created_by == user_id)
+        today_non_gst_count = today_non_gst_count_query.scalar() or 0
 
         # Calculate growth rate
         growth_rate = 0
@@ -139,15 +189,21 @@ def get_dashboard_analytics():
 
         # ==================== LOAD ONLY RECENT BILLS FOR PRODUCT ANALYSIS ====================
         # Only load bills from start_date for product analysis (not ALL historical bills)
-        gst_bills = GSTBilling.query.filter(
+        gst_bills_query = GSTBilling.query.filter(
             GSTBilling.client_id == client_id,
             GSTBilling.created_at >= prev_month_start  # Only last 60 days max for product analysis
-        ).all()
+        )
+        if not has_view_all:
+            gst_bills_query = gst_bills_query.filter(GSTBilling.created_by == user_id)
+        gst_bills = gst_bills_query.all()
 
-        non_gst_bills = NonGSTBilling.query.filter(
+        non_gst_bills_query = NonGSTBilling.query.filter(
             NonGSTBilling.client_id == client_id,
             NonGSTBilling.created_at >= prev_month_start  # Only last 60 days max
-        ).all()
+        )
+        if not has_view_all:
+            non_gst_bills_query = non_gst_bills_query.filter(NonGSTBilling.created_by == user_id)
+        non_gst_bills = non_gst_bills_query.all()
 
         # Product performance analysis (ALL TIME)
         product_sales = defaultdict(lambda: {'quantity': 0, 'revenue': 0.0, 'category': '', 'recent_sales': 0, 'old_sales': 0})

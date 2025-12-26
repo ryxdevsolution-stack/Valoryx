@@ -4,6 +4,7 @@ from models.billing_model import GSTBilling, NonGSTBilling
 from models.customer_model import Customer
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission
+from utils.helpers import title_case
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta
 import uuid
@@ -409,18 +410,18 @@ def create_customer():
         max_code = db.session.query(func.max(Customer.customer_code)).filter_by(client_id=client_id).scalar()
         next_code = (max_code + 1) if max_code else 100
 
-        # Create new customer
+        # Create new customer (apply title case to name fields)
         new_customer = Customer(
             customer_id=str(uuid.uuid4()),
             client_id=client_id,
             customer_code=next_code,
-            customer_name=data.get('customer_name'),
+            customer_name=title_case(data.get('customer_name')),
             customer_phone=data.get('customer_phone'),
             customer_email=data.get('customer_email', ''),
             customer_address=data.get('customer_address', ''),
             customer_gstin=data.get('customer_gstin', ''),
-            customer_city=data.get('customer_city', ''),
-            customer_state=data.get('customer_state', ''),
+            customer_city=title_case(data.get('customer_city', '')),
+            customer_state=title_case(data.get('customer_state', '')),
             customer_pincode=data.get('customer_pincode', ''),
             notes=data.get('notes', ''),
             status='active'

@@ -11,6 +11,7 @@ from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager, invalidate_stock_cache
+from utils.helpers import title_case
 
 stock_bp = Blueprint('stock', __name__)
 
@@ -80,10 +81,14 @@ def add_stock():
             if field not in data:
                 return jsonify({'error': f'Missing required field: {field}'}), 400
 
+        # Apply title case to name fields
+        product_name = title_case(data['product_name'])
+        category = title_case(data.get('category', 'Other'))
+
         # Check if product already exists for this client
         existing_product = StockEntry.query.filter_by(
             client_id=client_id,
-            product_name=data['product_name']
+            product_name=product_name
         ).first()
 
         if existing_product:
@@ -94,7 +99,7 @@ def add_stock():
             existing_product.cost_price = data.get('cost_price', existing_product.cost_price)
             existing_product.mrp = data.get('mrp', existing_product.mrp)
             existing_product.pricing = data.get('pricing', existing_product.pricing)
-            existing_product.category = data.get('category', existing_product.category)
+            existing_product.category = category
             existing_product.unit = data.get('unit', existing_product.unit)
             existing_product.low_stock_alert = data.get('low_stock_alert', existing_product.low_stock_alert)
 
@@ -146,14 +151,14 @@ def add_stock():
             item_code_value = data.get('item_code', '').strip()
             if not item_code_value:
                 # Auto-generate item code
-                item_code_value = generate_item_code(client_id, data['product_name'])
+                item_code_value = generate_item_code(client_id, product_name)
             # else: user provided item_code, use it
 
             new_product = StockEntry(
                 product_id=str(uuid.uuid4()),
                 client_id=client_id,
-                product_name=data['product_name'],
-                category=data.get('category', 'Other'),
+                product_name=product_name,
+                category=category,
                 quantity=data['quantity'],
                 rate=data['rate'],
                 cost_price=data.get('cost_price'),
@@ -300,11 +305,11 @@ def update_stock(product_id):
         # Store old data for audit
         old_data = product.to_dict()
 
-        # Update fields
+        # Update fields (apply title case to name fields)
         if 'product_name' in data:
-            product.product_name = data['product_name']
+            product.product_name = title_case(data['product_name'])
         if 'category' in data:
-            product.category = data['category']
+            product.category = title_case(data['category'])
         if 'quantity' in data:
             product.quantity = data['quantity']
         if 'rate' in data:
@@ -449,10 +454,10 @@ def bulk_import_stock():
                     errors.append(f"Row {index + 2}: Missing required fields")
                     continue
 
-                product_name = str(row['product_name']).strip()
+                product_name = title_case(str(row['product_name']).strip())
                 quantity = int(row['quantity'])
                 rate = float(row['rate'])
-                category = str(row['category']).strip() if 'category' in row and not pd.isna(row['category']) else 'Other'
+                category = title_case(str(row['category']).strip()) if 'category' in row and not pd.isna(row['category']) else 'Other'
                 unit = str(row['unit']).strip() if 'unit' in row and not pd.isna(row['unit']) else 'pcs'
                 low_stock_alert = int(row['low_stock_alert']) if 'low_stock_alert' in row and not pd.isna(row['low_stock_alert']) else 10
                 cost_price = float(row['cost_price']) if 'cost_price' in row and not pd.isna(row['cost_price']) else None

@@ -6,6 +6,7 @@ from extensions import db
 from models.expense_model import Expense, ExpenseSummary
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
+from utils.cache import cache, invalidate_cache
 from decimal import Decimal
 
 expense_bp = Blueprint('expense', __name__)
@@ -48,6 +49,9 @@ def create_expense():
         db.session.add(new_expense)
         db.session.commit()
 
+        # Invalidate cache for this client's expenses
+        invalidate_cache(f"expenses:{client_id}")
+
         # Update summaries asynchronously or via background job in production
         update_expense_summaries(client_id, expense_date)
 
@@ -66,7 +70,7 @@ def create_expense():
 @expense_bp.route('/list', methods=['GET'])
 @authenticate
 def list_expenses():
-    """List expenses with filtering"""
+    """List expenses with filtering (cached)"""
     try:
         client_id = g.user['client_id']
 
@@ -76,6 +80,14 @@ def list_expenses():
         category = request.args.get('category')
         limit = int(request.args.get('limit', 100))
         offset = int(request.args.get('offset', 0))
+
+        # Generate cache key
+        cache_key = f"expenses:list:{client_id}:{date_from}:{date_to}:{category}:{limit}:{offset}"
+
+        # Try cache first
+        cached_result = cache.get(cache_key)
+        if cached_result is not None:
+            return jsonify(cached_result), 200
 
         # Build query
         query = Expense.query.filter_by(client_id=client_id)
@@ -94,13 +106,18 @@ def list_expenses():
         expenses = query.order_by(Expense.expense_date.desc(), Expense.created_at.desc())\
             .limit(limit).offset(offset).all()
 
-        return jsonify({
+        result = {
             'success': True,
             'expenses': [expense.to_dict() for expense in expenses],
             'total': total_count,
             'limit': limit,
             'offset': offset
-        }), 200
+        }
+
+        # Cache for 2 minutes (reports typically switch between periods quickly)
+        cache.set(cache_key, result, ttl_seconds=120)
+
+        return jsonify(result), 200
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch expenses', 'message': str(e)}), 500
@@ -171,6 +188,9 @@ def update_expense(expense_id):
 
         db.session.commit()
 
+        # Invalidate cache for this client's expenses
+        invalidate_cache(f"expenses:{client_id}")
+
         # Update summaries
         update_expense_summaries(client_id, expense.expense_date)
 
@@ -207,6 +227,9 @@ def delete_expense(expense_id):
         db.session.delete(expense)
         db.session.commit()
 
+        # Invalidate cache for this client's expenses
+        invalidate_cache(f"expenses:{client_id}")
+
         # Update summaries
         update_expense_summaries(client_id, expense_date)
 
@@ -225,7 +248,7 @@ def delete_expense(expense_id):
 @expense_bp.route('/summary', methods=['GET'])
 @authenticate
 def get_expense_summary():
-    """Get expense summary by time period"""
+    """Get expense summary by time period (cached)"""
     try:
         client_id = g.user['client_id']
 
@@ -236,6 +259,14 @@ def get_expense_summary():
 
         if not date_from or not date_to:
             return jsonify({'error': 'date_from and date_to are required'}), 400
+
+        # Generate cache key
+        cache_key = f"expenses:summary:{client_id}:{period_type}:{date_from}:{date_to}"
+
+        # Try cache first
+        cached_result = cache.get(cache_key)
+        if cached_result is not None:
+            return jsonify(cached_result), 200
 
         start_date = datetime.fromisoformat(date_from).date()
         end_date = datetime.fromisoformat(date_to).date()
@@ -303,7 +334,7 @@ def get_expense_summary():
                 yearly_map[year_key]['count'] += 1
             time_breakdown = list(yearly_map.values())
 
-        return jsonify({
+        result = {
             'success': True,
             'summary': {
                 'period_type': period_type,
@@ -314,7 +345,12 @@ def get_expense_summary():
                 'category_breakdown': category_breakdown,
                 'time_breakdown': sorted(time_breakdown, key=lambda x: list(x.values())[0])
             }
-        }), 200
+        }
+
+        # Cache for 2 minutes
+        cache.set(cache_key, result, ttl_seconds=120)
+
+        return jsonify(result), 200
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch expense summary', 'message': str(e)}), 500

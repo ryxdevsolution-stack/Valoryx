@@ -135,7 +135,13 @@
       "Bash(for file in /home/development1/Desktop/mj-billing/backend/routes/*.py)",
       "Bash(for file in /home/development1/Desktop/mj-billing/backend/utils/*.py)",
       "Bash(for file in /home/development1/Desktop/mj-billing/frontend/src/components/*.tsx)",
-      "Bash(for file in /home/development1/Desktop/mj-billing/frontend/src/app/**/*.tsx)"
+      "Bash(for file in /home/development1/Desktop/mj-billing/frontend/src/app/**/*.tsx)",
+      "Bash(pip3 install:*)",
+      "Bash(if [ ! -d \"venv\" ])",
+      "Bash(then python3 -m venv venv)",
+      "Bash(fi)",
+      "Bash(git log:*)",
+      "Bash(sudo -n apt-get install:*)"
     ],
     "deny": [],
     "ask": [],

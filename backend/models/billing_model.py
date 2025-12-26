@@ -1,6 +1,7 @@
 from extensions import db
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.orm import relationship
 
 class GSTBilling(db.Model):
     """GST-enabled billing with percentage calculation"""
@@ -26,10 +27,14 @@ class GSTBilling(db.Model):
     payment_type = db.Column(db.Text)
     amount_received = db.Column(db.Numeric(12, 2))
     discount_percentage = db.Column(db.Numeric(5, 2))
+    discount_amount = db.Column(db.Numeric(12, 2))
     status = db.Column(db.String(20), default='final')
     created_by = db.Column(db.String(36), db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationship to User model
+    creator = relationship('User', foreign_keys=[created_by], lazy='joined')
 
     def to_dict(self):
         return {
@@ -47,8 +52,10 @@ class GSTBilling(db.Model):
             'payment_type': self.payment_type,
             'amount_received': str(self.amount_received) if self.amount_received else None,
             'discount_percentage': str(self.discount_percentage) if self.discount_percentage else None,
+            'discount_amount': str(self.discount_amount) if self.discount_amount else None,
             'status': self.status,
             'created_by': self.created_by,
+            'created_by_name': self.creator.full_name if self.creator and self.creator.full_name else (self.creator.email if self.creator else None),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'type': 'gst'
@@ -76,10 +83,14 @@ class NonGSTBilling(db.Model):
     payment_type = db.Column(db.Text)
     amount_received = db.Column(db.Numeric(12, 2))
     discount_percentage = db.Column(db.Numeric(5, 2))
+    discount_amount = db.Column(db.Numeric(12, 2))
     status = db.Column(db.String(20), default='final')
     created_by = db.Column(db.String(36), db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationship to User model
+    creator = relationship('User', foreign_keys=[created_by], lazy='joined')
 
     def to_dict(self):
         return {
@@ -94,8 +105,10 @@ class NonGSTBilling(db.Model):
             'payment_type': self.payment_type,
             'amount_received': str(self.amount_received) if self.amount_received else None,
             'discount_percentage': str(self.discount_percentage) if self.discount_percentage else None,
+            'discount_amount': str(self.discount_amount) if self.discount_amount else None,
             'status': self.status,
             'created_by': self.created_by,
+            'created_by_name': self.creator.full_name if self.creator and self.creator.full_name else (self.creator.email if self.creator else None),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'type': 'non_gst'

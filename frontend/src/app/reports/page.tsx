@@ -32,11 +32,8 @@ interface Expense {
 interface ReportData {
   total_bills: number
   total_revenue: number
-  average_bill_value: number
   bills_growth: number
   revenue_growth: number
-  daily_revenue: Array<{ date: string; revenue: number; bills_count: number }>
-  payment_methods: Array<{ method: string; count: number; amount: number }>
   top_customers: Array<{ name: string; total_spend: number; bills_count: number }>
   hourly_distribution: Array<{ hour: number; bills: number; revenue: number }>
   bills: Bill[]
@@ -56,10 +53,12 @@ export default function ReportsPage() {
     start_date: '',
     end_date: '',
   })
-  const [timeFilter, setTimeFilter] = useState<'daily' | 'weekly' | 'monthly'>('daily')
+  const [periodType, setPeriodType] = useState<'daily' | 'weekly' | 'monthly'>('monthly')
   const [searchQuery, setSearchQuery] = useState('')
   const [sortBy, setSortBy] = useState<'date' | 'amount' | 'customer'>('date')
   const [isNotesModalOpen, setIsNotesModalOpen] = useState(false)
+  const [currentPage, setCurrentPage] = useState(1)
+  const itemsPerPage = 17
 
   // Expense management states
   const [showExpenseModal, setShowExpenseModal] = useState(false)
@@ -75,26 +74,69 @@ export default function ReportsPage() {
     notes: ''
   })
 
+  // Collapsible section states
+  const [isExpenseCategoriesOpen, setIsExpenseCategoriesOpen] = useState(false)
+  const [isTopCustomersOpen, setIsTopCustomersOpen] = useState(false)
+
   const ongoingRequest = useRef<Promise<void> | null>(null)
   const hasInitialized = useRef(false)
+
+  // Calculate date range based on period type
+  const calculateDateRange = (type: 'daily' | 'weekly' | 'monthly') => {
+    const today = new Date()
+    const endDate = today.toISOString().split('T')[0]
+    let startDate = ''
+
+    if (type === 'daily') {
+      // Today only
+      startDate = endDate
+    } else if (type === 'weekly') {
+      // Last 7 days
+      const weekAgo = new Date()
+      weekAgo.setDate(today.getDate() - 6)
+      startDate = weekAgo.toISOString().split('T')[0]
+    } else if (type === 'monthly') {
+      // Last 30 days
+      const monthAgo = new Date()
+      monthAgo.setDate(today.getDate() - 29)
+      startDate = monthAgo.toISOString().split('T')[0]
+    }
+
+    return { start_date: startDate, end_date: endDate }
+  }
+
+  // Handle period type change
+  const handlePeriodChange = (type: 'daily' | 'weekly' | 'monthly') => {
+    // Prevent changing period while loading
+    if (loading) return
+
+    setPeriodType(type)
+    const range = calculateDateRange(type)
+    setDateRange(range)
+    fetchReportData(range.start_date, range.end_date)
+  }
 
   useEffect(() => {
     if (hasInitialized.current) return
     hasInitialized.current = true
 
-    const today = new Date()
-    const thirtyDaysAgo = new Date()
-    thirtyDaysAgo.setDate(today.getDate() - 30)
+    // Fetch expense categories once on mount (they don't change with date range)
+    const fetchCategories = async () => {
+      try {
+        const categoriesRes = await api.get('/expense/categories')
+        if (categoriesRes.data.success) {
+          setExpenseCategories(categoriesRes.data.categories)
+        }
+      } catch (error) {
+        console.log('Failed to fetch expense categories:', error)
+      }
+    }
 
-    const endDate = today.toISOString().split('T')[0]
-    const startDate = thirtyDaysAgo.toISOString().split('T')[0]
+    fetchCategories()
 
-    setDateRange({
-      start_date: startDate,
-      end_date: endDate,
-    })
-
-    fetchReportData(startDate, endDate)
+    const range = calculateDateRange('monthly')
+    setDateRange(range)
+    fetchReportData(range.start_date, range.end_date)
   }, [])
 
   const fetchReportData = async (startDate: string, endDate: string) => {
@@ -110,14 +152,33 @@ export default function ReportsPage() {
     const request = (async () => {
       try {
         setLoading(true)
-        console.log('Fetching report data for:', { startDate, endDate })
-        const response = await api.get('/billing/list', {
-          params: {
-            date_from: startDate,
-            date_to: endDate,
-            limit: 1000
-          }
-        })
+
+        // Fetch all data in parallel for faster loading
+        const [billsResponse, expenseSummaryRes, expenseListRes] = await Promise.all([
+          api.get('/billing/list', {
+            params: {
+              date_from: startDate,
+              date_to: endDate,
+              limit: 500  // Reduced from 1000 for faster response
+            }
+          }),
+          api.get('/expense/summary', {
+            params: {
+              date_from: startDate,
+              date_to: endDate,
+              period_type: 'day'
+            }
+          }).catch(() => ({ data: { success: false } })),
+          api.get('/expense/list', {
+            params: {
+              date_from: startDate,
+              date_to: endDate,
+              limit: 500  // Reduced from 1000 for faster response
+            }
+          }).catch(() => ({ data: { success: false } }))
+        ])
+
+        const response = billsResponse
 
         console.log('Report data received:', response.data)
         const bills = response.data.bills || []
@@ -128,47 +189,6 @@ export default function ReportsPage() {
           const amount = bill.type === 'gst' ? parseFloat(bill.final_amount || 0) : parseFloat(bill.total_amount || 0)
           return sum + amount
         }, 0)
-        const averageBillValue = totalBills > 0 ? totalRevenue / totalBills : 0
-
-        // Group by date for daily revenue
-        const dailyRevenueMap = new Map<string, { revenue: number; bills_count: number }>()
-        bills.forEach((bill: any) => {
-          const date = new Date(bill.created_at).toISOString().split('T')[0]
-          const amount = bill.type === 'gst' ? parseFloat(bill.final_amount || 0) : parseFloat(bill.total_amount || 0)
-
-          if (!dailyRevenueMap.has(date)) {
-            dailyRevenueMap.set(date, { revenue: 0, bills_count: 0 })
-          }
-          const current = dailyRevenueMap.get(date)!
-          current.revenue += amount
-          current.bills_count += 1
-        })
-
-        const dailyRevenue = Array.from(dailyRevenueMap.entries()).map(([date, data]) => ({
-          date,
-          revenue: data.revenue,
-          bills_count: data.bills_count
-        })).sort((a, b) => a.date.localeCompare(b.date))
-
-        // Payment methods breakdown
-        const paymentMethodsMap = new Map<string, { count: number; amount: number }>()
-        bills.forEach((bill: any) => {
-          const method = bill.payment_type || 'Cash'
-          const amount = bill.type === 'gst' ? parseFloat(bill.final_amount || 0) : parseFloat(bill.total_amount || 0)
-
-          if (!paymentMethodsMap.has(method)) {
-            paymentMethodsMap.set(method, { count: 0, amount: 0 })
-          }
-          const current = paymentMethodsMap.get(method)!
-          current.count += 1
-          current.amount += amount
-        })
-
-        const paymentMethods = Array.from(paymentMethodsMap.entries()).map(([method, data]) => ({
-          method,
-          count: data.count,
-          amount: data.amount
-        })).sort((a, b) => b.amount - a.amount)
 
         // Top customers
         const customersMap = new Map<string, { total_spend: number; bills_count: number }>()
@@ -215,55 +235,26 @@ export default function ReportsPage() {
           }))
           .sort((a, b) => a.hour - b.hour)
 
-        // Fetch expenses data
+        // Process expenses data (already fetched in parallel above)
         let expensesData = undefined
-        try {
-          const [expenseSummaryRes, expenseListRes, categoriesRes] = await Promise.all([
-            api.get('/expense/summary', {
-              params: {
-                date_from: startDate,
-                date_to: endDate,
-                period_type: 'day'
-              }
-            }),
-            api.get('/expense/list', {
-              params: {
-                date_from: startDate,
-                date_to: endDate,
-                limit: 1000
-              }
-            }),
-            api.get('/expense/categories')
-          ])
+        if (expenseSummaryRes.data.success) {
+          const expenseSummary = expenseSummaryRes.data.summary
+          const expenses = expenseListRes.data.success ? expenseListRes.data.expenses : []
 
-          if (expenseSummaryRes.data.success) {
-            const expenseSummary = expenseSummaryRes.data.summary
-            const expenses = expenseListRes.data.success ? expenseListRes.data.expenses : []
-            const categories = categoriesRes.data.success ? categoriesRes.data.categories : []
-
-            setExpenseCategories(categories)
-
-            expensesData = {
-              total_expenses: expenseSummary.total_expenses || 0,
-              expense_count: expenseSummary.expense_count || 0,
-              category_breakdown: expenseSummary.category_breakdown || {},
-              net_profit: totalRevenue - (expenseSummary.total_expenses || 0),
-              expense_list: expenses
-            }
+          expensesData = {
+            total_expenses: expenseSummary.total_expenses || 0,
+            expense_count: expenseSummary.expense_count || 0,
+            category_breakdown: expenseSummary.category_breakdown || {},
+            net_profit: totalRevenue - (expenseSummary.total_expenses || 0),
+            expense_list: expenses
           }
-        } catch (expenseError) {
-          console.log('Expenses data not available:', expenseError)
-          // Continue without expenses data
         }
 
         setReportData({
           total_bills: totalBills,
           total_revenue: totalRevenue,
-          average_bill_value: averageBillValue,
           bills_growth: 0,
           revenue_growth: 0,
-          daily_revenue: dailyRevenue,
-          payment_methods: paymentMethods,
           top_customers: topCustomers,
           hourly_distribution: hourlyDistribution,
           bills,
@@ -276,11 +267,8 @@ export default function ReportsPage() {
         setReportData({
           total_bills: 0,
           total_revenue: 0,
-          average_bill_value: 0,
           bills_growth: 0,
           revenue_growth: 0,
-          daily_revenue: [],
-          payment_methods: [],
           top_customers: [],
           hourly_distribution: [],
           bills: []
@@ -295,11 +283,6 @@ export default function ReportsPage() {
     return request
   }
 
-  const handleDateChange = () => {
-    if (dateRange.start_date && dateRange.end_date) {
-      fetchReportData(dateRange.start_date, dateRange.end_date)
-    }
-  }
 
   // Expense management functions
   const handleAddExpense = () => {
@@ -405,10 +388,23 @@ export default function ReportsPage() {
     }
   }) || []
 
-  const getMaxRevenue = () => {
-    if (!reportData?.daily_revenue.length) return 0
-    return Math.max(...reportData.daily_revenue.map(d => d.revenue))
-  }
+  // Pagination calculations
+  const totalPages = Math.ceil(filteredBills.length / itemsPerPage)
+  const paginatedBills = filteredBills.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  )
+
+  // Calculate page total for current page
+  const pageTotal = paginatedBills.reduce((sum, bill) => {
+    const amount = bill.type === 'gst' ? parseFloat((bill as any).final_amount || 0) : parseFloat((bill as any).total_amount || 0)
+    return sum + amount
+  }, 0)
+
+  // Reset to page 1 when search or sort changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, sortBy])
 
   if (loading && !reportData) {
     return (
@@ -450,7 +446,7 @@ export default function ReportsPage() {
             )}
           </div>
 
-          {/* Date Range Picker, Expenses and Notes Buttons */}
+          {/* Period Selector, Expenses and Notes Buttons */}
           <div className="flex items-center gap-3">
             <button
               type="button"
@@ -474,48 +470,76 @@ export default function ReportsPage() {
               </svg>
               Notes
             </button>
-            <input
-              type="date"
-              value={dateRange.start_date}
-              onChange={(e) => setDateRange({ ...dateRange, start_date: e.target.value })}
-              className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-            />
-            <span className="text-gray-500 dark:text-gray-400">to</span>
-            <input
-              type="date"
-              value={dateRange.end_date}
-              onChange={(e) => setDateRange({ ...dateRange, end_date: e.target.value })}
-              className="px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white dark:bg-gray-800 text-gray-900 dark:text-white"
-            />
-            <button
-              type="button"
-              onClick={handleDateChange}
-              disabled={loading}
-              className="px-4 py-2 bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-            >
-              {loading ? 'Loading...' : 'Apply'}
-            </button>
+
+            {/* Period Selector Buttons */}
+            <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
+              <button
+                type="button"
+                onClick={() => handlePeriodChange('daily')}
+                disabled={loading}
+                className={`px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
+                  periodType === 'daily'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }`}
+              >
+                {loading && periodType === 'daily' && (
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                )}
+                Daily
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePeriodChange('weekly')}
+                disabled={loading}
+                className={`px-4 py-2 text-sm font-medium border-l border-r border-gray-300 dark:border-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
+                  periodType === 'weekly'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }`}
+              >
+                {loading && periodType === 'weekly' && (
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                )}
+                Weekly
+              </button>
+              <button
+                type="button"
+                onClick={() => handlePeriodChange('monthly')}
+                disabled={loading}
+                className={`px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
+                  periodType === 'monthly'
+                    ? 'bg-indigo-600 text-white'
+                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                }`}
+              >
+                {loading && periodType === 'monthly' && (
+                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
+                )}
+                Monthly
+              </button>
+            </div>
           </div>
         </div>
 
         {/* Statistics Cards */}
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
           {/* Total Bills */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3 }}
-            className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700"
+            className="bg-white dark:bg-gray-800 rounded-md p-3 border border-gray-200 dark:border-gray-700"
           >
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                 Total Bills
               </span>
             </div>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+            <p className="text-xl font-bold text-gray-900 dark:text-white">
               {reportData?.total_bills || 0}
             </p>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               Created in selected period
             </p>
           </motion.div>
@@ -525,232 +549,72 @@ export default function ReportsPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.3, delay: 0.1 }}
-            className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700"
+            className="bg-white dark:bg-gray-800 rounded-md p-3 border border-gray-200 dark:border-gray-700"
           >
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+            <div className="flex items-center justify-between mb-2">
+              <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                 Total Revenue
               </span>
             </div>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
+            <p className="text-xl font-bold text-gray-900 dark:text-white">
               {formatCurrency(reportData?.total_revenue || 0)}
             </p>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
               Across all bills
             </p>
           </motion.div>
 
-          {/* Average Bill Value */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.3, delay: 0.2 }}
-            className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <span className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                Average Bill Value
-              </span>
-            </div>
-            <p className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-              {formatCurrency(reportData?.average_bill_value || 0)}
-            </p>
-            <p className="text-sm text-gray-500 dark:text-gray-400">
-              Per transaction
-            </p>
-          </motion.div>
-        </div>
+          {/* Total Expenses */}
+          {reportData?.expenses && (
+            <motion.div
+              initial={{ opacity: 0, y: 20 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.3, delay: 0.2 }}
+              className="bg-white dark:bg-gray-800 rounded-md p-3 border border-red-200 dark:border-red-900"
+            >
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                  Total Expenses
+                </span>
+                <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </div>
+              <p className="text-xl font-bold text-red-600 dark:text-red-400">
+                {formatCurrency(reportData.expenses.total_expenses)}
+              </p>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                {reportData.expenses.expense_count} transactions
+              </p>
+            </motion.div>
+          )}
 
-        {/* Expense & Profit Cards */}
-        {reportData?.expenses && (
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
-            {/* Total Expenses */}
+          {/* Net Profit */}
+          {reportData?.expenses && (
             <motion.div
               initial={{ opacity: 0, y: 20 }}
               animate={{ opacity: 1, y: 0 }}
               transition={{ duration: 0.3, delay: 0.3 }}
-              className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-red-200 dark:border-red-900"
+              className="bg-white dark:bg-gray-800 rounded-md p-3 border border-green-200 dark:border-green-900"
             >
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                  Total Expenses
-                </span>
-                <svg className="w-8 h-8 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-              </div>
-              <p className="text-3xl font-bold text-red-600 dark:text-red-400 mb-2">
-                {formatCurrency(reportData.expenses.total_expenses)}
-              </p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                {reportData.expenses.expense_count} transactions
-              </p>
-            </motion.div>
-
-            {/* Net Profit */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: 0.4 }}
-              className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-green-200 dark:border-green-900"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+              <div className="flex items-center justify-between mb-2">
+                <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
                   Net Profit
                 </span>
-                <svg className="w-8 h-8 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
                 </svg>
               </div>
-              <p className={`text-3xl font-bold mb-2 ${reportData.expenses.net_profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+              <p className={`text-xl font-bold ${reportData.expenses.net_profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
                 {formatCurrency(reportData.expenses.net_profit)}
               </p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
                 Revenue - Expenses
               </p>
             </motion.div>
-
-            {/* Profit Margin */}
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: 0.5 }}
-              className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-indigo-200 dark:border-indigo-900"
-            >
-              <div className="flex items-center justify-between mb-4">
-                <span className="text-sm font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                  Profit Margin
-                </span>
-                <svg className="w-8 h-8 text-indigo-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z" />
-                </svg>
-              </div>
-              <p className="text-3xl font-bold text-gray-900 dark:text-white mb-2">
-                {reportData.total_revenue > 0 ? ((reportData.expenses.net_profit / reportData.total_revenue) * 100).toFixed(1) : 0}%
-              </p>
-              <p className="text-sm text-gray-500 dark:text-gray-400">
-                Of total revenue
-              </p>
-            </motion.div>
-          </div>
-        )}
-
-        {/* Revenue Trend Chart */}
-        <div className="grid grid-cols-1 xl:grid-cols-2 gap-6 mb-6">
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4 }}
-            className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700"
-          >
-            <div className="flex items-center justify-between mb-4">
-              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Revenue Trend</h3>
-              <div className="flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => setTimeFilter('daily')}
-                  className={`px-3 py-1 text-xs rounded-lg transition-colors ${
-                    timeFilter === 'daily'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                  }`}
-                >
-                  Daily
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTimeFilter('weekly')}
-                  className={`px-3 py-1 text-xs rounded-lg transition-colors ${
-                    timeFilter === 'weekly'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                  }`}
-                >
-                  Weekly
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setTimeFilter('monthly')}
-                  className={`px-3 py-1 text-xs rounded-lg transition-colors ${
-                    timeFilter === 'monthly'
-                      ? 'bg-indigo-600 text-white'
-                      : 'bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
-                  }`}
-                >
-                  Monthly
-                </button>
-              </div>
-            </div>
-
-            {/* Simple Bar Chart */}
-            <div className="space-y-2 max-h-64 overflow-y-auto">
-              {reportData?.daily_revenue.slice(-7).map((day, index) => (
-                <div key={day.date} className="flex items-center gap-3">
-                  <span className="text-xs text-gray-500 dark:text-gray-400 w-20 flex-shrink-0">
-                    {new Date(day.date).toLocaleDateString('en-IN', { month: 'short', day: 'numeric' })}
-                  </span>
-                  <div className="flex-1">
-                    <div className="bg-gray-100 dark:bg-gray-700 rounded-full h-8 relative overflow-hidden">
-                      <motion.div
-                        initial={{ width: 0 }}
-                        animate={{ width: `${(day.revenue / getMaxRevenue()) * 100}%` }}
-                        transition={{ duration: 0.5, delay: index * 0.1 }}
-                        className="bg-gradient-to-r from-indigo-500 to-indigo-600 h-full rounded-full flex items-center justify-end pr-3"
-                      >
-                        <span className="text-xs font-medium text-white">
-                          {formatCurrency(day.revenue)}
-                        </span>
-                      </motion.div>
-                    </div>
-                  </div>
-                  <span className="text-xs text-gray-500 dark:text-gray-400 w-12 text-right">
-                    {day.bills_count} bills
-                  </span>
-                </div>
-              ))}
-            </div>
-          </motion.div>
-
-          {/* Payment Methods */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.4, delay: 0.1 }}
-            className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700"
-          >
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Payment Methods</h3>
-            <div className="space-y-4">
-              {reportData?.payment_methods.slice(0, 5).map((method, index) => {
-                const percentage = ((method.amount / (reportData.total_revenue || 1)) * 100).toFixed(1)
-                const colors = ['bg-blue-500', 'bg-green-500', 'bg-yellow-500', 'bg-purple-500', 'bg-pink-500']
-                return (
-                  <div key={method.method}>
-                    <div className="flex items-center justify-between mb-1">
-                      <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{method.method}</span>
-                      <span className="text-sm text-gray-500 dark:text-gray-400">{percentage}%</span>
-                    </div>
-                    <div className="flex items-center gap-3">
-                      <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
-                        <motion.div
-                          initial={{ width: 0 }}
-                          animate={{ width: `${percentage}%` }}
-                          transition={{ duration: 0.5, delay: index * 0.1 }}
-                          className={`h-full ${colors[index % colors.length]}`}
-                        />
-                      </div>
-                      <span className="text-sm font-medium text-gray-900 dark:text-white w-24 text-right">
-                        {formatCurrency(method.amount)}
-                      </span>
-                    </div>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                      {method.count} transactions
-                    </p>
-                  </div>
-                )
-              })}
-            </div>
-          </motion.div>
+          )}
         </div>
+
 
         {/* Expense Categories Breakdown */}
         {reportData?.expenses && Object.keys(reportData.expenses.category_breakdown).length > 0 && (
@@ -758,39 +622,62 @@ export default function ReportsPage() {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.4, delay: 0.15 }}
-            className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 mb-6"
+            className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 mb-6 overflow-hidden"
           >
-            <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Expense Categories</h3>
-            <div className="space-y-4">
-              {Object.entries(reportData.expenses.category_breakdown)
-                .sort(([, a], [, b]) => b - a)
-                .slice(0, 5)
-                .map(([category, amount], index) => {
-                  const percentage = ((amount / reportData.expenses!.total_expenses) * 100).toFixed(1)
-                  const colors = ['bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-amber-500', 'bg-pink-500']
-                  return (
-                    <div key={category}>
-                      <div className="flex items-center justify-between mb-1">
-                        <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{category}</span>
-                        <span className="text-sm text-gray-500 dark:text-gray-400">{percentage}%</span>
-                      </div>
-                      <div className="flex items-center gap-3">
-                        <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
-                          <motion.div
-                            initial={{ width: 0 }}
-                            animate={{ width: `${percentage}%` }}
-                            transition={{ duration: 0.5, delay: index * 0.1 }}
-                            className={`h-full ${colors[index % colors.length]}`}
-                          />
+            <button
+              onClick={() => setIsExpenseCategoriesOpen(!isExpenseCategoriesOpen)}
+              className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            >
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Expense Categories</h3>
+              <svg
+                className={`w-5 h-5 text-gray-500 dark:text-gray-400 transition-transform ${isExpenseCategoriesOpen ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {isExpenseCategoriesOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                className="px-6 pb-6"
+              >
+                <div className="space-y-4">
+                  {Object.entries(reportData.expenses.category_breakdown)
+                    .sort(([, a], [, b]) => b - a)
+                    .slice(0, 5)
+                    .map(([category, amount], index) => {
+                      const percentage = ((amount / reportData.expenses!.total_expenses) * 100).toFixed(1)
+                      const colors = ['bg-red-500', 'bg-orange-500', 'bg-yellow-500', 'bg-amber-500', 'bg-pink-500']
+                      return (
+                        <div key={category}>
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-medium text-gray-700 dark:text-gray-300">{category}</span>
+                            <span className="text-sm text-gray-500 dark:text-gray-400">{percentage}%</span>
+                          </div>
+                          <div className="flex items-center gap-3">
+                            <div className="flex-1 bg-gray-100 dark:bg-gray-700 rounded-full h-2 overflow-hidden">
+                              <motion.div
+                                initial={{ width: 0 }}
+                                animate={{ width: `${percentage}%` }}
+                                transition={{ duration: 0.5, delay: index * 0.1 }}
+                                className={`h-full ${colors[index % colors.length]}`}
+                              />
+                            </div>
+                            <span className="text-sm font-medium text-gray-900 dark:text-white w-24 text-right">
+                              {formatCurrency(amount)}
+                            </span>
+                          </div>
                         </div>
-                        <span className="text-sm font-medium text-gray-900 dark:text-white w-24 text-right">
-                          {formatCurrency(amount)}
-                        </span>
-                      </div>
-                    </div>
-                  )
-                })}
-            </div>
+                      )
+                    })}
+                </div>
+              </motion.div>
+            )}
           </motion.div>
         )}
 
@@ -800,54 +687,75 @@ export default function ReportsPage() {
           initial={{ opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.2 }}
-          className="bg-white dark:bg-gray-800 rounded-xl p-6 border border-gray-200 dark:border-gray-700 mb-6"
+          className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 mb-6 overflow-hidden"
         >
-          <h3 className="text-lg font-semibold text-gray-900 dark:text-white mb-4">Top Customers</h3>
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                    Customer
-                  </th>
-                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                    Total Spend
-                  </th>
-                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                    Bills
-                  </th>
-                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                    Avg Bill
-                  </th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {reportData?.top_customers.slice(0, 5).map((customer, index) => (
-                  <tr key={index} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                    <td className="py-3 px-4">
-                      <div className="flex items-center gap-3">
-                        <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center">
-                          <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
-                            {customer.name.charAt(0).toUpperCase()}
-                          </span>
-                        </div>
-                        <span className="text-sm font-medium text-gray-900 dark:text-white">{customer.name}</span>
-                      </div>
-                    </td>
-                    <td className="py-3 px-4 text-right text-sm font-semibold text-gray-900 dark:text-white">
-                      {formatCurrency(customer.total_spend)}
-                    </td>
-                    <td className="py-3 px-4 text-right text-sm text-gray-500 dark:text-gray-400">
-                      {customer.bills_count}
-                    </td>
-                    <td className="py-3 px-4 text-right text-sm text-gray-500 dark:text-gray-400">
-                      {formatCurrency(customer.total_spend / customer.bills_count)}
-                    </td>
+          <button
+            onClick={() => setIsTopCustomersOpen(!isTopCustomersOpen)}
+            className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+          >
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Top Customers</h3>
+            <svg
+              className={`w-5 h-5 text-gray-500 dark:text-gray-400 transition-transform ${isTopCustomersOpen ? 'rotate-180' : ''}`}
+              fill="none"
+              stroke="currentColor"
+              viewBox="0 0 24 24"
+            >
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+            </svg>
+          </button>
+          {isTopCustomersOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: 'auto', opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.3 }}
+              className="overflow-x-auto"
+            >
+              <table className="w-full">
+                <thead>
+                  <tr className="border-b border-gray-200 dark:border-gray-700">
+                    <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                      Customer
+                    </th>
+                    <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                      Total Spend
+                    </th>
+                    <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                      Bills
+                    </th>
+                    <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                      Avg Bill
+                    </th>
                   </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+                </thead>
+                <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                  {reportData?.top_customers.slice(0, 5).map((customer, index) => (
+                    <tr key={index} className="hover:bg-gray-50 dark:hover:bg-gray-700">
+                      <td className="py-3 px-4">
+                        <div className="flex items-center gap-3">
+                          <div className="w-8 h-8 rounded-full bg-indigo-100 dark:bg-indigo-900 flex items-center justify-center">
+                            <span className="text-sm font-medium text-indigo-600 dark:text-indigo-400">
+                              {customer.name.charAt(0).toUpperCase()}
+                            </span>
+                          </div>
+                          <span className="text-sm font-medium text-gray-900 dark:text-white">{customer.name}</span>
+                        </div>
+                      </td>
+                      <td className="py-3 px-4 text-right text-sm font-semibold text-gray-900 dark:text-white">
+                        {formatCurrency(customer.total_spend)}
+                      </td>
+                      <td className="py-3 px-4 text-right text-sm text-gray-500 dark:text-gray-400">
+                        {customer.bills_count}
+                      </td>
+                      <td className="py-3 px-4 text-right text-sm text-gray-500 dark:text-gray-400">
+                        {formatCurrency(customer.total_spend / customer.bills_count)}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </motion.div>
+          )}
         </motion.div>
 
         {/* Bills History */}
@@ -860,15 +768,6 @@ export default function ReportsPage() {
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Bills History</h3>
             <div className="flex items-center gap-3">
-              <button
-                type="button"
-                className="px-4 py-2 border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-sm rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors flex items-center gap-2"
-              >
-                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
-                </svg>
-                Export
-              </button>
               <div className="relative">
                 <input
                   type="text"
@@ -896,62 +795,68 @@ export default function ReportsPage() {
           <div className="overflow-x-auto">
             <table className="w-full">
               <thead>
-                <tr className="border-b border-gray-200 dark:border-gray-700">
-                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                <tr className="border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900">
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-600 dark:text-gray-400 uppercase tracking-wide">
                     Date
                   </th>
-                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-600 dark:text-gray-400 uppercase tracking-wide">
                     Bill #
                   </th>
-                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-600 dark:text-gray-400 uppercase tracking-wide">
                     Customer
                   </th>
-                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                  <th className="text-left py-3 px-4 text-xs font-medium text-gray-600 dark:text-gray-400 uppercase tracking-wide">
                     Payment
                   </th>
-                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
+                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-600 dark:text-gray-400 uppercase tracking-wide">
                     Amount
-                  </th>
-                  <th className="text-right py-3 px-4 text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">
-                    Actions
                   </th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                {filteredBills.slice(0, 20).map((bill) => {
+                {paginatedBills.map((bill) => {
                   const amount = bill.type === 'gst' ? parseFloat((bill as any).final_amount || 0) : parseFloat((bill as any).total_amount || 0)
+
+                  // Format payment type properly
+                  const formatPaymentType = (type: string) => {
+                    if (!type) return 'N/A'
+                    return type.split('_').map(word =>
+                      word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
+                    ).join(' ')
+                  }
+
+                  // Get payment type color
+                  const getPaymentColor = (type: string) => {
+                    const lowerType = type?.toLowerCase() || ''
+                    if (lowerType.includes('cash')) return 'bg-green-50 text-green-700 dark:bg-green-900/30 dark:text-green-300'
+                    if (lowerType.includes('upi')) return 'bg-purple-50 text-purple-700 dark:bg-purple-900/30 dark:text-purple-300'
+                    if (lowerType.includes('card')) return 'bg-blue-50 text-blue-700 dark:bg-blue-900/30 dark:text-blue-300'
+                    if (lowerType.includes('bank')) return 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300'
+                    return 'bg-gray-50 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
+                  }
+
                   return (
-                    <tr key={bill.bill_id} className="hover:bg-gray-50 dark:hover:bg-gray-700">
-                      <td className="py-3 px-4 text-sm text-gray-500 dark:text-gray-400">
+                    <tr key={bill.bill_id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
+                      <td className="py-3 px-4 text-sm text-gray-600 dark:text-gray-400">
                         {new Date(bill.created_at).toLocaleDateString('en-IN', {
                           month: 'short',
                           day: 'numeric',
                           year: 'numeric'
                         })}
                       </td>
-                      <td className="py-3 px-4 text-sm font-medium text-gray-900 dark:text-white">
+                      <td className="py-3 px-4 text-sm font-medium text-gray-700 dark:text-gray-300">
                         #{bill.bill_number}
                       </td>
                       <td className="py-3 px-4 text-sm text-gray-700 dark:text-gray-300">
                         {bill.customer_name || 'Walk-in'}
                       </td>
                       <td className="py-3 px-4">
-                        <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800 dark:bg-green-900 dark:text-green-200">
-                          {bill.payment_type}
+                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getPaymentColor(bill.payment_type)}`}>
+                          {formatPaymentType(bill.payment_type)}
                         </span>
                       </td>
-                      <td className="py-3 px-4 text-right text-sm font-semibold text-gray-900 dark:text-white">
+                      <td className="py-3 px-4 text-right text-sm font-semibold text-gray-800 dark:text-gray-200">
                         {formatCurrency(amount)}
-                      </td>
-                      <td className="py-3 px-4 text-right">
-                        <button
-                          type="button"
-                          className="text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
-                        >
-                          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 5v.01M12 12v.01M12 19v.01M12 6a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2zm0 7a1 1 0 110-2 1 1 0 010 2z" />
-                          </svg>
-                        </button>
                       </td>
                     </tr>
                   )
@@ -963,6 +868,116 @@ export default function ReportsPage() {
           {filteredBills.length === 0 && (
             <div className="text-center py-12">
               <p className="text-gray-500 dark:text-gray-400">No bills found</p>
+            </div>
+          )}
+
+          {/* Pagination Controls */}
+          {filteredBills.length > 0 && (
+            <div className="flex items-center justify-center gap-2 mt-4 pb-2">
+              <button
+                onClick={() => setCurrentPage(1)}
+                disabled={currentPage === 1}
+                className="px-2 py-1 text-xs font-medium rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                First
+              </button>
+              <button
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+                className="px-3 py-1 text-xs font-medium rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                ‹ Prev
+              </button>
+
+              {/* Page Numbers */}
+              <div className="flex items-center gap-1">
+                {Array.from({ length: Math.min(5, totalPages) }, (_, i) => {
+                  let pageNum: number
+                  if (totalPages <= 5) {
+                    pageNum = i + 1
+                  } else if (currentPage <= 3) {
+                    pageNum = i + 1
+                  } else if (currentPage >= totalPages - 2) {
+                    pageNum = totalPages - 4 + i
+                  } else {
+                    pageNum = currentPage - 2 + i
+                  }
+                  return (
+                    <button
+                      key={pageNum}
+                      onClick={() => setCurrentPage(pageNum)}
+                      className={`w-7 h-7 text-xs font-medium rounded ${
+                        currentPage === pageNum
+                          ? 'bg-indigo-600 text-white'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                      }`}
+                    >
+                      {pageNum}
+                    </button>
+                  )
+                })}
+              </div>
+
+              <button
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1 text-xs font-medium rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Next ›
+              </button>
+              <button
+                onClick={() => setCurrentPage(totalPages)}
+                disabled={currentPage === totalPages}
+                className="px-2 py-1 text-xs font-medium rounded bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed"
+              >
+                Last
+              </button>
+            </div>
+          )}
+
+          {/* Fixed Footer with Page Total and Grand Total */}
+          {filteredBills.length > 0 && (
+            <div className="mt-3 bg-gradient-to-r from-slate-800 to-slate-700 rounded-lg p-4 border border-slate-600">
+              <div className="flex justify-between items-center">
+                {/* Left side - Page Info and Page Total */}
+                <div className="flex items-center gap-6">
+                  <div>
+                    <p className="text-xs text-slate-400">Page {currentPage} of {totalPages || 1}</p>
+                    <p className="text-xs text-slate-400">{paginatedBills.length} items</p>
+                  </div>
+                  <div className="border-l border-slate-600 pl-6">
+                    <p className="text-xs text-slate-400">Page Total</p>
+                    <p className="text-lg font-bold text-yellow-400">{formatCurrency(pageTotal)}</p>
+                  </div>
+                </div>
+
+                {/* Middle - Expenses Info (if available) */}
+                {reportData?.expenses && (
+                  <div className="flex items-center gap-6">
+                    <div className="border-l border-slate-600 pl-6">
+                      <p className="text-xs text-slate-400">Total Expenses</p>
+                      <p className="text-lg font-bold text-red-400">{formatCurrency(reportData.expenses.total_expenses)}</p>
+                    </div>
+                    <div className="border-l border-slate-600 pl-6">
+                      <p className="text-xs text-slate-400">Net Profit</p>
+                      <p className={`text-lg font-bold ${reportData.expenses.net_profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
+                        {formatCurrency(reportData.expenses.net_profit)}
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Right side - Grand Total */}
+                <div className="text-right">
+                  <p className="text-xs text-slate-400">Grand Total ({filteredBills.length} bills)</p>
+                  <p className="text-xl font-bold text-white">
+                    {formatCurrency(filteredBills.reduce((sum, bill) => {
+                      const amount = bill.type === 'gst' ? parseFloat((bill as any).final_amount || 0) : parseFloat((bill as any).total_amount || 0)
+                      return sum + amount
+                    }, 0))}
+                  </p>
+                </div>
+              </div>
             </div>
           )}
         </motion.div>

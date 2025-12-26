@@ -226,7 +226,7 @@ export function generateReceiptHtml(bill: BillData, clientInfo: ClientInfo, show
   <div class="dashed"></div>
   <div class="small center">Payment: ${paymentHtml}</div>
 
-  ${showNoExchange ? '<div class="no-exchange">** NO EXCHANGE AVAILABLE **</div>' : ''}
+  ${showNoExchange ? '<div class="no-exchange">Sorry, No Exchange / No Refund</div>' : ''}
 
   ${totalSavings > 0 ? `
   <div class="savings-box">
@@ -243,23 +243,63 @@ export function generateReceiptHtml(bill: BillData, clientInfo: ClientInfo, show
 }
 
 /**
- * Print using browser's print dialog
+ * Print using browser's print dialog (iframe-based, no popup needed)
  */
 export function browserPrint(bill: BillData, clientInfo: ClientInfo, showNoExchange: boolean = false): void {
   const html = generateReceiptHtml(bill, clientInfo, showNoExchange);
 
-  // Create a new window for printing
-  const printWindow = window.open('', '_blank', 'width=320,height=600');
-  if (!printWindow) {
-    throw new Error('Could not open print window. Please allow popups for this site.');
+  // Remove any existing print iframe
+  const existingFrame = document.getElementById('print-iframe');
+  if (existingFrame) {
+    existingFrame.remove();
   }
 
-  printWindow.document.write(html);
-  printWindow.document.close();
+  // Create hidden iframe for printing (avoids popup blocker)
+  const iframe = document.createElement('iframe');
+  iframe.id = 'print-iframe';
+  iframe.style.position = 'fixed';
+  iframe.style.right = '0';
+  iframe.style.bottom = '0';
+  iframe.style.width = '0';
+  iframe.style.height = '0';
+  iframe.style.border = 'none';
+  iframe.style.visibility = 'hidden';
+  document.body.appendChild(iframe);
 
-  // Print immediately - no delay needed for simple HTML
-  printWindow.print();
-  printWindow.close();
+  const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+  if (!iframeDoc) {
+    throw new Error('Could not access iframe document for printing.');
+  }
+
+  // Track if print was already triggered to avoid double dialog
+  let printTriggered = false;
+
+  const triggerPrint = () => {
+    if (printTriggered) return;
+    printTriggered = true;
+
+    try {
+      iframe.contentWindow?.focus();
+      iframe.contentWindow?.print();
+    } catch (e) {
+      console.error('Print error:', e);
+    }
+
+    // Remove iframe after a longer delay to ensure print dialog completes
+    setTimeout(() => {
+      const frame = document.getElementById('print-iframe');
+      if (frame) frame.remove();
+    }, 5000);
+  };
+
+  // Write content to iframe
+  iframeDoc.open();
+  iframeDoc.write(html);
+  iframeDoc.close();
+
+  // For dynamically written content, onload may not fire
+  // Use a short delay to ensure content is rendered
+  setTimeout(triggerPrint, 100);
 }
 
 /**

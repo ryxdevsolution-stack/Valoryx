@@ -54,7 +54,7 @@ export default function AllBillsPage() {
   const [loading, setLoading] = useState(true)
   const [selectedPaymentType, setSelectedPaymentType] = useState<string>('all')
   const [currentPage, setCurrentPage] = useState(1)
-  const itemsPerPage = 20
+  const itemsPerPage = 17
   const [loadingBillDetails, setLoadingBillDetails] = useState(false)
 
   // Track ongoing request to prevent duplicates (for React Strict Mode)
@@ -766,21 +766,37 @@ export default function AllBillsPage() {
               </div>
             )}
 
-            {/* Fixed Grand Total at Bottom */}
+            {/* Fixed Footer with Page Total and Grand Total */}
             <div className="flex-shrink-0 mt-1.5 bg-gradient-to-r from-slate-800 to-slate-700 dark:from-gray-800 dark:to-gray-700 rounded-lg border border-slate-600 dark:border-gray-600 shadow-lg px-3 py-2">
               <div className="flex justify-between items-center">
-                <div>
-                  <h2 className="text-sm font-bold text-white">GRAND TOTAL</h2>
-                  <p className="text-slate-300 dark:text-gray-300 text-[10px]">
+                <div className="flex items-center gap-6">
+                  {/* Page Info */}
+                  <div>
+                    <p className="text-slate-400 dark:text-gray-400 text-[10px] uppercase font-medium">Page {currentPage} of {totalPages || 1}</p>
+                    <p className="text-slate-300 dark:text-gray-300 text-xs font-semibold">
+                      {paginatedBills.length} items
+                    </p>
+                  </div>
+                  {/* Page Total */}
+                  <div className="border-l border-slate-600 pl-6">
+                    <p className="text-slate-400 dark:text-gray-400 text-[10px] uppercase font-medium">Page Total</p>
+                    <p className="text-yellow-400 text-sm font-bold">
+                      ₹{paginatedBills.reduce((sum, bill) => sum + bill.displayAmount, 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    </p>
+                  </div>
+                </div>
+                {/* Grand Total */}
+                <div className="text-right">
+                  <p className="text-slate-400 dark:text-gray-400 text-[10px] uppercase font-medium">
                     {selectedPaymentType === 'all'
-                      ? `All Bills (${bills.length})`
-                      : `${paymentTypes.find(pt => pt.payment_type_id === selectedPaymentType)?.payment_name} (${new Set(filteredExpandedBills.map(b => b.bill_id)).size} bills)`
+                      ? `Grand Total (${bills.length} bills)`
+                      : `${paymentTypes.find(pt => pt.payment_type_id === selectedPaymentType)?.payment_name || selectedPaymentType} (${new Set(filteredExpandedBills.map(b => b.bill_id)).size} bills)`
                     }
                   </p>
+                  <p className="text-white text-lg font-bold">
+                    ₹{filteredTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                  </p>
                 </div>
-                <p className="text-white text-lg font-bold">
-                  ₹{filteredTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </p>
               </div>
             </div>
           </>

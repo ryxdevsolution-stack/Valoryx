@@ -162,16 +162,28 @@ class OptimizedConfig:
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
     # -------------------------------
-    # JWT (unchanged)
+    # JWT - SECURITY HARDENED
     # -------------------------------
-    JWT_SECRET = os.getenv("JWT_SECRET", "ryx-billing-secret-key-change-in-production")
+    JWT_SECRET = os.getenv("JWT_SECRET")
+    if not JWT_SECRET:
+        raise ValueError(
+            "CRITICAL SECURITY ERROR: JWT_SECRET environment variable is not set!\n"
+            "Generate a strong secret with: python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+            "Then add it to your .env file: JWT_SECRET=<generated-secret>"
+        )
     JWT_ALGORITHM = "HS256"
     JWT_EXPIRATION_HOURS = 24
 
     # -------------------------------
-    # Flask
+    # Flask - SECURITY HARDENED
     # -------------------------------
-    SECRET_KEY = os.getenv("SECRET_KEY", "flask-secret-key-change-in-production")
+    SECRET_KEY = os.getenv("SECRET_KEY")
+    if not SECRET_KEY:
+        raise ValueError(
+            "CRITICAL SECURITY ERROR: SECRET_KEY environment variable is not set!\n"
+            "Generate a strong secret with: python -c \"import secrets; print(secrets.token_hex(32))\"\n"
+            "Then add it to your .env file: SECRET_KEY=<generated-secret>"
+        )
     DEBUG = os.getenv("DEBUG", "False").lower() in ["true", "1", "yes"]
     PROPAGATE_EXCEPTIONS = True
 

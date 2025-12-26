@@ -1,5 +1,23 @@
 from decimal import Decimal
 
+
+def title_case(text):
+    """
+    Convert text to title case (first letter of each word capitalized).
+    Handles names professionally.
+
+    Examples:
+        "john doe" -> "John Doe"
+        "JOHN DOE" -> "John Doe"
+        "john" -> "John"
+    """
+    if not text or not isinstance(text, str):
+        return text
+
+    # Strip extra spaces and convert to title case
+    return text.strip().title()
+
+
 def calculate_gst_amount(subtotal, gst_percentage):
     """Calculate GST amount from subtotal and percentage"""
     subtotal_decimal = Decimal(str(subtotal))

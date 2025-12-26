@@ -45,6 +45,10 @@ ON gst_billing(client_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_gst_client_billnum
 ON gst_billing(client_id, bill_number DESC);
 
+-- CRITICAL: Index for created_by filtering (view_own_bills permission)
+CREATE INDEX IF NOT EXISTS idx_gst_created_by
+ON gst_billing(client_id, created_by, created_at DESC);
+
 -- Index for customer searches
 CREATE INDEX IF NOT EXISTS idx_gst_customer_name
 ON gst_billing(client_id, customer_name);
@@ -77,6 +81,10 @@ ON non_gst_billing(client_id, created_at DESC);
 -- Index for bill number lookups
 CREATE INDEX IF NOT EXISTS idx_nongst_client_billnum
 ON non_gst_billing(client_id, bill_number DESC);
+
+-- CRITICAL: Index for created_by filtering (view_own_bills permission)
+CREATE INDEX IF NOT EXISTS idx_nongst_created_by
+ON non_gst_billing(client_id, created_by, created_at DESC);
 
 -- Index for customer searches
 CREATE INDEX IF NOT EXISTS idx_nongst_customer_name

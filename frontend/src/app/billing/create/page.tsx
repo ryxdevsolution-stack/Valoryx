@@ -38,6 +38,7 @@ interface BillItem {
   mrp?: number
   limitedByStock?: boolean
   requestedQuantity?: number
+  saveToStock?: boolean  // NEW: User can choose to save product to stock after billing
 }
 
 interface PaymentSplit {
@@ -158,7 +159,8 @@ export default function UnifiedBillingPage() {
   const [productSearch, setProductSearch] = useState('')
   const [showProductDropdown, setShowProductDropdown] = useState(false)
   const [productsLoading, setProductsLoading] = useState(true)
-  const [selectedProductIndex, setSelectedProductIndex] = useState(0)
+  const [selectedProductIndex, setSelectedProductIndex] = useState(-1)  // -1 means no selection
+  const [hasUsedArrowKeys, setHasUsedArrowKeys] = useState(false)  // Track if user navigated with arrows
   const [isNewProduct, setIsNewProduct] = useState(false)
   const [newProductName, setNewProductName] = useState('')
   const [newProductBarcode, setNewProductBarcode] = useState('')
@@ -666,6 +668,8 @@ export default function UnifiedBillingPage() {
     setIsNewProduct(false)
     setAvailableStock(product.quantity || 0)
     setStockWarning('')
+    setHasUsedArrowKeys(false)  // Reset arrow key tracking
+    setSelectedProductIndex(-1)  // Reset selection
     const defaultRate = Number(product.rate)
 
     // Determine GST based on permissions:
@@ -806,7 +810,19 @@ export default function UnifiedBillingPage() {
   }
 
   const addItem = () => {
-    if (!currentItem.product_name || !currentItem.quantity || Number(currentItem.quantity) <= 0) {
+    // If user typed in search but didn't select a product, use search text as new product
+    let productNameToUse = currentItem.product_name
+    let productIdToUse = currentItem.product_id
+    let isNewProductToUse = isNewProduct
+
+    if (!productNameToUse && productSearch.trim().length > 0) {
+      // Auto-create from search text (no minimum length requirement)
+      productNameToUse = productSearch.trim()
+      productIdToUse = `nosave-${Date.now()}-${Math.random().toString(36).substring(7)}`
+      isNewProductToUse = true
+    }
+
+    if (!productNameToUse || !currentItem.quantity || Number(currentItem.quantity) <= 0) {
       alert('Please enter product name and valid quantity')
       return
     }
@@ -816,7 +832,7 @@ export default function UnifiedBillingPage() {
       return
     }
 
-    if (!isNewProduct && availableStock === 0) {
+    if (!isNewProductToUse && availableStock === 0) {
       alert('⚠️ This product is out of stock! Cannot add to bill.')
       return
     }
@@ -825,14 +841,14 @@ export default function UnifiedBillingPage() {
     let limitedByStock = false
     const requestedQuantity = Number(currentItem.quantity)
 
-    if (!isNewProduct && availableStock > 0 && actualQuantity > availableStock) {
+    if (!isNewProductToUse && availableStock > 0 && actualQuantity > availableStock) {
       actualQuantity = availableStock
       limitedByStock = true
     }
 
     const existingItemIndex = activeTab.items.findIndex(
       (item) =>
-        item.product_id === currentItem.product_id &&
+        item.product_id === productIdToUse &&
         item.rate === currentItem.rate &&
         item.gst_percentage === currentItem.gst_percentage
     )
@@ -860,19 +876,22 @@ export default function UnifiedBillingPage() {
       const gstAmt = (subtotal * currentItem.gst_percentage) / 100
       const total = subtotal + gstAmt
 
-      // For quick sale items (nosave-), keep the existing ID; for other new products use temp-
-      const productId = currentItem.product_id.startsWith('nosave-')
-        ? currentItem.product_id
-        : (isNewProduct ? `temp-${Date.now()}` : currentItem.product_id)
+      // For new products, always use nosave- prefix (no stock saving)
+      // For existing stock products, keep the original UUID
+      const productId = productIdToUse.startsWith('nosave-') || productIdToUse.startsWith('temp-')
+        ? productIdToUse  // Keep existing nosave/temp prefix
+        : (isNewProductToUse ? `nosave-${Date.now()}-${Math.random().toString(36).substring(7)}` : productIdToUse)
 
       const newItem: BillItem = {
         ...currentItem,
         product_id: productId,
+        product_name: productNameToUse,
         quantity: actualQuantity,
         gst_amount: Number(gstAmt.toFixed(2)),
         amount: Number(total.toFixed(2)),
         limitedByStock,
         requestedQuantity: limitedByStock ? requestedQuantity : undefined,
+        // saveToStock removed - quick products are not saved to stock
       }
 
       updateActiveTab({ items: [...activeTab.items, newItem] })
@@ -893,6 +912,8 @@ export default function UnifiedBillingPage() {
     setIsNewProduct(false)
     setAvailableStock(0)
     setStockWarning('')
+    setHasUsedArrowKeys(false)  // Reset arrow key tracking
+    setSelectedProductIndex(-1)  // Reset selection
 
     setTimeout(() => {
       productSearchRef.current?.focus()
@@ -904,16 +925,23 @@ export default function UnifiedBillingPage() {
 
     if (e.key === 'ArrowDown') {
       e.preventDefault()
+      setHasUsedArrowKeys(true)  // User is navigating with arrows
       setSelectedProductIndex((prev) =>
-        prev < filteredProducts.length - 1 ? prev + 1 : prev
+        prev < filteredProducts.length - 1 ? prev + 1 : 0  // Start from 0 if -1
       )
     } else if (e.key === 'ArrowUp') {
       e.preventDefault()
+      setHasUsedArrowKeys(true)  // User is navigating with arrows
       setSelectedProductIndex((prev) => (prev > 0 ? prev - 1 : 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      if (filteredProducts[selectedProductIndex]) {
+      // ONLY select from dropdown if user actually navigated with arrow keys
+      if (hasUsedArrowKeys && selectedProductIndex >= 0 && filteredProducts[selectedProductIndex]) {
         handleProductSelect(filteredProducts[selectedProductIndex])
+      } else {
+        // User just pressed Enter without using arrows - move to quantity field
+        quantityInputRef.current?.focus()
+        quantityInputRef.current?.select()
       }
     }
   }
@@ -1061,7 +1089,21 @@ export default function UnifiedBillingPage() {
         }
       }
 
-      const cleanedItems = activeTab.items.map(({ limitedByStock, requestedQuantity, ...item }) => item)
+      // Clean items - remove UI-only fields, keep nosave- prefix (no stock saving for quick products)
+      const cleanedItems = activeTab.items.map(({ limitedByStock, requestedQuantity, saveToStock, ...item }) => item)
+
+      /* DISABLED: Save to stock feature - quick products are temporary bills only
+      const cleanedItems = activeTab.items.map(({ limitedByStock, requestedQuantity, saveToStock, ...item }) => {
+        // Convert nosave- to temp- if user wants to save to stock
+        if (item.product_id.startsWith('nosave-') && saveToStock !== false) {
+          return {
+            ...item,
+            product_id: `temp-${Date.now()}-${Math.random().toString(36).substring(7)}`
+          }
+        }
+        return item
+      })
+      */
 
       // Format payment_type as JSON string of splits
       const paymentData = JSON.stringify(activeTab.payment_splits)
@@ -1516,9 +1558,12 @@ export default function UnifiedBillingPage() {
                     placeholder="Type to search product..."
                     value={productSearch}
                     onChange={(e) => {
-                      setProductSearch(e.target.value)
+                      const searchValue = e.target.value
+                      setProductSearch(searchValue)
                       setShowProductDropdown(true)
-                      setSelectedProductIndex(0)
+                      setSelectedProductIndex(-1)  // Reset selection - no auto-select
+                      setHasUsedArrowKeys(false)  // Reset arrow key tracking
+                      // No auto-populate - user must either use arrow keys to select OR just click Add
                     }}
                     onFocus={() => setShowProductDropdown(true)}
                     onKeyDown={(e) => {
@@ -1556,7 +1601,7 @@ export default function UnifiedBillingPage() {
                               key={product.product_id}
                               onClick={() => handleProductSelect(product)}
                               className={`px-3 py-2 cursor-pointer border-b border-gray-100 dark:border-gray-700 ${
-                                index === selectedProductIndex
+                                hasUsedArrowKeys && index === selectedProductIndex
                                   ? 'bg-blue-100 dark:bg-blue-900'
                                   : 'hover:bg-blue-50 dark:hover:bg-gray-700'
                               }`}
@@ -1584,39 +1629,19 @@ export default function UnifiedBillingPage() {
                             </div>
                           ))}
                         </>
-                      ) : (
-                        <div className="px-3 py-3 bg-green-50 dark:bg-green-900/20 border border-green-300 dark:border-green-700">
-                          <div className="text-xs text-green-700 dark:text-green-400 mb-2">Quick Sale - Product not in stock</div>
-                          <div className="bg-white dark:bg-gray-800 rounded px-2 py-1 mb-2 border border-green-200 dark:border-green-700">
-                            <span className="text-xs text-gray-500">Product: </span>
-                            <span className="font-bold text-gray-900 dark:text-white text-sm">{productSearch}</span>
+                      ) : productSearch.trim().length > 0 ? (
+                        <div className="px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-300 dark:border-blue-700">
+                          <div className="text-xs text-blue-700 dark:text-blue-400 mb-1.5 font-medium">
+                            💡 No stock product selected
                           </div>
-                          <button
-                            onClick={() => {
-                              // Use search text as product name directly - quick sale (not saved to stock)
-                              setIsNewProduct(true)
-                              setCurrentItem({
-                                product_id: `nosave-${Date.now()}`,
-                                product_name: productSearch.trim(),
-                                item_code: '',
-                                hsn_code: '',
-                                unit: 'pcs',
-                                quantity: '' as number | string,
-                                rate: 0,
-                                gst_percentage: 0,
-                              })
-                              setShowProductDropdown(false)
-                              setTimeout(() => {
-                                rateInputRef.current?.focus()
-                                rateInputRef.current?.select()
-                              }, 100)
-                            }}
-                            className="w-full px-3 py-2 rounded text-sm font-medium transition bg-green-500 text-white hover:bg-green-600"
-                          >
-                            Use &quot;{productSearch}&quot; as Quick Sale
-                          </button>
+                          <div className="text-sm font-bold text-gray-900 dark:text-white mb-1">
+                            &quot;{productSearch.trim()}&quot;
+                          </div>
+                          <div className="text-xs text-gray-600 dark:text-gray-400">
+                            Click <span className="font-semibold text-blue-600 dark:text-blue-400">+ Add</span> to create as new product, or use <span className="font-semibold">↓ Arrow</span> to select from stock above.
+                          </div>
                         </div>
-                      )}
+                      ) : null}
                     </div>
                   )}
                 </div>
@@ -1784,6 +1809,7 @@ export default function UnifiedBillingPage() {
                     <th className="px-1 py-1 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-24">
                       Total
                     </th>
+                    {/* Save column removed - quick products are not saved to stock */}
                     <th className="px-1 py-1 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase w-10">
                       Action
                     </th>
@@ -1901,6 +1927,7 @@ export default function UnifiedBillingPage() {
                         <td className="px-1 py-0.5 text-xs text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 text-right font-bold">
                           ₹{item.amount.toFixed(2)}
                         </td>
+                        {/* Save checkbox removed - quick products are not saved to stock */}
                         <td className="px-1 py-0.5 text-xs text-center">
                           <button
                             type="button"
@@ -2145,6 +2172,17 @@ export default function UnifiedBillingPage() {
                       ₹{getTotalPaymentSplits().toFixed(2)}
                     </span>
                   </div>
+                  {/* Balance to Collect or Change to Give */}
+                  {getTotalPaymentSplits() > 0 && Math.abs(getTotalPaymentSplits() - getRoundedGrandTotal()) >= 0.01 && (
+                    <div className="flex justify-between text-xs font-bold mt-1 py-1 px-2 rounded bg-orange-50 dark:bg-orange-900/20">
+                      <span className={getTotalPaymentSplits() < getRoundedGrandTotal() ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
+                        {getTotalPaymentSplits() < getRoundedGrandTotal() ? '⚠️ Balance to Collect:' : '💰 Change to Give:'}
+                      </span>
+                      <span className={getTotalPaymentSplits() < getRoundedGrandTotal() ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
+                        ₹{Math.abs(getRoundedGrandTotal() - getTotalPaymentSplits()).toFixed(2)}
+                      </span>
+                    </div>
+                  )}
                 </div>
               )}
             </div>

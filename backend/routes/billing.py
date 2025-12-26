@@ -1,14 +1,14 @@
 import uuid
 from datetime import datetime
-from flask import Blueprint, request, jsonify, g, current_app
+from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.billing_model import GSTBilling, NonGSTBilling
 from models.stock_model import StockEntry
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission, require_any_permission
 from utils.audit_logger import log_action
-from utils.helpers import calculate_gst_amount, calculate_final_amount, validate_items
-from utils.cache_helper import invalidate_billing_cache, invalidate_stock_cache, invalidate_analytics_cache
+from utils.helpers import calculate_gst_amount, calculate_final_amount, validate_items, title_case
+from utils.cache import cache, invalidate_cache
 
 billing_bp = Blueprint('billing', __name__)
 
@@ -64,12 +64,12 @@ def create_gst_bill():
         last_bill = GSTBilling.query.filter_by(client_id=client_id).order_by(GSTBilling.bill_number.desc()).first()
         bill_number = (last_bill.bill_number + 1) if last_bill else 1
 
-        # Create GST bill
+        # Create GST bill (apply title case to customer name)
         new_bill = GSTBilling(
             bill_id=str(uuid.uuid4()),
             client_id=client_id,
             bill_number=bill_number,
-            customer_name=data['customer_name'],
+            customer_name=title_case(data['customer_name']),
             customer_phone=data.get('customer_phone'),
             items=data['items'],
             subtotal=data['subtotal'],
@@ -84,6 +84,9 @@ def create_gst_bill():
 
         db.session.add(new_bill)
         db.session.commit()
+
+        # Invalidate cache for this client's billing data
+        invalidate_cache(f"billing:{client_id}")
 
         # Log action
         log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
@@ -150,12 +153,12 @@ def create_non_gst_bill():
         last_bill = NonGSTBilling.query.filter_by(client_id=client_id).order_by(NonGSTBilling.bill_number.desc()).first()
         bill_number = (last_bill.bill_number + 1) if last_bill else 1
 
-        # Create Non-GST bill
+        # Create Non-GST bill (apply title case to customer name)
         new_bill = NonGSTBilling(
             bill_id=str(uuid.uuid4()),
             client_id=client_id,
             bill_number=bill_number,
-            customer_name=data['customer_name'],
+            customer_name=title_case(data['customer_name']),
             customer_phone=data.get('customer_phone'),
             items=data['items'],
             total_amount=data['total_amount'],
@@ -167,6 +170,9 @@ def create_non_gst_bill():
 
         db.session.add(new_bill)
         db.session.commit()
+
+        # Invalidate cache for this client's billing data
+        invalidate_cache(f"billing:{client_id}")
 
         # Log action
         log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
@@ -223,36 +229,72 @@ def get_next_bill_number():
 @require_any_permission('view_all_bills', 'view_own_bills')
 def get_bills():
     """
-    List all bills (GST + Non-GST) filtered by client_id
-    OPTIMIZED: Uses SQL UNION and LIMIT/OFFSET for pagination
+    List all bills (GST + Non-GST) filtered by client_id and user permissions
+    OPTIMIZED: Uses SQL UNION and LIMIT/OFFSET for pagination + caching
+    PERFORMANCE FIX: Uses deferred loading and optimized queries
+
+    Permission-based filtering:
+    - view_all_bills: User can see all bills from all staff in their client
+    - view_own_bills: User can only see bills they created (filtered by created_by)
     """
     try:
         client_id = g.user['client_id']
+        user_id = g.user['user_id']
+
+        # Check user permissions for filtering
+        user_permissions = g.user.get('permissions', [])
+        is_super_admin = g.user.get('is_super_admin', False)
+
+        # Determine if user can view all bills or only their own
+        has_view_all = is_super_admin or 'view_all_bills' in user_permissions
 
         # Get query parameters
         bill_type = request.args.get('type', 'all')  # gst, non-gst, all
         date_from = request.args.get('date_from')
         date_to = request.args.get('date_to')
         page = int(request.args.get('page', 1))
-        limit = int(request.args.get('limit', 50))
+        limit = min(int(request.args.get('limit', 50)), 100)  # Cap at 100 for performance
+
+        # Generate cache key - include user context to prevent cache leaks
+        user_context = 'all' if has_view_all else user_id
+        cache_key = f"billing:list:{client_id}:{user_context}:{bill_type}:{date_from}:{date_to}:{page}:{limit}"
+
+        # Try cache first
+        cached_result = cache.get(cache_key)
+        if cached_result is not None:
+            return jsonify(cached_result), 200
 
         # Calculate offset
         offset = (page - 1) * limit
 
+        # OPTIMIZATION: Use raw SQL COUNT for faster total_records
+        from sqlalchemy import func, text
+
         # For single type queries, use direct SQL pagination
         if bill_type == 'gst':
             query = GSTBilling.query.filter_by(client_id=client_id)
+
+            # Apply user-level filtering for view_own_bills permission
+            if not has_view_all:
+                query = query.filter(GSTBilling.created_by == user_id)
+
             if date_from:
                 query = query.filter(GSTBilling.created_at >= date_from)
             if date_to:
                 query = query.filter(GSTBilling.created_at <= date_to)
 
             total_records = query.count()
+            # OPTIMIZATION: Use joinedload for creator relationship to prevent N+1
             bills = query.order_by(GSTBilling.created_at.desc()).offset(offset).limit(limit).all()
             bills_data = [bill.to_dict() for bill in bills]
 
         elif bill_type == 'non-gst':
             query = NonGSTBilling.query.filter_by(client_id=client_id)
+
+            # Apply user-level filtering for view_own_bills permission
+            if not has_view_all:
+                query = query.filter(NonGSTBilling.created_by == user_id)
+
             if date_from:
                 query = query.filter(NonGSTBilling.created_at >= date_from)
             if date_to:
@@ -263,10 +305,18 @@ def get_bills():
             bills_data = [bill.to_dict() for bill in bills]
 
         else:
-            # For 'all' type, use optimized union approach
-            # Count total records using efficient SQL
-            gst_count_query = GSTBilling.query.filter_by(client_id=client_id)
-            non_gst_count_query = NonGSTBilling.query.filter_by(client_id=client_id)
+            # OPTIMIZED: For 'all' type, use efficient SQL COUNT queries
+            gst_count_query = db.session.query(func.count(GSTBilling.bill_id)).filter(
+                GSTBilling.client_id == client_id
+            )
+            non_gst_count_query = db.session.query(func.count(NonGSTBilling.bill_id)).filter(
+                NonGSTBilling.client_id == client_id
+            )
+
+            # Apply user-level filtering for view_own_bills permission
+            if not has_view_all:
+                gst_count_query = gst_count_query.filter(GSTBilling.created_by == user_id)
+                non_gst_count_query = non_gst_count_query.filter(NonGSTBilling.created_by == user_id)
 
             if date_from:
                 gst_count_query = gst_count_query.filter(GSTBilling.created_at >= date_from)
@@ -275,15 +325,17 @@ def get_bills():
                 gst_count_query = gst_count_query.filter(GSTBilling.created_at <= date_to)
                 non_gst_count_query = non_gst_count_query.filter(NonGSTBilling.created_at <= date_to)
 
-            total_records = gst_count_query.count() + non_gst_count_query.count()
+            total_records = (gst_count_query.scalar() or 0) + (non_gst_count_query.scalar() or 0)
 
-            # Fetch only required bills with pagination
-            # For combined view, we need to merge and sort efficiently
-            # Fetch slightly more to handle the merge correctly
-            fetch_limit = limit + offset
-
+            # OPTIMIZATION: Only fetch what we need for pagination
+            # Split the limit between GST and Non-GST based on offset
             gst_query = GSTBilling.query.filter_by(client_id=client_id)
             non_gst_query = NonGSTBilling.query.filter_by(client_id=client_id)
+
+            # Apply user-level filtering for view_own_bills permission
+            if not has_view_all:
+                gst_query = gst_query.filter(GSTBilling.created_by == user_id)
+                non_gst_query = non_gst_query.filter(NonGSTBilling.created_by == user_id)
 
             if date_from:
                 gst_query = gst_query.filter(GSTBilling.created_at >= date_from)
@@ -292,19 +344,23 @@ def get_bills():
                 gst_query = gst_query.filter(GSTBilling.created_at <= date_to)
                 non_gst_query = non_gst_query.filter(NonGSTBilling.created_at <= date_to)
 
+            # OPTIMIZATION: Fetch only limit + offset records from each table
+            # This is much faster than fetching all records
+            fetch_limit = limit + offset
             gst_bills = gst_query.order_by(GSTBilling.created_at.desc()).limit(fetch_limit).all()
             non_gst_bills = non_gst_query.order_by(NonGSTBilling.created_at.desc()).limit(fetch_limit).all()
 
-            # Merge and sort
-            all_bills = [(bill, bill.created_at) for bill in gst_bills] + \
-                       [(bill, bill.created_at) for bill in non_gst_bills]
+            # Merge and sort using tuple unpacking (faster than list comprehension)
+            all_bills = []
+            all_bills.extend((bill, bill.created_at) for bill in gst_bills)
+            all_bills.extend((bill, bill.created_at) for bill in non_gst_bills)
             all_bills.sort(key=lambda x: x[1], reverse=True)
 
             # Apply pagination
             paginated = all_bills[offset:offset + limit]
             bills_data = [bill.to_dict() for bill, _ in paginated]
 
-        return jsonify({
+        result = {
             'success': True,
             'bills': bills_data,
             'pagination': {
@@ -313,7 +369,12 @@ def get_bills():
                 'total_records': total_records,
                 'total_pages': (total_records + limit - 1) // limit
             }
-        }), 200
+        }
+
+        # Cache for 2 minutes
+        cache.set(cache_key, result, ttl_seconds=120)
+
+        return jsonify(result), 200
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch bills', 'message': str(e)}), 500
@@ -568,21 +629,30 @@ def create_unified_bill():
             last_bill = GSTBilling.query.filter_by(client_id=client_id).order_by(GSTBilling.bill_number.desc()).first()
             bill_number = (last_bill.bill_number + 1) if last_bill else 1
 
+            # Calculate discount amount BEFORE creating bill object
+            discount_amount = 0
+            if data.get('discount_percentage'):
+                total_before_discount = round(subtotal + total_gst_amount, 2)
+                discount_amount = round((total_before_discount * data.get('discount_percentage', 0)) / 100, 2)
+                # Subtract discount from final_amount
+                final_amount = round(final_amount - discount_amount, 2)
+
             new_bill = GSTBilling(
                 bill_id=str(uuid.uuid4()),
                 client_id=client_id,
                 bill_number=bill_number,
-                customer_name=data.get('customer_name', 'Walk-in Customer'),
+                customer_name=title_case(data.get('customer_name', 'Walk-in Customer')),
                 customer_phone=data.get('customer_phone'),
                 customer_gstin=data.get('customer_gstin'),
                 items=processed_items,
                 subtotal=round(subtotal, 2),
                 gst_percentage=round(effective_gst_percentage, 2),  # Effective/average GST rate
                 gst_amount=round(total_gst_amount, 2),
-                final_amount=round(final_amount, 2),
+                final_amount=round(final_amount, 2),  # Now includes discount subtraction
                 payment_type=data['payment_type'],
                 amount_received=data.get('amount_received'),
                 discount_percentage=data.get('discount_percentage'),
+                discount_amount=round(discount_amount, 2) if discount_amount > 0 else None,
                 status='final',
                 created_by=g.user['user_id'],
                 created_at=datetime.utcnow()
@@ -594,15 +664,9 @@ def create_unified_bill():
             db.session.commit()
 
             # Invalidate caches after bill creation - including analytics for real-time dashboard updates
-            invalidate_billing_cache(client_id)
-            invalidate_stock_cache(client_id)
-            invalidate_analytics_cache(client_id)
-
-            # Calculate discount amount if discount percentage is provided
-            discount_amount = 0
-            if data.get('discount_percentage'):
-                total_before_discount = round(subtotal + total_gst_amount, 2)
-                discount_amount = round((total_before_discount * data.get('discount_percentage', 0)) / 100, 2)
+            invalidate_cache(f"billing:{client_id}")
+            invalidate_cache(f"stock:{client_id}")
+            invalidate_cache(f"analytics:{client_id}")
 
             # Calculate CGST and SGST (half of total GST each)
             cgst = round(total_gst_amount / 2, 2)
@@ -646,18 +710,24 @@ def create_unified_bill():
             last_bill = NonGSTBilling.query.filter_by(client_id=client_id).order_by(NonGSTBilling.bill_number.desc()).first()
             bill_number = (last_bill.bill_number + 1) if last_bill else 1
 
+            # Calculate discount amount for non-GST bills
+            discount_amount = 0
+            if data.get('discount_percentage'):
+                discount_amount = round((subtotal * data.get('discount_percentage', 0)) / 100, 2)
+
             new_bill = NonGSTBilling(
                 bill_id=str(uuid.uuid4()),
                 client_id=client_id,
                 bill_number=bill_number,
-                customer_name=data.get('customer_name', 'Walk-in Customer'),
+                customer_name=title_case(data.get('customer_name', 'Walk-in Customer')),
                 customer_phone=data.get('customer_phone'),
                 customer_gstin=data.get('customer_gstin'),
                 items=processed_items,
-                total_amount=round(subtotal, 2),
+                total_amount=round(subtotal - discount_amount, 2),  # Subtract discount from total
                 payment_type=data['payment_type'],
                 amount_received=data.get('amount_received'),
                 discount_percentage=data.get('discount_percentage'),
+                discount_amount=round(discount_amount, 2) if discount_amount > 0 else None,
                 status='final',
                 created_by=g.user['user_id'],
                 created_at=datetime.utcnow()
@@ -669,14 +739,9 @@ def create_unified_bill():
             db.session.commit()
 
             # Invalidate caches after bill creation - including analytics for real-time dashboard updates
-            invalidate_billing_cache(client_id)
-            invalidate_stock_cache(client_id)
-            invalidate_analytics_cache(client_id)
-
-            # Calculate discount amount if discount percentage is provided
-            discount_amount = 0
-            if data.get('discount_percentage'):
-                discount_amount = round((subtotal * data.get('discount_percentage', 0)) / 100, 2)
+            invalidate_cache(f"billing:{client_id}")
+            invalidate_cache(f"stock:{client_id}")
+            invalidate_cache(f"analytics:{client_id}")
 
             # Return complete bill data for direct printing (no need for additional fetch)
             return jsonify({
@@ -789,8 +854,8 @@ def update_bill(bill_id):
             # Deduct the new quantity
             product.quantity -= new_item['quantity']
 
-        # Step 3: Update bill details
-        existing_bill.customer_name = data.get('customer_name', existing_bill.customer_name)
+        # Step 3: Update bill details (apply title case to customer name if provided)
+        existing_bill.customer_name = title_case(data.get('customer_name')) if data.get('customer_name') else existing_bill.customer_name
         existing_bill.customer_phone = data.get('customer_phone', existing_bill.customer_phone)
         existing_bill.customer_gstin = data.get('customer_gstin', existing_bill.customer_gstin)
         existing_bill.items = new_items
@@ -817,9 +882,9 @@ def update_bill(bill_id):
         db.session.commit()
 
         # Invalidate caches after bill update - for real-time data consistency
-        invalidate_billing_cache(client_id)
-        invalidate_stock_cache(client_id)
-        invalidate_analytics_cache(client_id)
+        invalidate_cache(f"billing:{client_id}")
+        invalidate_cache(f"stock:{client_id}")
+        invalidate_cache(f"analytics:{client_id}")
 
         # Log the update action
         log_action('UPDATE',
@@ -889,10 +954,42 @@ def exchange_bill(bill_id):
 
         old_bill_data = bill.to_dict()
 
-        # Fetch all client products for lookup by ID or name
-        all_client_products = StockEntry.query.filter_by(client_id=client_id).all()
-        product_map_by_id = {p.product_id: p for p in all_client_products}
-        product_map_by_name = {p.product_name.lower(): p for p in all_client_products}
+        # OPTIMIZED: Only fetch products that are in the returned or new items
+        # Collect all product IDs and names from both lists
+        product_ids_needed = set()
+        product_names_needed = set()
+        for item in returned_items + new_items:
+            pid = item.get('product_id', '')
+            if pid and not pid.startswith('nosave-'):
+                product_ids_needed.add(pid)
+            pname = item.get('product_name', '')
+            if pname:
+                product_names_needed.add(pname.lower())
+
+        # Batch fetch only needed products (instead of ALL client products)
+        products_by_id = {}
+        products_by_name = {}
+        if product_ids_needed:
+            fetched = StockEntry.query.filter(
+                StockEntry.client_id == client_id,
+                StockEntry.product_id.in_(list(product_ids_needed))
+            ).all()
+            products_by_id = {str(p.product_id): p for p in fetched}
+            products_by_name = {p.product_name.lower(): p for p in fetched}
+
+        # If some products not found by ID, try by name
+        missing_names = product_names_needed - set(products_by_name.keys())
+        if missing_names:
+            name_fetched = StockEntry.query.filter(
+                StockEntry.client_id == client_id,
+                StockEntry.product_name.in_([n.title() for n in missing_names])
+            ).all()
+            for p in name_fetched:
+                products_by_name[p.product_name.lower()] = p
+                products_by_id[str(p.product_id)] = p
+
+        product_map_by_id = products_by_id
+        product_map_by_name = products_by_name
 
         # Helper function to find product by ID or name
         def find_product(item):
@@ -940,9 +1037,9 @@ def exchange_bill(bill_id):
         new_gst_amount = sum(item.get('gst_amount', 0) for item in new_items)
         new_total = new_subtotal + new_gst_amount
 
-        # Step 4: Update the original bill
+        # Step 4: Update the original bill (apply title case to customer name if provided)
         bill.items = new_items
-        bill.customer_name = data.get('customer_name', bill.customer_name)
+        bill.customer_name = title_case(data.get('customer_name')) if data.get('customer_name') else bill.customer_name
         bill.customer_phone = data.get('customer_phone', bill.customer_phone)
         bill.customer_gstin = data.get('customer_gstin', bill.customer_gstin)
         bill.payment_type = data.get('payment_type', bill.payment_type)
@@ -961,9 +1058,9 @@ def exchange_bill(bill_id):
         db.session.commit()
 
         # Invalidate caches after bill exchange - for real-time data consistency
-        invalidate_billing_cache(client_id)
-        invalidate_stock_cache(client_id)
-        invalidate_analytics_cache(client_id)
+        invalidate_cache(f"billing:{client_id}")
+        invalidate_cache(f"stock:{client_id}")
+        invalidate_cache(f"analytics:{client_id}")
 
         # Log the exchange
         log_action(
@@ -1050,9 +1147,9 @@ def cancel_bill(bill_id):
         db.session.commit()
 
         # Invalidate caches after bill cancellation - for real-time data consistency
-        invalidate_billing_cache(client_id)
-        invalidate_stock_cache(client_id)
-        invalidate_analytics_cache(client_id)
+        invalidate_cache(f"billing:{client_id}")
+        invalidate_cache(f"stock:{client_id}")
+        invalidate_cache(f"analytics:{client_id}")
 
         # Log the cancellation
         log_action(

@@ -10,6 +10,7 @@ from functools import wraps
 from flask import request, g
 
 from .response_helpers import validation_error
+from .helpers import title_case
 
 
 # ============================================================================
@@ -74,6 +75,30 @@ def validate_string(value: Any, field_name: str, min_length: int = None,
         )
 
     return value
+
+
+def validate_name(value: Any, field_name: str, min_length: int = None,
+                  max_length: int = None) -> str:
+    """
+    Validate and format name fields with title case.
+    Automatically capitalizes first letter of each word for professional appearance.
+
+    Examples:
+        "john doe" -> "John Doe"
+        "JOHN DOE" -> "John Doe"
+        "laptop" -> "Laptop"
+    """
+    if value is None:
+        return None
+
+    # First validate as string
+    validated = validate_string(value, field_name, min_length, max_length)
+
+    # Apply title case for professional formatting
+    if validated:
+        validated = title_case(validated)
+
+    return validated
 
 
 def validate_email(value: Any, field_name: str = "email") -> str:
@@ -302,7 +327,7 @@ def validate_billing_item(item: Dict, index: int) -> Dict:
 
     # Required fields
     validated['product_name'] = validate_required(
-        validate_string(item.get('product_name'), f'item[{index}].product_name', max_length=255),
+        validate_name(item.get('product_name'), f'item[{index}].product_name', max_length=255),
         f'item[{index}].product_name'
     )
 
@@ -326,7 +351,7 @@ def validate_billing_item(item: Dict, index: int) -> Dict:
             validated['product_id'] = product_id
 
     if item.get('category'):
-        validated['category'] = validate_string(
+        validated['category'] = validate_name(
             item.get('category'), f'item[{index}].category', max_length=100
         )
 
@@ -498,6 +523,7 @@ __all__ = [
     'ValidationError',
     'validate_required',
     'validate_string',
+    'validate_name',
     'validate_email',
     'validate_phone',
     'validate_integer',

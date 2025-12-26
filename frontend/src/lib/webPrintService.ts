@@ -242,7 +242,7 @@ export function generateReceiptHtml(
 
   <div class="dashed"></div>
   <div class="small flex"><span>Items: ${totalItems} &nbsp; Total Qty: ${totalQty}</span><span>Sub Total: ${Number(bill.subtotal || 0).toFixed(2)}</span></div>
-  ${Number(bill.discount_amount || 0) > 0 ? `<div class="small flex"><span>Discount:</span><span>-${Number(bill.discount_amount || 0).toFixed(2)}</span></div>` : ''}
+  ${Number(bill.discount_amount || 0) > 0 ? `<div class="small flex"><span>Discount (${bill.discount_percentage || 0}%):</span><span>-₹${Number(bill.discount_amount || 0).toFixed(2)}</span></div>` : ''}
   ${Number(bill.gst_amount || 0) > 0 ? `<div class="small flex"><span>GST Amount:</span><span>${Number(bill.gst_amount || 0).toFixed(2)}</span></div>` : ''}
 
   <div class="grand-total flex">
@@ -282,7 +282,7 @@ export function generateReceiptHtml(
       : ''
   }
 
-  <div class="no-exchange">⚠ NO EXCHANGE / NO REFUND ⚠</div>
+  <div class="no-exchange">Sorry, No Exchange / No Refund</div>
   <div class="center bold" style="margin: 2mm 0;">★★★ THANK YOU VISIT AGAIN ★★★</div>
   <div class="solid"></div>
 </body>
@@ -294,7 +294,7 @@ export function generateReceiptHtml(
 // ============================================================================
 
 /**
- * Print bill using browser's print dialog
+ * Print bill using browser's print dialog (iframe-based, no popup needed)
  */
 export function printBill(
   bill: BillData,
@@ -304,22 +304,62 @@ export function printBill(
   try {
     const html = generateReceiptHtml(bill, clientInfo, showNoExchange);
 
-    // Create a new window for printing
-    const printWindow = window.open('', '_blank', 'width=320,height=600');
-    if (!printWindow) {
+    // Remove any existing print iframe
+    const existingFrame = document.getElementById('print-iframe');
+    if (existingFrame) {
+      existingFrame.remove();
+    }
+
+    // Create hidden iframe for printing (avoids popup blocker)
+    const iframe = document.createElement('iframe');
+    iframe.id = 'print-iframe';
+    iframe.style.position = 'fixed';
+    iframe.style.right = '0';
+    iframe.style.bottom = '0';
+    iframe.style.width = '0';
+    iframe.style.height = '0';
+    iframe.style.border = 'none';
+    iframe.style.visibility = 'hidden';
+    document.body.appendChild(iframe);
+
+    const iframeDoc = iframe.contentDocument || iframe.contentWindow?.document;
+    if (!iframeDoc) {
       return {
         success: false,
         method: 'browser',
-        message: 'Could not open print window. Please allow popups for this site.',
+        message: 'Could not access iframe document for printing.',
       };
     }
 
-    printWindow.document.write(html);
-    printWindow.document.close();
+    // Track if print was already triggered to avoid double dialog
+    let printTriggered = false;
 
-    // Print and close
-    printWindow.print();
-    printWindow.close();
+    const triggerPrint = () => {
+      if (printTriggered) return;
+      printTriggered = true;
+
+      try {
+        iframe.contentWindow?.focus();
+        iframe.contentWindow?.print();
+      } catch (e) {
+        console.error('Print error:', e);
+      }
+
+      // Remove iframe after a longer delay to ensure print dialog completes
+      setTimeout(() => {
+        const frame = document.getElementById('print-iframe');
+        if (frame) frame.remove();
+      }, 5000);
+    };
+
+    // Write content to iframe
+    iframeDoc.open();
+    iframeDoc.write(html);
+    iframeDoc.close();
+
+    // For dynamically written content, onload may not fire
+    // Use a short delay to ensure content is rendered
+    setTimeout(triggerPrint, 100);
 
     return {
       success: true,

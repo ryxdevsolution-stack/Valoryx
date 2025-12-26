@@ -17,12 +17,22 @@ report_bp = Blueprint('report', __name__)
 @authenticate
 def generate_report():
     """
-    Generate report with client_id filtering
+    Generate report with client_id and user permission filtering
     Combines GST + Non-GST data
+
+    Permission-based filtering:
+    - view_all_bills: User can see reports for all bills in their client
+    - view_own_bills: User can only see reports for bills they created
     """
     try:
         data = request.get_json()
         client_id = g.user['client_id']
+        user_id = g.user['user_id']
+
+        # Check user permissions for filtering
+        user_permissions = g.user.get('permissions', [])
+        is_super_admin = g.user.get('is_super_admin', False)
+        has_view_all = is_super_admin or 'view_all_bills' in user_permissions
 
         # Validate required fields
         required_fields = ['start_date', 'end_date']
@@ -33,21 +43,33 @@ def generate_report():
         date_from = datetime.fromisoformat(data['start_date']).date()
         date_to = datetime.fromisoformat(data['end_date']).date()
 
-        # Query GST billing data
-        gst_bills = GSTBilling.query.filter(
+        # Query GST billing data with permission-based filtering
+        gst_query = GSTBilling.query.filter(
             GSTBilling.client_id == client_id,
             func.date(GSTBilling.created_at) >= date_from,
             func.date(GSTBilling.created_at) <= date_to,
             GSTBilling.status == 'final'
-        ).all()
+        )
 
-        # Query Non-GST billing data
-        non_gst_bills = NonGSTBilling.query.filter(
+        # Apply user-level filtering for view_own_bills permission
+        if not has_view_all:
+            gst_query = gst_query.filter(GSTBilling.created_by == user_id)
+
+        gst_bills = gst_query.all()
+
+        # Query Non-GST billing data with permission-based filtering
+        non_gst_query = NonGSTBilling.query.filter(
             NonGSTBilling.client_id == client_id,
             func.date(NonGSTBilling.created_at) >= date_from,
             func.date(NonGSTBilling.created_at) <= date_to,
             NonGSTBilling.status == 'final'
-        ).all()
+        )
+
+        # Apply user-level filtering for view_own_bills permission
+        if not has_view_all:
+            non_gst_query = non_gst_query.filter(NonGSTBilling.created_by == user_id)
+
+        non_gst_bills = non_gst_query.all()
 
         # Calculate totals
         total_gst_bills = len(gst_bills)

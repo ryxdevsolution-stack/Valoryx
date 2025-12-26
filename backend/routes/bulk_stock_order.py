@@ -7,6 +7,7 @@ from models.stock_model import StockEntry
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission
 from utils.audit_logger import log_action
+from utils.helpers import title_case
 
 bulk_order_bp = Blueprint('bulk_stock_order', __name__)
 
@@ -63,12 +64,12 @@ def create_bulk_order():
         # Generate order number
         order_number = generate_order_number(client_id)
 
-        # Create order
+        # Create order (apply title case to supplier name)
         order = BulkStockOrder(
             order_id=str(uuid.uuid4()),
             client_id=client_id,
             order_number=order_number,
-            supplier_name=data.get('supplier_name'),
+            supplier_name=title_case(data.get('supplier_name')),
             supplier_contact=data.get('supplier_contact'),
             order_date=datetime.utcnow(),
             expected_delivery_date=datetime.fromisoformat(data['expected_delivery_date']) if data.get('expected_delivery_date') else None,
@@ -80,15 +81,19 @@ def create_bulk_order():
 
         db.session.add(order)
 
-        # Add order items
+        # Add order items (apply title case to product names and categories)
         for item_data in data['items']:
+            # Apply title case to name fields
+            product_name = title_case(item_data['product_name'])
+            category = title_case(item_data.get('category', 'Other'))
+
             # Check if product exists
             product_id = item_data.get('product_id')
-            if not product_id and item_data.get('product_name'):
+            if not product_id and product_name:
                 # Try to find existing product by name
                 existing_product = StockEntry.query.filter_by(
                     client_id=client_id,
-                    product_name=item_data['product_name']
+                    product_name=product_name
                 ).first()
                 if existing_product:
                     product_id = existing_product.product_id
@@ -97,8 +102,8 @@ def create_bulk_order():
                 item_id=str(uuid.uuid4()),
                 order_id=order.order_id,
                 product_id=product_id,
-                product_name=item_data['product_name'],
-                category=item_data.get('category', 'Other'),
+                product_name=product_name,
+                category=category,
                 quantity_ordered=item_data['quantity_ordered'],
                 quantity_received=0,
                 unit=item_data.get('unit', 'pcs'),
