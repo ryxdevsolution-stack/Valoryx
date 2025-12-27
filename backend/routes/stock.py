@@ -41,7 +41,7 @@ def generate_item_code(client_id, product_name):
     from sqlalchemy.sql.expression import case
 
     # Get count of existing items to estimate next sequence (much faster than parsing all codes)
-    item_count = db.session.query(func.count(StockEntry.stock_id)).filter_by(client_id=client_id).scalar() or 0
+    item_count = db.session.query(func.count(StockEntry.product_id)).filter_by(client_id=client_id).scalar() or 0
 
     # Start from count + 1 as a baseline
     next_sequence = item_count + 1

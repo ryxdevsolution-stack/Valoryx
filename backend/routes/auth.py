@@ -41,13 +41,13 @@ def login():
         ).filter(User.email == email).first()
 
         if not result:
-            return jsonify({'error': 'Invalid credentials'}), 401
+            return jsonify({'error': 'Email address not found'}), 401
 
         user, client = result
 
         # Verify password
         if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
-            return jsonify({'error': 'Invalid credentials'}), 401
+            return jsonify({'error': 'Incorrect password'}), 401
 
         # Check if user is active
         if not user.is_active:
