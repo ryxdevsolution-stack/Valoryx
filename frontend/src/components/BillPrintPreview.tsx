@@ -486,7 +486,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
         @media print {
           @page {
             size: 80mm auto;
-            margin: 0mm;
+            margin: 0mm 1.5mm;
           }
           * {
             -webkit-print-color-adjust: exact !important;
@@ -495,15 +495,15 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
             box-sizing: border-box !important;
           }
           .bill-receipt {
-            width: 74mm !important;
-            max-width: 74mm !important;
-            margin: 0 0 0 3mm !important;
-            padding: 2mm !important;
+            width: 77mm !important;
+            max-width: 77mm !important;
+            margin: 0 auto !important;
+            padding: 1mm !important;
             box-sizing: border-box !important;
             font-weight: 700 !important;
             color: #000000 !important;
             overflow-x: hidden !important;
-            line-height: 1.3 !important;
+            line-height: 1.2 !important;
             font-family: 'Courier New', Courier, monospace !important;
             -webkit-font-smoothing: none !important;
             -moz-osx-font-smoothing: unset !important;
@@ -518,7 +518,6 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
           .bill-receipt b {
             font-weight: 900 !important;
           }
-          /* Ensure text is dark and crisp for thermal printing */
           .bill-receipt div,
           .bill-receipt span,
           .bill-receipt p {

@@ -138,14 +138,14 @@ export function generateReceiptHtml(
   <style>
     @page {
       size: 80mm auto;
-      margin: 0mm 2mm;
+      margin: 0mm 1.5mm;
     }
     @media print {
       html, body {
         margin: 0 !important;
         padding: 0 !important;
-        width: 76mm !important;
-        max-width: 76mm !important;
+        width: 77mm !important;
+        max-width: 77mm !important;
       }
       .no-print { display: none !important; }
       * {
@@ -162,15 +162,15 @@ export function generateReceiptHtml(
     }
     body {
       font-family: 'Courier New', 'Lucida Console', monospace;
-      width: 76mm;
-      max-width: 76mm;
+      width: 77mm;
+      max-width: 77mm;
       margin: 0 auto;
       background: white;
       color: #000000;
       font-size: 10pt;
       font-weight: 600;
-      line-height: 1.4;
-      padding: 2mm;
+      line-height: 1.2;
+      padding: 1mm;
       -webkit-font-smoothing: none;
       text-rendering: geometricPrecision;
       overflow-x: hidden;

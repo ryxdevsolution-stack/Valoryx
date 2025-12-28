@@ -389,10 +389,10 @@ export const footerSections: FooterSection[] = [
   {
     title: 'Resources',
     links: [
-      { label: 'Documentation', href: '#' },
-      { label: 'Help Center', href: '#' },
+      { label: 'Documentation', href: '/docs' },
+      { label: 'Help Center', href: '/docs#troubleshooting' },
       { label: 'Blog', href: '#' },
-      { label: 'Tutorials', href: '#' },
+      { label: 'Tutorials', href: '/docs#getting-started' },
       { label: 'API Reference', href: '#' },
     ],
   },

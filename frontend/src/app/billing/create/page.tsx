@@ -725,6 +725,8 @@ export default function UnifiedBillingPage() {
       quantity: '' as number | string,
       rate: 0,
       gst_percentage: 0,
+      cost_price: undefined,
+      mrp: undefined,
     })
     setShowProductDropdown(false)
     setNewProductName('') // Reset for next use
@@ -922,6 +924,8 @@ export default function UnifiedBillingPage() {
       quantity: '' as number | string,
       rate: 0,
       gst_percentage: 0,
+      cost_price: undefined,
+      mrp: undefined,
     })
     setProductSearch('')
     setShowProductDropdown(false)
@@ -2399,6 +2403,8 @@ export default function UnifiedBillingPage() {
                       quantity: '' as number | string,
                       rate: 0,
                       gst_percentage: 0,
+                      cost_price: undefined,
+                      mrp: undefined,
                     })
                     setIsNewProduct(false)
                     setProductSearch('')
