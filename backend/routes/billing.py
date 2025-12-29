@@ -9,6 +9,7 @@ from utils.permission_middleware import require_permission, require_any_permissi
 from utils.audit_logger import log_action
 from utils.helpers import calculate_gst_amount, calculate_final_amount, validate_items, title_case
 from utils.cache import cache, invalidate_cache
+from utils.bill_number_helper import get_next_bill_number
 
 billing_bp = Blueprint('billing', __name__)
 
@@ -60,9 +61,8 @@ def create_gst_bill():
         gst_amount = calculate_gst_amount(data['subtotal'], data['gst_percentage'])
         final_amount = calculate_final_amount(data['subtotal'], gst_amount)
 
-        # Get next bill number for this client
-        last_bill = GSTBilling.query.filter_by(client_id=client_id).order_by(GSTBilling.bill_number.desc()).first()
-        bill_number = (last_bill.bill_number + 1) if last_bill else 1
+        # Phase 0: Get next bill number atomically (prevents race conditions)
+        bill_number = get_next_bill_number(client_id, 'gst')
 
         # Create GST bill (apply title case to customer name)
         new_bill = GSTBilling(
@@ -83,6 +83,27 @@ def create_gst_bill():
         )
 
         db.session.add(new_bill)
+        db.session.flush()  # Get bill_id before stock reduction
+
+        # Phase 0: Stock reduction in Python (replaces database trigger)
+        # Use row-level locking to prevent overselling
+        for item in data['items']:
+            product = StockEntry.query.filter_by(
+                product_id=item['product_id'],
+                client_id=client_id
+            ).with_for_update().first()
+
+            if not product:
+                raise ValueError(f"Product {item['product_name']} not found")
+
+            if product.quantity < item['quantity']:
+                raise ValueError(f"Insufficient stock for {item['product_name']}. Available: {product.quantity}")
+
+            # Reduce stock
+            product.quantity -= item['quantity']
+            product.updated_at = datetime.utcnow()
+
+        # Commit both bill creation and stock reduction atomically
         db.session.commit()
 
         # Invalidate cache for this client's billing data
@@ -90,8 +111,6 @@ def create_gst_bill():
 
         # Log action
         log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
-
-        # Note: Stock reduction handled automatically by database trigger
 
         return jsonify({
             'success': True,
@@ -149,9 +168,8 @@ def create_non_gst_bill():
             if product.quantity < item['quantity']:
                 return jsonify({'error': f"Insufficient stock for {item['product_name']}. Available: {product.quantity}"}), 400
 
-        # Get next bill number for this client
-        last_bill = NonGSTBilling.query.filter_by(client_id=client_id).order_by(NonGSTBilling.bill_number.desc()).first()
-        bill_number = (last_bill.bill_number + 1) if last_bill else 1
+        # Phase 0: Get next bill number atomically (prevents race conditions)
+        bill_number = get_next_bill_number(client_id, 'non_gst')
 
         # Create Non-GST bill (apply title case to customer name)
         new_bill = NonGSTBilling(
@@ -169,6 +187,27 @@ def create_non_gst_bill():
         )
 
         db.session.add(new_bill)
+        db.session.flush()  # Get bill_id before stock reduction
+
+        # Phase 0: Stock reduction in Python (replaces database trigger)
+        # Use row-level locking to prevent overselling
+        for item in data['items']:
+            product = StockEntry.query.filter_by(
+                product_id=item['product_id'],
+                client_id=client_id
+            ).with_for_update().first()
+
+            if not product:
+                raise ValueError(f"Product {item['product_name']} not found")
+
+            if product.quantity < item['quantity']:
+                raise ValueError(f"Insufficient stock for {item['product_name']}. Available: {product.quantity}")
+
+            # Reduce stock
+            product.quantity -= item['quantity']
+            product.updated_at = datetime.utcnow()
+
+        # Commit both bill creation and stock reduction atomically
         db.session.commit()
 
         # Invalidate cache for this client's billing data
@@ -176,8 +215,6 @@ def create_non_gst_bill():
 
         # Log action
         log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
-
-        # Note: Stock reduction handled automatically by database trigger
 
         return jsonify({
             'success': True,
@@ -629,9 +666,17 @@ def create_unified_bill():
             last_bill = GSTBilling.query.filter_by(client_id=client_id).order_by(GSTBilling.bill_number.desc()).first()
             bill_number = (last_bill.bill_number + 1) if last_bill else 1
 
-            # Calculate discount amount BEFORE creating bill object
+            # Calculate discount amount or negotiable amount BEFORE creating bill object
             discount_amount = 0
-            if data.get('discount_percentage'):
+            negotiable_amount = data.get('negotiable_amount')
+
+            if negotiable_amount and negotiable_amount > 0:
+                # Use negotiable amount - this overrides discount percentage
+                total_before_negotiation = round(subtotal + total_gst_amount, 2)
+                final_amount = round(negotiable_amount, 2)
+                discount_amount = total_before_negotiation - final_amount
+            elif data.get('discount_percentage'):
+                # Use discount percentage
                 total_before_discount = round(subtotal + total_gst_amount, 2)
                 discount_amount = round((total_before_discount * data.get('discount_percentage', 0)) / 100, 2)
                 # Subtract discount from final_amount
@@ -648,11 +693,12 @@ def create_unified_bill():
                 subtotal=round(subtotal, 2),
                 gst_percentage=round(effective_gst_percentage, 2),  # Effective/average GST rate
                 gst_amount=round(total_gst_amount, 2),
-                final_amount=round(final_amount, 2),  # Now includes discount subtraction
+                final_amount=round(final_amount, 2),  # Now includes discount/negotiable amount
                 payment_type=data['payment_type'],
                 amount_received=data.get('amount_received'),
-                discount_percentage=data.get('discount_percentage'),
+                discount_percentage=data.get('discount_percentage') if not negotiable_amount else None,
                 discount_amount=round(discount_amount, 2) if discount_amount > 0 else None,
+                negotiable_amount=round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                 status='final',
                 created_by=g.user['user_id'],
                 created_at=datetime.utcnow()
@@ -690,8 +736,9 @@ def create_unified_bill():
                     'customer_gstin': data.get('customer_gstin', ''),
                     'items': processed_items,
                     'subtotal': round(subtotal, 2),
-                    'discount_percentage': data.get('discount_percentage', 0),
+                    'discount_percentage': data.get('discount_percentage', 0) if not negotiable_amount else 0,
                     'discount_amount': discount_amount,
+                    'negotiable_amount': round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                     'gst_amount': round(total_gst_amount, 2),
                     'final_amount': round(final_amount, 2),
                     'total_amount': round(subtotal, 2),
@@ -710,10 +757,19 @@ def create_unified_bill():
             last_bill = NonGSTBilling.query.filter_by(client_id=client_id).order_by(NonGSTBilling.bill_number.desc()).first()
             bill_number = (last_bill.bill_number + 1) if last_bill else 1
 
-            # Calculate discount amount for non-GST bills
+            # Calculate discount amount or negotiable amount for non-GST bills
             discount_amount = 0
-            if data.get('discount_percentage'):
+            negotiable_amount = data.get('negotiable_amount')
+            total_amount = subtotal
+
+            if negotiable_amount and negotiable_amount > 0:
+                # Use negotiable amount - this overrides discount percentage
+                total_amount = round(negotiable_amount, 2)
+                discount_amount = subtotal - total_amount
+            elif data.get('discount_percentage'):
+                # Use discount percentage
                 discount_amount = round((subtotal * data.get('discount_percentage', 0)) / 100, 2)
+                total_amount = round(subtotal - discount_amount, 2)
 
             new_bill = NonGSTBilling(
                 bill_id=str(uuid.uuid4()),
@@ -723,11 +779,12 @@ def create_unified_bill():
                 customer_phone=data.get('customer_phone'),
                 customer_gstin=data.get('customer_gstin'),
                 items=processed_items,
-                total_amount=round(subtotal - discount_amount, 2),  # Subtract discount from total
+                total_amount=total_amount,  # Final amount after discount/negotiation
                 payment_type=data['payment_type'],
                 amount_received=data.get('amount_received'),
-                discount_percentage=data.get('discount_percentage'),
+                discount_percentage=data.get('discount_percentage') if not negotiable_amount else None,
                 discount_amount=round(discount_amount, 2) if discount_amount > 0 else None,
+                negotiable_amount=round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                 status='final',
                 created_by=g.user['user_id'],
                 created_at=datetime.utcnow()
@@ -759,10 +816,11 @@ def create_unified_bill():
                     'customer_gstin': data.get('customer_gstin', ''),
                     'items': processed_items,
                     'subtotal': round(subtotal, 2),
-                    'discount_percentage': data.get('discount_percentage', 0),
+                    'discount_percentage': data.get('discount_percentage', 0) if not negotiable_amount else 0,
                     'discount_amount': discount_amount,
+                    'negotiable_amount': round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                     'gst_amount': 0,
-                    'final_amount': round(subtotal - discount_amount, 2),
+                    'final_amount': total_amount,
                     'total_amount': round(subtotal, 2),
                     'payment_type': data['payment_type'],
                     'created_at': new_bill.created_at.isoformat() if new_bill.created_at else datetime.utcnow().isoformat(),

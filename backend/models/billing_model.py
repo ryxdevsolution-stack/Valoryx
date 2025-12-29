@@ -28,6 +28,7 @@ class GSTBilling(db.Model):
     amount_received = db.Column(db.Numeric(12, 2))
     discount_percentage = db.Column(db.Numeric(5, 2))
     discount_amount = db.Column(db.Numeric(12, 2))
+    negotiable_amount = db.Column(db.Numeric(12, 2))
     status = db.Column(db.String(20), default='final')
     created_by = db.Column(db.String(36), db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -53,6 +54,7 @@ class GSTBilling(db.Model):
             'amount_received': str(self.amount_received) if self.amount_received else None,
             'discount_percentage': str(self.discount_percentage) if self.discount_percentage else None,
             'discount_amount': str(self.discount_amount) if self.discount_amount else None,
+            'negotiable_amount': str(self.negotiable_amount) if self.negotiable_amount else None,
             'status': self.status,
             'created_by': self.created_by,
             'created_by_name': self.creator.full_name if self.creator and self.creator.full_name else (self.creator.email if self.creator else None),
@@ -84,6 +86,7 @@ class NonGSTBilling(db.Model):
     amount_received = db.Column(db.Numeric(12, 2))
     discount_percentage = db.Column(db.Numeric(5, 2))
     discount_amount = db.Column(db.Numeric(12, 2))
+    negotiable_amount = db.Column(db.Numeric(12, 2))
     status = db.Column(db.String(20), default='final')
     created_by = db.Column(db.String(36), db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -106,6 +109,7 @@ class NonGSTBilling(db.Model):
             'amount_received': str(self.amount_received) if self.amount_received else None,
             'discount_percentage': str(self.discount_percentage) if self.discount_percentage else None,
             'discount_amount': str(self.discount_amount) if self.discount_amount else None,
+            'negotiable_amount': str(self.negotiable_amount) if self.negotiable_amount else None,
             'status': self.status,
             'created_by': self.created_by,
             'created_by_name': self.creator.full_name if self.creator and self.creator.full_name else (self.creator.email if self.creator else None),

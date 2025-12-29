@@ -52,6 +52,7 @@ export interface GSTBill {
   final_amount: number;
   discount_percentage?: number;
   discount_amount?: number;
+  negotiable_amount?: number;
   payment_type: string;
   amount_received?: number;
   status: 'draft' | 'final' | 'cancelled';
@@ -76,6 +77,7 @@ export interface NonGSTBill {
   total_amount: number;
   discount_percentage?: number;
   discount_amount?: number;
+  negotiable_amount?: number;
   payment_type: string;
   amount_received?: number;
   status: 'draft' | 'final' | 'cancelled';
@@ -99,6 +101,7 @@ export interface CreateBillRequest {
   items: Partial<BillItem>[];
   payment_type: string;
   discount_percentage?: number;
+  negotiable_amount?: number;
   amount_received?: number;
 }
 
@@ -127,6 +130,7 @@ export interface PrintableBill {
   subtotal: number;
   discount_percentage: number;
   discount_amount: number;
+  negotiable_amount?: number;
   gst_amount: number;
   final_amount: number;
   total_amount: number;
@@ -179,6 +183,7 @@ export interface ExchangeBillRequest {
   payment_type: string;
   amount_received?: number;
   discount_percentage?: number;
+  negotiable_amount?: number;
 }
 
 export interface ExchangeBillResponse {

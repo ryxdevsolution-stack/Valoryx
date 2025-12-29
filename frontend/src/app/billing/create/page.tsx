@@ -65,6 +65,8 @@ interface BillTab {
   payment_splits: PaymentSplit[]
   items: BillItem[]
   discountPercentage: number
+  negotiableAmount: number
+  useNegotiablePrice: boolean
   amountReceived: number
 }
 
@@ -89,6 +91,7 @@ export default function UnifiedBillingPage() {
   const customerPhoneRef = useRef<HTMLInputElement>(null)
   const customerGstinRef = useRef<HTMLInputElement>(null)
   const discountRef = useRef<HTMLInputElement>(null)
+  const negotiableAmountRef = useRef<HTMLInputElement>(null)
   const amountReceivedRef = useRef<HTMLInputElement>(null)
   const printButtonRef = useRef<HTMLButtonElement>(null)
 
@@ -131,6 +134,8 @@ export default function UnifiedBillingPage() {
       payment_splits: [],
       items: [],
       discountPercentage: 0,
+      negotiableAmount: 0,
+      useNegotiablePrice: false,
       amountReceived: 0,
     }]
   })
@@ -428,6 +433,8 @@ export default function UnifiedBillingPage() {
         payment_splits: [],
         items: [],
         discountPercentage: 0,
+        negotiableAmount: 0,
+        useNegotiablePrice: false,
         amountReceived: 0,
       },
     ])
@@ -447,6 +454,8 @@ export default function UnifiedBillingPage() {
         payment_splits: [],
         items: [],
         discountPercentage: 0,
+        negotiableAmount: 0,
+        useNegotiablePrice: false,
         amountReceived: 0,
       }])
       setActiveTabId(newTabId)
@@ -475,6 +484,8 @@ export default function UnifiedBillingPage() {
         payment_splits: [],
         items: [],
         discountPercentage: 0,
+        negotiableAmount: 0,
+        useNegotiablePrice: false,
         amountReceived: 0,
       }])
       setActiveTabId(newTabId)
@@ -1018,6 +1029,13 @@ export default function UnifiedBillingPage() {
 
   const calculateGrandTotal = () => {
     const subtotalWithGST = calculateSubtotal() + calculateTotalGST()
+
+    // If negotiable price is enabled, return that directly
+    if (activeTab.useNegotiablePrice && activeTab.negotiableAmount > 0) {
+      return activeTab.negotiableAmount
+    }
+
+    // Otherwise use discount percentage
     const calculatedDiscountAmount = (subtotalWithGST * activeTab.discountPercentage) / 100
     return Math.max(0, subtotalWithGST - calculatedDiscountAmount)
   }
@@ -1136,7 +1154,8 @@ export default function UnifiedBillingPage() {
         items: cleanedItems,
         payment_type: paymentData,
         amount_received: activeTab.amountReceived,
-        discount_percentage: activeTab.discountPercentage,
+        discount_percentage: activeTab.useNegotiablePrice ? 0 : activeTab.discountPercentage,
+        negotiable_amount: activeTab.useNegotiablePrice ? activeTab.negotiableAmount : null,
       })
       console.log('[BILLING] Bill created successfully:', response.data.bill?.bill_number)
 
@@ -1507,7 +1526,7 @@ export default function UnifiedBillingPage() {
               </div>
 
               {/* GST Number */}
-              <div className="md:col-span-3">
+              <div className="md:col-span-5">
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
                   Customer GSTIN
                 </label>
@@ -1517,29 +1536,8 @@ export default function UnifiedBillingPage() {
                   placeholder="Optional GSTIN"
                   value={activeTab.customer_gstin}
                   onChange={(e) => updateActiveTab({ customer_gstin: e.target.value })}
-                  onKeyDown={(e) => handleEnterNavigation(e, discountRef)}
-                  className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
-                />
-              </div>
-
-              {/* Discount */}
-              <div className="md:col-span-2">
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                  Discount %
-                </label>
-                <input
-                  ref={discountRef}
-                  type="number"
-                  min="0"
-                  max="100"
-                  step="0.01"
-                  placeholder="0"
-                  value={activeTab.discountPercentage || ''}
-                  onChange={(e) =>
-                    updateActiveTab({ discountPercentage: parseFloat(e.target.value) || 0 })
-                  }
                   onKeyDown={(e) => handleEnterNavigation(e, productSearchRef)}
-                  className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                  className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
               </div>
             </div>
@@ -2284,6 +2282,54 @@ export default function UnifiedBillingPage() {
                     {activeTab.items.reduce((sum, item) => sum + item.quantity, 0)}
                   </div>
                 </div>
+                <div className="col-span-2 bg-blue-50 dark:bg-blue-900/20 rounded p-2 border border-blue-300 dark:border-blue-700">
+                  <div className="flex items-center justify-between mb-1">
+                    <label className="text-xs text-blue-700 dark:text-blue-300 font-medium">
+                      {activeTab.useNegotiablePrice ? 'Negotiable ₹' : 'Discount %'}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        updateActiveTab({
+                          useNegotiablePrice: !activeTab.useNegotiablePrice,
+                          discountPercentage: 0,
+                          negotiableAmount: 0
+                        })
+                      }}
+                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold"
+                      title={activeTab.useNegotiablePrice ? 'Switch to Discount %' : 'Switch to Negotiable Amount'}
+                    >
+                      {activeTab.useNegotiablePrice ? '% Off' : '₹ Price'}
+                    </button>
+                  </div>
+                  {activeTab.useNegotiablePrice ? (
+                    <input
+                      ref={negotiableAmountRef}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Enter final amount"
+                      value={activeTab.negotiableAmount || ''}
+                      onChange={(e) =>
+                        updateActiveTab({ negotiableAmount: parseFloat(e.target.value) || 0 })
+                      }
+                      className="w-full px-2 py-1 text-sm font-semibold border-2 border-blue-400 dark:border-blue-600 rounded focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                    />
+                  ) : (
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      placeholder="Enter %"
+                      value={activeTab.discountPercentage || ''}
+                      onChange={(e) =>
+                        updateActiveTab({ discountPercentage: parseFloat(e.target.value) || 0 })
+                      }
+                      className="w-full px-2 py-1 text-sm font-semibold border-2 border-blue-400 dark:border-blue-600 rounded focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                    />
+                  )}
+                </div>
               </div>
 
               {/* Billing Summary - Middle */}
@@ -2391,6 +2437,8 @@ export default function UnifiedBillingPage() {
                       customer_phone: '',
                       customer_gstin: '',
                       discountPercentage: 0,
+                      negotiableAmount: 0,
+                      useNegotiablePrice: false,
                       amountReceived: 0,
                       payment_splits: [],
                     })

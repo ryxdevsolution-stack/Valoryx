@@ -13,6 +13,7 @@ interface BillDataExtended extends BillData {
   gst_percentage?: number
   discount_percentage?: number
   discount_amount?: number
+  negotiable_amount?: number
 }
 
 interface ClientInfoExtended extends ClientInfo {
@@ -191,10 +192,10 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                     <span style={{ flex: '1', minWidth: '0' }}></span>
                     <span style={{ width: '6mm', textAlign: 'center', flexShrink: 0, fontWeight: '600' }}>{item.quantity}</span>
                     <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0, fontWeight: '600' }}>
-                      {item.mrp ? Number(item.mrp).toFixed(2) : '-'}
+                      {item.mrp ? Math.round(Number(item.mrp)) : '-'}
                     </span>
-                    <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0, fontWeight: '600' }}>{Number(item.rate).toFixed(2)}</span>
-                    <span style={{ width: '12mm', textAlign: 'right', fontWeight: 'bold', flexShrink: 0 }}>{Number(item.amount).toFixed(2)}</span>
+                    <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0, fontWeight: '600' }}>{Math.round(Number(item.rate))}</span>
+                    <span style={{ width: '12mm', textAlign: 'right', fontWeight: 'bold', flexShrink: 0 }}>{Math.round(Number(item.amount))}</span>
                   </div>
                 </div>
               ))}
@@ -224,7 +225,12 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                   </div>
                 )}
 
-                {bill.discount_amount && Number(bill.discount_amount) > 0 && (
+                {bill.negotiable_amount && Number(bill.negotiable_amount) > 0 ? (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
+                    <span style={{ fontWeight: '600', color: '#2e7d32' }}>Negotiated Price</span>
+                    <span style={{ fontWeight: 'bold', color: '#2e7d32' }}>₹{Number(bill.negotiable_amount).toFixed(2)}</span>
+                  </div>
+                ) : bill.discount_amount && Number(bill.discount_amount) > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
                     <span style={{ fontWeight: '600' }}>Discount ({bill.discount_percentage}%)</span>
                     <span style={{ fontWeight: 'bold', color: '#d32f2f' }}>-₹{Number(bill.discount_amount).toFixed(2)}</span>
@@ -237,7 +243,19 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
               <div style={{ borderTop: '3px solid #000', borderBottom: '3px solid #000', padding: '3mm 1mm', marginBottom: '2mm', background: '#f0f0f0' }}>
                 <div style={{ fontSize: '12pt', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', letterSpacing: '0.3px', color: '#000000' }}>
                   <span style={{ fontWeight: 'bold' }}>GRAND TOTAL</span>
-                  <span style={{ fontSize: '14pt', fontWeight: 'bold' }}>₹{Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount).toFixed(2)}</span>
+                  <span style={{ fontSize: '14pt', fontWeight: 'bold' }}>₹{(() => {
+                    const baseAmount = Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount);
+                    const discountAmt = bill.discount_amount && Number(bill.discount_amount) > 0 ? Number(bill.discount_amount) : 0;
+                    const negotiableAmt = bill.negotiable_amount && Number(bill.negotiable_amount) > 0 ? Number(bill.negotiable_amount) : 0;
+
+                    // If negotiable amount exists, use it directly (it's the final price after negotiation)
+                    if (negotiableAmt > 0) {
+                      return Math.round(negotiableAmt);
+                    }
+
+                    // Otherwise subtract discount from base amount
+                    return Math.round(baseAmount - discountAmt);
+                  })()}</span>
                 </div>
               </div>
 
@@ -308,7 +326,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
 
               {/* Footer */}
               <div style={{ textAlign: 'center', marginTop: '3mm' }}>
-                {/* Today's Savings - Shows only MRP savings (MRP - Rate) */}
+                {/* Today's Savings - Shows MRP savings + Negotiation savings */}
                 {(() => {
                   const mrpSavings = bill.items.reduce((sum, item) => {
                     const mrpAmt = Number(item.mrp) ? Number(item.mrp) * Number(item.quantity) : 0
@@ -316,7 +334,11 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                     return sum + Math.max(0, mrpAmt - rateAmt)
                   }, 0)
 
-                  return mrpSavings > 0 && (
+                  // Calculate negotiation savings if applicable
+                  const negotiationSavings = bill.discount_amount && Number(bill.discount_amount) > 0 ? Number(bill.discount_amount) : 0
+                  const totalSavings = mrpSavings + negotiationSavings
+
+                  return totalSavings > 0 && (
                     <div style={{
                       border: '2px solid #000',
                       padding: '2mm',
@@ -336,10 +358,11 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                         fontWeight: 'bold',
                         letterSpacing: '1px'
                       }}>
-                        ₹{mrpSavings.toFixed(2)}
+                        ₹{totalSavings.toFixed(2)}
                       </div>
                       <div style={{ fontSize: '6pt', marginTop: '1mm', fontStyle: 'italic' }}>
-                        You saved on MRP!
+                        {mrpSavings > 0 && negotiationSavings > 0 ? 'You saved on MRP + Negotiation!' :
+                         mrpSavings > 0 ? 'You saved on MRP!' : 'You saved through negotiation!'}
                       </div>
                     </div>
                   )

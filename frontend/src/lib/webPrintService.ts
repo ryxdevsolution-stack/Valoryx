@@ -84,7 +84,9 @@ export function generateReceiptHtml(
 
   const totalQty = bill.items.reduce((sum, item) => sum + Number(item.quantity), 0);
   const totalItems = bill.items.length;
-  const finalAmount = Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount) || 0;
+  const baseAmount = Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount) || 0;
+  const discountAmt = Number(bill.discount_amount) || 0;
+  const finalAmount = baseAmount - discountAmt;
   const roundOff = Math.round(finalAmount) - finalAmount;
 
   // Calculate savings
@@ -233,9 +235,9 @@ export function generateReceiptHtml(
     <div class="small item-row" style="margin-bottom: 1mm;">
       <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${name}</span>
       <span style="width: 7mm; text-align: center;">${item.quantity}</span>
-      <span style="width: 11mm; text-align: right;">${Number(mrp).toFixed(2)}</span>
-      <span style="width: 11mm; text-align: right;">${Number(item.rate).toFixed(2)}</span>
-      <span style="width: 13mm; text-align: right; font-weight: bold;">${Number(item.amount).toFixed(2)}</span>
+      <span style="width: 11mm; text-align: right;">${Math.round(Number(mrp))}</span>
+      <span style="width: 11mm; text-align: right;">${Math.round(Number(item.rate))}</span>
+      <span style="width: 13mm; text-align: right; font-weight: bold;">${Math.round(Number(item.amount))}</span>
     </div>`;
     })
     .join('')}
@@ -247,7 +249,7 @@ export function generateReceiptHtml(
 
   <div class="grand-total flex">
     <span>GRAND TOTAL</span>
-    <span style="font-size: 16pt;">₹${Math.round(finalAmount).toFixed(2)}</span>
+    <span style="font-size: 16pt;">₹${Math.round(finalAmount)}</span>
   </div>
 
   ${

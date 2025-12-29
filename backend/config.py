@@ -41,7 +41,7 @@ class OptimizedConfig:
             "isolation_level": "READ COMMITTED",  # Prevent lock contention
         },
         "connect_args": {
-            "connect_timeout": 3,  # Fail fast on connection issues
+            "connect_timeout": 30,  # Allow more time for initial connection
             "keepalives": 1,
             "keepalives_idle": 5,
             "keepalives_interval": 2,
