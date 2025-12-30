@@ -2033,41 +2033,122 @@ export default function UnifiedBillingPage() {
                 Payment Methods (Split Payment)
               </h3>
 
-              {/* Amount Received - First */}
-              <div className="flex items-center gap-2 mb-3 bg-gray-50 dark:bg-gray-900 p-2 rounded">
-                <label className="text-xs font-medium text-gray-700 dark:text-gray-300 w-20">
-                  Received:
-                </label>
-                <input
-                  ref={amountReceivedRef}
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  placeholder="0.00"
-                  value={activeTab.amountReceived || ''}
-                  onChange={(e) =>
-                    updateActiveTab({ amountReceived: parseFloat(e.target.value) || 0 })
-                  }
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      // Check if there are payment splits, if not add one
-                      if (activeTab.payment_splits.length === 0) {
-                        addPaymentSplit()
-                        setTimeout(() => {
-                          // Since Cash is default, go directly to amount input
-                          const firstAmountInput = document.querySelector('input[placeholder="Amount"]') as HTMLInputElement
-                          firstAmountInput?.focus()
-                          firstAmountInput?.select()
-                        }, 100)
-                      } else {
-                        const firstPaymentSelect = document.querySelector('select[title="Select payment type"]') as HTMLSelectElement
-                        firstPaymentSelect?.focus()
-                      }
+              {/* Amount Received & Discount - Side by Side */}
+              <div className="flex items-center gap-6 mb-3 bg-gray-50 dark:bg-gray-900 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+                {/* Received */}
+                <div className="flex items-center gap-3">
+                  <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">
+                    Received:
+                  </label>
+                  <input
+                    ref={amountReceivedRef}
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={activeTab.amountReceived || ''}
+                    onChange={(e) =>
+                      updateActiveTab({ amountReceived: parseFloat(e.target.value) || 0 })
                     }
-                  }}
-                  className="w-32 px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-semibold"
-                />
+                    onKeyDown={(e) => {
+                      if (e.key === 'Enter') {
+                        e.preventDefault()
+                        // Move to Negotiable/Discount field
+                        const discountInput = document.querySelector('input[placeholder="Final amount"], input[placeholder="Enter %"]') as HTMLInputElement
+                        if (discountInput) {
+                          discountInput.focus()
+                          discountInput.select()
+                        }
+                      }
+                    }}
+                    className="w-36 px-3 py-2 text-sm border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-bold"
+                  />
+                </div>
+
+                {/* Divider */}
+                <div className="h-10 w-px bg-gray-300 dark:bg-gray-600"></div>
+
+                {/* Discount/Negotiable */}
+                <div className="flex items-center gap-3">
+                  <label className="text-sm text-blue-700 dark:text-blue-300 font-semibold">
+                    {activeTab.useNegotiablePrice ? 'Negotiable ₹' : 'Discount %'}
+                  </label>
+                  {activeTab.useNegotiablePrice ? (
+                    <input
+                      ref={negotiableAmountRef}
+                      type="number"
+                      min="0"
+                      step="0.01"
+                      placeholder="Final amount"
+                      value={activeTab.negotiableAmount || ''}
+                      onChange={(e) =>
+                        updateActiveTab({ negotiableAmount: parseFloat(e.target.value) || 0 })
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          // Add payment split and focus on it
+                          if (activeTab.payment_splits.length === 0) {
+                            addPaymentSplit()
+                            setTimeout(() => {
+                              const firstAmountInput = document.querySelector('input[placeholder="Amount"]') as HTMLInputElement
+                              firstAmountInput?.focus()
+                              firstAmountInput?.select()
+                            }, 100)
+                          } else {
+                            const firstPaymentSelect = document.querySelector('select[title="Select payment type"]') as HTMLSelectElement
+                            firstPaymentSelect?.focus()
+                          }
+                        }
+                      }}
+                      className="w-36 px-3 py-2 text-sm font-bold border-2 border-blue-400 dark:border-blue-600 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                    />
+                  ) : (
+                    <input
+                      type="number"
+                      min="0"
+                      max="100"
+                      step="0.01"
+                      placeholder="Enter %"
+                      value={activeTab.discountPercentage || ''}
+                      onChange={(e) =>
+                        updateActiveTab({ discountPercentage: parseFloat(e.target.value) || 0 })
+                      }
+                      onKeyDown={(e) => {
+                        if (e.key === 'Enter') {
+                          e.preventDefault()
+                          // Add payment split and focus on it
+                          if (activeTab.payment_splits.length === 0) {
+                            addPaymentSplit()
+                            setTimeout(() => {
+                              const firstAmountInput = document.querySelector('input[placeholder="Amount"]') as HTMLInputElement
+                              firstAmountInput?.focus()
+                              firstAmountInput?.select()
+                            }, 100)
+                          } else {
+                            const firstPaymentSelect = document.querySelector('select[title="Select payment type"]') as HTMLSelectElement
+                            firstPaymentSelect?.focus()
+                          }
+                        }
+                      }}
+                      className="w-28 px-3 py-2 text-sm font-bold border-2 border-blue-400 dark:border-blue-600 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                    />
+                  )}
+                  <button
+                    type="button"
+                    onClick={() => {
+                      updateActiveTab({
+                        useNegotiablePrice: !activeTab.useNegotiablePrice,
+                        discountPercentage: 0,
+                        negotiableAmount: 0
+                      })
+                    }}
+                    className="text-sm text-blue-600 dark:text-blue-400 hover:underline font-bold px-2 py-1 bg-blue-50 dark:bg-blue-900/30 rounded"
+                    title={activeTab.useNegotiablePrice ? 'Switch to Discount %' : 'Switch to Negotiable Amount'}
+                  >
+                    {activeTab.useNegotiablePrice ? '% Off' : '₹ Price'}
+                  </button>
+                </div>
               </div>
 
               <div className="flex items-center justify-between">
@@ -2265,7 +2346,7 @@ export default function UnifiedBillingPage() {
           <div className="bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 p-2">
               {/* Summary Cards - Left Side */}
-              <div className="lg:col-span-3 grid grid-cols-2 gap-2">
+              <div className="lg:col-span-2 grid grid-cols-2 gap-2">
                 <div className="bg-gray-50 dark:bg-gray-900 rounded p-2 border border-gray-200 dark:border-gray-700">
                   <div className="text-xs text-gray-600 dark:text-gray-400 font-medium">
                     Total Items
@@ -2282,58 +2363,10 @@ export default function UnifiedBillingPage() {
                     {activeTab.items.reduce((sum, item) => sum + item.quantity, 0)}
                   </div>
                 </div>
-                <div className="col-span-2 bg-blue-50 dark:bg-blue-900/20 rounded p-2 border border-blue-300 dark:border-blue-700">
-                  <div className="flex items-center justify-between mb-1">
-                    <label className="text-xs text-blue-700 dark:text-blue-300 font-medium">
-                      {activeTab.useNegotiablePrice ? 'Negotiable ₹' : 'Discount %'}
-                    </label>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        updateActiveTab({
-                          useNegotiablePrice: !activeTab.useNegotiablePrice,
-                          discountPercentage: 0,
-                          negotiableAmount: 0
-                        })
-                      }}
-                      className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-semibold"
-                      title={activeTab.useNegotiablePrice ? 'Switch to Discount %' : 'Switch to Negotiable Amount'}
-                    >
-                      {activeTab.useNegotiablePrice ? '% Off' : '₹ Price'}
-                    </button>
-                  </div>
-                  {activeTab.useNegotiablePrice ? (
-                    <input
-                      ref={negotiableAmountRef}
-                      type="number"
-                      min="0"
-                      step="0.01"
-                      placeholder="Enter final amount"
-                      value={activeTab.negotiableAmount || ''}
-                      onChange={(e) =>
-                        updateActiveTab({ negotiableAmount: parseFloat(e.target.value) || 0 })
-                      }
-                      className="w-full px-2 py-1 text-sm font-semibold border-2 border-blue-400 dark:border-blue-600 rounded focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
-                    />
-                  ) : (
-                    <input
-                      type="number"
-                      min="0"
-                      max="100"
-                      step="0.01"
-                      placeholder="Enter %"
-                      value={activeTab.discountPercentage || ''}
-                      onChange={(e) =>
-                        updateActiveTab({ discountPercentage: parseFloat(e.target.value) || 0 })
-                      }
-                      className="w-full px-2 py-1 text-sm font-semibold border-2 border-blue-400 dark:border-blue-600 rounded focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
-                    />
-                  )}
-                </div>
               </div>
 
               {/* Billing Summary - Middle */}
-              <div className="lg:col-span-5 bg-gray-50 dark:bg-gray-900 rounded p-2 border border-gray-200 dark:border-gray-700">
+              <div className="lg:col-span-6 bg-gray-50 dark:bg-gray-900 rounded p-2 border border-gray-200 dark:border-gray-700">
                 <div className="space-y-1">
                   <div className="flex justify-between items-center">
                     <span className="text-xs text-gray-700 dark:text-gray-300 font-medium">
