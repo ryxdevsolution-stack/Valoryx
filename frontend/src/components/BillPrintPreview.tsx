@@ -227,8 +227,8 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
 
                 {bill.negotiable_amount && Number(bill.negotiable_amount) > 0 ? (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
-                    <span style={{ fontWeight: '600', color: '#2e7d32' }}>Negotiated Price</span>
-                    <span style={{ fontWeight: 'bold', color: '#2e7d32' }}>₹{Number(bill.negotiable_amount).toFixed(2)}</span>
+                    <span style={{ fontWeight: '600' }}>Discount</span>
+                    <span style={{ fontWeight: 'bold', color: '#d32f2f' }}>-₹{Number(bill.negotiable_amount).toFixed(2)}</span>
                   </div>
                 ) : bill.discount_amount && Number(bill.discount_amount) > 0 && (
                   <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
@@ -244,17 +244,23 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                 <div style={{ fontSize: '12pt', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', letterSpacing: '0.3px', color: '#000000' }}>
                   <span style={{ fontWeight: 'bold' }}>GRAND TOTAL</span>
                   <span style={{ fontSize: '14pt', fontWeight: 'bold' }}>₹{(() => {
-                    const baseAmount = Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount);
-                    const discountAmt = bill.discount_amount && Number(bill.discount_amount) > 0 ? Number(bill.discount_amount) : 0;
-                    const negotiableAmt = bill.negotiable_amount && Number(bill.negotiable_amount) > 0 ? Number(bill.negotiable_amount) : 0;
+                    // Calculate grand total - ALWAYS calculate to ensure consistency
+                    const subtotal = Number(bill.subtotal) || 0;
+                    const gstAmount = Number(bill.gst_amount) || 0;
+                    const negotiable = Number(bill.negotiable_amount) || 0;
+                    const discount = negotiable > 0 ? 0 : Number(bill.discount_amount) || 0;
 
-                    // If negotiable amount exists, use it directly (it's the final price after negotiation)
-                    if (negotiableAmt > 0) {
-                      return Math.round(negotiableAmt);
+                    let finalAmount = 0;
+                    if (bill.type === 'gst') {
+                      // GST bill: subtotal + GST - (negotiable or discount)
+                      finalAmount = subtotal + gstAmount - negotiable - discount;
+                    } else {
+                      // Non-GST bill: subtotal - (negotiable or discount)
+                      finalAmount = subtotal - negotiable - discount;
                     }
 
-                    // Otherwise subtract discount from base amount
-                    return Math.round(baseAmount - discountAmt);
+                    // Ensure grand total never goes negative
+                    return Math.round(Math.max(0, finalAmount));
                   })()}</span>
                 </div>
               </div>
@@ -326,7 +332,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
 
               {/* Footer */}
               <div style={{ textAlign: 'center', marginTop: '3mm' }}>
-                {/* Today's Savings - Shows MRP savings + Negotiation savings */}
+                {/* Today's Savings - Shows MRP savings + Negotiation/Discount savings */}
                 {(() => {
                   const mrpSavings = bill.items.reduce((sum, item) => {
                     const mrpAmt = Number(item.mrp) ? Number(item.mrp) * Number(item.quantity) : 0
@@ -334,9 +340,11 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                     return sum + Math.max(0, mrpAmt - rateAmt)
                   }, 0)
 
-                  // Calculate negotiation savings if applicable
-                  const negotiationSavings = bill.discount_amount && Number(bill.discount_amount) > 0 ? Number(bill.discount_amount) : 0
-                  const totalSavings = mrpSavings + negotiationSavings
+                  // Calculate negotiation or discount savings if applicable
+                  const negotiableSavings = bill.negotiable_amount && Number(bill.negotiable_amount) > 0 ? Number(bill.negotiable_amount) : 0
+                  const discountSavings = !negotiableSavings && bill.discount_amount && Number(bill.discount_amount) > 0 ? Number(bill.discount_amount) : 0
+                  const extraSavings = negotiableSavings + discountSavings
+                  const totalSavings = mrpSavings + extraSavings
 
                   return totalSavings > 0 && (
                     <div style={{
@@ -361,8 +369,10 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                         ₹{totalSavings.toFixed(2)}
                       </div>
                       <div style={{ fontSize: '6pt', marginTop: '1mm', fontStyle: 'italic' }}>
-                        {mrpSavings > 0 && negotiationSavings > 0 ? 'You saved on MRP + Negotiation!' :
-                         mrpSavings > 0 ? 'You saved on MRP!' : 'You saved through negotiation!'}
+                        {mrpSavings > 0 && negotiableSavings > 0 ? 'You saved on MRP + Negotiable!' :
+                         mrpSavings > 0 && discountSavings > 0 ? 'You saved on MRP + Discount!' :
+                         mrpSavings > 0 ? 'You saved on MRP!' :
+                         negotiableSavings > 0 ? 'You saved through negotiation!' : 'You saved with discount!'}
                       </div>
                     </div>
                   )

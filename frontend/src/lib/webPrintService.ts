@@ -26,6 +26,7 @@ export interface BillData {
   subtotal: number;
   discount_percentage?: number;
   discount_amount?: number;
+  negotiable_amount?: number;
   gst_amount?: number;
   final_amount: number;
   total_amount: number;
@@ -84,9 +85,25 @@ export function generateReceiptHtml(
 
   const totalQty = bill.items.reduce((sum, item) => sum + Number(item.quantity), 0);
   const totalItems = bill.items.length;
-  const baseAmount = Number(bill.type === 'gst' ? bill.final_amount : bill.total_amount) || 0;
-  const discountAmt = Number(bill.discount_amount) || 0;
-  const finalAmount = baseAmount - discountAmt;
+
+  // Calculate grand total - ALWAYS calculate to ensure consistency
+  // Don't trust backend's final_amount blindly - calculate from source values
+  const subtotal = Number(bill.subtotal) || 0;
+  const gstAmount = Number(bill.gst_amount) || 0;
+  const negotiable = Number(bill.negotiable_amount) || 0;
+  const discount = negotiable > 0 ? 0 : Number(bill.discount_amount) || 0;
+
+  let finalAmount = 0;
+  if (bill.type === 'gst') {
+    // GST bill: subtotal + GST - (negotiable or discount)
+    finalAmount = subtotal + gstAmount - negotiable - discount;
+  } else {
+    // Non-GST bill: subtotal - (negotiable or discount)
+    finalAmount = subtotal - negotiable - discount;
+  }
+
+  // Ensure grand total never goes negative
+  finalAmount = Math.max(0, finalAmount);
   const roundOff = Math.round(finalAmount) - finalAmount;
 
   // Calculate savings
@@ -244,7 +261,11 @@ export function generateReceiptHtml(
 
   <div class="dashed"></div>
   <div class="small flex"><span>Items: ${totalItems} &nbsp; Total Qty: ${totalQty}</span><span>Sub Total: ${Number(bill.subtotal || 0).toFixed(2)}</span></div>
-  ${Number(bill.discount_amount || 0) > 0 ? `<div class="small flex"><span>Discount (${bill.discount_percentage || 0}%):</span><span>-₹${Number(bill.discount_amount || 0).toFixed(2)}</span></div>` : ''}
+  ${Number(bill.negotiable_amount || 0) > 0
+    ? `<div class="small flex"><span>Discount:</span><span>-₹${Number(bill.negotiable_amount || 0).toFixed(2)}</span></div>`
+    : Number(bill.discount_amount || 0) > 0
+      ? `<div class="small flex"><span>Discount${bill.discount_percentage ? ` (${bill.discount_percentage}%)` : ''}:</span><span>-₹${Number(bill.discount_amount || 0).toFixed(2)}</span></div>`
+      : ''}
   ${Number(bill.gst_amount || 0) > 0 ? `<div class="small flex"><span>GST Amount:</span><span>${Number(bill.gst_amount || 0).toFixed(2)}</span></div>` : ''}
 
   <div class="grand-total flex">

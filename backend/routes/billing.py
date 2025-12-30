@@ -671,10 +671,10 @@ def create_unified_bill():
             negotiable_amount = data.get('negotiable_amount')
 
             if negotiable_amount and negotiable_amount > 0:
-                # Use negotiable amount - this overrides discount percentage
+                # Negotiable amount is the discount to subtract (not the final price)
                 total_before_negotiation = round(subtotal + total_gst_amount, 2)
-                final_amount = round(negotiable_amount, 2)
-                discount_amount = total_before_negotiation - final_amount
+                discount_amount = round(negotiable_amount, 2)
+                final_amount = round(total_before_negotiation - discount_amount, 2)
             elif data.get('discount_percentage'):
                 # Use discount percentage
                 total_before_discount = round(subtotal + total_gst_amount, 2)
@@ -763,9 +763,9 @@ def create_unified_bill():
             total_amount = subtotal
 
             if negotiable_amount and negotiable_amount > 0:
-                # Use negotiable amount - this overrides discount percentage
-                total_amount = round(negotiable_amount, 2)
-                discount_amount = subtotal - total_amount
+                # Negotiable amount is the discount to subtract (not the final price)
+                discount_amount = round(negotiable_amount, 2)
+                total_amount = round(subtotal - discount_amount, 2)
             elif data.get('discount_percentage'):
                 # Use discount percentage
                 discount_amount = round((subtotal * data.get('discount_percentage', 0)) / 100, 2)
@@ -1255,9 +1255,6 @@ def print_bill():
 
         # Initialize thermal printer
         printer = ThermalPrinter(printer_name=printer_name)
-
-        # Log printer detection (skip list_printers for speed)
-        print(f"[PRINT] Using printer: {printer.printer_name}")
 
         # Check if printer was detected
         if not printer.printer_name:

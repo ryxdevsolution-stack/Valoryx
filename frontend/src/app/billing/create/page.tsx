@@ -1030,9 +1030,9 @@ export default function UnifiedBillingPage() {
   const calculateGrandTotal = () => {
     const subtotalWithGST = calculateSubtotal() + calculateTotalGST()
 
-    // If negotiable price is enabled, return that directly
+    // If negotiable price is enabled, subtract the negotiable amount as discount
     if (activeTab.useNegotiablePrice && activeTab.negotiableAmount > 0) {
-      return activeTab.negotiableAmount
+      return Math.max(0, subtotalWithGST - activeTab.negotiableAmount)
     }
 
     // Otherwise use discount percentage
@@ -1633,13 +1633,8 @@ export default function UnifiedBillingPage() {
                                   <div className="text-xs text-gray-500 dark:text-gray-400">
                                     Code: {product.item_code || 'N/A'} | Stock: {product.quantity} |
                                     GST: {product.gst_percentage}%
-                                    {product.cost_price && (
-                                      <span className="ml-2 font-semibold text-orange-600 dark:text-orange-400">
-                                        | Cost: ₹{Number(product.cost_price).toFixed(2)}
-                                      </span>
-                                    )}
                                     {product.mrp && (
-                                      <span className="ml-2 font-semibold text-green-600 dark:text-green-400">
+                                      <span className="ml-2 font-semibold text-orange-600 dark:text-orange-400">
                                         | MRP: ₹{Number(product.mrp).toFixed(2)}
                                       </span>
                                     )}
@@ -1910,7 +1905,7 @@ export default function UnifiedBillingPage() {
                               }}
                             >
                               {item.product_name}
-                              {showCostTooltip === index && item.cost_price && (
+                              {showCostTooltip === index && item.mrp && (
                                 <span
                                   className={`cost-tooltip absolute left-0 ${
                                     index >= activeTab.items.length - 2
@@ -1923,7 +1918,7 @@ export default function UnifiedBillingPage() {
                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                     </svg>
-                                    Cost: ₹{Number(item.cost_price).toFixed(2)}
+                                    MRP: ₹{Number(item.mrp).toFixed(2)}
                                   </span>
                                   <span
                                     className={`absolute left-3 w-2 h-2 bg-orange-600 transform rotate-45 ${
@@ -2144,7 +2139,7 @@ export default function UnifiedBillingPage() {
                       })
                     }}
                     className="text-sm text-blue-600 dark:text-blue-400 hover:underline font-bold px-2 py-1 bg-blue-50 dark:bg-blue-900/30 rounded"
-                    title={activeTab.useNegotiablePrice ? 'Switch to Discount %' : 'Switch to Negotiable Amount'}
+                    title={activeTab.useNegotiablePrice ? 'Switch to Discount %' : 'Switch to Negotiable ₹'}
                   >
                     {activeTab.useNegotiablePrice ? '% Off' : '₹ Price'}
                   </button>
@@ -2393,6 +2388,16 @@ export default function UnifiedBillingPage() {
                       </span>
                       <span className="text-xs font-semibold text-red-600 dark:text-red-400">
                         - ₹{getDiscountAmount().toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  {activeTab.useNegotiablePrice && activeTab.negotiableAmount > 0 && (
+                    <div className="flex justify-between items-center border-t border-gray-300 dark:border-gray-600 pt-1">
+                      <span className="text-xs text-red-600 dark:text-red-400 font-medium">
+                        Negotiable:
+                      </span>
+                      <span className="text-xs font-semibold text-red-600 dark:text-red-400">
+                        - ₹{activeTab.negotiableAmount.toFixed(2)}
                       </span>
                     </div>
                   )}
