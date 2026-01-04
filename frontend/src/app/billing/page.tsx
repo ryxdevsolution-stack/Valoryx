@@ -352,8 +352,8 @@ export default function AllBillsPage() {
         // Use Electron's silent print for desktop app
         console.log('[BILLING] Electron detected - using Electron print API...')
         try {
-          const { generateReceiptHtml } = await import('@/lib/printUtils')
-          const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo)
+          const { generateReceiptHtml } = await import('@/lib/webPrintService')
+          const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo, true)
           const printResult = await electronAPI.silentPrint(receiptHtml, null)
 
           if (printResult.success) {
@@ -369,7 +369,7 @@ export default function AllBillsPage() {
         // Use browser print dialog for web deployment
         console.log('[BILLING] Web mode - using browser print dialog...')
         const { printBill } = await import('@/lib/webPrintService')
-        const printResult = printBill(billForPrint as any, clientInfo, false)
+        const printResult = printBill(billForPrint as any, clientInfo, true)
 
         if (printResult.success) {
           console.log('Print dialog opened successfully!')

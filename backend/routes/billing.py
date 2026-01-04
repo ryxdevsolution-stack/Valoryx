@@ -1268,7 +1268,7 @@ def print_bill():
             }), 500
 
         # Print the bill
-        success = printer.print_bill(bill_data, client_info)
+        success = printer.print_bill(bill_data, client_info, show_no_exchange=True)
 
         if success:
             # Log the print action

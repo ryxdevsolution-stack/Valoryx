@@ -465,8 +465,8 @@ export default function ExchangeBillPage() {
 
       if (hasElectronPrint) {
         // Use Electron's silent print for desktop app
-        const { generateReceiptHtml } = await import('@/lib/printUtils')
-        const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo)
+        const { generateReceiptHtml } = await import('@/lib/webPrintService')
+        const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo, false)
         await electronAPI.silentPrint(receiptHtml, null)
       } else {
         // Use browser print dialog for web deployment

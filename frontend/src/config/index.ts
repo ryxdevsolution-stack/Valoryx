@@ -145,20 +145,32 @@ export const BILLING_CONFIG = {
 
 // ============================================================================
 // PRINT CONFIGURATION (Web Only)
+// Keep in sync with: webPrintService.ts, thermal_printer.py, BillPrintPreview.tsx
 // ============================================================================
 
 export const PRINT_CONFIG = {
-  /** Receipt width for thermal printers */
-  receiptWidth: '80mm',
-  /** Content width (accounting for margins) */
-  contentWidth: '76mm',
+  /** Paper size for thermal printers (80mm paper) */
+  paperSize: '80mm',
+  /** Actual printable width (80mm - margins = 72mm) */
+  receiptWidth: '72mm',
+  /** Content width for receipt body */
+  contentWidth: '72mm',
   /** Default font for receipts */
-  receiptFont: "'Courier New', 'Lucida Console', monospace",
+  receiptFont: "'Courier New', 'Consolas', monospace",
   /** Auto-close print window after printing */
   autoClosePrintWindow: true,
   /** Print window dimensions */
   printWindowWidth: 320,
   printWindowHeight: 600,
+  /** Column widths for items table */
+  columns: {
+    qty: '6mm',
+    mrp: '11mm',
+    rate: '11mm',
+    amount: '12mm',
+  },
+  /** Max characters for item names */
+  itemNameMax: 20,
 } as const;
 
 // ============================================================================

@@ -1,13 +1,28 @@
 /**
- * Web Print Service
- * Standalone print service for web/cloud deployments
- * Uses browser print dialog - completely separate from desktop printing
+ * Web Print Service - UNIFIED RECEIPT FORMAT
+ * Single source of truth for browser-based receipt printing
+ *
+ * Configuration matches backend/utils/thermal_printer.py for consistency
  */
+
+// ============================================================================
+// CONFIGURATION - Keep in sync with thermal_printer.py
+// ============================================================================
+const RECEIPT_CONFIG = {
+  PAPER_WIDTH: '72mm',      // Actual printable width (80mm - margins)
+  FONT_SIZE: '9pt',         // Base font size
+  FONT_SIZE_LARGE: '12pt',  // Headers
+  FONT_SIZE_SMALL: '8pt',   // Details
+  COL_QTY: '6mm',           // Quantity column
+  COL_MRP: '11mm',          // MRP column
+  COL_RATE: '11mm',         // Rate column
+  COL_AMT: '12mm',          // Amount column
+  ITEM_NAME_MAX: 20,        // Max characters for item name
+} as const;
 
 // ============================================================================
 // TYPES
 // ============================================================================
-
 export interface BillItem {
   product_name: string;
   quantity: number;
@@ -28,6 +43,7 @@ export interface BillData {
   discount_amount?: number;
   negotiable_amount?: number;
   gst_amount?: number;
+  gst_percentage?: number;
   final_amount: number;
   total_amount: number;
   payment_type: string;
@@ -53,60 +69,83 @@ export interface PrintResult {
 }
 
 // ============================================================================
-// RECEIPT HTML GENERATOR
+// HELPER FUNCTIONS
 // ============================================================================
+function formatDate(dateString: string): string {
+  const date = new Date(dateString);
+  const day = date.getDate().toString().padStart(2, '0');
+  const month = (date.getMonth() + 1).toString().padStart(2, '0');
+  const year = date.getFullYear();
+  return `${day}/${month}/${year}`;
+}
 
-/**
- * Generate HTML receipt optimized for 80mm thermal printers
- */
+function formatTime(dateString: string): string {
+  const date = new Date(dateString);
+  const hours = date.getHours();
+  const minutes = date.getMinutes().toString().padStart(2, '0');
+  const seconds = date.getSeconds().toString().padStart(2, '0');
+  const ampm = hours >= 12 ? 'PM' : 'AM';
+  const displayHours = (hours % 12 || 12).toString().padStart(2, '0');
+  return `${displayHours}:${minutes}:${seconds} ${ampm}`;
+}
+
+function truncate(text: string, maxLen: number): string {
+  if (text.length > maxLen) {
+    return text.substring(0, maxLen - 2) + '..';
+  }
+  return text;
+}
+
+function formatNumber(val: number): string {
+  // Format numbers compactly for large values
+  if (val >= 1000) {
+    return Math.round(val).toString();
+  }
+  return val.toFixed(2);
+}
+
+function escapeHtml(text: string): string {
+  return text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#039;');
+}
+
+// ============================================================================
+// RECEIPT HTML GENERATOR - UNIFIED FORMAT
+// ============================================================================
 export function generateReceiptHtml(
   bill: BillData,
   clientInfo: ClientInfo,
-  showNoExchange: boolean = false
+  showNoExchange: boolean = true
 ): string {
-  const formatDate = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: '2-digit',
-      year: 'numeric',
-    });
-  };
+  const { PAPER_WIDTH, FONT_SIZE, FONT_SIZE_LARGE, FONT_SIZE_SMALL, COL_QTY, COL_MRP, COL_RATE, COL_AMT, ITEM_NAME_MAX } = RECEIPT_CONFIG;
 
-  const formatTime = (dateString: string) => {
-    const date = new Date(dateString);
-    return date.toLocaleTimeString('en-IN', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: true,
-    });
-  };
-
-  const totalQty = bill.items.reduce((sum, item) => sum + Number(item.quantity), 0);
+  // Calculate totals
   const totalItems = bill.items.length;
+  const totalQty = bill.items.reduce((sum, item) => sum + Number(item.quantity), 0);
 
-  // Calculate grand total - ALWAYS calculate to ensure consistency
-  // Don't trust backend's final_amount blindly - calculate from source values
   const subtotal = Number(bill.subtotal) || 0;
   const gstAmount = Number(bill.gst_amount) || 0;
   const negotiable = Number(bill.negotiable_amount) || 0;
-  const discount = negotiable > 0 ? 0 : Number(bill.discount_amount) || 0;
+  const discount = Number(bill.discount_amount) || 0;
+  const actualDiscount = negotiable > 0 ? negotiable : discount;
 
+  // Calculate final amount
   let finalAmount = 0;
   if (bill.type === 'gst') {
-    // GST bill: subtotal + GST - (negotiable or discount)
-    finalAmount = subtotal + gstAmount - negotiable - discount;
+    finalAmount = subtotal + gstAmount - actualDiscount;
   } else {
-    // Non-GST bill: subtotal - (negotiable or discount)
-    finalAmount = subtotal - negotiable - discount;
+    finalAmount = subtotal - actualDiscount;
   }
-
-  // Ensure grand total never goes negative
   finalAmount = Math.max(0, finalAmount);
-  const roundOff = Math.round(finalAmount) - finalAmount;
 
-  // Calculate savings
+  const roundOff = Math.round(finalAmount) - finalAmount;
+  const grandTotal = Math.round(finalAmount);
+
+  // Calculate savings and GST breakdown
   let totalSavings = 0;
   const gstBreakdown: Record<number, { taxable: number; gst: number }> = {};
 
@@ -114,9 +153,11 @@ export function generateReceiptHtml(
     const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
     const rate = Number(item.rate);
     const qty = Number(item.quantity);
+
     if (mrp > rate) {
       totalSavings += (mrp - rate) * qty;
     }
+
     const gstPct = Number(item.gst_percentage) || 0;
     if (gstPct > 0) {
       const taxableAmt = qty * rate;
@@ -129,6 +170,9 @@ export function generateReceiptHtml(
     }
   }
 
+  // Include discount in savings
+  totalSavings += actualDiscount;
+
   // Format payment info
   let paymentHtml = '';
   try {
@@ -140,173 +184,215 @@ export function generateReceiptHtml(
         )
         .join('<br>');
     } else {
-      paymentHtml = bill.payment_type;
+      paymentHtml = escapeHtml(bill.payment_type);
     }
   } catch {
-    paymentHtml = bill.payment_type;
+    paymentHtml = escapeHtml(bill.payment_type);
   }
 
-  const userName = bill.user_name || bill.created_by || 'Admin';
+  // User name
+  let userName = bill.user_name || bill.created_by || 'Admin';
+  if (userName.length > 15) {
+    userName = userName.substring(0, 12) + '...';
+  }
 
-  return `
-<!DOCTYPE html>
+  // Build items HTML
+  let itemsHtml = '';
+  for (const item of bill.items) {
+    const name = truncate(item.product_name, ITEM_NAME_MAX);
+    const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
+    const rate = Number(item.rate);
+    const qty = Number(item.quantity);
+    const amt = Number(item.amount);
+
+    itemsHtml += `
+    <div class="item-row">
+      <span class="col-name">${escapeHtml(name)}</span>
+      <span class="col-qty">${qty}</span>
+      <span class="col-mrp">${formatNumber(mrp)}</span>
+      <span class="col-rate">${formatNumber(rate)}</span>
+      <span class="col-amt">${formatNumber(amt)}</span>
+    </div>`;
+  }
+
+  // Build GST breakdown HTML
+  let gstBreakdownHtml = '';
+  if (bill.type === 'gst' && Object.keys(gstBreakdown).length > 0) {
+    gstBreakdownHtml = `
+    <div class="center small bold">GST BREAKDOWN</div>
+    <table class="gst-table">
+      <tr><th>Tax%</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>Total</th></tr>`;
+    for (const gstPct of Object.keys(gstBreakdown).map(Number).sort()) {
+      const data = gstBreakdown[gstPct];
+      const cgstAmt = data.gst / 2;
+      gstBreakdownHtml += `
+      <tr>
+        <td>${gstPct}%</td>
+        <td>${Math.round(data.taxable)}</td>
+        <td>${cgstAmt.toFixed(2)}</td>
+        <td>${cgstAmt.toFixed(2)}</td>
+        <td>${data.gst.toFixed(2)}</td>
+      </tr>`;
+    }
+    gstBreakdownHtml += '</table>';
+  }
+
+  // Build complete HTML
+  return `<!DOCTYPE html>
 <html>
 <head>
   <meta charset="UTF-8">
   <title>Bill #${bill.bill_number}</title>
   <style>
-    @page {
-      size: 80mm auto;
-      margin: 0mm 1.5mm;
-    }
+    @page { size: 80mm auto; margin: 2mm; }
     @media print {
-      html, body {
-        margin: 0 !important;
-        padding: 0 !important;
-        width: 77mm !important;
-        max-width: 77mm !important;
-      }
-      .no-print { display: none !important; }
-      * {
-        -webkit-print-color-adjust: exact !important;
-        print-color-adjust: exact !important;
-        color-adjust: exact !important;
-        box-sizing: border-box !important;
-      }
+      html, body { margin: 0 !important; padding: 0 !important; }
+      body { width: ${PAPER_WIDTH} !important; }
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
-    html {
-      width: 80mm;
-      max-width: 80mm;
-    }
     body {
-      font-family: 'Courier New', 'Lucida Console', monospace;
-      width: 77mm;
-      max-width: 77mm;
-      margin: 0 auto;
-      background: white;
-      color: #000000;
-      font-size: 10pt;
+      font-family: 'Courier New', 'Consolas', monospace;
+      width: ${PAPER_WIDTH};
+      max-width: ${PAPER_WIDTH};
+      background: #fff;
+      color: #000;
+      font-size: ${FONT_SIZE};
       font-weight: 600;
-      line-height: 1.2;
-      padding: 1mm;
+      line-height: 1.3;
+      padding: 2mm;
       -webkit-font-smoothing: none;
-      text-rendering: geometricPrecision;
-      overflow-x: hidden;
     }
     .center { text-align: center; }
     .bold { font-weight: 900; }
-    .large { font-size: 16pt; font-weight: 900; letter-spacing: 2px; }
-    .small { font-size: 9pt; font-weight: 600; }
-    .dashed { border-bottom: 2px dashed #000000; margin: 2mm 0; }
-    .solid { border-bottom: 3px solid #000000; margin: 2mm 0; }
-    .flex { display: flex; justify-content: space-between; flex-wrap: nowrap; }
-    .grand-total { border: 3px solid #000000; padding: 3mm; margin: 2mm 0; font-size: 14pt; font-weight: 900; background: #f0f0f0; }
-    .savings-box { border: 3px double #000000; padding: 2mm; margin: 2mm 0; text-align: center; font-weight: 700; }
-    .no-exchange { border-top: 1px dashed #000; border-bottom: 1px dashed #000; padding: 1.5mm 0; margin: 2mm 0; text-align: center; font-weight: 900; font-size: 8pt; }
-    .item-row { display: flex; flex-wrap: nowrap; width: 100%; }
-    .item-row span { flex-shrink: 0; }
+    .large { font-size: ${FONT_SIZE_LARGE}; font-weight: 900; }
+    .small { font-size: ${FONT_SIZE_SMALL}; }
+    .dashed { border-bottom: 1px dashed #000; margin: 2mm 0; }
+    .solid { border-bottom: 2px solid #000; margin: 2mm 0; }
+    .row { margin-bottom: 0.5mm; }
+    .row-2col { display: flex; margin-bottom: 0.5mm; }
+    .row-2col span { flex: 1; }
+    .item-header, .item-row {
+      display: flex;
+      align-items: center;
+      font-size: ${FONT_SIZE_SMALL};
+    }
+    .item-header { font-weight: 900; margin-bottom: 1mm; }
+    .item-row { margin-bottom: 1mm; }
+    .col-name { width: 22mm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
+    .col-qty { width: ${COL_QTY}; text-align: center; flex-shrink: 0; }
+    .col-mrp { width: ${COL_MRP}; text-align: right; flex-shrink: 0; }
+    .col-rate { width: ${COL_RATE}; text-align: right; flex-shrink: 0; }
+    .col-amt { width: ${COL_AMT}; text-align: right; flex-shrink: 0; font-weight: 700; }
+    .summary-row { display: flex; margin-bottom: 0.5mm; }
+    .summary-row span { flex: 1; }
+    .grand-total {
+      border: 2px solid #000;
+      padding: 2mm;
+      margin: 2mm 0;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: 900;
+    }
+    .grand-total-label { font-size: 10pt; }
+    .grand-total-value { font-size: 14pt; }
+    .savings-box {
+      border: 2px double #000;
+      padding: 2mm;
+      margin: 2mm 0;
+      text-align: center;
+    }
+    .gst-table {
+      width: 100%;
+      font-size: 7pt;
+      border-collapse: collapse;
+      margin: 2mm 0;
+    }
+    .gst-table th, .gst-table td {
+      border: 1px solid #000;
+      padding: 1mm;
+      text-align: center;
+    }
+    .no-exchange {
+      border: 1px dashed #000;
+      padding: 1.5mm;
+      margin: 2mm 0;
+      text-align: center;
+      font-weight: 700;
+      font-size: ${FONT_SIZE_SMALL};
+    }
   </style>
 </head>
 <body>
+  <!-- Header -->
   <div class="solid"></div>
   <div class="center" style="margin: 2mm 0;">
-    <div class="large bold">${clientInfo.client_name || 'Business Name'}</div>
-    ${clientInfo.address ? `<div class="small">${clientInfo.address.replace(/\n/g, '<br>')}</div>` : ''}
-    ${clientInfo.gstin ? `<div class="small">GSTIN: ${clientInfo.gstin}</div>` : ''}
+    <div class="large">${escapeHtml(clientInfo.client_name || 'Business Name')}</div>
+    ${clientInfo.address ? `<div class="small">${escapeHtml(clientInfo.address).replace(/\n/g, '<br>')}</div>` : ''}
+    ${clientInfo.phone ? `<div class="small">Ph: ${escapeHtml(clientInfo.phone)}</div>` : ''}
+    ${clientInfo.gstin ? `<div class="small bold">GSTIN: ${escapeHtml(clientInfo.gstin)}</div>` : ''}
   </div>
   <div class="solid"></div>
 
-  <div class="center bold" style="margin: 1mm 0;">
-    ${bill.type === 'gst' ? 'TAX INVOICE' : 'RECEIPT'}
+  <!-- Bill Type -->
+  <div class="center bold" style="margin: 1mm 0; font-size: 10pt;">
+    *** ${bill.type === 'gst' ? 'TAX INVOICE' : 'RECEIPT'} ***
   </div>
   <div class="dashed"></div>
 
+  <!-- Bill Info - 2 COLUMN LAYOUT -->
   <div class="small">
-    <div class="flex"><span>User: ${userName}</span><span>Time: ${formatTime(bill.created_at)}</span></div>
-    <div class="flex"><span>Bill No: ${bill.bill_number}</span><span>Date: ${formatDate(bill.created_at)}</span></div>
-    ${bill.customer_name ? `<div>Customer: ${bill.customer_name}</div>` : ''}
-    ${bill.type === 'gst' && bill.customer_gstin ? `<div>GSTIN: ${bill.customer_gstin}</div>` : ''}
+    <div class="row-2col"><span>Bill No: ${bill.bill_number}</span><span>Date: ${formatDate(bill.created_at)}</span></div>
+    <div class="row-2col"><span>Time: ${formatTime(bill.created_at)}</span><span>User: ${escapeHtml(userName)}</span></div>
+    ${bill.customer_name ? `<div class="row">Customer: ${escapeHtml(bill.customer_name)}</div>` : ''}
+    ${bill.customer_phone ? `<div class="row">Phone: ${escapeHtml(bill.customer_phone)}</div>` : ''}
+    ${bill.type === 'gst' && bill.customer_gstin ? `<div class="row">GSTIN: ${escapeHtml(bill.customer_gstin)}</div>` : ''}
   </div>
   <div class="dashed"></div>
 
   <!-- Items Header -->
-  <div class="small item-row" style="font-weight: bold; margin-bottom: 1mm;">
-    <span style="flex: 1; min-width: 0; overflow: hidden;">Item</span>
-    <span style="width: 7mm; text-align: center;">Qty</span>
-    <span style="width: 11mm; text-align: right;">MRP</span>
-    <span style="width: 11mm; text-align: right;">Rate</span>
-    <span style="width: 13mm; text-align: right;">Amt</span>
+  <div class="item-header">
+    <span class="col-name">Item</span>
+    <span class="col-qty">Qty</span>
+    <span class="col-mrp">MRP</span>
+    <span class="col-rate">Rate</span>
+    <span class="col-amt">Amt</span>
   </div>
   <div class="dashed"></div>
 
   <!-- Items -->
-  ${bill.items
-    .map((item) => {
-      const name =
-        item.product_name.length > 14
-          ? item.product_name.substring(0, 12) + '..'
-          : item.product_name;
-      const mrp = item.mrp && item.mrp > 0 ? item.mrp : item.rate;
-      return `
-    <div class="small item-row" style="margin-bottom: 1mm;">
-      <span style="flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${name}</span>
-      <span style="width: 7mm; text-align: center;">${item.quantity}</span>
-      <span style="width: 11mm; text-align: right;">${Math.round(Number(mrp))}</span>
-      <span style="width: 11mm; text-align: right;">${Math.round(Number(item.rate))}</span>
-      <span style="width: 13mm; text-align: right; font-weight: bold;">${Math.round(Number(item.amount))}</span>
-    </div>`;
-    })
-    .join('')}
-
+  ${itemsHtml}
   <div class="dashed"></div>
-  <div class="small flex"><span>Items: ${totalItems} &nbsp; Total Qty: ${totalQty}</span><span>Sub Total: ${Number(bill.subtotal || 0).toFixed(2)}</span></div>
-  ${Number(bill.negotiable_amount || 0) > 0
-    ? `<div class="small flex"><span>Discount:</span><span>-₹${Number(bill.negotiable_amount || 0).toFixed(2)}</span></div>`
-    : Number(bill.discount_amount || 0) > 0
-      ? `<div class="small flex"><span>Discount${bill.discount_percentage ? ` (${bill.discount_percentage}%)` : ''}:</span><span>-₹${Number(bill.discount_amount || 0).toFixed(2)}</span></div>`
-      : ''}
-  ${Number(bill.gst_amount || 0) > 0 ? `<div class="small flex"><span>GST Amount:</span><span>${Number(bill.gst_amount || 0).toFixed(2)}</span></div>` : ''}
 
-  <div class="grand-total flex">
-    <span>GRAND TOTAL</span>
-    <span style="font-size: 16pt;">₹${Math.round(finalAmount)}</span>
+  <!-- Summary - 2 COLUMN -->
+  <div class="small">
+    <div class="summary-row"><span>Items: ${totalItems} | Qty: ${totalQty}</span><span>Sub Total: ${subtotal.toFixed(2)}</span></div>
+    ${actualDiscount > 0 || gstAmount > 0 ? `<div class="summary-row"><span>${actualDiscount > 0 ? `Discount: -${actualDiscount.toFixed(2)}` : ''}</span><span>${gstAmount > 0 ? `GST: +${gstAmount.toFixed(2)}` : ''}</span></div>` : ''}
+    ${Math.abs(roundOff) >= 0.01 ? `<div class="row">Round Off: ${roundOff > 0 ? '+' : ''}${roundOff.toFixed(2)}</div>` : ''}
   </div>
 
-  ${
-    bill.type === 'gst' && Object.keys(gstBreakdown).length > 0
-      ? `
-  <div class="small flex" style="margin: 1mm 0;">
-    <span>GST (${Object.keys(gstBreakdown)
-      .map(Number)
-      .sort()
-      .map((gstPct) => `${gstPct}%: Rs.${gstBreakdown[gstPct].gst.toFixed(2)}`)
-      .join(', ')})</span>
-    <span><strong>Rs.${Object.values(gstBreakdown)
-      .reduce((sum, d) => sum + d.gst, 0)
-      .toFixed(2)}</strong></span>
+  <!-- Grand Total -->
+  <div class="grand-total">
+    <span class="grand-total-label">GRAND TOTAL</span>
+    <span class="grand-total-value">Rs.${grandTotal}</span>
   </div>
-  `
-      : ''
-  }
+
+  ${gstBreakdownHtml}
 
   <div class="dashed"></div>
   <div class="small center">Payment: ${paymentHtml}</div>
 
-  ${
-    totalSavings > 0
-      ? `
+  ${totalSavings > 0 ? `
   <div class="savings-box">
     <div class="bold">TODAY'S SAVINGS</div>
-    <div class="large bold">₹${totalSavings.toFixed(2)}</div>
-    <div class="small" style="font-style: italic;">You saved compared to MRP!</div>
-  </div>
-  `
-      : ''
-  }
+    <div class="large">Rs.${totalSavings.toFixed(2)}</div>
+    <div class="small">You saved compared to MRP!</div>
+  </div>` : ''}
 
-  <div class="no-exchange">Sorry, No Exchange / No Refund</div>
-  <div class="center bold" style="margin: 2mm 0;">★★★ THANK YOU VISIT AGAIN ★★★</div>
+  ${showNoExchange ? '<div class="no-exchange">Sorry, No Exchange / No Refund</div>' : ''}
+
+  <div class="dashed"></div>
+  <div class="center bold" style="margin: 2mm 0;">*** THANK YOU VISIT AGAIN ***</div>
   <div class="solid"></div>
 </body>
 </html>`;
@@ -322,7 +408,7 @@ export function generateReceiptHtml(
 export function printBill(
   bill: BillData,
   clientInfo: ClientInfo,
-  showNoExchange: boolean = false
+  showNoExchange: boolean = true
 ): PrintResult {
   try {
     const html = generateReceiptHtml(bill, clientInfo, showNoExchange);
@@ -333,7 +419,7 @@ export function printBill(
       existingFrame.remove();
     }
 
-    // Create hidden iframe for printing (avoids popup blocker)
+    // Create hidden iframe for printing
     const iframe = document.createElement('iframe');
     iframe.id = 'print-iframe';
     iframe.style.position = 'fixed';
@@ -354,9 +440,7 @@ export function printBill(
       };
     }
 
-    // Track if print was already triggered to avoid double dialog
     let printTriggered = false;
-
     const triggerPrint = () => {
       if (printTriggered) return;
       printTriggered = true;
@@ -368,20 +452,16 @@ export function printBill(
         console.error('Print error:', e);
       }
 
-      // Remove iframe after a longer delay to ensure print dialog completes
       setTimeout(() => {
         const frame = document.getElementById('print-iframe');
         if (frame) frame.remove();
       }, 5000);
     };
 
-    // Write content to iframe
     iframeDoc.open();
     iframeDoc.write(html);
     iframeDoc.close();
 
-    // For dynamically written content, onload may not fire
-    // Use a short delay to ensure content is rendered
     setTimeout(triggerPrint, 100);
 
     return {
@@ -404,16 +484,13 @@ export function printBill(
 export function downloadPdf(
   bill: BillData,
   clientInfo: ClientInfo,
-  showNoExchange: boolean = false
+  showNoExchange: boolean = true
 ): PrintResult {
   try {
     const html = generateReceiptHtml(bill, clientInfo, showNoExchange);
-
-    // Create a blob from HTML
     const blob = new Blob([html], { type: 'text/html' });
     const url = URL.createObjectURL(blob);
 
-    // Open in new tab for user to print/save as PDF
     const newTab = window.open(url, '_blank');
     if (!newTab) {
       return {
@@ -423,7 +500,6 @@ export function downloadPdf(
       };
     }
 
-    // Clean up after a delay
     setTimeout(() => URL.revokeObjectURL(url), 10000);
 
     return {
@@ -446,19 +522,19 @@ export function downloadPdf(
 export function shareWhatsApp(bill: BillData, clientInfo: ClientInfo): PrintResult {
   try {
     const finalAmount = bill.type === 'gst' ? bill.final_amount : bill.total_amount;
-    const date = new Date(bill.created_at).toLocaleDateString('en-IN');
+    const date = formatDate(bill.created_at);
 
     const message = encodeURIComponent(
       `*${clientInfo.client_name || 'Bill'}*\n` +
-        `━━━━━━━━━━━━━━━\n` +
-        `Bill No: ${bill.bill_number}\n` +
-        `Date: ${date}\n` +
-        `━━━━━━━━━━━━━━━\n` +
-        `Items: ${bill.items.length}\n` +
-        `Total: Rs. ${Math.round(Number(finalAmount)).toFixed(2)}\n` +
-        `Payment: ${bill.payment_type}\n` +
-        `━━━━━━━━━━━━━━━\n` +
-        `Thank you for your purchase!`
+      `━━━━━━━━━━━━━━━\n` +
+      `Bill No: ${bill.bill_number}\n` +
+      `Date: ${date}\n` +
+      `━━━━━━━━━━━━━━━\n` +
+      `Items: ${bill.items.length}\n` +
+      `Total: Rs. ${Math.round(Number(finalAmount))}\n` +
+      `Payment: ${bill.payment_type}\n` +
+      `━━━━━━━━━━━━━━━\n` +
+      `Thank you for your purchase!`
     );
 
     const phone = bill.customer_phone ? bill.customer_phone.replace(/\D/g, '') : '';
@@ -485,12 +561,12 @@ export function shareWhatsApp(bill: BillData, clientInfo: ClientInfo): PrintResu
 // ============================================================================
 // DEFAULT EXPORT
 // ============================================================================
-
 const webPrintService = {
   generateReceiptHtml,
   printBill,
   downloadPdf,
   shareWhatsApp,
+  RECEIPT_CONFIG,
 };
 
 export default webPrintService;

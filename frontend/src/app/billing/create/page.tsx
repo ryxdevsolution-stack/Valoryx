@@ -100,6 +100,11 @@ export default function UnifiedBillingPage() {
   const barcodeBuffer = useRef('')
   const barcodeTimeout = useRef<NodeJS.Timeout | null>(null)
 
+  // For detecting fast typing (barcode scanner) in product search field
+  const searchInputTimestamp = useRef<number>(0)
+  const searchInputBuffer = useRef<string>('')
+  const searchBarcodeTimeout = useRef<NodeJS.Timeout | null>(null)
+
   // LocalStorage key for draft persistence
   const DRAFT_STORAGE_KEY = 'billing_draft_tabs'
 
@@ -352,6 +357,9 @@ export default function UnifiedBillingPage() {
       document.removeEventListener('click', handleClickOutside)
       if (barcodeTimeout.current) {
         clearTimeout(barcodeTimeout.current)
+      }
+      if (searchBarcodeTimeout.current) {
+        clearTimeout(searchBarcodeTimeout.current)
       }
     }
   }, [loadInitialData])
@@ -838,6 +846,74 @@ export default function UnifiedBillingPage() {
     }
   }
 
+  // Handle barcode scan detection in product search field
+  // Barcode scanners type very fast (< 50ms between chars) vs manual typing (> 100ms)
+  const BARCODE_TYPING_THRESHOLD_MS = 50   // Max ms between chars for barcode scanner
+  const BARCODE_COMPLETION_DELAY_MS = 150  // Wait time after last char before processing
+  const BARCODE_MIN_LENGTH = 3             // Minimum barcode length
+
+  const handleProductSearchChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const searchValue = e.target.value
+    const now = Date.now()
+    // Handle first character - timestamp 0 means first input, treat as manual typing
+    const timeSinceLastInput = searchInputTimestamp.current === 0
+      ? Infinity
+      : now - searchInputTimestamp.current
+
+    // Update timestamp
+    searchInputTimestamp.current = now
+
+    // If typing is fast (< threshold ms between characters), it's likely a barcode scanner
+    if (timeSinceLastInput < BARCODE_TYPING_THRESHOLD_MS && searchValue.length > BARCODE_MIN_LENGTH) {
+      // Accumulate in buffer for barcode
+      searchInputBuffer.current = searchValue
+
+      // Clear any existing timeout
+      if (searchBarcodeTimeout.current) {
+        clearTimeout(searchBarcodeTimeout.current)
+      }
+
+      // Set timeout to process barcode after scanner finishes
+      searchBarcodeTimeout.current = setTimeout(async () => {
+        const scannedCode = searchInputBuffer.current.trim()
+        if (scannedCode.length >= BARCODE_MIN_LENGTH) {
+          try {
+            const response = await api.get(`/stock/lookup/${encodeURIComponent(scannedCode)}`)
+            const product = response.data.product
+            addProductToItems(product)
+            setProductSearch('')
+            searchInputBuffer.current = ''
+            setShowProductDropdown(false)
+            // Reset timestamp for next scan
+            searchInputTimestamp.current = 0
+            // Keep focus on search for next scan
+            productSearchRef.current?.focus()
+          } catch (error: any) {
+            // Product not found - let it stay in search field for manual handling
+            setShowProductDropdown(true)
+          }
+        }
+        searchInputBuffer.current = ''
+      }, BARCODE_COMPLETION_DELAY_MS)
+    } else {
+      // Manual typing - reset buffer and show dropdown
+      searchInputBuffer.current = ''
+      // Reset timestamp if field is cleared (for fresh detection on next input)
+      if (!searchValue) {
+        searchInputTimestamp.current = 0
+      }
+      if (searchBarcodeTimeout.current) {
+        clearTimeout(searchBarcodeTimeout.current)
+      }
+    }
+
+    // Always update search value for display
+    setProductSearch(searchValue)
+    setShowProductDropdown(true)
+    setSelectedProductIndex(-1)
+    setHasUsedArrowKeys(false)
+  }
+
   const addItem = () => {
     // If user typed in search but didn't select a product, use search text as new product
     let productNameToUse = currentItem.product_name
@@ -1203,8 +1279,8 @@ export default function UnifiedBillingPage() {
 
         try {
           // Import and generate receipt HTML
-          const { generateReceiptHtml } = await import('@/lib/printUtils')
-          const receiptHtml = generateReceiptHtml(billData, clientInfo)
+          const { generateReceiptHtml } = await import('@/lib/webPrintService')
+          const receiptHtml = generateReceiptHtml(billData, clientInfo, true)
 
           console.log('[BILLING] Sending to Electron printer...')
           const printResult = await electronAPI.silentPrint(receiptHtml, null)
@@ -1224,7 +1300,7 @@ export default function UnifiedBillingPage() {
         console.log('[BILLING] Web mode - using browser print dialog...')
         try {
           const { printBill } = await import('@/lib/webPrintService')
-          const printResult = printBill(billData, clientInfo, false)
+          const printResult = printBill(billData, clientInfo, true)
 
           if (printResult.success) {
             console.log('[BILLING] Browser print dialog opened successfully!')
@@ -1565,24 +1641,17 @@ export default function UnifiedBillingPage() {
                   </div>
                 </div>
               )}
-              <div className="flex gap-1 items-end">
+              <div className="flex gap-2 items-end">
                 <div className="flex-1 relative product-search-container">
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
                     Search Product (F2)
                   </label>
                   <input
                     ref={productSearchRef}
                     type="text"
-                    placeholder="Type to search product..."
+                    placeholder="Type To Search Product..."
                     value={productSearch}
-                    onChange={(e) => {
-                      const searchValue = e.target.value
-                      setProductSearch(searchValue)
-                      setShowProductDropdown(true)
-                      setSelectedProductIndex(-1)  // Reset selection - no auto-select
-                      setHasUsedArrowKeys(false)  // Reset arrow key tracking
-                      // No auto-populate - user must either use arrow keys to select OR just click Add
-                    }}
+                    onChange={handleProductSearchChange}
                     onFocus={() => setShowProductDropdown(true)}
                     onKeyDown={(e) => {
                       // If Enter is pressed without a product, move to Amount Received
@@ -1595,7 +1664,7 @@ export default function UnifiedBillingPage() {
                         handleProductSearchKeyDown(e)
                       }
                     }}
-                    className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 capitalize"
+                    className="w-full px-3 py-2.5 text-base border-2 border-blue-400 dark:border-blue-500 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-600 text-gray-900 dark:text-white bg-white dark:bg-gray-700 capitalize font-medium shadow-sm"
                   />
                   {/* Dropdown List */}
                   {showProductDropdown && productSearch && (
@@ -1663,8 +1732,8 @@ export default function UnifiedBillingPage() {
                     </div>
                   )}
                 </div>
-                <div className="w-20">
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <div className="w-24">
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
                     Quantity
                   </label>
                   <input
@@ -1690,7 +1759,7 @@ export default function UnifiedBillingPage() {
                     }}
                     onKeyDown={(e) => handleKeyPress(e, 'quantity')}
                     disabled={!isNewProduct && Boolean(currentItem.product_id) && availableStock === 0}
-                    className={`w-full px-2 py-1 text-xs border rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white ${
+                    className={`w-full px-3 py-2.5 text-base border-2 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white font-medium ${
                       !isNewProduct && currentItem.product_id && availableStock === 0
                         ? 'bg-red-50 dark:bg-red-900/20 border-red-500 dark:border-red-600 cursor-not-allowed'
                         : stockWarning
@@ -1699,8 +1768,8 @@ export default function UnifiedBillingPage() {
                     }`}
                   />
                 </div>
-                <div className="w-24">
-                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <div className="w-28">
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
                     Rate
                   </label>
                   <input
@@ -1714,14 +1783,14 @@ export default function UnifiedBillingPage() {
                       setCurrentItem({ ...currentItem, rate: parseFloat(e.target.value) || 0 })
                     }
                     onKeyDown={(e) => handleKeyPress(e, 'rate')}
-                    className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                    className="w-full px-3 py-2.5 text-base border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium"
                     title="Enter rate"
                   />
                 </div>
                 {/* GST% field - Hidden for non-GST only users */}
                 {!nonGstOnly && (
                   <div className="w-20">
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
                       GST%
                     </label>
                     <input
@@ -1739,7 +1808,7 @@ export default function UnifiedBillingPage() {
                         })
                       }
                       onKeyDown={(e) => handleKeyPress(e, 'gst')}
-                      className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                      className="w-full px-3 py-2.5 text-base border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium"
                       title="Enter GST %"
                     />
                   </div>
@@ -1751,7 +1820,7 @@ export default function UnifiedBillingPage() {
                     disabled={
                       !isNewProduct && Boolean(currentItem.product_id) && availableStock === 0
                     }
-                    className={`px-3 py-1 rounded transition font-medium text-xs whitespace-nowrap ${
+                    className={`px-5 py-2.5 rounded-lg transition font-semibold text-base whitespace-nowrap shadow-sm ${
                       !isNewProduct && currentItem.product_id && availableStock === 0
                         ? 'bg-gray-400 text-gray-700 cursor-not-allowed'
                         : 'bg-blue-600 text-white hover:bg-blue-700'

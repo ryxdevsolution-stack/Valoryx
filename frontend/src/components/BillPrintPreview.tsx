@@ -110,15 +110,13 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
           </div>
 
           <div className="flex-1 overflow-auto bg-gray-50 p-6">
-            <div className="bg-white shadow-lg" style={{ maxWidth: '76mm', width: '76mm', margin: '0 auto' }}>
+            <div className="bg-white shadow-lg" style={{ maxWidth: '72mm', width: '72mm', margin: '0 auto' }}>
               <div ref={printRef} className="bill-receipt">
-              {/* Star border top */}
-              <div className="text-center" style={{ fontSize: '10px', letterSpacing: '-1px' }}>
-                ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
-              </div>
+              {/* Solid line top */}
+              <div style={{ borderBottom: '2px solid #000', margin: '2mm 0' }}></div>
 
               {/* Header */}
-              <div className="text-center" style={{ marginTop: '3mm', marginBottom: '3mm' }}>
+              <div className="text-center" style={{ marginTop: '2mm', marginBottom: '2mm' }}>
                 {safeClientInfo.logo_url && (
                   <div style={{ margin: '0 auto 2mm', width: '20mm', height: '20mm', position: 'relative' }}>
                     <NextImage
@@ -130,7 +128,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                     />
                   </div>
                 )}
-                <div style={{ fontSize: '14pt', fontWeight: 'bold', textTransform: 'uppercase', letterSpacing: '0.5px', marginBottom: '2mm', color: '#000000' }}>
+                <div style={{ fontSize: '12pt', fontWeight: '900', textTransform: 'uppercase', marginBottom: '1mm', color: '#000000' }}>
                   {safeClientInfo.client_name}
                 </div>
                 {safeClientInfo.address && (
@@ -138,105 +136,96 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                     {safeClientInfo.address}
                   </div>
                 )}
-                <div style={{ fontSize: '8pt', lineHeight: '1.3', fontWeight: '600' }}>
-                  {safeClientInfo.gstin && <div>GSTIN: {safeClientInfo.gstin}</div>}
-                </div>
-                <div style={{ fontSize: '10pt', fontWeight: 'bold', marginTop: '2mm', textTransform: 'uppercase', color: '#000000', letterSpacing: '0.5px' }}>
-                  {bill.type === 'gst' ? 'TAX INVOICE' : 'CASH BILL'}
-                </div>
+                {safeClientInfo.phone && (
+                  <div style={{ fontSize: '8pt', fontWeight: '600' }}>Ph: {safeClientInfo.phone}</div>
+                )}
+                {safeClientInfo.gstin && (
+                  <div style={{ fontSize: '8pt', fontWeight: '900' }}>GSTIN: {safeClientInfo.gstin}</div>
+                )}
               </div>
+              <div style={{ borderBottom: '2px solid #000', margin: '2mm 0' }}></div>
 
-              {/* Dashed line */}
-              <div style={{ borderBottom: '2px dashed #000', margin: '2mm 0' }}></div>
+              {/* Bill Type */}
+              <div style={{ fontSize: '10pt', fontWeight: '900', textAlign: 'center', margin: '1mm 0', color: '#000000' }}>
+                *** {bill.type === 'gst' ? 'TAX INVOICE' : 'RECEIPT'} ***
+              </div>
+              <div style={{ borderBottom: '1px dashed #000', margin: '2mm 0' }}></div>
 
-              {/* Bill Info */}
+              {/* Bill Info - 2 COLUMN LAYOUT */}
               <div style={{ fontSize: '8pt', marginBottom: '2mm' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5mm' }}>
-                  <span>Bill No: {bill.bill_number}</span>
-                  <span><strong>Date: {formatDate(bill.created_at)}</strong></span>
+                <div style={{ display: 'flex', marginBottom: '0.5mm' }}>
+                  <span style={{ flex: 1 }}>Bill No: {bill.bill_number}</span>
+                  <span style={{ flex: 1 }}>Date: {formatDate(bill.created_at)}</span>
                 </div>
-                <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                  <span>Time: {formatTime(bill.created_at)}</span>
-                  <span>Mode: {bill.type === 'gst' ? 'GST' : 'NON-GST'}</span>
+                <div style={{ display: 'flex', marginBottom: '0.5mm' }}>
+                  <span style={{ flex: 1 }}>Time: {formatTime(bill.created_at)}</span>
+                  <span style={{ flex: 1 }}></span>
                 </div>
                 {bill.customer_name && (
-                  <div style={{ marginTop: '2mm', borderTop: '1px solid #ccc', paddingTop: '1mm' }}>
-                    <div><strong>Customer:</strong> {bill.customer_name}</div>
-                    {bill.type === 'gst' && bill.customer_gstin && <div><strong>GSTIN:</strong> {bill.customer_gstin}</div>}
-                  </div>
+                  <div style={{ marginBottom: '0.5mm' }}>Customer: {bill.customer_name}</div>
+                )}
+                {bill.type === 'gst' && bill.customer_gstin && (
+                  <div style={{ marginBottom: '0.5mm' }}>GSTIN: {bill.customer_gstin}</div>
                 )}
               </div>
+              <div style={{ borderBottom: '1px dashed #000', margin: '2mm 0' }}></div>
+
+              {/* Items Header - FIXED COLUMN WIDTHS */}
+              <div style={{ fontSize: '8pt', display: 'flex', alignItems: 'center', marginBottom: '1mm', fontWeight: '900', color: '#000000' }}>
+                <span style={{ width: '22mm', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>Item</span>
+                <span style={{ width: '6mm', textAlign: 'center', flexShrink: 0 }}>Qty</span>
+                <span style={{ width: '11mm', textAlign: 'right', flexShrink: 0 }}>MRP</span>
+                <span style={{ width: '11mm', textAlign: 'right', flexShrink: 0 }}>Rate</span>
+                <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0 }}>Amt</span>
+              </div>
+              <div style={{ borderBottom: '1px dashed #000', margin: '1mm 0' }}></div>
+
+              {/* Items - SINGLE LINE FORMAT */}
+              {bill.items.map((item, index) => {
+                const name = item.product_name.length > 20 ? item.product_name.substring(0, 18) + '..' : item.product_name;
+                const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
+                const rate = Number(item.rate);
+                const amt = Number(item.amount);
+                const formatNum = (v: number) => v >= 1000 ? Math.round(v).toString() : v.toFixed(2);
+
+                return (
+                  <div key={index} style={{ fontSize: '8pt', display: 'flex', alignItems: 'center', marginBottom: '1mm', color: '#000000' }}>
+                    <span style={{ width: '22mm', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>{name}</span>
+                    <span style={{ width: '6mm', textAlign: 'center', flexShrink: 0 }}>{item.quantity}</span>
+                    <span style={{ width: '11mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(mrp)}</span>
+                    <span style={{ width: '11mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(rate)}</span>
+                    <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0, fontWeight: '700' }}>{formatNum(amt)}</span>
+                  </div>
+                );
+              })}
 
               {/* Dashed line */}
               <div style={{ borderBottom: '2px dashed #000', margin: '2mm 0' }}></div>
 
-              {/* Items Header */}
-              <div style={{ fontSize: '9pt', display: 'flex', justifyContent: 'space-between', marginBottom: '1mm', fontWeight: 'bold', flexWrap: 'nowrap', color: '#000000' }}>
-                <span style={{ flex: '1', minWidth: '0', overflow: 'hidden', fontWeight: 'bold' }}>Item</span>
-                <span style={{ width: '6mm', textAlign: 'center', flexShrink: 0, fontWeight: 'bold' }}>Qty</span>
-                <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0, fontWeight: 'bold' }}>MRP</span>
-                <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0, fontWeight: 'bold' }}>Rate</span>
-                <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0, fontWeight: 'bold' }}>Amt</span>
-              </div>
-
-              {/* Dashed line */}
-              <div style={{ borderBottom: '2px dashed #000', margin: '1mm 0' }}></div>
-
-              {/* Items */}
-              {bill.items.map((item, index) => (
-                <div key={index} style={{ marginBottom: '2mm' }}>
-                  <div style={{ fontSize: '10pt', fontWeight: 'bold', textTransform: 'capitalize', marginBottom: '0.5mm', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: '#000000' }}>
-                    {item.product_name.length > 24 ? item.product_name.substring(0, 22) + '..' : item.product_name}
-                  </div>
-                  <div style={{ fontSize: '9pt', display: 'flex', justifyContent: 'space-between', flexWrap: 'nowrap', color: '#000000' }}>
-                    <span style={{ flex: '1', minWidth: '0' }}></span>
-                    <span style={{ width: '6mm', textAlign: 'center', flexShrink: 0, fontWeight: '600' }}>{item.quantity}</span>
-                    <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0, fontWeight: '600' }}>
-                      {item.mrp ? Math.round(Number(item.mrp)) : '-'}
+              {/* Summary - 2 COLUMN */}
+              <div style={{ fontSize: '8pt', marginBottom: '2mm' }}>
+                <div style={{ display: 'flex', marginBottom: '0.5mm' }}>
+                  <span style={{ flex: 1 }}>Items: {totalItems} | Qty: {totalQuantity}</span>
+                  <span style={{ flex: 1 }}>Sub Total: ₹{Number(bill?.subtotal ?? 0).toFixed(2)}</span>
+                </div>
+                {(bill.negotiable_amount && Number(bill.negotiable_amount) > 0) ||
+                 (bill.discount_amount && Number(bill.discount_amount) > 0) ||
+                 (bill.type === 'gst' && bill.gst_amount && Number(bill.gst_amount) > 0) ? (
+                  <div style={{ display: 'flex', marginBottom: '0.5mm' }}>
+                    <span style={{ flex: 1 }}>
+                      {bill.negotiable_amount && Number(bill.negotiable_amount) > 0
+                        ? `Discount: -₹${Number(bill.negotiable_amount).toFixed(2)}`
+                        : bill.discount_amount && Number(bill.discount_amount) > 0
+                        ? `Discount: -₹${Number(bill.discount_amount).toFixed(2)}`
+                        : ''}
                     </span>
-                    <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0, fontWeight: '600' }}>{Math.round(Number(item.rate))}</span>
-                    <span style={{ width: '12mm', textAlign: 'right', fontWeight: 'bold', flexShrink: 0 }}>{Math.round(Number(item.amount))}</span>
+                    <span style={{ flex: 1 }}>
+                      {bill.type === 'gst' && bill.gst_amount && Number(bill.gst_amount) > 0
+                        ? `GST: +₹${Number(bill.gst_amount).toFixed(2)}`
+                        : ''}
+                    </span>
                   </div>
-                </div>
-              ))}
-
-              {/* Dashed line */}
-              <div style={{ borderBottom: '2px dashed #000', margin: '2mm 0' }}></div>
-
-              {/* Items summary */}
-              <div style={{ fontSize: '8pt', display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
-                <span>Items: {totalItems}   Qty: {totalQuantity}</span>
-              </div>
-
-              {/* Dashed line */}
-              <div style={{ borderBottom: '2px dashed #000', margin: '2mm 0' }}></div>
-
-              {/* Subtotal, GST, and Discount */}
-              <div style={{ fontSize: '9pt', marginBottom: '2mm', paddingLeft: '1mm', paddingRight: '1mm' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
-                  <span style={{ fontWeight: '600' }}>Sub Total</span>
-                  <span style={{ fontWeight: 'bold' }}>₹{Number(bill?.subtotal ?? 0).toFixed(2)}</span>
-                </div>
-
-                {bill.type === 'gst' && bill.gst_amount && Number(bill.gst_amount) > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
-                    <span style={{ fontWeight: '600' }}>GST ({bill.gst_percentage}%)</span>
-                    <span style={{ fontWeight: 'bold' }}>₹{Number(bill.gst_amount).toFixed(2)}</span>
-                  </div>
-                )}
-
-                {bill.negotiable_amount && Number(bill.negotiable_amount) > 0 ? (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
-                    <span style={{ fontWeight: '600' }}>Discount</span>
-                    <span style={{ fontWeight: 'bold', color: '#d32f2f' }}>-₹{Number(bill.negotiable_amount).toFixed(2)}</span>
-                  </div>
-                ) : bill.discount_amount && Number(bill.discount_amount) > 0 && (
-                  <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '1mm' }}>
-                    <span style={{ fontWeight: '600' }}>Discount ({bill.discount_percentage}%)</span>
-                    <span style={{ fontWeight: 'bold', color: '#d32f2f' }}>-₹{Number(bill.discount_amount).toFixed(2)}</span>
-                  </div>
-                )}
-
+                ) : null}
               </div>
 
               {/* Grand Total */}
@@ -472,12 +461,12 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
         </div>
       </div>
 
-      {/* Screen preview styling - Optimized for 80mm thermal printers */}
+      {/* Screen preview styling - Optimized for 80mm thermal printers (72mm printable area) */}
       <style dangerouslySetInnerHTML={{__html: `
         .bill-receipt {
           font-family: 'Courier New', Courier, monospace;
-          max-width: 76mm;
-          width: 76mm;
+          max-width: 72mm;
+          width: 72mm;
           margin: 0 auto;
           background: white;
           color: #000000;
@@ -519,7 +508,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
         @media print {
           @page {
             size: 80mm auto;
-            margin: 0mm 1.5mm;
+            margin: 0mm 4mm;
           }
           * {
             -webkit-print-color-adjust: exact !important;
@@ -528,8 +517,8 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
             box-sizing: border-box !important;
           }
           .bill-receipt {
-            width: 77mm !important;
-            max-width: 77mm !important;
+            width: 72mm !important;
+            max-width: 72mm !important;
             margin: 0 auto !important;
             padding: 1mm !important;
             box-sizing: border-box !important;
