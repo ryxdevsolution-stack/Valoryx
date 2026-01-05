@@ -457,7 +457,7 @@ To add a new product, fill in the following:
 |-------|-------------|----------|
 | Product Name | Name of the product | Yes |
 | Category | Product category (e.g., Electronics, Grocery) | Yes |
-| Cost Price | Your purchase price | Yes |
+| Purchase Price | Your purchase price | Yes |
 | Selling Rate | Price you sell at | Yes |
 | MRP | Maximum Retail Price | Optional |
 | Quantity | Current stock quantity | Yes |

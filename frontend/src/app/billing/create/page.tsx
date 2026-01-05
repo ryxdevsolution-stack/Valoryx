@@ -161,7 +161,7 @@ export default function UnifiedBillingPage() {
     return '1'
   })
 
-  const [billDate] = useState(new Date())
+  const [billDate, setBillDate] = useState(new Date())
   const [nextBillNumber, setNextBillNumber] = useState<number | null>(null)
 
   // Product selection state
@@ -1028,28 +1028,56 @@ export default function UnifiedBillingPage() {
   }
 
   const handleProductSearchKeyDown = (e: React.KeyboardEvent) => {
-    if (!showProductDropdown || filteredProducts.length === 0) return
-
     if (e.key === 'ArrowDown') {
+      if (!showProductDropdown || filteredProducts.length === 0) return
       e.preventDefault()
       setHasUsedArrowKeys(true)  // User is navigating with arrows
       setSelectedProductIndex((prev) =>
         prev < filteredProducts.length - 1 ? prev + 1 : 0  // Start from 0 if -1
       )
     } else if (e.key === 'ArrowUp') {
+      if (!showProductDropdown || filteredProducts.length === 0) return
       e.preventDefault()
       setHasUsedArrowKeys(true)  // User is navigating with arrows
       setSelectedProductIndex((prev) => (prev > 0 ? prev - 1 : 0))
     } else if (e.key === 'Enter') {
       e.preventDefault()
-      // ONLY select from dropdown if user actually navigated with arrow keys
+
+      // If user navigated with arrow keys and has selection, use that
       if (hasUsedArrowKeys && selectedProductIndex >= 0 && filteredProducts[selectedProductIndex]) {
         handleProductSelect(filteredProducts[selectedProductIndex])
-      } else {
-        // User just pressed Enter without using arrows - move to quantity field
-        quantityInputRef.current?.focus()
-        quantityInputRef.current?.select()
+        return
       }
+
+      // Check for exact match by name, item_code, or barcode
+      const searchLower = productSearch.toLowerCase().trim()
+      const searchNoSpaces = productSearch.replace(/\s+/g, '').toLowerCase()
+
+      if (searchLower && filteredProducts.length > 0) {
+        // Find exact match
+        const exactMatch = filteredProducts.find((p) =>
+          p.product_name.toLowerCase() === searchLower ||
+          (p.item_code && p.item_code.toLowerCase() === searchLower) ||
+          (p.barcode && p.barcode.toLowerCase() === searchLower) ||
+          (p.barcode && p.barcode.replace(/\s+/g, '').toLowerCase() === searchNoSpaces)
+        )
+
+        if (exactMatch) {
+          // Exact match found - auto-select it
+          handleProductSelect(exactMatch)
+          return
+        }
+
+        // If only one product matches, auto-select it
+        if (filteredProducts.length === 1) {
+          handleProductSelect(filteredProducts[0])
+          return
+        }
+      }
+
+      // No exact match or multiple matches - move to quantity field
+      quantityInputRef.current?.focus()
+      quantityInputRef.current?.select()
     }
   }
 
@@ -1232,6 +1260,7 @@ export default function UnifiedBillingPage() {
         amount_received: activeTab.amountReceived,
         discount_percentage: activeTab.useNegotiablePrice ? 0 : activeTab.discountPercentage,
         negotiable_amount: activeTab.useNegotiablePrice ? activeTab.negotiableAmount : null,
+        bill_date: billDate.toISOString(),
       })
       console.log('[BILLING] Bill created successfully:', response.data.bill?.bill_number)
 
@@ -1425,9 +1454,20 @@ export default function UnifiedBillingPage() {
               </div>
               <div className="flex flex-col items-end">
                 <span className="text-xs text-gray-500 dark:text-gray-400 mb-1 font-medium">Date</span>
-                <span className="text-sm font-semibold text-gray-900 dark:text-white">
-                  {formatDate(billDate)}
-                </span>
+                <input
+                  type="date"
+                  value={billDate.toISOString().split('T')[0]}
+                  max={new Date().toISOString().split('T')[0]}
+                  onChange={(e) => {
+                    if (e.target.value) {
+                      const newDate = new Date(e.target.value)
+                      // Preserve current time
+                      newDate.setHours(billDate.getHours(), billDate.getMinutes(), billDate.getSeconds())
+                      setBillDate(newDate)
+                    }
+                  }}
+                  className="text-sm font-semibold text-gray-900 dark:text-white bg-transparent border border-gray-300 dark:border-gray-600 rounded px-2 py-1 cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
+                />
               </div>
             </div>
 

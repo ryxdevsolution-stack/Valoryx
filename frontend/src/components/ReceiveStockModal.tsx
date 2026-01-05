@@ -207,7 +207,7 @@ export default function ReceiveStockModal({ isOpen, onClose, order, onSuccess }:
 
                     {item.cost_price && item.selling_price && (
                       <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600 flex gap-4 text-xs text-gray-600 dark:text-gray-400">
-                        <span>Cost: ₹{item.cost_price}</span>
+                        <span>Purchase: ₹{item.cost_price}</span>
                         <span>Selling: ₹{item.selling_price}</span>
                       </div>
                     )}

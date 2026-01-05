@@ -1,11 +1,11 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { useClient } from '@/contexts/ClientContext'
-import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle } from 'lucide-react'
+import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle, Calendar } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 
 interface BillItem {
@@ -56,6 +56,11 @@ export default function AllBillsPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 17
   const [loadingBillDetails, setLoadingBillDetails] = useState(false)
+
+  // Date filter state
+  const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'custom'>('all')
+  const [fromDate, setFromDate] = useState<string>('')
+  const [toDate, setToDate] = useState<string>('')
 
   // Track ongoing request to prevent duplicates (for React Strict Mode)
   const ongoingRequest = useRef<Promise<void> | null>(null)
@@ -142,6 +147,10 @@ export default function AllBillsPage() {
   }
 
   const getAmount = (bill: Bill) => {
+    // Cancelled bills show as 0
+    if (bill.status === 'cancelled') {
+      return 0
+    }
     if (bill.type === 'gst') {
       return parseFloat(String(bill.final_amount || '0'))
     }
@@ -209,23 +218,65 @@ export default function AllBillsPage() {
     return expanded
   }
 
-  // Filter and expand bills
-  const expandedBills = getExpandedBills(bills)
-  const filteredExpandedBills = selectedPaymentType === 'all'
-    ? expandedBills
-    : selectedPaymentType.includes('+')
+  // Helper to get date string in LOCAL timezone (YYYY-MM-DD)
+  // Using local timezone to avoid off-by-one day errors for IST users
+  const getLocalDateString = useCallback((date: Date) => {
+    const year = date.getFullYear()
+    const month = String(date.getMonth() + 1).padStart(2, '0')
+    const day = String(date.getDate()).padStart(2, '0')
+    return `${year}-${month}-${day}`
+  }, [])
+
+  // Memoize today's date string to avoid recalculation
+  const todayString = useMemo(() => getLocalDateString(new Date()), [getLocalDateString])
+
+  // Filter bills by date - memoized for performance
+  const dateFilteredBills = useMemo(() => bills.filter(bill => {
+    if (dateFilter === 'all') return true
+
+    const billDate = getLocalDateString(new Date(bill.created_at))
+
+    if (dateFilter === 'today') {
+      return billDate === todayString
+    }
+
+    // Custom date range (set same date in From & To for specific day)
+    if (fromDate && toDate) {
+      return billDate >= fromDate && billDate <= toDate
+    }
+    if (fromDate) {
+      return billDate >= fromDate
+    }
+    if (toDate) {
+      return billDate <= toDate
+    }
+
+    return true
+  }), [bills, dateFilter, fromDate, toDate, todayString, getLocalDateString])
+
+  // Filter and expand bills - memoized for performance
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  const expandedBills = useMemo(() => getExpandedBills(dateFilteredBills), [dateFilteredBills])
+
+  const filteredExpandedBills = useMemo(() => {
+    if (selectedPaymentType === 'all') return expandedBills
+
+    if (selectedPaymentType.includes('+')) {
       // Split payment filter - show bills that have this exact combination
-      ? expandedBills.filter(bill => {
-          const billTypes = parsePaymentTypes(bill)
-          if (billTypes.length <= 1) return false
-          const sortedTypes = [...billTypes].sort().join('+')
-          return sortedTypes === selectedPaymentType
-        })
-      // Single payment filter - only show bills with exactly that one payment type (no splits)
-      : expandedBills.filter(bill => {
-          const billTypes = parsePaymentTypes(bill)
-          return billTypes.length === 1 && bill.displayPaymentType === selectedPaymentType
-        })
+      return expandedBills.filter(bill => {
+        const billTypes = parsePaymentTypes(bill)
+        if (billTypes.length <= 1) return false
+        const sortedTypes = [...billTypes].sort().join('+')
+        return sortedTypes === selectedPaymentType
+      })
+    }
+
+    // Single payment filter - only show bills with exactly that one payment type (no splits)
+    return expandedBills.filter(bill => {
+      const billTypes = parsePaymentTypes(bill)
+      return billTypes.length === 1 && bill.displayPaymentType === selectedPaymentType
+    })
+  }, [expandedBills, selectedPaymentType])
 
   // Pagination
   const totalPages = Math.ceil(filteredExpandedBills.length / itemsPerPage)
@@ -233,17 +284,23 @@ export default function AllBillsPage() {
   const endIndex = startIndex + itemsPerPage
   const paginatedBills = filteredExpandedBills.slice(startIndex, endIndex)
 
-  // Calculate totals
-  const grandTotal = bills.reduce((sum, bill) => sum + getAmount(bill), 0)
-  const filteredTotal = filteredExpandedBills.reduce((sum, bill) => sum + bill.displayAmount, 0)
+  // Calculate totals (using date filtered bills) - memoized
+  const grandTotal = useMemo(() =>
+    dateFilteredBills.reduce((sum, bill) => sum + getAmount(bill), 0),
+    [dateFilteredBills]
+  )
+  const filteredTotal = useMemo(() =>
+    filteredExpandedBills.reduce((sum, bill) => sum + bill.displayAmount, 0),
+    [filteredExpandedBills]
+  )
 
-  // Get payment type statistics (only single payment bills, not split payments)
-  const paymentTypeStats = paymentTypes.map(pt => {
+  // Get payment type statistics (only single payment bills, not split payments) - memoized
+  const paymentTypeStats = useMemo(() => paymentTypes.map(pt => {
     // Count only bills that have exactly this single payment type (no splits)
     let count = 0
     let totalAmount = 0
 
-    bills.forEach(bill => {
+    dateFilteredBills.forEach(bill => {
       const types = parsePaymentTypes(bill)
       // Only count if this bill has exactly one payment type and it matches
       if (types.length === 1 && types[0] === pt.payment_type_id) {
@@ -257,13 +314,13 @@ export default function AllBillsPage() {
       count,
       total: totalAmount
     }
-  })
+  }), [paymentTypes, dateFilteredBills])
 
-  // Get split payment (relationship) statistics
-  const splitPaymentStats = (() => {
+  // Get split payment (relationship) statistics - memoized
+  const splitPaymentStats = useMemo(() => {
     const splitCombinations = new Map<string, { count: number; total: number; types: string[] }>()
 
-    bills.forEach(bill => {
+    dateFilteredBills.forEach(bill => {
       const types = parsePaymentTypes(bill)
       if (types.length > 1) {
         // Sort types to ensure consistent key (e.g., "CASH+UPI" not "UPI+CASH")
@@ -284,12 +341,12 @@ export default function AllBillsPage() {
       total: data.total,
       types: data.types
     }))
-  })()
+  }, [dateFilteredBills])
 
   // Reset to page 1 when filter changes
   useEffect(() => {
     setCurrentPage(1)
-  }, [selectedPaymentType])
+  }, [selectedPaymentType, dateFilter, fromDate, toDate])
 
   const handlePrintBill = async (billId: string) => {
     try {
@@ -397,15 +454,26 @@ export default function AllBillsPage() {
     try {
       const response = await api.post(`/billing/${billId}/cancel`)
       if (response.data.success) {
-        alert(`Bill #${billNumber} cancelled successfully`)
+        // Immediately update UI - set status to cancelled
+        setBills(prevBills =>
+          prevBills.map(bill =>
+            bill.bill_id === billId ? { ...bill, status: 'cancelled' } : bill
+          )
+        )
+        alert(`Bill #${billNumber} cancelled successfully. Stock has been restored.`)
+      }
+    } catch (error: any) {
+      const errorMsg = error.response?.data?.error || 'Failed to cancel bill'
+      // Check if it's already cancelled (means previous attempt succeeded)
+      if (errorMsg.includes('already cancelled')) {
+        // Update UI to reflect the cancelled status
         setBills(prevBills =>
           prevBills.map(bill =>
             bill.bill_id === billId ? { ...bill, status: 'cancelled' } : bill
           )
         )
       }
-    } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to cancel bill')
+      alert(errorMsg)
     }
   }
 
@@ -437,10 +505,102 @@ export default function AllBillsPage() {
     <DashboardLayout>
       {/* Full height container with fixed footer */}
       <div className="flex flex-col h-[calc(100vh-6rem)]">
-        {/* Header */}
+        {/* Header with Date Filter */}
         <div className="flex-shrink-0 mb-2">
-          <h1 className="text-lg font-bold text-gray-900 dark:text-white">All Bills</h1>
-          <p className="text-[10px] text-gray-600 dark:text-gray-400">Filter and view billing records by payment method</p>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <h1 className="text-lg font-bold text-gray-900 dark:text-white">All Bills</h1>
+              <p className="text-[10px] text-gray-600 dark:text-gray-400">Filter by date and payment method</p>
+            </div>
+
+            {/* Date Filter - Compact */}
+            <div className="flex items-center gap-1.5">
+              {/* All Dates */}
+              <button
+                type="button"
+                onClick={() => {
+                  setDateFilter('all')
+                  setFromDate('')
+                  setToDate('')
+                }}
+                className={`px-2 py-1 text-[10px] font-medium rounded transition-all ${
+                  dateFilter === 'all'
+                    ? 'bg-slate-700 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                }`}
+              >
+                All
+              </button>
+
+              {/* Today */}
+              <button
+                type="button"
+                onClick={() => {
+                  setDateFilter('today')
+                  setFromDate('')
+                  setToDate('')
+                }}
+                className={`flex items-center gap-1 px-2 py-1 text-[10px] font-medium rounded transition-all ${
+                  dateFilter === 'today'
+                    ? 'bg-blue-600 text-white'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600'
+                }`}
+              >
+                <Calendar className="w-3 h-3" />
+                Today
+              </button>
+
+              {/* Separator */}
+              <div className="w-px h-5 bg-gray-300 dark:bg-gray-600" />
+
+              {/* From Date */}
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] text-gray-500 dark:text-gray-400">From</span>
+                <input
+                  type="date"
+                  value={fromDate}
+                  max={toDate || todayString}
+                  onChange={(e) => {
+                    setFromDate(e.target.value)
+                    setDateFilter('custom')
+                  }}
+                  className="px-1.5 py-0.5 text-[10px] border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* To Date */}
+              <div className="flex items-center gap-1">
+                <span className="text-[9px] text-gray-500 dark:text-gray-400">To</span>
+                <input
+                  type="date"
+                  value={toDate}
+                  min={fromDate}
+                  max={todayString}
+                  onChange={(e) => {
+                    setToDate(e.target.value)
+                    setDateFilter('custom')
+                  }}
+                  className="px-1.5 py-0.5 text-[10px] border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                />
+              </div>
+
+              {/* Clear custom dates */}
+              {dateFilter === 'custom' && (fromDate || toDate) && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setDateFilter('all')
+                    setFromDate('')
+                    setToDate('')
+                  }}
+                  className="p-1 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300"
+                  title="Clear dates"
+                >
+                  <XCircle className="w-3.5 h-3.5" />
+                </button>
+              )}
+            </div>
+          </div>
         </div>
 
         {loading ? (
@@ -489,7 +649,7 @@ export default function AllBillsPage() {
                       <span className={`text-sm font-bold ${
                         selectedPaymentType === 'all' ? 'text-white' : 'text-gray-900 dark:text-white'
                       }`}>
-                        {bills.length}
+                        {dateFilteredBills.length}
                       </span>
                       <span className={`text-[10px] font-medium ${
                         selectedPaymentType === 'all' ? 'text-white/80' : 'text-gray-600 dark:text-gray-400'
@@ -789,7 +949,7 @@ export default function AllBillsPage() {
                 <div className="text-right">
                   <p className="text-slate-400 dark:text-gray-400 text-[10px] uppercase font-medium">
                     {selectedPaymentType === 'all'
-                      ? `Grand Total (${bills.length} bills)`
+                      ? `Grand Total (${dateFilteredBills.length} bills)${dateFilter !== 'all' ? ` • ${dateFilter === 'today' ? 'Today' : 'Custom'}` : ''}`
                       : `${paymentTypes.find(pt => pt.payment_type_id === selectedPaymentType)?.payment_name || selectedPaymentType} (${new Set(filteredExpandedBills.map(b => b.bill_id)).size} bills)`
                     }
                   </p>

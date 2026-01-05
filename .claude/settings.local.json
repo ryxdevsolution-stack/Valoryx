@@ -141,7 +141,9 @@
       "Bash(then python3 -m venv venv)",
       "Bash(fi)",
       "Bash(git log:*)",
-      "Bash(sudo -n apt-get install:*)"
+      "Bash(sudo -n apt-get install:*)",
+      "Bash(./venv/bin/python3:*)",
+      "Bash(git -C /home/development1/Desktop/mj-billing log --oneline --grep=\"print\\\\|bill\\\\|cutoff\\\\|thermal\")"
     ],
     "deny": [],
     "ask": [],

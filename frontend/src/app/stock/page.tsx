@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton } from '@/components/SkeletonLoader'
@@ -16,7 +16,6 @@ interface Stock {
   rate: number | string
   cost_price?: number | string | null
   mrp?: number | string | null
-  pricing?: number | string | null
   category: string
   unit: string
   low_stock_alert: number
@@ -72,7 +71,6 @@ export default function StockManagementPage() {
     rate: '' as number | string,
     cost_price: '' as number | string,
     mrp: '' as number | string,
-    pricing: '' as number | string,
     category: '',
     unit: 'pcs',
     low_stock_alert: 10,
@@ -81,6 +79,23 @@ export default function StockManagementPage() {
     gst_percentage: 0,
     hsn_code: '',
   })
+
+  // Duplicate detection - memoized for performance
+  const duplicateProduct = useMemo(() => {
+    if (formData.product_name.trim() === '') return undefined
+    return stocks.find(stock =>
+      stock.product_id !== editingId &&
+      stock.product_name.toLowerCase() === formData.product_name.trim().toLowerCase()
+    )
+  }, [stocks, formData.product_name, editingId])
+
+  const duplicateBarcode = useMemo(() => {
+    if (formData.barcode.trim() === '') return undefined
+    return stocks.find(stock =>
+      stock.product_id !== editingId &&
+      stock.barcode && stock.barcode.toLowerCase() === formData.barcode.trim().toLowerCase()
+    )
+  }, [stocks, formData.barcode, editingId])
 
   // Track initialization to prevent duplicate calls in React Strict Mode
   const hasInitialized = useRef(false)
@@ -162,7 +177,7 @@ export default function StockManagementPage() {
         // Add new stock
         const response = await api.post('/stock', formData)
         showToast('Stock added successfully!', 'success')
-        setShowAddForm(false)
+        // Keep form open for continuous adding - just clear the form
 
         // Optimistic update - add new stock to list without refetching
         const newStock = response.data.product
@@ -173,24 +188,23 @@ export default function StockManagementPage() {
         }
 
         setStocks(prev => [newStock, ...prev])
-      }
 
-      // Reset form
-      setFormData({
-        product_name: '',
-        quantity: '',
-        rate: '',
-        cost_price: '',
-        mrp: '',
-        pricing: '',
-        category: '',
-        unit: 'pcs',
-        low_stock_alert: 10,
-        item_code: '',
-        barcode: '',
-        gst_percentage: 0,
-        hsn_code: '',
-      })
+        // Clear form for next entry (but keep form open)
+        setFormData({
+          product_name: '',
+          quantity: '',
+          rate: '',
+          cost_price: '',
+          mrp: '',
+          category: '',
+          unit: 'pcs',
+          low_stock_alert: 10,
+          item_code: '',
+          barcode: '',
+          gst_percentage: 0,
+          hsn_code: '',
+        })
+      }
     } catch (error: any) {
       showToast(error.response?.data?.error || `Failed to ${editingId ? 'update' : 'add'} stock`, 'error')
     } finally {
@@ -206,7 +220,6 @@ export default function StockManagementPage() {
       rate: Number(stock.rate),
       cost_price: stock.cost_price ? Number(stock.cost_price) : 0,
       mrp: stock.mrp ? Number(stock.mrp) : 0,
-      pricing: stock.pricing ? Number(stock.pricing) : 0,
       category: stock.category || '',
       unit: stock.unit,
       low_stock_alert: stock.low_stock_alert,
@@ -228,7 +241,6 @@ export default function StockManagementPage() {
       rate: '',
       cost_price: '',
       mrp: '',
-      pricing: '',
       category: '',
       unit: 'pcs',
       low_stock_alert: 10,
@@ -237,6 +249,47 @@ export default function StockManagementPage() {
       gst_percentage: 0,
       hsn_code: '',
     })
+  }
+
+  // Clear form without closing (for continuous adding)
+  const handleClearForm = () => {
+    setEditingId(null)
+    setFormData({
+      product_name: '',
+      quantity: '',
+      rate: '',
+      cost_price: '',
+      mrp: '',
+      category: '',
+      unit: 'pcs',
+      low_stock_alert: 10,
+      item_code: '',
+      barcode: '',
+      gst_percentage: 0,
+      hsn_code: '',
+    })
+  }
+
+  // Handle Enter key to move to next field (like Tab)
+  const handleEnterKey = (e: React.KeyboardEvent<HTMLInputElement | HTMLSelectElement>) => {
+    if (e.key === 'Enter') {
+      e.preventDefault()
+      const form = e.currentTarget.form
+      if (!form) return
+
+      // Get all focusable elements in the form
+      const elements = Array.from(form.querySelectorAll('input, select, button[type="submit"]'))
+      const currentIndex = elements.indexOf(e.currentTarget)
+
+      // Find next element (skip disabled elements)
+      for (let i = currentIndex + 1; i < elements.length; i++) {
+        const nextElement = elements[i] as HTMLElement
+        if (!nextElement.hasAttribute('disabled') && nextElement.tabIndex !== -1) {
+          nextElement.focus()
+          break
+        }
+      }
+    }
   }
 
   const handleDelete = async (productId: string) => {
@@ -260,12 +313,18 @@ export default function StockManagementPage() {
     return stock.is_low_stock ?? (stock.quantity <= stock.low_stock_alert)
   }
 
-  // Get unique categories and units for filters
-  const uniqueCategories = Array.from(new Set(stocks.map(s => s.category).filter(Boolean)))
-  const uniqueUnits = Array.from(new Set(stocks.map(s => s.unit).filter(Boolean)))
+  // Get unique categories and units for filters - memoized for performance
+  const uniqueCategories = useMemo(() =>
+    Array.from(new Set(stocks.map(s => s.category).filter(Boolean))),
+    [stocks]
+  )
+  const uniqueUnits = useMemo(() =>
+    Array.from(new Set(stocks.map(s => s.unit).filter(Boolean))),
+    [stocks]
+  )
 
-  // Filter stocks based on search and filters
-  const filteredStocks = stocks.filter((stock) => {
+  // Filter stocks based on search and filters - memoized for performance
+  const filteredStocks = useMemo(() => stocks.filter((stock) => {
     // Search filter (product name, item code, barcode)
     const searchLower = searchQuery.toLowerCase().trim()
     const matchesSearch = searchLower === '' ||
@@ -286,7 +345,7 @@ export default function StockManagementPage() {
     const matchesUnit = unitFilter === 'all' || stock.unit === unitFilter
 
     return matchesSearch && matchesCategory && matchesStatus && matchesUnit
-  })
+  }), [stocks, searchQuery, categoryFilter, statusFilter, unitFilter])
 
   const handleFileUpload = async (event: React.ChangeEvent<HTMLInputElement>) => {
     const files = event.target.files
@@ -496,7 +555,8 @@ export default function StockManagementPage() {
     }
   }
 
-  const lowStockCount = stocks.filter(isLowStock).length
+  // Memoized low stock count for performance
+  const lowStockCount = useMemo(() => stocks.filter(isLowStock).length, [stocks])
 
   return (
     <DashboardLayout>
@@ -599,6 +659,7 @@ export default function StockManagementPage() {
           <h2 className="text-xl font-semibold text-gray-900 dark:text-white mb-4">
             {editingId ? 'Edit Stock' : 'Add New Stock'}
           </h2>
+
           <form onSubmit={handleSubmit} className="space-y-4">
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
               <div>
@@ -611,15 +672,25 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, barcode: e.target.value })
                   }
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                    }
-                  }}
+                  onKeyDown={handleEnterKey}
                   placeholder="Scan or enter barcode"
                   autoFocus
-                  className="w-full px-4 py-2 border border-cyan-500 dark:border-cyan-400 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-cyan-500 focus:border-transparent font-mono text-lg"
+                  className={`w-full px-4 py-2 border dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:border-transparent font-mono text-lg ${
+                    duplicateBarcode && !editingId
+                      ? 'border-amber-500 dark:border-amber-400 focus:ring-amber-500'
+                      : 'border-cyan-500 dark:border-cyan-400 focus:ring-cyan-500'
+                  }`}
                 />
+                {duplicateBarcode && !editingId && (
+                  <div className="flex items-center gap-1.5 mt-1.5 text-amber-600 dark:text-amber-400">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-xs">
+                      Already assigned to &quot;<strong>{duplicateBarcode.product_name}</strong>&quot; (Qty: {duplicateBarcode.quantity})
+                    </span>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -632,8 +703,23 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, product_name: e.target.value })
                   }
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  onKeyDown={handleEnterKey}
+                  className={`w-full px-4 py-2 border dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:border-transparent ${
+                    duplicateProduct && !editingId
+                      ? 'border-amber-500 dark:border-amber-400 focus:ring-amber-500'
+                      : 'border-gray-300 dark:border-gray-600 focus:ring-blue-500'
+                  }`}
                 />
+                {duplicateProduct && !editingId && (
+                  <div className="flex items-center gap-1.5 mt-1.5 text-amber-600 dark:text-amber-400">
+                    <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                      <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
+                    </svg>
+                    <span className="text-xs">
+                      Exists in stock (Qty: {duplicateProduct.quantity}, Rate: ₹{Number(duplicateProduct.rate).toLocaleString('en-IN')}) — adding will increase quantity
+                    </span>
+                  </div>
+                )}
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -647,6 +733,7 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, quantity: e.target.value === '' ? '' : parseInt(e.target.value) })
                   }
+                  onKeyDown={handleEnterKey}
                   placeholder="0"
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -664,13 +751,14 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, rate: e.target.value === '' ? '' : parseFloat(e.target.value) })
                   }
+                  onKeyDown={handleEnterKey}
                   placeholder="0"
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Cost Price (₹)
+                  Purchase Price (₹)
                 </label>
                 <input
                   type="number"
@@ -680,6 +768,7 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, cost_price: e.target.value === '' ? '' : parseFloat(e.target.value) })
                   }
+                  onKeyDown={handleEnterKey}
                   placeholder="0"
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -697,27 +786,11 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, mrp: e.target.value === '' ? '' : parseFloat(e.target.value) })
                   }
+                  onKeyDown={handleEnterKey}
                   placeholder="0"
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
                 <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Shown on print, not in billing</p>
-              </div>
-              <div>
-                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Pricing (₹)
-                </label>
-                <input
-                  type="number"
-                  min="0"
-                  step="0.01"
-                  value={formData.pricing}
-                  onChange={(e) =>
-                    setFormData({ ...formData, pricing: e.target.value === '' ? '' : parseFloat(e.target.value) })
-                  }
-                  placeholder="0"
-                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-                />
-                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Pricing from stock updation</p>
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
@@ -729,6 +802,7 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, category: e.target.value })
                   }
+                  onKeyDown={handleEnterKey}
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
@@ -741,6 +815,7 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, unit: e.target.value })
                   }
+                  onKeyDown={handleEnterKey}
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
                   <option value="pcs">Pieces</option>
@@ -761,6 +836,7 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, low_stock_alert: parseInt(e.target.value) || 0 })
                   }
+                  onKeyDown={handleEnterKey}
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
               </div>
@@ -774,6 +850,7 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, item_code: e.target.value })
                   }
+                  onKeyDown={handleEnterKey}
                   placeholder="Auto-generated if left blank"
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
                 />
@@ -792,6 +869,7 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, gst_percentage: parseFloat(e.target.value) || 0 })
                   }
+                  onKeyDown={handleEnterKey}
                   placeholder="0"
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 />
@@ -807,12 +885,13 @@ export default function StockManagementPage() {
                   onChange={(e) =>
                     setFormData({ ...formData, hsn_code: e.target.value })
                   }
+                  onKeyDown={handleEnterKey}
                   placeholder="e.g., 8471"
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
                 />
               </div>
             </div>
-            <div className="flex gap-4">
+            <div className="flex gap-3">
               <button
                 type="submit"
                 disabled={submitting}
@@ -833,6 +912,14 @@ export default function StockManagementPage() {
                 ) : (
                   editingId ? 'Update Stock' : 'Add Stock'
                 )}
+              </button>
+              <button
+                type="button"
+                onClick={handleClearForm}
+                disabled={submitting}
+                className="px-6 py-2 bg-blue-500 dark:bg-blue-600 text-white rounded-lg hover:bg-blue-600 dark:hover:bg-blue-500 transition disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                Clear
               </button>
               <button
                 type="button"
@@ -1087,7 +1174,7 @@ export default function StockManagementPage() {
             <h3 className="font-semibold text-yellow-900 dark:text-yellow-300 mb-2">ℹ️ Important Notes</h3>
             <ul className="text-sm text-yellow-800 dark:text-yellow-400 space-y-1">
               <li>• Required columns: <strong>product_name, quantity, rate</strong></li>
-              <li>• Optional columns: category, unit, low_stock_alert, item_code, barcode, gst_percentage, hsn_code, pricing</li>
+              <li>• Optional columns: category, unit, low_stock_alert, item_code, barcode, gst_percentage, hsn_code, purchase_price, mrp</li>
               <li>• If product exists, quantity will be <strong>added</strong> (not replaced)</li>
               <li>• Negative values are not allowed</li>
               <li>• Maximum file size: 5MB</li>

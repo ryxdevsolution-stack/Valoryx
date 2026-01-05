@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+from dateutil import parser as date_parser
 from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.billing_model import GSTBilling, NonGSTBilling
@@ -486,6 +487,18 @@ def create_unified_bill():
         data = request.get_json()
         client_id = g.user['client_id']
 
+        # Parse custom bill date if provided, otherwise use current datetime
+        bill_date = datetime.utcnow()
+        if data.get('bill_date'):
+            try:
+                bill_date = date_parser.parse(data['bill_date'])
+                # Prevent future dates
+                if bill_date.date() > datetime.utcnow().date():
+                    return jsonify({'error': 'Bill date cannot be in the future'}), 400
+            except (ValueError, TypeError):
+                # If parsing fails, return error to user
+                return jsonify({'error': 'Invalid bill date format'}), 400
+
         # Check user permissions for billing
         user_permissions = g.user.get('permissions', [])
         is_super_admin = g.user.get('is_super_admin', False)
@@ -701,7 +714,7 @@ def create_unified_bill():
                 negotiable_amount=round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                 status='final',
                 created_by=g.user['user_id'],
-                created_at=datetime.utcnow()
+                created_at=bill_date
             )
 
             db.session.add(new_bill)
@@ -787,7 +800,7 @@ def create_unified_bill():
                 negotiable_amount=round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                 status='final',
                 created_by=g.user['user_id'],
-                created_at=datetime.utcnow()
+                created_at=bill_date
             )
 
             db.session.add(new_bill)
@@ -1204,25 +1217,31 @@ def cancel_bill(bill_id):
 
         db.session.commit()
 
-        # Invalidate caches after bill cancellation - for real-time data consistency
-        invalidate_cache(f"billing:{client_id}")
-        invalidate_cache(f"stock:{client_id}")
-        invalidate_cache(f"analytics:{client_id}")
+        # These operations are non-critical - don't fail the cancellation if they error
+        try:
+            # Invalidate caches after bill cancellation - for real-time data consistency
+            invalidate_cache(f"billing:{client_id}")
+            invalidate_cache(f"stock:{client_id}")
+            invalidate_cache(f"analytics:{client_id}")
 
-        # Log the cancellation
-        log_action(
-            'CANCEL',
-            'gst_billing' if is_gst else 'non_gst_billing',
-            bill_id,
-            old_bill_data,
-            {'status': 'cancelled', 'cancelled_at': datetime.utcnow().isoformat()}
-        )
+            # Log the cancellation
+            log_action(
+                'CANCEL',
+                'gst_billing' if is_gst else 'non_gst_billing',
+                bill_id,
+                old_bill_data,
+                {'status': 'cancelled', 'cancelled_at': datetime.utcnow().isoformat()}
+            )
+        except Exception as log_error:
+            # Log error but don't fail the request - cancellation already committed
+            print(f"Warning: Post-cancellation operations failed: {str(log_error)}")
 
         return jsonify({
             'success': True,
             'message': 'Bill cancelled successfully',
             'bill_id': bill_id,
-            'bill_number': bill.bill_number
+            'bill_number': bill.bill_number,
+            'stock_restored': True
         }), 200
 
     except Exception as e:

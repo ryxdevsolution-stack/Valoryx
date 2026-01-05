@@ -460,9 +460,13 @@ def bulk_import_stock():
                 category = title_case(str(row['category']).strip()) if 'category' in row and not pd.isna(row['category']) else 'Other'
                 unit = str(row['unit']).strip() if 'unit' in row and not pd.isna(row['unit']) else 'pcs'
                 low_stock_alert = int(row['low_stock_alert']) if 'low_stock_alert' in row and not pd.isna(row['low_stock_alert']) else 10
-                cost_price = float(row['cost_price']) if 'cost_price' in row and not pd.isna(row['cost_price']) else None
+                # Support both 'purchase_price' and 'cost_price' column names (purchase_price takes priority)
+                cost_price = None
+                if 'purchase_price' in row and not pd.isna(row['purchase_price']):
+                    cost_price = float(row['purchase_price'])
+                elif 'cost_price' in row and not pd.isna(row['cost_price']):
+                    cost_price = float(row['cost_price'])
                 mrp = float(row['mrp']) if 'mrp' in row and not pd.isna(row['mrp']) else None
-                pricing = float(row['pricing']) if 'pricing' in row and not pd.isna(row['pricing']) else None
 
                 # Handle item_code - auto-generate if not provided
                 item_code = str(row['item_code']).strip() if 'item_code' in row and not pd.isna(row['item_code']) else ''
@@ -496,7 +500,6 @@ def bulk_import_stock():
                     existing_product.rate = rate
                     existing_product.cost_price = cost_price if cost_price is not None else existing_product.cost_price
                     existing_product.mrp = mrp if mrp is not None else existing_product.mrp
-                    existing_product.pricing = pricing if pricing is not None else existing_product.pricing
                     existing_product.category = category
                     existing_product.unit = unit
                     existing_product.low_stock_alert = low_stock_alert
@@ -528,7 +531,6 @@ def bulk_import_stock():
                         rate=rate,
                         cost_price=cost_price,
                         mrp=mrp,
-                        pricing=pricing,
                         unit=unit,
                         low_stock_alert=low_stock_alert,
                         item_code=item_code,
@@ -612,7 +614,9 @@ def download_template():
             'rate': [50000.00, 500.00, 1500.00, 15000.00, 10.00, 25.00],
             'category': ['Electronics', 'Electronics', 'Electronics', 'Electronics', 'Stationery', 'Stationery'],
             'unit': ['pcs', 'pcs', 'pcs', 'pcs', 'pcs', 'pcs'],
-            'low_stock_alert': [5, 10, 8, 5, 20, 15]
+            'low_stock_alert': [5, 10, 8, 5, 20, 15],
+            'purchase_price': [40000.00, 350.00, 1200.00, 12000.00, 6.00, 18.00],
+            'mrp': [55000.00, 599.00, 1799.00, 17999.00, 15.00, 35.00]
         }
 
         df = pd.DataFrame(data)
@@ -710,24 +714,42 @@ def lookup_product(code):
     try:
         client_id = g.user['client_id']
 
+        # Normalize input: strip whitespace and remove any extra characters
+        normalized_code = code.strip() if code else ''
+
+        if not normalized_code:
+            return jsonify({
+                'error': 'Product not found',
+                'message': 'Empty search code provided'
+            }), 404
+
         # Search by barcode first (most common for scanner)
         product = StockEntry.query.filter_by(
             client_id=client_id,
-            barcode=code
+            barcode=normalized_code
         ).first()
+
+        # Try barcode without spaces (some scanners add spaces)
+        if not product:
+            code_no_spaces = normalized_code.replace(' ', '')
+            if code_no_spaces != normalized_code:
+                product = StockEntry.query.filter_by(
+                    client_id=client_id,
+                    barcode=code_no_spaces
+                ).first()
 
         # If not found by barcode, try item_code
         if not product:
             product = StockEntry.query.filter_by(
                 client_id=client_id,
-                item_code=code
+                item_code=normalized_code
             ).first()
 
         # If still not found, try exact product name match
         if not product:
             product = StockEntry.query.filter(
                 StockEntry.client_id == client_id,
-                StockEntry.product_name.ilike(code)
+                StockEntry.product_name.ilike(normalized_code)
             ).first()
 
         if not product:
@@ -736,11 +758,11 @@ def lookup_product(code):
                 'message': f'No product found with barcode, item code, or name: {code}'
             }), 404
 
-        # Check stock availability
+        # Check stock availability (null-safe check for low_stock_alert)
         stock_status = 'available'
         if product.quantity == 0:
             stock_status = 'out_of_stock'
-        elif product.quantity <= product.low_stock_alert:
+        elif product.low_stock_alert and product.quantity <= product.low_stock_alert:
             stock_status = 'low_stock'
 
         return jsonify({

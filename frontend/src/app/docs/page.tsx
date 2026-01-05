@@ -536,7 +536,7 @@ const docContent: Record<string, React.ReactNode> = {
               {[
                 { field: 'Product Name', desc: 'Name of the product', required: 'Yes' },
                 { field: 'Category', desc: 'Product category (e.g., Electronics, Grocery)', required: 'Yes' },
-                { field: 'Cost Price', desc: 'Your purchase price', required: 'Yes' },
+                { field: 'Purchase Price', desc: 'Your purchase price', required: 'Yes' },
                 { field: 'Selling Rate', desc: 'Price you sell at', required: 'Yes' },
                 { field: 'MRP', desc: 'Maximum Retail Price', required: 'Optional' },
                 { field: 'Quantity', desc: 'Current stock quantity', required: 'Yes' },

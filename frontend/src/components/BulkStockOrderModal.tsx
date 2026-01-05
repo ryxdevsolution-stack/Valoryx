@@ -281,7 +281,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                       </div>
                       <div>
                         <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
-                          Cost Price (₹)
+                          Purchase Price (₹)
                         </label>
                         <input
                           type="number"
