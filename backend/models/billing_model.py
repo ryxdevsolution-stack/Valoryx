@@ -39,8 +39,8 @@ class GSTBilling(db.Model):
 
     def to_dict(self):
         return {
-            'bill_id': self.bill_id,
-            'client_id': self.client_id,
+            'bill_id': str(self.bill_id) if self.bill_id else None,
+            'client_id': str(self.client_id) if self.client_id else None,
             'bill_number': self.bill_number,
             'customer_name': self.customer_name,
             'customer_phone': self.customer_phone,
@@ -56,7 +56,7 @@ class GSTBilling(db.Model):
             'discount_amount': str(self.discount_amount) if self.discount_amount else None,
             'negotiable_amount': str(self.negotiable_amount) if self.negotiable_amount else None,
             'status': self.status,
-            'created_by': self.created_by,
+            'created_by': str(self.created_by) if self.created_by else None,
             'created_by_name': self.creator.full_name if self.creator and self.creator.full_name else (self.creator.email if self.creator else None),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
@@ -97,8 +97,8 @@ class NonGSTBilling(db.Model):
 
     def to_dict(self):
         return {
-            'bill_id': self.bill_id,
-            'client_id': self.client_id,
+            'bill_id': str(self.bill_id) if self.bill_id else None,
+            'client_id': str(self.client_id) if self.client_id else None,
             'bill_number': self.bill_number,
             'customer_name': self.customer_name,
             'customer_phone': self.customer_phone,
@@ -111,7 +111,7 @@ class NonGSTBilling(db.Model):
             'discount_amount': str(self.discount_amount) if self.discount_amount else None,
             'negotiable_amount': str(self.negotiable_amount) if self.negotiable_amount else None,
             'status': self.status,
-            'created_by': self.created_by,
+            'created_by': str(self.created_by) if self.created_by else None,
             'created_by_name': self.creator.full_name if self.creator and self.creator.full_name else (self.creator.email if self.creator else None),
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,

@@ -31,8 +31,8 @@ class StockEntry(db.Model):
 
     def to_dict(self):
         return {
-            'product_id': self.product_id,
-            'client_id': self.client_id,
+            'product_id': str(self.product_id) if self.product_id else None,
+            'client_id': str(self.client_id) if self.client_id else None,
             'product_name': self.product_name,
             'category': self.category,
             'quantity': self.quantity,
