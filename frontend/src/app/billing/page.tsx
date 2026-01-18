@@ -12,6 +12,7 @@ interface BillItem {
   product_name: string
   quantity: number
   rate: number
+  mrp?: number
   gst_percentage?: number
   amount: number
   item_code?: string
@@ -33,6 +34,7 @@ interface Bill {
   items?: BillItem[]
   discount_percentage?: number
   discount_amount?: number
+  negotiable_amount?: number
   cgst?: number
   sgst?: number
   igst?: number
@@ -365,25 +367,33 @@ export default function AllBillsPage() {
         throw new Error('Bill data not found')
       }
 
+      console.log('[BILLING] Bill data received:', billData)
+      console.log('[BILLING] negotiable_amount:', billData.negotiable_amount)
+      console.log('[BILLING] discount_amount:', billData.discount_amount)
+
       const billForPrint = {
         bill_number: billData.bill_number,
         customer_name: billData.customer_name,
         customer_phone: billData.customer_phone,
         items: billData.items,
-        subtotal: billData.subtotal,
+        subtotal: billData.subtotal || billData.total_amount || 0,
         discount_percentage: billData.discount_percentage,
         discount_amount: billData.discount_amount,
-        gst_amount: billData.gst_amount,
-        final_amount: billData.final_amount,
-        total_amount: billData.total_amount,
+        negotiable_amount: billData.negotiable_amount || 0,
+        gst_amount: billData.gst_amount || 0,
+        gst_percentage: billData.gst_percentage || 0,
+        final_amount: billData.final_amount || billData.total_amount || 0,
+        total_amount: billData.total_amount || billData.subtotal || 0,
         payment_type: billData.payment_type,
         created_at: billData.created_at,
         type: billData.type,
-        cgst: billData.cgst,
-        sgst: billData.sgst,
-        igst: billData.igst,
-        user_name: billData.user_name || billData.created_by || 'Admin'
+        cgst: billData.cgst || 0,
+        sgst: billData.sgst || 0,
+        igst: billData.igst || 0,
+        user_name: billData.user_name || (billData as any).created_by_name || (billData as any).created_by || 'Admin'
       }
+
+      console.log('[BILLING] Bill for print:', billForPrint)
 
       const clientInfo = client ? {
         client_name: client.client_name,
@@ -564,7 +574,7 @@ export default function AllBillsPage() {
                     setFromDate(e.target.value)
                     setDateFilter('custom')
                   }}
-                  className="px-1.5 py-0.5 text-[10px] border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  className="text-sm font-semibold text-gray-900 dark:text-white bg-transparent border border-gray-300 dark:border-gray-600 rounded px-2 py-1 cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
 
@@ -580,7 +590,7 @@ export default function AllBillsPage() {
                     setToDate(e.target.value)
                     setDateFilter('custom')
                   }}
-                  className="px-1.5 py-0.5 text-[10px] border border-gray-300 dark:border-gray-600 rounded bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                  className="text-sm font-semibold text-gray-900 dark:text-white bg-transparent border border-gray-300 dark:border-gray-600 rounded px-2 py-1 cursor-pointer hover:border-blue-500 dark:hover:border-blue-400 focus:outline-none focus:ring-1 focus:ring-blue-500"
                 />
               </div>
 

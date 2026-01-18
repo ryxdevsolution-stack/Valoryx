@@ -1,0 +1,101 @@
+================================================================================
+                    RYX BILLING DESKTOP - INSTALLATION GUIDE
+================================================================================
+
+SYSTEM REQUIREMENTS:
+--------------------
+- Windows 10 or later
+- Internet connection (for initial setup only)
+- 2GB RAM minimum
+- 500MB free disk space
+
+
+INSTALLATION STEPS:
+-------------------
+
+Step 1: Install Python
+-----------------------
+1. Download Python from: https://www.python.org/downloads/
+2. Run the installer
+3. ⚠️ IMPORTANT: Check "Add Python to PATH" during installation
+4. Click "Install Now"
+
+
+Step 2: Install Node.js
+------------------------
+1. Download Node.js from: https://nodejs.org/
+2. Run the installer
+3. Accept all default options
+4. Click "Install"
+
+
+Step 3: Extract RYX Billing
+----------------------------
+1. Extract the "RYX-Billing" folder to your desired location
+   (Example: C:\RYX-Billing)
+2. Do NOT run from Desktop or Downloads folder
+
+
+Step 4: Install Dependencies
+-----------------------------
+1. Open the "RYX-Billing" folder
+2. Double-click "INSTALL_DEPENDENCIES.bat"
+3. Wait for installation to complete (may take 5-10 minutes)
+4. Press any key when prompted
+
+
+RUNNING THE APPLICATION:
+-------------------------
+
+Starting the App:
+1. Double-click "START_RYX_BILLING.bat"
+2. Wait 10-15 seconds
+3. Your browser will open automatically with RYX Billing
+4. Login with your credentials
+
+⚠️ DO NOT CLOSE THE BLACK WINDOW! This is the application server.
+
+Stopping the App:
+1. Close your browser
+2. Double-click "STOP_RYX_BILLING.bat"
+   OR close the black command window
+
+
+TROUBLESHOOTING:
+----------------
+
+Problem: "Python is not recognized"
+Solution: Reinstall Python and make sure to check "Add Python to PATH"
+
+Problem: "npm is not recognized"
+Solution: Reinstall Node.js
+
+Problem: Application doesn't start
+Solution:
+1. Run "STOP_RYX_BILLING.bat"
+2. Wait 10 seconds
+3. Run "START_RYX_BILLING.bat" again
+
+Problem: Port already in use
+Solution: Another application is using ports 3000 or 5000
+1. Close other applications
+2. Restart computer
+3. Try again
+
+
+OFFLINE MODE:
+-------------
+After first run, the application works completely offline!
+- All data is stored locally on your computer
+- Data syncs to cloud every 2 hours when internet is available
+- You can work without internet connection
+
+
+SUPPORT:
+--------
+For technical support, contact:
+Email: support@ryx-solutions.com
+Phone: [Your Phone Number]
+
+
+================================================================================

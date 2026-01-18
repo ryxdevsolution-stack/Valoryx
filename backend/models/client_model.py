@@ -1,4 +1,5 @@
 from extensions import db
+from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
 from datetime import datetime
 import uuid
 
@@ -6,7 +7,7 @@ class ClientEntry(db.Model):
     """Master client registration table"""
     __tablename__ = 'client_entry'
 
-    client_id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    client_id = db.Column(FlexibleUUID, primary_key=True, default=lambda: str(uuid.uuid4()))
     client_name = db.Column(db.String(255), nullable=False)
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     logo_url = db.Column(db.String(500))

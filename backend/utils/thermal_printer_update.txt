@@ -1,0 +1,25 @@
+I need to update the thermal_printer.py _generate_receipt_html method to match the reference receipt exactly.
+
+The new format should be:
+1. Business name (large, bold, centered)
+2. Address (small, centered)
+3. Phone (small, centered)
+4. GST NO : xxxxx (small, bold, centered)
+5. Dashed line
+6. *** TAX INVOICE *** (centered, bold)
+7. Dashed line
+8. Bill No  : 6453        Cash Sales (two column)
+9. Date     : 10/01/2026
+10. Time     : 18:01 PM
+11. Dashed line
+12. Product table header: Product | Qty | MRP | Rate | Amount
+13. Dashed line
+14. Items
+15. Dashed line
+16. Total Items : 3        Total Amount : 212.00
+17. Total Mrp : 225.00
+18. Total Rate : 212.00
+19. Total Discount : 13.00        Total : 212.00
+20. Dashed line
+21. GST 18% on 179.65 - CGST =16.17 - SGST = 16.17
+22. Thank You ! Visit Again!!

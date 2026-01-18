@@ -144,7 +144,10 @@
       "Bash(sudo -n apt-get install:*)",
       "Bash(./venv/bin/python3:*)",
       "Bash(git -C /home/development1/Desktop/mj-billing log --oneline --grep=\"print\\\\|bill\\\\|cutoff\\\\|thermal\")",
-      "Bash(systemctl list-units:*)"
+      "Bash(systemctl list-units:*)",
+      "Bash(set DB_MODE=offline)",
+      "Bash(if not exist services mkdir services)",
+      "Bash(tasklist:*)"
     ],
     "deny": [],
     "ask": [],

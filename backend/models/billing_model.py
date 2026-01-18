@@ -2,6 +2,7 @@ from extensions import db
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
+from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
 
 class GSTBilling(db.Model):
     """GST-enabled billing with percentage calculation"""
@@ -13,26 +14,27 @@ class GSTBilling(db.Model):
         db.Index('idx_gst_client_billnum', 'client_id', 'bill_number'),  # For bill number lookups
     )
 
-    bill_id = db.Column(db.String(36), primary_key=True)
-    client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
+    bill_id = db.Column(FlexibleUUID, primary_key=True)
+    client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     bill_number = db.Column(db.Integer)
     customer_name = db.Column(db.String(255), nullable=True)
     customer_phone = db.Column(db.String(20))
     customer_gstin = db.Column(db.String(15))
-    items = db.Column(JSONB, nullable=False)
-    subtotal = db.Column(db.Numeric(12, 2), nullable=False)
-    gst_percentage = db.Column(db.Numeric(5, 2), nullable=False)
-    gst_amount = db.Column(db.Numeric(12, 2), nullable=False)
-    final_amount = db.Column(db.Numeric(12, 2), nullable=False)
+    items = db.Column(FlexibleJSON, nullable=False)
+    subtotal = db.Column(FlexibleNumeric, nullable=False)
+    gst_percentage = db.Column(FlexibleNumeric, nullable=False)
+    gst_amount = db.Column(FlexibleNumeric, nullable=False)
+    final_amount = db.Column(FlexibleNumeric, nullable=False)
     payment_type = db.Column(db.Text)
-    amount_received = db.Column(db.Numeric(12, 2))
-    discount_percentage = db.Column(db.Numeric(5, 2))
-    discount_amount = db.Column(db.Numeric(12, 2))
-    negotiable_amount = db.Column(db.Numeric(12, 2))
+    amount_received = db.Column(FlexibleNumeric)
+    discount_percentage = db.Column(FlexibleNumeric)
+    discount_amount = db.Column(FlexibleNumeric)
+    negotiable_amount = db.Column(FlexibleNumeric)
     status = db.Column(db.String(20), default='final')
-    created_by = db.Column(db.String(36), db.ForeignKey('users.user_id'))
+    created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
 
     # Relationship to User model
     creator = relationship('User', foreign_keys=[created_by], lazy='joined')
@@ -74,23 +76,24 @@ class NonGSTBilling(db.Model):
         db.Index('idx_nongst_client_billnum', 'client_id', 'bill_number'),  # For bill number lookups
     )
 
-    bill_id = db.Column(db.String(36), primary_key=True)
-    client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
+    bill_id = db.Column(FlexibleUUID, primary_key=True)
+    client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     bill_number = db.Column(db.Integer)
     customer_name = db.Column(db.String(255), nullable=True)
     customer_phone = db.Column(db.String(20))
     customer_gstin = db.Column(db.String(15))
-    items = db.Column(JSONB, nullable=False)
-    total_amount = db.Column(db.Numeric(12, 2), nullable=False)
+    items = db.Column(FlexibleJSON, nullable=False)
+    total_amount = db.Column(FlexibleNumeric, nullable=False)
     payment_type = db.Column(db.Text)
-    amount_received = db.Column(db.Numeric(12, 2))
-    discount_percentage = db.Column(db.Numeric(5, 2))
-    discount_amount = db.Column(db.Numeric(12, 2))
-    negotiable_amount = db.Column(db.Numeric(12, 2))
+    amount_received = db.Column(FlexibleNumeric)
+    discount_percentage = db.Column(FlexibleNumeric)
+    discount_amount = db.Column(FlexibleNumeric)
+    negotiable_amount = db.Column(FlexibleNumeric)
     status = db.Column(db.String(20), default='final')
-    created_by = db.Column(db.String(36), db.ForeignKey('users.user_id'))
+    created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
 
     # Relationship to User model
     creator = relationship('User', foreign_keys=[created_by], lazy='joined')

@@ -1,4 +1,5 @@
 from extensions import db
+from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
 from datetime import datetime
 import uuid
 
@@ -6,10 +7,10 @@ class User(db.Model):
     """User authentication with client_id foreign key"""
     __tablename__ = 'users'
 
-    user_id = db.Column(db.String(36), primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = db.Column(FlexibleUUID, primary_key=True, default=lambda: str(uuid.uuid4()))
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     password_hash = db.Column(db.String(255), nullable=False)
-    client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
+    client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     role = db.Column(db.String(50), default='staff')
     is_super_admin = db.Column(db.Boolean, default=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
@@ -20,9 +21,9 @@ class User(db.Model):
     full_name = db.Column(db.String(255), default='')
     phone = db.Column(db.String(20), default='')
     department = db.Column(db.String(100), default='')
-    created_by = db.Column(db.String(36), nullable=True)  # UUID stored as string
+    created_by = db.Column(FlexibleUUID, nullable=True)  # UUID stored as string
     updated_at = db.Column(db.DateTime)
-    updated_by = db.Column(db.String(36), nullable=True)  # UUID stored as string
+    updated_by = db.Column(FlexibleUUID, nullable=True)  # UUID stored as string
     deleted_at = db.Column(db.DateTime, nullable=True)  # For soft delete
 
     def to_dict(self):

@@ -817,12 +817,28 @@ export default function ReportsPage() {
                 {paginatedBills.map((bill) => {
                   const amount = bill.type === 'gst' ? parseFloat((bill as any).final_amount || 0) : parseFloat((bill as any).total_amount || 0)
 
-                  // Format payment type properly
-                  const formatPaymentType = (type: string) => {
-                    if (!type) return 'N/A'
-                    return type.split('_').map(word =>
-                      word.charAt(0).toUpperCase() + word.slice(1).toLowerCase()
-                    ).join(' ')
+                  // Parse payment types (handle JSON split payments)
+                  const parsePaymentTypes = (paymentType: string) => {
+                    if (!paymentType) return []
+
+                    // Check if it's a JSON string (split payment)
+                    if (typeof paymentType === 'string' && paymentType.trim().startsWith('[')) {
+                      try {
+                        const parsed = JSON.parse(paymentType)
+                        if (Array.isArray(parsed)) {
+                          return parsed.map(p => ({
+                            type: (p.PAYMENT_TYPE || p.payment_type || '').toUpperCase(),
+                            amount: parseFloat(p.AMOUNT || p.amount || 0)
+                          }))
+                        }
+                      } catch (e) {
+                        // If parsing fails, treat as single payment
+                        return [{ type: paymentType.toUpperCase(), amount }]
+                      }
+                    }
+
+                    // Single payment type
+                    return [{ type: paymentType.toUpperCase(), amount }]
                   }
 
                   // Get payment type color
@@ -834,6 +850,8 @@ export default function ReportsPage() {
                     if (lowerType.includes('bank')) return 'bg-indigo-50 text-indigo-700 dark:bg-indigo-900/30 dark:text-indigo-300'
                     return 'bg-gray-50 text-gray-700 dark:bg-gray-800 dark:text-gray-300'
                   }
+
+                  const paymentTypes = parsePaymentTypes(bill.payment_type)
 
                   return (
                     <tr key={bill.bill_id} className="hover:bg-gray-50 dark:hover:bg-gray-800/50">
@@ -851,9 +869,19 @@ export default function ReportsPage() {
                         {bill.customer_name || 'Walk-in'}
                       </td>
                       <td className="py-3 px-4">
-                        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${getPaymentColor(bill.payment_type)}`}>
-                          {formatPaymentType(bill.payment_type)}
-                        </span>
+                        <div className="flex flex-wrap gap-1">
+                          {paymentTypes.map((payment, index) => (
+                            <span
+                              key={index}
+                              className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs ${getPaymentColor(payment.type)}`}
+                            >
+                              <span className="font-medium">{payment.type}</span>
+                              {paymentTypes.length > 1 && (
+                                <span className="ml-1.5 font-bold text-gray-900 dark:text-gray-100">₹{payment.amount.toFixed(2)}</span>
+                              )}
+                            </span>
+                          ))}
+                        </div>
                       </td>
                       <td className="py-3 px-4 text-right text-sm font-semibold text-gray-800 dark:text-gray-200">
                         {formatCurrency(amount)}

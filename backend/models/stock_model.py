@@ -1,5 +1,6 @@
 from extensions import db
 from datetime import datetime
+from database.flexible_types import FlexibleUUID, FlexibleNumeric
 
 class StockEntry(db.Model):
     """Product inventory management with client isolation"""
@@ -11,23 +12,24 @@ class StockEntry(db.Model):
         db.Index('idx_stock_client_itemcode', 'client_id', 'item_code'),    # For item code lookups
     )
 
-    product_id = db.Column(db.String(36), primary_key=True)
-    client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
+    product_id = db.Column(FlexibleUUID, primary_key=True)
+    client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     product_name = db.Column(db.String(255), nullable=False)
     category = db.Column(db.String(100))
     quantity = db.Column(db.Integer, nullable=False, default=0)
-    rate = db.Column(db.Numeric(10, 2), nullable=False)
-    cost_price = db.Column(db.Numeric(10, 2), nullable=True)  # Cost price for profit calculation
-    mrp = db.Column(db.Numeric(10, 2), nullable=True)  # Maximum Retail Price (for display on print)
-    pricing = db.Column(db.Numeric(10, 2), nullable=True, default=None)  # Pricing field from stock updation
+    rate = db.Column(FlexibleNumeric, nullable=False)
+    cost_price = db.Column(FlexibleNumeric, nullable=True)  # Cost price for profit calculation
+    mrp = db.Column(FlexibleNumeric, nullable=True)  # Maximum Retail Price (for display on print)
+    pricing = db.Column(FlexibleNumeric, nullable=True, default=None)  # Pricing field from stock updation
     unit = db.Column(db.String(20), default='pcs')
     low_stock_alert = db.Column(db.Integer, default=10)
     item_code = db.Column(db.String(50), nullable=True, index=True)  # Added index
     barcode = db.Column(db.String(100), unique=True, nullable=True, index=True)
-    gst_percentage = db.Column(db.Numeric(5, 2), default=0)
+    gst_percentage = db.Column(FlexibleNumeric, default=0)
     hsn_code = db.Column(db.String(20))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
 
     def to_dict(self):
         return {

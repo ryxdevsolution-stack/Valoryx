@@ -1,4 +1,5 @@
 from extensions import db
+from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -6,17 +7,17 @@ class Expense(db.Model):
     """Daily expense tracking"""
     __tablename__ = 'expense'
 
-    expense_id = db.Column(db.String(36), primary_key=True)
-    client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
+    expense_id = db.Column(FlexibleUUID, primary_key=True)
+    client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     category = db.Column(db.String(100), nullable=False)  # e.g., 'rent', 'utilities', 'salary', 'supplies', 'maintenance', 'other'
     description = db.Column(db.Text)
-    amount = db.Column(db.Numeric(12, 2), nullable=False)
+    amount = db.Column(FlexibleNumeric, nullable=False)
     expense_date = db.Column(db.Date, nullable=False, index=True)
     payment_method = db.Column(db.String(50))  # e.g., 'cash', 'bank_transfer', 'card'
     receipt_url = db.Column(db.String(500))  # Optional receipt/invoice upload
     notes = db.Column(db.Text)
-    extra_data = db.Column(JSONB)  # Additional flexible data
-    created_by = db.Column(db.String(36), db.ForeignKey('users.user_id'))
+    extra_data = db.Column(FlexibleJSON)  # Additional flexible data
+    created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -42,13 +43,13 @@ class ExpenseSummary(db.Model):
     """Aggregated expense summaries by time period"""
     __tablename__ = 'expense_summary'
 
-    summary_id = db.Column(db.String(36), primary_key=True)
-    client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
+    summary_id = db.Column(FlexibleUUID, primary_key=True)
+    client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     period_type = db.Column(db.String(20), nullable=False)  # 'day', 'week', 'month', 'year'
     period_start = db.Column(db.Date, nullable=False, index=True)
     period_end = db.Column(db.Date, nullable=False)
-    total_expenses = db.Column(db.Numeric(12, 2), default=0)
-    category_breakdown = db.Column(JSONB)  # {'rent': 5000, 'utilities': 1000, ...}
+    total_expenses = db.Column(FlexibleNumeric, default=0)
+    category_breakdown = db.Column(FlexibleJSON)  # {'rent': 5000, 'utilities': 1000, ...}
     expense_count = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

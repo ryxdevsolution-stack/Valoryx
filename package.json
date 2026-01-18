@@ -21,6 +21,9 @@
     "electron:pack": "electron-builder --dir",
     "postinstall": "electron-builder install-app-deps"
   },
+  "dependencies": {
+    "electron-updater": "^6.1.7"
+  },
   "devDependencies": {
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
@@ -49,8 +52,9 @@
         ]
       },
       {
-        "from": "frontend/.next/standalone/Desktop/mj-billing/frontend",
-        "to": "frontend"
+        "from": "frontend/.next/standalone/frontend",
+        "to": "frontend",
+        "filter": ["**/*"]
       },
       {
         "from": "frontend/.next/static",
@@ -68,17 +72,17 @@
           "arch": [
             "x64"
           ]
-        },
-        {
-          "target": "portable",
-          "arch": [
-            "x64"
-          ]
         }
       ],
       "icon": "electron/resources/icon.ico",
       "artifactName": "${productName}-Setup-${version}.${ext}",
-      "signAndEditExecutable": false
+      "signAndEditExecutable": false,
+      "publish": [
+        {
+          "provider": "generic",
+          "url": "https://your-update-server.com/updates"
+        }
+      ]
     },
     "nsis": {
       "oneClick": false,
@@ -89,8 +93,7 @@
       "installerHeaderIcon": "electron/resources/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "RYX Billing",
-      "include": "electron/installer.nsh"
+      "shortcutName": "RYX Billing"
     },
     "portable": {
       "artifactName": "${productName}-Portable-${version}.${ext}"

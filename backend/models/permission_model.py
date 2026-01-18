@@ -1,13 +1,13 @@
 from extensions import db
+from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
 from datetime import datetime
 import uuid
-from sqlalchemy.dialects.postgresql import UUID
 
 class PermissionSection(db.Model):
     """Permission section model for organizing permissions"""
     __tablename__ = 'permission_sections'
 
-    section_id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    section_id = db.Column(FlexibleUUID, primary_key=True, default=uuid.uuid4)
     section_name = db.Column(db.String(100), unique=True, nullable=False)
     description = db.Column(db.Text)
     display_order = db.Column(db.Integer, nullable=False)
@@ -33,10 +33,10 @@ class Permission(db.Model):
     """Permission definition model"""
     __tablename__ = 'permissions'
 
-    permission_id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    permission_id = db.Column(FlexibleUUID, primary_key=True, default=uuid.uuid4)
     permission_name = db.Column(db.String(100), unique=True, nullable=False, index=True)
     description = db.Column(db.String(255))
-    section_id = db.Column(UUID(as_uuid=True), db.ForeignKey('permission_sections.section_id', ondelete='CASCADE'))
+    section_id = db.Column(FlexibleUUID, db.ForeignKey('permission_sections.section_id', ondelete='CASCADE'))
     display_order = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
@@ -60,11 +60,11 @@ class UserPermission(db.Model):
     """User-Permission association model"""
     __tablename__ = 'user_permissions'
 
-    id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.user_id', ondelete='CASCADE'), nullable=False, index=True)
-    permission_id = db.Column(UUID(as_uuid=True), db.ForeignKey('permissions.permission_id', ondelete='CASCADE'), nullable=False, index=True)
+    id = db.Column(FlexibleUUID, primary_key=True, default=uuid.uuid4)
+    user_id = db.Column(FlexibleUUID, db.ForeignKey('users.user_id', ondelete='CASCADE'), nullable=False, index=True)
+    permission_id = db.Column(FlexibleUUID, db.ForeignKey('permissions.permission_id', ondelete='CASCADE'), nullable=False, index=True)
     granted_at = db.Column(db.DateTime, default=datetime.utcnow)
-    granted_by = db.Column(UUID(as_uuid=True), db.ForeignKey('users.user_id', ondelete='SET NULL'))
+    granted_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id', ondelete='SET NULL'))
 
     # Relationships
     user = db.relationship('User', foreign_keys=[user_id], backref='user_permissions')
@@ -89,6 +89,14 @@ class UserPermission(db.Model):
 
 def get_user_permissions(user_id):
     """Get all permission names for a user"""
+    import logging
+    logging.info(f"[DEBUG] get_user_permissions called with user_id={user_id}, type={type(user_id)}")
+
+    # Ensure user_id is a UUID object if it's a string
+    if isinstance(user_id, str):
+        import uuid as uuid_mod
+        user_id = uuid_mod.UUID(user_id)
+
     permissions = db.session.query(Permission.permission_name).join(
         UserPermission, Permission.permission_id == UserPermission.permission_id
     ).filter(

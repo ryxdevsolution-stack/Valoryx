@@ -1,12 +1,13 @@
 from extensions import db
+from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
 from datetime import datetime
 
 class Customer(db.Model):
     """Customer master data table"""
     __tablename__ = 'customer'
 
-    customer_id = db.Column(db.String(36), primary_key=True)
-    client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
+    customer_id = db.Column(FlexibleUUID, primary_key=True)
+    client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     customer_code = db.Column(db.Integer, unique=True, index=True)
     customer_name = db.Column(db.String(255), nullable=False)
     customer_phone = db.Column(db.String(20), nullable=False)
@@ -17,7 +18,7 @@ class Customer(db.Model):
     customer_state = db.Column(db.String(100))
     customer_pincode = db.Column(db.String(10))
     total_bills = db.Column(db.Integer, default=0)
-    total_spent = db.Column(db.Numeric(15, 2), default=0.00)
+    total_spent = db.Column(FlexibleNumeric, default=0.00)
     last_purchase_date = db.Column(db.DateTime)
     first_purchase_date = db.Column(db.DateTime)
     status = db.Column(db.String(20), default='active')

@@ -83,6 +83,21 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
   const totalQuantity = bill.items.reduce((sum, item) => sum + Number(item.quantity), 0)
   const totalItems = bill.items.length
 
+  // Format payment with amounts
+  const getPaymentDisplay = () => {
+    try {
+      const payments = JSON.parse(bill.payment_type)
+      if (Array.isArray(payments) && payments.length > 0) {
+        return payments.map((p: { payment_type: string; amount: number }) =>
+          `${p.payment_type}: ${parseFloat(String(p.amount)).toFixed(2)}`
+        ).join(', ')
+      }
+      return bill.payment_type
+    } catch {
+      return bill.payment_type
+    }
+  }
+
   return (
     <div className="bill-print-modal-wrapper">
       {/* Screen Overlay */}
@@ -112,279 +127,138 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
           <div className="flex-1 overflow-auto bg-gray-50 p-6">
             <div className="bg-white shadow-lg" style={{ maxWidth: '72mm', width: '72mm', margin: '0 auto' }}>
               <div ref={printRef} className="bill-receipt">
-              {/* Solid line top */}
-              <div style={{ borderBottom: '2px solid #000', margin: '2mm 0' }}></div>
-
-              {/* Header */}
-              <div className="text-center" style={{ marginTop: '2mm', marginBottom: '2mm' }}>
-                {safeClientInfo.logo_url && (
-                  <div style={{ margin: '0 auto 2mm', width: '20mm', height: '20mm', position: 'relative' }}>
-                    <NextImage
-                      src={safeClientInfo.logo_url}
-                      alt={safeClientInfo.client_name}
-                      fill
-                      style={{ objectFit: 'contain' }}
-                      unoptimized
-                    />
-                  </div>
-                )}
-                <div style={{ fontSize: '12pt', fontWeight: '900', textTransform: 'uppercase', marginBottom: '1mm', color: '#000000' }}>
+              {/* Header - Clean and Simple */}
+              <div className="text-center" style={{ marginTop: '1mm', marginBottom: '1mm' }}>
+                <div style={{ fontSize: '13pt', fontWeight: '700', marginBottom: '1mm', color: '#000000' }}>
                   {safeClientInfo.client_name}
                 </div>
                 {safeClientInfo.address && (
-                  <div style={{ fontSize: '8pt', lineHeight: '1.3', marginBottom: '1mm', whiteSpace: 'pre-wrap', fontWeight: '600' }}>
+                  <div style={{ fontSize: '7pt', lineHeight: '1.3', marginBottom: '0.5mm', whiteSpace: 'pre-wrap' }}>
                     {safeClientInfo.address}
                   </div>
                 )}
                 {safeClientInfo.phone && (
-                  <div style={{ fontSize: '8pt', fontWeight: '600' }}>Ph: {safeClientInfo.phone}</div>
+                  <div style={{ fontSize: '7pt', marginBottom: '0.5mm' }}>Ph: {safeClientInfo.phone}</div>
                 )}
-                {safeClientInfo.gstin && (
-                  <div style={{ fontSize: '8pt', fontWeight: '900' }}>GSTIN: {safeClientInfo.gstin}</div>
+                {(safeClientInfo as any).gstin && (
+                  <div style={{ fontSize: '7pt', fontWeight: '700', marginBottom: '0.5mm' }}>GST NO : {(safeClientInfo as any).gstin}</div>
                 )}
               </div>
-              <div style={{ borderBottom: '2px solid #000', margin: '2mm 0' }}></div>
+              <div style={{ borderBottom: '1px dashed #000', margin: '1.5mm 0' }}></div>
 
               {/* Bill Type */}
-              <div style={{ fontSize: '10pt', fontWeight: '900', textAlign: 'center', margin: '1mm 0', color: '#000000' }}>
-                *** {bill.type === 'gst' ? 'TAX INVOICE' : 'RECEIPT'} ***
+              <div style={{ fontSize: '11pt', fontWeight: '700', textAlign: 'center', margin: '1.5mm 0', color: '#000000' }}>
+                *** TAX INVOICE ***
               </div>
-              <div style={{ borderBottom: '1px dashed #000', margin: '2mm 0' }}></div>
+              <div style={{ borderBottom: '1px dashed #000', margin: '1.5mm 0' }}></div>
 
               {/* Bill Info - 2 COLUMN LAYOUT */}
-              <div style={{ fontSize: '8pt', marginBottom: '2mm' }}>
-                <div style={{ display: 'flex', marginBottom: '0.5mm' }}>
-                  <span style={{ flex: 1 }}>Bill No: {bill.bill_number}</span>
-                  <span style={{ flex: 1 }}>Date: {formatDate(bill.created_at)}</span>
+              <div style={{ fontSize: '7pt', marginBottom: '1mm' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5mm' }}>
+                  <span><strong>Bill No  :</strong> {bill.bill_number}</span>
+                  <span>{getPaymentDisplay()}</span>
                 </div>
-                <div style={{ display: 'flex', marginBottom: '0.5mm' }}>
-                  <span style={{ flex: 1 }}>Time: {formatTime(bill.created_at)}</span>
-                  <span style={{ flex: 1 }}></span>
+                <div style={{ marginBottom: '0.5mm' }}>
+                  <strong>Date     :</strong> {formatDate(bill.created_at)}
                 </div>
-                {bill.customer_name && (
-                  <div style={{ marginBottom: '0.5mm' }}>Customer: {bill.customer_name}</div>
-                )}
-                {bill.type === 'gst' && bill.customer_gstin && (
-                  <div style={{ marginBottom: '0.5mm' }}>GSTIN: {bill.customer_gstin}</div>
-                )}
+                <div style={{ marginBottom: '0.5mm' }}>
+                  <strong>Time     :</strong> {formatTime(bill.created_at)}
+                </div>
               </div>
-              <div style={{ borderBottom: '1px dashed #000', margin: '2mm 0' }}></div>
+              <div style={{ borderBottom: '1px dashed #000', margin: '1.5mm 0' }}></div>
 
-              {/* Items Header - FIXED COLUMN WIDTHS */}
-              <div style={{ fontSize: '8pt', display: 'flex', alignItems: 'center', marginBottom: '1mm', fontWeight: '900', color: '#000000' }}>
-                <span style={{ width: '22mm', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>Item</span>
-                <span style={{ width: '6mm', textAlign: 'center', flexShrink: 0 }}>Qty</span>
-                <span style={{ width: '11mm', textAlign: 'right', flexShrink: 0 }}>MRP</span>
-                <span style={{ width: '11mm', textAlign: 'right', flexShrink: 0 }}>Rate</span>
-                <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0 }}>Amt</span>
+              {/* Items Header */}
+              <div style={{ fontSize: '7pt', display: 'flex', alignItems: 'center', marginBottom: '1mm', fontWeight: '700', color: '#000000' }}>
+                <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Product</span>
+                <span style={{ width: '10mm', textAlign: 'center', flexShrink: 0 }}>Qty</span>
+                <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0 }}>MRP</span>
+                <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0 }}>Rate</span>
+                <span style={{ width: '14mm', textAlign: 'right', flexShrink: 0 }}>Amount</span>
               </div>
-              <div style={{ borderBottom: '1px dashed #000', margin: '1mm 0' }}></div>
 
-              {/* Items - SINGLE LINE FORMAT */}
+              {/* Items */}
               {bill.items.map((item, index) => {
-                const name = item.product_name.length > 20 ? item.product_name.substring(0, 18) + '..' : item.product_name;
+                const name = item.product_name;
                 const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
                 const rate = Number(item.rate);
                 const amt = Number(item.amount);
-                const formatNum = (v: number) => v >= 1000 ? Math.round(v).toString() : v.toFixed(2);
+                const formatNum = (v: number) => v < 100 ? v.toFixed(2) : Math.round(v).toString();
 
                 return (
-                  <div key={index} style={{ fontSize: '8pt', display: 'flex', alignItems: 'center', marginBottom: '1mm', color: '#000000' }}>
-                    <span style={{ width: '22mm', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', flexShrink: 0 }}>{name}</span>
-                    <span style={{ width: '6mm', textAlign: 'center', flexShrink: 0 }}>{item.quantity}</span>
-                    <span style={{ width: '11mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(mrp)}</span>
-                    <span style={{ width: '11mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(rate)}</span>
-                    <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0, fontWeight: '700' }}>{formatNum(amt)}</span>
+                  <div key={index} style={{ fontSize: '7pt', display: 'flex', alignItems: 'center', marginBottom: '0.5mm', color: '#000000' }}>
+                    <span style={{ flex: 1, minWidth: 0, wordWrap: 'break-word', wordBreak: 'break-word', overflowWrap: 'break-word' }}>{name}</span>
+                    <span style={{ width: '10mm', textAlign: 'center', flexShrink: 0 }}>{item.quantity}</span>
+                    <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(mrp)}</span>
+                    <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(rate)}</span>
+                    <span style={{ width: '14mm', textAlign: 'right', flexShrink: 0, fontWeight: '700' }}>{formatNum(amt)}</span>
                   </div>
                 );
               })}
 
-              {/* Dashed line */}
-              <div style={{ borderBottom: '2px dashed #000', margin: '2mm 0' }}></div>
+              <div style={{ borderBottom: '1px dashed #000', margin: '1.5mm 0' }}></div>
 
-              {/* Summary - 2 COLUMN */}
-              <div style={{ fontSize: '8pt', marginBottom: '2mm' }}>
-                <div style={{ display: 'flex', marginBottom: '0.5mm' }}>
-                  <span style={{ flex: 1 }}>Items: {totalItems} | Qty: {totalQuantity}</span>
-                  <span style={{ flex: 1 }}>Sub Total: ₹{Number(bill?.subtotal ?? 0).toFixed(2)}</span>
+              {/* Totals matching reference format */}
+              <div style={{ fontSize: '7pt', marginBottom: '1mm' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5mm' }}>
+                  <span>Total Items : {totalItems}</span>
+                  <span style={{ fontSize: '14px', fontWeight: '700' }}>Total Amount : {Number(bill?.subtotal ?? 0).toFixed(2)}</span>
                 </div>
-                {(bill.negotiable_amount && Number(bill.negotiable_amount) > 0) ||
-                 (bill.discount_amount && Number(bill.discount_amount) > 0) ||
-                 (bill.type === 'gst' && bill.gst_amount && Number(bill.gst_amount) > 0) ? (
-                  <div style={{ display: 'flex', marginBottom: '0.5mm' }}>
-                    <span style={{ flex: 1 }}>
-                      {bill.negotiable_amount && Number(bill.negotiable_amount) > 0
-                        ? `Discount: -₹${Number(bill.negotiable_amount).toFixed(2)}`
-                        : bill.discount_amount && Number(bill.discount_amount) > 0
-                        ? `Discount: -₹${Number(bill.discount_amount).toFixed(2)}`
-                        : ''}
-                    </span>
-                    <span style={{ flex: 1 }}>
-                      {bill.type === 'gst' && bill.gst_amount && Number(bill.gst_amount) > 0
-                        ? `GST: +₹${Number(bill.gst_amount).toFixed(2)}`
-                        : ''}
-                    </span>
-                  </div>
-                ) : null}
+                <div style={{ marginBottom: '0.5mm' }}>
+                  Total Mrp : {bill.items.reduce((sum, item) => {
+                    const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
+                    return sum + (mrp * Number(item.quantity));
+                  }, 0).toFixed(2)}
+                </div>
+                <div style={{ marginBottom: '0.5mm' }}>
+                  Total Rate : {bill.items.reduce((sum, item) => {
+                    return sum + (Number(item.rate) * Number(item.quantity));
+                  }, 0).toFixed(2)}
+                </div>
+                {(() => {
+                  const negotiable = Number(bill.negotiable_amount) || 0;
+                  const discount = Number(bill.discount_amount) || 0;
+                  const actualDiscount = negotiable > 0 ? negotiable : discount;
+                  return actualDiscount > 0 ? (
+                    <div style={{ marginBottom: '0.5mm' }}>
+                      <span style={{ fontSize: '11pt', fontWeight: '700' }}>Total Discount : {actualDiscount.toFixed(2)}</span>
+                    </div>
+                  ) : null;
+                })()}
               </div>
 
-              {/* Grand Total */}
-              <div style={{ borderTop: '3px solid #000', borderBottom: '3px solid #000', padding: '3mm 1mm', marginBottom: '2mm', background: '#f0f0f0' }}>
-                <div style={{ fontSize: '12pt', fontWeight: 'bold', display: 'flex', justifyContent: 'space-between', letterSpacing: '0.3px', color: '#000000' }}>
-                  <span style={{ fontWeight: 'bold' }}>GRAND TOTAL</span>
-                  <span style={{ fontSize: '14pt', fontWeight: 'bold' }}>₹{(() => {
-                    // Calculate grand total - ALWAYS calculate to ensure consistency
-                    const subtotal = Number(bill.subtotal) || 0;
-                    const gstAmount = Number(bill.gst_amount) || 0;
-                    const negotiable = Number(bill.negotiable_amount) || 0;
-                    const discount = negotiable > 0 ? 0 : Number(bill.discount_amount) || 0;
+              <div style={{ borderBottom: '1px dashed #000', margin: '1.5mm 0' }}></div>
 
-                    let finalAmount = 0;
-                    if (bill.type === 'gst') {
-                      // GST bill: subtotal + GST - (negotiable or discount)
-                      finalAmount = subtotal + gstAmount - negotiable - discount;
-                    } else {
-                      // Non-GST bill: subtotal - (negotiable or discount)
-                      finalAmount = subtotal - negotiable - discount;
-                    }
-
-                    // Ensure grand total never goes negative
-                    return Math.round(Math.max(0, finalAmount));
-                  })()}</span>
+              {/* GST Breakdown - Only for GST bills */}
+              {bill.type === 'gst' && bill.gst_amount && Number(bill.gst_amount) > 0 && (
+                <div style={{ fontSize: '7pt', textAlign: 'center', marginBottom: '2mm' }}>
+                  GST {bill.gst_percentage || 18}% on {Number(bill.subtotal || 0).toFixed(2)} - CGST ={(Number(bill.gst_amount) / 2).toFixed(2)} - SGST = {(Number(bill.gst_amount) / 2).toFixed(2)}
                 </div>
-              </div>
-
-              {/* GST Breakdown for Tax Invoice - Compact */}
-              {bill.type === 'gst' && bill.items.some(item => Number(item.gst_percentage) > 0) && (
-                <>
-                  <div style={{ fontSize: '8pt', marginTop: '1mm' }}>
-                    {(() => {
-                      const gstGroups = bill.items.reduce((acc, item) => {
-                        const gstRate = Number(item.gst_percentage) || 0
-                        if (gstRate > 0) {
-                          if (!acc[gstRate]) acc[gstRate] = { taxable: 0 }
-                          acc[gstRate].taxable += Number(item.amount) || 0
-                        }
-                        return acc
-                      }, {} as Record<number, { taxable: number }>)
-
-                      let totalGst = 0
-                      const parts = Object.entries(gstGroups).map(([rate, data]) => {
-                        const gstRate = parseFloat(rate)
-                        const gstAmt = (data.taxable * gstRate) / 100
-                        totalGst += gstAmt
-                        return `${gstRate}%: ₹${gstAmt.toFixed(2)}`
-                      })
-
-                      return (
-                        <div style={{ display: 'flex', justifyContent: 'space-between' }}>
-                          <span>GST ({parts.join(', ')})</span>
-                          <span><strong>₹{totalGst.toFixed(2)}</strong></span>
-                        </div>
-                      )
-                    })()}
-                  </div>
-                </>
               )}
 
-              {/* Dashed line */}
-              <div style={{ borderBottom: '2px dashed #000', margin: '2mm 0' }}></div>
+              {/* Savings Box */}
+              {(() => {
+                const mrpSavings = bill.items.reduce((sum, item) => {
+                  const mrpAmt = Number(item.mrp) ? Number(item.mrp) * Number(item.quantity) : 0
+                  const rateAmt = Number(item.rate) * Number(item.quantity)
+                  return sum + Math.max(0, mrpAmt - rateAmt)
+                }, 0)
 
-              {/* Payment Info */}
-              <div style={{ fontSize: '8pt', marginBottom: '2mm', paddingLeft: '1mm', paddingRight: '1mm' }}>
-                <div style={{ textAlign: 'center', marginBottom: '1mm' }}><strong>Payment Mode:</strong></div>
-                {(() => {
-                  try {
-                    // Try to parse as JSON (split payment)
-                    const payments = JSON.parse(bill.payment_type)
-                    if (Array.isArray(payments) && payments.length > 0) {
-                      return payments.map((payment: any, index: number) => (
-                        <div key={index} style={{ display: 'flex', justifyContent: 'space-between', paddingLeft: '3mm', paddingRight: '3mm', marginBottom: '0.5mm' }}>
-                          <span>{payment.payment_type}</span>
-                          <span>₹{parseFloat(payment.amount).toFixed(2)}</span>
-                        </div>
-                      ))
-                    }
-                  } catch {
-                    // If not JSON, display as plain text
-                    return (
-                      <div style={{ textAlign: 'center' }}>
-                        {bill.payment_type}
-                      </div>
-                    )
-                  }
-                })()}
-              </div>
+                const negotiableSavings = bill.negotiable_amount && Number(bill.negotiable_amount) > 0 ? Number(bill.negotiable_amount) : 0
+                const discountSavings = !negotiableSavings && bill.discount_amount && Number(bill.discount_amount) > 0 ? Number(bill.discount_amount) : 0
+                const totalSavings = mrpSavings + negotiableSavings + discountSavings
 
-              {/* Dashed line */}
-              <div style={{ borderBottom: '2px dashed #000', margin: '2mm 0' }}></div>
+                return totalSavings > 0 && (
+                  <div style={{ textAlign: 'center', margin: '2mm 0', padding: '1.5mm', border: '1px dashed #000' }}>
+                    <div style={{ fontSize: '7pt' }}>TODAY&apos;S SAVINGS</div>
+                    <div style={{ fontSize: '11pt', fontWeight: 'bold', margin: '0.5mm 0' }}>₹{totalSavings.toFixed(2)}</div>
+                    <div style={{ fontSize: '7pt' }}>You saved compared to MRP!</div>
+                  </div>
+                )
+              })()}
 
               {/* Footer */}
-              <div style={{ textAlign: 'center', marginTop: '3mm' }}>
-                {/* Today's Savings - Shows MRP savings + Negotiation/Discount savings */}
-                {(() => {
-                  const mrpSavings = bill.items.reduce((sum, item) => {
-                    const mrpAmt = Number(item.mrp) ? Number(item.mrp) * Number(item.quantity) : 0
-                    const rateAmt = Number(item.rate) * Number(item.quantity)
-                    return sum + Math.max(0, mrpAmt - rateAmt)
-                  }, 0)
-
-                  // Calculate negotiation or discount savings if applicable
-                  const negotiableSavings = bill.negotiable_amount && Number(bill.negotiable_amount) > 0 ? Number(bill.negotiable_amount) : 0
-                  const discountSavings = !negotiableSavings && bill.discount_amount && Number(bill.discount_amount) > 0 ? Number(bill.discount_amount) : 0
-                  const extraSavings = negotiableSavings + discountSavings
-                  const totalSavings = mrpSavings + extraSavings
-
-                  return totalSavings > 0 && (
-                    <div style={{
-                      border: '2px solid #000',
-                      padding: '2mm',
-                      marginBottom: '3mm',
-                      background: '#ffffff'
-                    }}>
-                      <div style={{
-                        fontSize: '9pt',
-                        fontWeight: 'bold',
-                        marginBottom: '1mm',
-                        letterSpacing: '0.5px'
-                      }}>
-                        TODAY&apos;S SAVINGS
-                      </div>
-                      <div style={{
-                        fontSize: '16pt',
-                        fontWeight: 'bold',
-                        letterSpacing: '1px'
-                      }}>
-                        ₹{totalSavings.toFixed(2)}
-                      </div>
-                      <div style={{ fontSize: '6pt', marginTop: '1mm', fontStyle: 'italic' }}>
-                        {mrpSavings > 0 && negotiableSavings > 0 ? 'You saved on MRP + Negotiable!' :
-                         mrpSavings > 0 && discountSavings > 0 ? 'You saved on MRP + Discount!' :
-                         mrpSavings > 0 ? 'You saved on MRP!' :
-                         negotiableSavings > 0 ? 'You saved through negotiation!' : 'You saved with discount!'}
-                      </div>
-                    </div>
-                  )
-                })()}
-                {/* No Exchange Policy */}
-                <div style={{
-                  fontSize: '9pt',
-                  fontWeight: 'bold',
-                  marginBottom: '2mm',
-                  padding: '1.5mm 0',
-                  borderTop: '1px dashed #000',
-                  borderBottom: '1px dashed #000'
-                }}>
-                  Sorry, No Exchange / No Refund
-                </div>
-                <div style={{ fontSize: '9pt', fontWeight: 'bold', letterSpacing: '1px' }}>
-                  ★★★ THANK YOU VISIT AGAIN ★★★
-                </div>
-              </div>
-
-              {/* Star border bottom */}
-              <div className="text-center" style={{ fontSize: '10px', letterSpacing: '-1px', marginTop: '2mm' }}>
-                ★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★★
+              <div style={{ fontSize: '8pt', fontWeight: '700', textAlign: 'center', marginTop: '2mm' }}>
+                Sorry, No Exchange / No Refund
               </div>
               </div>
             </div>
@@ -464,18 +338,19 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
       {/* Screen preview styling - Optimized for 80mm thermal printers (72mm printable area) */}
       <style dangerouslySetInnerHTML={{__html: `
         .bill-receipt {
-          font-family: 'Courier New', Courier, monospace;
+          font-family: Arial, Helvetica, sans-serif;
           max-width: 72mm;
           width: 72mm;
           margin: 0 auto;
           background: white;
           color: #000000;
-          line-height: 1.4;
+          line-height: 1.3;
           padding: 2mm;
           box-sizing: border-box;
-          font-weight: 600;
+          font-weight: 700;
+          letter-spacing: -0.3px;
           -webkit-font-smoothing: none;
-          -moz-osx-font-smoothing: unset;
+          -moz-osx-font-smoothing: grayscale;
           text-rendering: geometricPrecision;
           overflow-x: hidden;
         }
@@ -483,7 +358,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
         .bill-receipt * {
           color: #000000 !important;
           box-sizing: border-box;
-          font-weight: 600 !important;
+          font-weight: 400 !important;
         }
 
         .bill-receipt strong,
@@ -525,26 +400,27 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
             font-weight: 700 !important;
             color: #000000 !important;
             overflow-x: hidden !important;
-            line-height: 1.2 !important;
-            font-family: 'Courier New', Courier, monospace !important;
+            line-height: 1.3 !important;
+            font-family: Arial, Helvetica, sans-serif !important;
+            letter-spacing: -0.3px !important;
             -webkit-font-smoothing: none !important;
-            -moz-osx-font-smoothing: unset !important;
+            -moz-osx-font-smoothing: grayscale !important;
             text-rendering: geometricPrecision !important;
           }
           .bill-receipt * {
             color: #000000 !important;
-            font-weight: 700 !important;
+            font-weight: 400 !important;
             -webkit-font-smoothing: none !important;
           }
           .bill-receipt strong,
           .bill-receipt b {
-            font-weight: 900 !important;
+            font-weight: 700 !important;
           }
           .bill-receipt div,
           .bill-receipt span,
           .bill-receipt p {
             color: #000000 !important;
-            font-weight: 700 !important;
+            font-weight: 400 !important;
           }
         }
 

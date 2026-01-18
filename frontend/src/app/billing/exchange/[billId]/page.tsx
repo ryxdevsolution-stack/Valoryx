@@ -429,18 +429,20 @@ export default function ExchangeBillPage() {
         customer_name: billData.customer_name,
         customer_phone: billData.customer_phone,
         items: billData.items,
-        subtotal: billData.subtotal,
+        subtotal: billData.subtotal || billData.total_amount || 0,
         discount_percentage: billData.discount_percentage,
         discount_amount: billData.discount_amount,
-        gst_amount: billData.gst_amount,
-        final_amount: billData.final_amount,
-        total_amount: billData.total_amount,
+        negotiable_amount: billData.negotiable_amount || 0,
+        gst_amount: billData.gst_amount || 0,
+        gst_percentage: billData.gst_percentage || 0,
+        final_amount: billData.final_amount || billData.total_amount || 0,
+        total_amount: billData.total_amount || billData.subtotal || 0,
         payment_type: billData.payment_type,
         created_at: billData.created_at,
         type: billData.type,
-        cgst: billData.cgst,
-        sgst: billData.sgst,
-        igst: billData.igst
+        cgst: billData.cgst || 0,
+        sgst: billData.sgst || 0,
+        igst: billData.igst || 0
       }
 
       const clientInfo = client ? {

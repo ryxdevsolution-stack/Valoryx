@@ -1,4 +1,5 @@
 from extensions import db
+from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
 
@@ -6,19 +7,19 @@ class Report(db.Model):
     """Auto-generated summary reports"""
     __tablename__ = 'report'
 
-    report_id = db.Column(db.String(36), primary_key=True)
-    client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
+    report_id = db.Column(FlexibleUUID, primary_key=True)
+    client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     report_type = db.Column(db.String(50), nullable=False)
     date_from = db.Column(db.Date, nullable=False)
     date_to = db.Column(db.Date, nullable=False)
     total_gst_bills = db.Column(db.Integer, default=0)
     total_non_gst_bills = db.Column(db.Integer, default=0)
-    total_gst_amount = db.Column(db.Numeric(12, 2), default=0)
-    total_non_gst_amount = db.Column(db.Numeric(12, 2), default=0)
-    total_revenue = db.Column(db.Numeric(12, 2), default=0)
-    payment_breakdown = db.Column(JSONB)
+    total_gst_amount = db.Column(FlexibleNumeric, default=0)
+    total_non_gst_amount = db.Column(FlexibleNumeric, default=0)
+    total_revenue = db.Column(FlexibleNumeric, default=0)
+    payment_breakdown = db.Column(FlexibleJSON)
     file_url = db.Column(db.String(500))
-    generated_by = db.Column(db.String(36), db.ForeignKey('users.user_id'))
+    generated_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
     def to_dict(self):

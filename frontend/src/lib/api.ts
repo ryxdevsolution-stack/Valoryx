@@ -27,7 +27,8 @@ const CACHE_TTLS: Record<string, number> = {
   '/stock/lookup': 120000,   // 2 min - product lookups
   '/customer/search': 60000, // 1 min - customer search results
   '/payment': 300000,        // 5 min - payment types rarely change
-  '/billing/printers': 120000 // 2 min - printer list
+  '/billing/printers': 120000, // 2 min - printer list
+  '/billing/list': 240000    // 4 min - billing list (aligned with stock)
 }
 
 // Get cache TTL based on URL pattern

@@ -1,7 +1,7 @@
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: 'standalone',
+  output: 'standalone', // Back to standalone for full Next.js features
   images: {
     remotePatterns: [
       {

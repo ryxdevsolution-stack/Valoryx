@@ -49,6 +49,18 @@ def create_app():
     else:
         logging.info("[OK] Database initialized successfully")
 
+    # Phase 1: Initialize background sync scheduler (2-hour interval)
+    if app.config.get('DB_MODE') == 'offline':
+        try:
+            from services.sync_scheduler import init_sync_scheduler
+            sync_scheduler = init_sync_scheduler(app)
+            app.config['SYNC_SCHEDULER'] = sync_scheduler
+            logging.info("[OK] Background sync scheduler initialized")
+        except Exception as e:
+            logging.warning(f"[WARNING] Background sync scheduler failed to initialize: {e}")
+    else:
+        logging.info("[INFO] Running in online mode - sync scheduler disabled")
+
     # Register blueprints with error handling
     blueprints_registered = []
     import_errors = []
@@ -285,13 +297,17 @@ def create_app():
         supabase_configured = supabase_url_set and supabase_key_set
         using_supabase = 'supabase' in str(Config.SQLALCHEMY_DATABASE_URI).lower() or 'postgresql' in str(Config.SQLALCHEMY_DATABASE_URI).lower()
 
+        # Phase 1: Get database mode
+        db_mode = app.config.get('DB_MODE', 'unknown')
+
         status = {
             'status': 'running',
             'message': 'RYX Billing API is running',
             'database': {
                 'initialized': db_initialized,
                 'connected': db_connected,
-                'type': 'PostgreSQL' if using_supabase else 'SQLite (fallback)'
+                'type': 'PostgreSQL' if using_supabase else 'SQLite (fallback)',
+                'mode': db_mode  # Phase 1: Show online/offline mode
             },
             'supabase': {
                 'configured': supabase_configured,
@@ -316,7 +332,43 @@ def create_app():
         if app.config.get('IMPORT_ERRORS'):
             status['warnings'].append(f"Blueprint import errors: {len(app.config.get('IMPORT_ERRORS', []))} failures")
 
+        # Phase 1: Add sync status
+        sync_scheduler = app.config.get('SYNC_SCHEDULER')
+        if sync_scheduler:
+            status['sync'] = sync_scheduler.get_status()
+        else:
+            status['sync'] = {'enabled': False, 'reason': 'Running in online mode or sync disabled'}
+
         return status, 200
+
+    # Phase 1: Manual sync endpoint
+    @app.route('/api/sync/trigger', methods=['POST'])
+    def trigger_sync():
+        """Manually trigger a sync to Supabase"""
+        sync_scheduler = app.config.get('SYNC_SCHEDULER')
+
+        if not sync_scheduler:
+            return {
+                'error': 'Sync not available',
+                'message': 'Sync scheduler is not running (only available in offline mode)'
+            }, 400
+
+        result = sync_scheduler.trigger_sync_now()
+        return result, 200
+
+    # Phase 1: Sync status endpoint
+    @app.route('/api/sync/status', methods=['GET'])
+    def sync_status():
+        """Get current sync status"""
+        sync_scheduler = app.config.get('SYNC_SCHEDULER')
+
+        if not sync_scheduler:
+            return {
+                'enabled': False,
+                'reason': 'Running in online mode or sync disabled'
+            }, 200
+
+        return sync_scheduler.get_status(), 200
 
     # Handle CORS preflight requests explicitly
     @app.before_request
@@ -412,9 +464,16 @@ app = create_app()
 
 if __name__ == '__main__':
     with app.app_context():
-        # Only create tables if they don't exist - skip if schema conflicts
+        # Phase 1: Create tables automatically for SQLite (offline mode)
         try:
-            db.create_all()
+            if app.config.get('DB_MODE') == 'offline':
+                # In offline mode, create tables automatically
+                print("[SQLite] Creating tables for offline mode...")
+                db.create_all()
+                print("[SQLite] ✓ Tables created successfully")
+            else:
+                # In online mode, only create if they don't exist
+                db.create_all()
         except Exception as e:
             print(f"[WARNING]  db.create_all() skipped: {e}")
             print("Database tables likely already exist - continuing...")

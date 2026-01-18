@@ -10,14 +10,11 @@
 // ============================================================================
 const RECEIPT_CONFIG = {
   PAPER_WIDTH: '72mm',      // Actual printable width (80mm - margins)
-  FONT_SIZE: '9pt',         // Base font size
-  FONT_SIZE_LARGE: '12pt',  // Headers
-  FONT_SIZE_SMALL: '8pt',   // Details
-  COL_QTY: '6mm',           // Quantity column
-  COL_MRP: '11mm',          // MRP column
-  COL_RATE: '11mm',         // Rate column
-  COL_AMT: '12mm',          // Amount column
-  ITEM_NAME_MAX: 20,        // Max characters for item name
+  FONT_SIZE: '8pt',         // Base font size (smaller, cleaner)
+  FONT_SIZE_LARGE: '11pt',  // Headers
+  FONT_SIZE_XLARGE: '13pt', // Business name
+  FONT_SIZE_SMALL: '7pt',   // Details
+  ITEM_NAME_MAX: 18,        // Max characters for item name
 } as const;
 
 // ============================================================================
@@ -121,7 +118,7 @@ export function generateReceiptHtml(
   clientInfo: ClientInfo,
   showNoExchange: boolean = true
 ): string {
-  const { PAPER_WIDTH, FONT_SIZE, FONT_SIZE_LARGE, FONT_SIZE_SMALL, COL_QTY, COL_MRP, COL_RATE, COL_AMT, ITEM_NAME_MAX } = RECEIPT_CONFIG;
+  const { PAPER_WIDTH, FONT_SIZE, FONT_SIZE_LARGE, FONT_SIZE_XLARGE, FONT_SIZE_SMALL, ITEM_NAME_MAX } = RECEIPT_CONFIG;
 
   // Calculate totals
   const totalItems = bill.items.length;
@@ -142,12 +139,10 @@ export function generateReceiptHtml(
   }
   finalAmount = Math.max(0, finalAmount);
 
-  const roundOff = Math.round(finalAmount) - finalAmount;
   const grandTotal = Math.round(finalAmount);
 
-  // Calculate savings and GST breakdown
+  // Calculate savings (MRP savings + discount)
   let totalSavings = 0;
-  const gstBreakdown: Record<number, { taxable: number; gst: number }> = {};
 
   for (const item of bill.items) {
     const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
@@ -157,49 +152,44 @@ export function generateReceiptHtml(
     if (mrp > rate) {
       totalSavings += (mrp - rate) * qty;
     }
-
-    const gstPct = Number(item.gst_percentage) || 0;
-    if (gstPct > 0) {
-      const taxableAmt = qty * rate;
-      const gstForItem = (taxableAmt * gstPct) / 100;
-      if (!gstBreakdown[gstPct]) {
-        gstBreakdown[gstPct] = { taxable: 0, gst: 0 };
-      }
-      gstBreakdown[gstPct].taxable += taxableAmt;
-      gstBreakdown[gstPct].gst += gstForItem;
-    }
   }
 
   // Include discount in savings
   totalSavings += actualDiscount;
 
-  // Format payment info
-  let paymentHtml = '';
+  // Format payment info with amounts
+  let paymentDisplay = '';
   try {
     const payments = JSON.parse(bill.payment_type);
     if (Array.isArray(payments) && payments.length > 0) {
-      paymentHtml = payments
+      paymentDisplay = payments
         .map((p: { payment_type: string; amount: number }) =>
-          `${p.payment_type}: Rs.${parseFloat(String(p.amount)).toFixed(2)}`
+          `${p.payment_type}: ${parseFloat(String(p.amount)).toFixed(2)}`
         )
-        .join('<br>');
+        .join(', ');
     } else {
-      paymentHtml = escapeHtml(bill.payment_type);
+      paymentDisplay = escapeHtml(bill.payment_type);
     }
   } catch {
-    paymentHtml = escapeHtml(bill.payment_type);
+    paymentDisplay = escapeHtml(bill.payment_type);
   }
 
-  // User name
-  let userName = bill.user_name || bill.created_by || 'Admin';
-  if (userName.length > 15) {
-    userName = userName.substring(0, 12) + '...';
+  // Calculate total MRP and total rate
+  let totalMrp = 0;
+  let totalRate = 0;
+
+  for (const item of bill.items) {
+    const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
+    const rate = Number(item.rate);
+    const qty = Number(item.quantity);
+    totalMrp += mrp * qty;
+    totalRate += rate * qty;
   }
 
   // Build items HTML
   let itemsHtml = '';
   for (const item of bill.items) {
-    const name = truncate(item.product_name, ITEM_NAME_MAX);
+    const name = item.product_name;
     const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
     const rate = Number(item.rate);
     const qty = Number(item.quantity);
@@ -207,7 +197,7 @@ export function generateReceiptHtml(
 
     itemsHtml += `
     <div class="item-row">
-      <span class="col-name">${escapeHtml(name)}</span>
+      <span class="col-product">${escapeHtml(name)}</span>
       <span class="col-qty">${qty}</span>
       <span class="col-mrp">${formatNumber(mrp)}</span>
       <span class="col-rate">${formatNumber(rate)}</span>
@@ -215,29 +205,16 @@ export function generateReceiptHtml(
     </div>`;
   }
 
-  // Build GST breakdown HTML
-  let gstBreakdownHtml = '';
-  if (bill.type === 'gst' && Object.keys(gstBreakdown).length > 0) {
-    gstBreakdownHtml = `
-    <div class="center small bold">GST BREAKDOWN</div>
-    <table class="gst-table">
-      <tr><th>Tax%</th><th>Taxable</th><th>CGST</th><th>SGST</th><th>Total</th></tr>`;
-    for (const gstPct of Object.keys(gstBreakdown).map(Number).sort()) {
-      const data = gstBreakdown[gstPct];
-      const cgstAmt = data.gst / 2;
-      gstBreakdownHtml += `
-      <tr>
-        <td>${gstPct}%</td>
-        <td>${Math.round(data.taxable)}</td>
-        <td>${cgstAmt.toFixed(2)}</td>
-        <td>${cgstAmt.toFixed(2)}</td>
-        <td>${data.gst.toFixed(2)}</td>
-      </tr>`;
-    }
-    gstBreakdownHtml += '</table>';
+  // Build GST breakdown text (inline format like reference)
+  let gstBreakdownText = '';
+  if (bill.type === 'gst' && gstAmount > 0) {
+    const cgst = gstAmount / 2;
+    const sgst = gstAmount / 2;
+    const taxableAmount = subtotal;
+    gstBreakdownText = `GST ${bill.gst_percentage || 18}% on ${taxableAmount.toFixed(2)} - CGST =${cgst.toFixed(2)} - SGST = ${sgst.toFixed(2)}`;
   }
 
-  // Build complete HTML
+  // Build complete HTML - MATCHING REFERENCE RECEIPT EXACTLY
   return `<!DOCTYPE html>
 <html>
 <head>
@@ -251,112 +228,64 @@ export function generateReceiptHtml(
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
-      font-family: 'Courier New', 'Consolas', monospace;
+      font-family: Arial, Helvetica, sans-serif;
       width: ${PAPER_WIDTH};
       max-width: ${PAPER_WIDTH};
       background: #fff;
       color: #000;
       font-size: ${FONT_SIZE};
-      font-weight: 600;
+      font-weight: 400;
       line-height: 1.3;
       padding: 2mm;
+      letter-spacing: -0.3px;
       -webkit-font-smoothing: none;
+      -moz-osx-font-smoothing: grayscale;
     }
     .center { text-align: center; }
-    .bold { font-weight: 900; }
-    .large { font-size: ${FONT_SIZE_LARGE}; font-weight: 900; }
-    .small { font-size: ${FONT_SIZE_SMALL}; }
-    .dashed { border-bottom: 1px dashed #000; margin: 2mm 0; }
-    .solid { border-bottom: 2px solid #000; margin: 2mm 0; }
+    .bold { font-weight: 700; }
+    .dashed { border-bottom: 2px dashed #000; margin: 1.5mm 0; }
     .row { margin-bottom: 0.5mm; }
-    .row-2col { display: flex; margin-bottom: 0.5mm; }
-    .row-2col span { flex: 1; }
+    .row-flex { display: flex; justify-content: space-between; margin-bottom: 0.5mm; }
     .item-header, .item-row {
       display: flex;
-      align-items: center;
       font-size: ${FONT_SIZE_SMALL};
+      margin-bottom: 0.5mm;
     }
-    .item-header { font-weight: 900; margin-bottom: 1mm; }
-    .item-row { margin-bottom: 1mm; }
-    .col-name { width: 22mm; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex-shrink: 0; }
-    .col-qty { width: ${COL_QTY}; text-align: center; flex-shrink: 0; }
-    .col-mrp { width: ${COL_MRP}; text-align: right; flex-shrink: 0; }
-    .col-rate { width: ${COL_RATE}; text-align: right; flex-shrink: 0; }
-    .col-amt { width: ${COL_AMT}; text-align: right; flex-shrink: 0; font-weight: 700; }
-    .summary-row { display: flex; margin-bottom: 0.5mm; }
-    .summary-row span { flex: 1; }
-    .grand-total {
-      border: 2px solid #000;
-      padding: 2mm;
-      margin: 2mm 0;
-      display: flex;
-      justify-content: space-between;
-      align-items: center;
-      font-weight: 900;
-    }
-    .grand-total-label { font-size: 10pt; }
-    .grand-total-value { font-size: 14pt; }
-    .savings-box {
-      border: 2px double #000;
-      padding: 2mm;
-      margin: 2mm 0;
-      text-align: center;
-    }
-    .gst-table {
-      width: 100%;
-      font-size: 7pt;
-      border-collapse: collapse;
-      margin: 2mm 0;
-    }
-    .gst-table th, .gst-table td {
-      border: 1px solid #000;
-      padding: 1mm;
-      text-align: center;
-    }
-    .no-exchange {
-      border: 1px dashed #000;
-      padding: 1.5mm;
-      margin: 2mm 0;
-      text-align: center;
-      font-weight: 700;
-      font-size: ${FONT_SIZE_SMALL};
-    }
+    .item-header { font-weight: 700; }
+    .col-product { flex: 1; min-width: 0; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; }
+    .col-qty { width: 10mm; text-align: center; }
+    .col-mrp { width: 12mm; text-align: right; }
+    .col-rate { width: 12mm; text-align: right; }
+    .col-amt { width: 14mm; text-align: right; font-weight: 700; }
   </style>
 </head>
 <body>
   <!-- Header -->
-  <div class="solid"></div>
-  <div class="center" style="margin: 2mm 0;">
-    <div class="large">${escapeHtml(clientInfo.client_name || 'Business Name')}</div>
-    ${clientInfo.address ? `<div class="small">${escapeHtml(clientInfo.address).replace(/\n/g, '<br>')}</div>` : ''}
-    ${clientInfo.phone ? `<div class="small">Ph: ${escapeHtml(clientInfo.phone)}</div>` : ''}
-    ${clientInfo.gstin ? `<div class="small bold">GSTIN: ${escapeHtml(clientInfo.gstin)}</div>` : ''}
-  </div>
-  <div class="solid"></div>
-
-  <!-- Bill Type -->
-  <div class="center bold" style="margin: 1mm 0; font-size: 10pt;">
-    *** ${bill.type === 'gst' ? 'TAX INVOICE' : 'RECEIPT'} ***
-  </div>
+  <div class="center bold" style="font-size: ${FONT_SIZE_XLARGE}; margin-bottom: 1mm;">${escapeHtml(clientInfo.client_name || 'Business Name')}</div>
+  ${clientInfo.address ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL};">${escapeHtml(clientInfo.address).replace(/\n/g, '<br>')}</div>` : ''}
+  ${clientInfo.phone ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL};">${escapeHtml(clientInfo.phone)}</div>` : ''}
+  ${clientInfo.gstin ? `<div class="center bold" style="font-size: ${FONT_SIZE_SMALL};">GST NO : ${escapeHtml(clientInfo.gstin)}</div>` : ''}
   <div class="dashed"></div>
 
-  <!-- Bill Info - 2 COLUMN LAYOUT -->
-  <div class="small">
-    <div class="row-2col"><span>Bill No: ${bill.bill_number}</span><span>Date: ${formatDate(bill.created_at)}</span></div>
-    <div class="row-2col"><span>Time: ${formatTime(bill.created_at)}</span><span>User: ${escapeHtml(userName)}</span></div>
-    ${bill.customer_name ? `<div class="row">Customer: ${escapeHtml(bill.customer_name)}</div>` : ''}
-    ${bill.customer_phone ? `<div class="row">Phone: ${escapeHtml(bill.customer_phone)}</div>` : ''}
-    ${bill.type === 'gst' && bill.customer_gstin ? `<div class="row">GSTIN: ${escapeHtml(bill.customer_gstin)}</div>` : ''}
+  <!-- Bill Type -->
+  <div class="center bold" style="font-size: ${FONT_SIZE_LARGE};">*** TAX INVOICE ***</div>
+  <div class="dashed"></div>
+
+  <!-- Bill Info -->
+  <div style="font-size: ${FONT_SIZE_SMALL};">
+    <div class="row-flex"><span><strong>Bill No  :</strong> ${bill.bill_number}</span><span>${paymentDisplay}</span></div>
+    <div class="row"><strong>Date     :</strong> ${formatDate(bill.created_at)}</div>
+    <div class="row"><strong>Time     :</strong> ${formatTime(bill.created_at)}</div>
   </div>
   <div class="dashed"></div>
 
   <!-- Items Header -->
   <div class="item-header">
-    <span class="col-name">Item</span>
+    <span class="col-product">Product</span>
     <span class="col-qty">Qty</span>
     <span class="col-mrp">MRP</span>
     <span class="col-rate">Rate</span>
-    <span class="col-amt">Amt</span>
+    <span class="col-amt">Amount</span>
   </div>
   <div class="dashed"></div>
 
@@ -364,36 +293,20 @@ export function generateReceiptHtml(
   ${itemsHtml}
   <div class="dashed"></div>
 
-  <!-- Summary - 2 COLUMN -->
-  <div class="small">
-    <div class="summary-row"><span>Items: ${totalItems} | Qty: ${totalQty}</span><span>Sub Total: ${subtotal.toFixed(2)}</span></div>
-    ${actualDiscount > 0 || gstAmount > 0 ? `<div class="summary-row"><span>${actualDiscount > 0 ? `Discount: -${actualDiscount.toFixed(2)}` : ''}</span><span>${gstAmount > 0 ? `GST: +${gstAmount.toFixed(2)}` : ''}</span></div>` : ''}
-    ${Math.abs(roundOff) >= 0.01 ? `<div class="row">Round Off: ${roundOff > 0 ? '+' : ''}${roundOff.toFixed(2)}</div>` : ''}
+  <!-- Totals Summary -->
+  <div style="font-size: ${FONT_SIZE_SMALL};">
+    <div class="row-flex"><span>Total Items : ${totalItems}</span><span style="font-size: 14px; font-weight: 700;">Total Amount : ${subtotal.toFixed(2)}</span></div>
+    <div class="row">Total Mrp : ${totalMrp.toFixed(2)}</div>
+    <div class="row">Total Rate : ${totalRate.toFixed(2)}</div>
+    ${actualDiscount > 0 ? `<div class="row"><span style="font-size: ${FONT_SIZE_LARGE}; font-weight: 700;">Total Discount : ${actualDiscount.toFixed(2)}</span></div>` : ''}
   </div>
-
-  <!-- Grand Total -->
-  <div class="grand-total">
-    <span class="grand-total-label">GRAND TOTAL</span>
-    <span class="grand-total-value">Rs.${grandTotal}</span>
-  </div>
-
-  ${gstBreakdownHtml}
-
   <div class="dashed"></div>
-  <div class="small center">Payment: ${paymentHtml}</div>
 
-  ${totalSavings > 0 ? `
-  <div class="savings-box">
-    <div class="bold">TODAY'S SAVINGS</div>
-    <div class="large">Rs.${totalSavings.toFixed(2)}</div>
-    <div class="small">You saved compared to MRP!</div>
-  </div>` : ''}
+  <!-- GST Breakdown (if GST bill) -->
+  ${gstBreakdownText ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL};">${gstBreakdownText}</div>` : ''}
 
-  ${showNoExchange ? '<div class="no-exchange">Sorry, No Exchange / No Refund</div>' : ''}
-
-  <div class="dashed"></div>
-  <div class="center bold" style="margin: 2mm 0;">*** THANK YOU VISIT AGAIN ***</div>
-  <div class="solid"></div>
+  <!-- Footer -->
+  <div class="center bold" style="font-size: ${FONT_SIZE}; margin-top: 2mm;">Sorry, No Exchange / No Refund</div>
 </body>
 </html>`;
 }

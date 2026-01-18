@@ -19,37 +19,88 @@ def force_ipv4_dns():
 force_ipv4_dns()
 
 
+# Phase 1: Database mode detection
+def get_database_mode():
+    """
+    Detect if app should run in online (PostgreSQL) or offline (SQLite) mode.
+
+    DEFAULT BEHAVIOR: Always use offline mode (SQLite) for speed.
+    Background sync uploads to Supabase every 2 hours.
+    """
+    db_mode = os.getenv('DB_MODE', '').lower()
+    if db_mode in ['offline', 'online']:
+        return db_mode
+
+    # NEW DEFAULT: Always use offline mode (SQLite) for desktop app
+    # Sync happens in background every 2 hours
+    return 'offline'
+
+
+def get_database_uri():
+    """Get database URI based on mode"""
+    mode = get_database_mode()
+
+    if mode == 'online':
+        return os.getenv("DB_URL", "sqlite:///app.db")
+    else:
+        # SQLite for offline mode
+        sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.mj-billing/local.db'))
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(sqlite_path), exist_ok=True)
+        return f'sqlite:///{sqlite_path}'
+
+
 class OptimizedConfig:
     """Optimized Flask configuration for high performance"""
 
     # -------------------------------
-    # Database - OPTIMIZED SETTINGS
+    # Database - OPTIMIZED SETTINGS (Phase 1: Dual Database Support)
     # -------------------------------
-    SQLALCHEMY_DATABASE_URI = os.getenv("DB_URL", "sqlite:///app.db")
+    DB_MODE = get_database_mode()
+    SQLALCHEMY_DATABASE_URI = get_database_uri()
     SQLALCHEMY_TRACK_MODIFICATIONS = False  # Disable to save resources
 
-    # OPTIMIZED CONNECTION POOL SETTINGS
-    SQLALCHEMY_ENGINE_OPTIONS = {
-        "pool_pre_ping": True,  # Verify connections before using
-        "pool_recycle": 3600,  # Recycle connections after 1 hour
-        "pool_size": 50,  # Increased pool size for high concurrency
-        "max_overflow": 100,  # Allow more overflow connections
-        "pool_timeout": 5,  # Quick timeout to fail fast
-        "echo": False,  # Disable SQL logging in production
-        "execution_options": {
-            "compiled_cache": {},  # Enable query compilation caching
-            "isolation_level": "READ COMMITTED",  # Prevent lock contention
-        },
-        "connect_args": {
-            "connect_timeout": 30,  # Allow more time for initial connection
-            "keepalives": 1,
-            "keepalives_idle": 5,
-            "keepalives_interval": 2,
-            "keepalives_count": 2,
-            "application_name": "mj-billing-backend",
-            "options": "-c statement_timeout=10000",  # 10s timeout
-        },
-    }
+    # OPTIMIZED CONNECTION POOL SETTINGS (adapted for both PostgreSQL and SQLite)
+    @staticmethod
+    def get_engine_options():
+        """Get engine options based on database mode"""
+        mode = get_database_mode()
+
+        if mode == 'online':
+            # PostgreSQL connection pool settings
+            return {
+                "pool_pre_ping": True,
+                "pool_recycle": 3600,
+                "pool_size": 50,
+                "max_overflow": 100,
+                "pool_timeout": 5,
+                "echo": False,
+                "execution_options": {
+                    "compiled_cache": {},
+                    "isolation_level": "READ COMMITTED",
+                },
+                "connect_args": {
+                    "connect_timeout": 30,
+                    "keepalives": 1,
+                    "keepalives_idle": 5,
+                    "keepalives_interval": 2,
+                    "keepalives_count": 2,
+                    "application_name": "mj-billing-backend",
+                    "options": "-c statement_timeout=10000",
+                },
+            }
+        else:
+            # SQLite connection settings
+            return {
+                "echo": False,
+                "connect_args": {
+                    "check_same_thread": False,
+                    "timeout": 10,
+                },
+                "poolclass": None,  # SQLite uses NullPool by default
+            }
+
+    SQLALCHEMY_ENGINE_OPTIONS = get_engine_options.__func__()
 
     # Query optimization
     SQLALCHEMY_RECORD_QUERIES = False  # Disable in production
@@ -162,7 +213,7 @@ class OptimizedConfig:
     SUPABASE_KEY = os.getenv("SUPABASE_KEY")
 
     # -------------------------------
-    # JWT - SECURITY HARDENED
+    # JWT - SECURITY HARDENED (Phase 1: Desktop mode support)
     # -------------------------------
     JWT_SECRET = os.getenv("JWT_SECRET")
     if not JWT_SECRET:
@@ -172,7 +223,8 @@ class OptimizedConfig:
             "Then add it to your .env file: JWT_SECRET=<generated-secret>"
         )
     JWT_ALGORITHM = "HS256"
-    JWT_EXPIRATION_HOURS = 24
+    JWT_EXPIRATION_HOURS = 24  # Web/online mode
+    JWT_DESKTOP_EXPIRATION_HOURS = 168  # 7 days for desktop/offline mode (Phase 2)
 
     # -------------------------------
     # Flask - SECURITY HARDENED

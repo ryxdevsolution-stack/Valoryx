@@ -1,19 +1,20 @@
 from extensions import db
 from datetime import datetime
 from sqlalchemy.dialects.postgresql import JSONB
+from database.flexible_types import FlexibleUUID, FlexibleJSON
 
 class AuditLog(db.Model):
     """Complete audit trail of all actions"""
     __tablename__ = 'audit_log'
 
-    log_id = db.Column(db.String(36), primary_key=True)
-    client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
-    user_id = db.Column(db.String(36), db.ForeignKey('users.user_id'))
+    log_id = db.Column(FlexibleUUID, primary_key=True)
+    client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
+    user_id = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     action_type = db.Column(db.String(50), nullable=False)
     table_name = db.Column(db.String(100))
-    record_id = db.Column(db.String(36))
-    old_data = db.Column(JSONB)
-    new_data = db.Column(JSONB)
+    record_id = db.Column(FlexibleUUID)
+    old_data = db.Column(FlexibleJSON)
+    new_data = db.Column(FlexibleJSON)
     ip_address = db.Column(db.String(45))
     user_agent = db.Column(db.Text)
     timestamp = db.Column(db.DateTime, default=datetime.utcnow)

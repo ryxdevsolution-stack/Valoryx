@@ -1,4 +1,5 @@
 from extensions import db
+from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
 from datetime import datetime
 
 class BulkStockOrder(db.Model):
@@ -10,8 +11,8 @@ class BulkStockOrder(db.Model):
         db.Index('idx_order_status', 'status'),
     )
 
-    order_id = db.Column(db.String(36), primary_key=True)
-    client_id = db.Column(db.String(36), db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
+    order_id = db.Column(FlexibleUUID, primary_key=True)
+    client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     order_number = db.Column(db.String(50), unique=True, nullable=False)  # e.g., ORD-2025-001
     supplier_name = db.Column(db.String(255), nullable=True)
     supplier_contact = db.Column(db.String(100), nullable=True)
@@ -19,7 +20,7 @@ class BulkStockOrder(db.Model):
     expected_delivery_date = db.Column(db.DateTime, nullable=True)
     status = db.Column(db.String(20), default='pending')  # pending, received, partial, cancelled
     notes = db.Column(db.Text, nullable=True)
-    created_by = db.Column(db.String(36), nullable=True)  # user_id who created the order
+    created_by = db.Column(FlexibleUUID, nullable=True)  # user_id who created the order
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     received_at = db.Column(db.DateTime, nullable=True)  # When order was marked as received
@@ -55,20 +56,20 @@ class BulkStockOrderItem(db.Model):
         db.Index('idx_order_item_product', 'product_id'),
     )
 
-    item_id = db.Column(db.String(36), primary_key=True)
-    order_id = db.Column(db.String(36), db.ForeignKey('bulk_stock_order.order_id'), nullable=False)
-    product_id = db.Column(db.String(36), db.ForeignKey('stock_entry.product_id'), nullable=True)  # Can be null for new products
+    item_id = db.Column(FlexibleUUID, primary_key=True)
+    order_id = db.Column(FlexibleUUID, db.ForeignKey('bulk_stock_order.order_id'), nullable=False)
+    product_id = db.Column(FlexibleUUID, db.ForeignKey('stock_entry.product_id'), nullable=True)  # Can be null for new products
     product_name = db.Column(db.String(255), nullable=False)
     category = db.Column(db.String(100), nullable=True)
     quantity_ordered = db.Column(db.Integer, nullable=False)
     quantity_received = db.Column(db.Integer, default=0)
     unit = db.Column(db.String(20), default='pcs')
-    cost_price = db.Column(db.Numeric(10, 2), nullable=True)  # Purchase price
-    selling_price = db.Column(db.Numeric(10, 2), nullable=True)  # Rate to sell at
-    mrp = db.Column(db.Numeric(10, 2), nullable=True)
+    cost_price = db.Column(FlexibleNumeric, nullable=True)  # Purchase price
+    selling_price = db.Column(FlexibleNumeric, nullable=True)  # Rate to sell at
+    mrp = db.Column(FlexibleNumeric, nullable=True)
     barcode = db.Column(db.String(100), nullable=True)
     item_code = db.Column(db.String(50), nullable=True)
-    gst_percentage = db.Column(db.Numeric(5, 2), default=0)
+    gst_percentage = db.Column(FlexibleNumeric, default=0)
     hsn_code = db.Column(db.String(20), nullable=True)
     notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

@@ -1,4 +1,5 @@
 from extensions import db
+from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
 from datetime import datetime, timedelta
 from sqlalchemy.dialects.postgresql import UUID
 import uuid

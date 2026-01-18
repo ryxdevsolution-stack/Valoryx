@@ -1445,7 +1445,7 @@ export default function UnifiedBillingPage() {
             {/* Bill Number and Date Header */}
             <div className="grid grid-cols-2 gap-4 p-2 border-b border-gray-200 dark:border-gray-700">
               <div className="flex flex-col">
-                <span className="text-xs text-gray-500 dark:text-gray-400 mb-1 font-medium">
+                <span className="text-base dark:text-gray-400 mb-1 font-medium">
                   Bill Number
                 </span>
                 <span className="text-lg font-bold text-gray-900 dark:text-white">
@@ -1453,7 +1453,7 @@ export default function UnifiedBillingPage() {
                 </span>
               </div>
               <div className="flex flex-col items-end">
-                <span className="text-xs text-gray-500 dark:text-gray-400 mb-1 font-medium">Date</span>
+                <span className="text-base dark:text-gray-400 mb-1 font-medium">Date</span>
                 <input
                   type="date"
                   value={billDate.toISOString().split('T')[0]}
@@ -1488,7 +1488,7 @@ export default function UnifiedBillingPage() {
             <div className="grid grid-cols-1 md:grid-cols-12 gap-2 p-2 relative">
               {/* Customer No */}
               <div className="md:col-span-2 relative customer-search-container">
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
                   Customer No
                 </label>
                 <input
@@ -1521,7 +1521,7 @@ export default function UnifiedBillingPage() {
                       }
                     }
                   }}
-                  className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 capitalize"
+                  className="w-full p-2 text-xs border-2 border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 capitalize"
                 />
                 {/* Customer Dropdown for Code field */}
                 {showCustomerDropdown && customerSearchField === 'code' && customerSuggestions.length > 0 && (
@@ -1551,7 +1551,7 @@ export default function UnifiedBillingPage() {
 
               {/* Customer Name */}
               <div className="md:col-span-3 relative customer-search-container">
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
                   Customer Name
                 </label>
                 <input
@@ -1567,7 +1567,7 @@ export default function UnifiedBillingPage() {
                       handleEnterNavigation(e, customerPhoneRef)
                     }
                   }}
-                  className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 capitalize"
+                  className="w-full p-2 text-xs border-2 border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 capitalize"
                 />
                 {/* Customer Dropdown for Name field */}
                 {showCustomerDropdown && customerSearchField === 'name' && customerSuggestions.length > 0 && (
@@ -1597,7 +1597,7 @@ export default function UnifiedBillingPage() {
 
               {/* Phone */}
               <div className="md:col-span-2 relative customer-search-container">
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
                   Phone
                 </label>
                 <input
@@ -1613,7 +1613,7 @@ export default function UnifiedBillingPage() {
                       handleEnterNavigation(e, customerGstinRef)
                     }
                   }}
-                  className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                  className="w-full p-2 text-xs border-2 border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
                 {/* Customer Dropdown for Phone field */}
                 {showCustomerDropdown && customerSearchField === 'phone' && customerSuggestions.length > 0 && (
@@ -1643,7 +1643,7 @@ export default function UnifiedBillingPage() {
 
               {/* GST Number */}
               <div className="md:col-span-5">
-                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">
+                <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
                   Customer GSTIN
                 </label>
                 <input
@@ -1653,7 +1653,7 @@ export default function UnifiedBillingPage() {
                   value={activeTab.customer_gstin}
                   onChange={(e) => updateActiveTab({ customer_gstin: e.target.value })}
                   onKeyDown={(e) => handleEnterNavigation(e, productSearchRef)}
-                  className="w-full px-2 py-1 text-xs border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                  className="w-full p-2 text-xs border-2 border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
               </div>
             </div>

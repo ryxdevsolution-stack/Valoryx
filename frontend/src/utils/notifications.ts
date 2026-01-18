@@ -46,7 +46,7 @@ export class SystemNotification {
 
     const notification = new Notification(options.title, {
       body: options.body,
-      icon: options.icon || '/favicon.ico',
+      icon: options.icon || '/RYX_Logo.png',
       requireInteraction: options.requireInteraction || false,
       tag: options.tag,
     })
