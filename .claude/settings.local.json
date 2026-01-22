@@ -147,7 +147,8 @@
       "Bash(systemctl list-units:*)",
       "Bash(set DB_MODE=offline)",
       "Bash(if not exist services mkdir services)",
-      "Bash(tasklist:*)"
+      "Bash(tasklist:*)",
+      "Bash(git ls-tree:*)"
     ],
     "deny": [],
     "ask": [],
