@@ -75,7 +75,6 @@ backend/.env
 # Use frontend/.env.local for local/desktop overrides (gitignored)
 
 # Electron / Desktop Build
-electron
 dist/
 *.AppImage
 *.deb
@@ -87,7 +86,6 @@ dist/
 deb-extract/
 squashfs-root/
 desktop/resources/python/
-resources
 desktop
 # Test files in root
 test*.js
