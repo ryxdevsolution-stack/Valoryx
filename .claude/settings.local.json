@@ -148,7 +148,8 @@
       "Bash(set DB_MODE=offline)",
       "Bash(if not exist services mkdir services)",
       "Bash(tasklist:*)",
-      "Bash(git ls-tree:*)"
+      "Bash(git ls-tree:*)",
+      "Bash(git tag:*)"
     ],
     "deny": [],
     "ask": [],
