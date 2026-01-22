@@ -1,8 +1,14 @@
 from extensions import db
 from datetime import datetime
+import pytz
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import relationship
 from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
+
+def get_current_time():
+    """Returns current datetime in Asia/Kolkata timezone"""
+    kolkata_tz = pytz.timezone('Asia/Kolkata')
+    return datetime.now(kolkata_tz)
 
 class GSTBilling(db.Model):
     """GST-enabled billing with percentage calculation"""
@@ -32,8 +38,8 @@ class GSTBilling(db.Model):
     negotiable_amount = db.Column(FlexibleNumeric)
     status = db.Column(db.String(20), default='final')
     created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=get_current_time)
+    updated_at = db.Column(db.DateTime, default=get_current_time, onupdate=get_current_time)
     synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
 
     # Relationship to User model
@@ -91,8 +97,8 @@ class NonGSTBilling(db.Model):
     negotiable_amount = db.Column(FlexibleNumeric)
     status = db.Column(db.String(20), default='final')
     created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=get_current_time)
+    updated_at = db.Column(db.DateTime, default=get_current_time, onupdate=get_current_time)
     synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
 
     # Relationship to User model

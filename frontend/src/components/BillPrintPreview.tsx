@@ -63,21 +63,45 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
   }, [autoPrint])
 
   const formatDate = (dateString: string) => {
-    const date = new Date(dateString)
-    const day = date.getDate().toString().padStart(2, '0')
-    const month = (date.getMonth() + 1).toString().padStart(2, '0')
-    const year = date.getFullYear()
-    return `${day}/${month}/${year}`
+    // Ensure the dateString is treated as UTC by appending 'Z' if not present
+    let utcString = dateString
+    if (!dateString.endsWith('Z') && !dateString.includes('+') && !dateString.includes('T')) {
+      // If it's just a date without time, add time
+      utcString = dateString + 'T00:00:00Z'
+    } else if (dateString.includes('T') && !dateString.endsWith('Z') && !dateString.includes('+')) {
+      // If it has time but no timezone, add Z
+      utcString = dateString + 'Z'
+    }
+
+    const date = new Date(utcString)
+    // Convert to Asia/Kolkata timezone
+    const options: Intl.DateTimeFormatOptions = {
+      timeZone: 'Asia/Kolkata',
+      day: '2-digit',
+      month: '2-digit',
+      year: 'numeric'
+    }
+    const formatter = new Intl.DateTimeFormat('en-GB', options)
+    return formatter.format(date)
   }
 
   const formatTime = (dateString: string) => {
-    const date = new Date(dateString)
-    const hours = date.getHours()
-    const minutes = date.getMinutes().toString().padStart(2, '0')
-    const seconds = date.getSeconds().toString().padStart(2, '0')
-    const ampm = hours >= 12 ? 'PM' : 'AM'
-    const displayHours = (hours % 12 || 12).toString().padStart(2, '0')
-    return `${displayHours}:${minutes}:${seconds} ${ampm}`
+    // Ensure the dateString is treated as UTC by appending 'Z' if not present
+    let utcString = dateString
+    if (dateString.includes('T') && !dateString.endsWith('Z') && !dateString.includes('+')) {
+      utcString = dateString + 'Z'
+    }
+
+    const date = new Date(utcString)
+    // Convert to Asia/Kolkata timezone and format in 12-hour format
+    const timeStr = date.toLocaleTimeString('en-US', {
+      timeZone: 'Asia/Kolkata',
+      hour: '2-digit',
+      minute: '2-digit',
+      second: '2-digit',
+      hour12: true
+    })
+    return timeStr
   }
 
   const totalQuantity = bill.items.reduce((sum, item) => sum + Number(item.quantity), 0)
@@ -383,7 +407,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
         @media print {
           @page {
             size: 80mm auto;
-            margin: 0mm 4mm;
+            margin: 0mm;
           }
           * {
             -webkit-print-color-adjust: exact !important;
@@ -391,11 +415,15 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
             color-adjust: exact !important;
             box-sizing: border-box !important;
           }
+          html, body {
+            margin: 0 !important;
+            padding: 0 !important;
+          }
           .bill-receipt {
             width: 72mm !important;
             max-width: 72mm !important;
             margin: 0 auto !important;
-            padding: 1mm !important;
+            padding: 2mm 1mm !important;
             box-sizing: border-box !important;
             font-weight: 700 !important;
             color: #000000 !important;

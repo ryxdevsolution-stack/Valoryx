@@ -1,6 +1,7 @@
 import uuid
 import io
 from datetime import datetime
+import pytz
 from flask import Blueprint, request, jsonify, g, send_file
 from sqlalchemy import func
 from extensions import db
@@ -407,6 +408,12 @@ def export_pdf():
             if created_at:
                 try:
                     date_obj = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    # Convert to Asia/Kolkata timezone
+                    kolkata_tz = pytz.timezone('Asia/Kolkata')
+                    if date_obj.tzinfo is None:
+                        # If naive datetime, assume UTC
+                        date_obj = pytz.utc.localize(date_obj)
+                    date_obj = date_obj.astimezone(kolkata_tz)
                     date_str = date_obj.strftime('%d/%m/%Y')
                 except:
                     date_str = created_at[:10] if len(created_at) >= 10 else created_at
@@ -489,7 +496,10 @@ def export_pdf():
             textColor=colors.HexColor('#94a3b8'),
             fontName='Times-Roman'
         )
-        elements.append(Paragraph(f"Generated on {datetime.now().strftime('%d/%m/%Y %H:%M')} by {user_full_name} | This is a computer-generated document", footer_style))
+        # Get current time in Asia/Kolkata timezone
+        kolkata_tz = pytz.timezone('Asia/Kolkata')
+        current_time = datetime.now(kolkata_tz)
+        elements.append(Paragraph(f"Generated on {current_time.strftime('%d/%m/%Y %H:%M')} by {user_full_name} | This is a computer-generated document", footer_style))
 
         # Build PDF with logo watermark
         # Create a factory function that passes the logo path

@@ -69,21 +69,45 @@ export interface PrintResult {
 // HELPER FUNCTIONS
 // ============================================================================
 function formatDate(dateString: string): string {
-  const date = new Date(dateString);
-  const day = date.getDate().toString().padStart(2, '0');
-  const month = (date.getMonth() + 1).toString().padStart(2, '0');
-  const year = date.getFullYear();
-  return `${day}/${month}/${year}`;
+  // Ensure the dateString is treated as UTC by appending 'Z' if not present
+  let utcString = dateString;
+  if (!dateString.endsWith('Z') && !dateString.includes('+') && !dateString.includes('T')) {
+    // If it's just a date without time, add time
+    utcString = dateString + 'T00:00:00Z';
+  } else if (dateString.includes('T') && !dateString.endsWith('Z') && !dateString.includes('+')) {
+    // If it has time but no timezone, add Z
+    utcString = dateString + 'Z';
+  }
+
+  const date = new Date(utcString);
+  // Convert to Asia/Kolkata timezone
+  const options: Intl.DateTimeFormatOptions = {
+    timeZone: 'Asia/Kolkata',
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric'
+  };
+  const formatter = new Intl.DateTimeFormat('en-GB', options);
+  return formatter.format(date);
 }
 
 function formatTime(dateString: string): string {
-  const date = new Date(dateString);
-  const hours = date.getHours();
-  const minutes = date.getMinutes().toString().padStart(2, '0');
-  const seconds = date.getSeconds().toString().padStart(2, '0');
-  const ampm = hours >= 12 ? 'PM' : 'AM';
-  const displayHours = (hours % 12 || 12).toString().padStart(2, '0');
-  return `${displayHours}:${minutes}:${seconds} ${ampm}`;
+  // Ensure the dateString is treated as UTC by appending 'Z' if not present
+  let utcString = dateString;
+  if (dateString.includes('T') && !dateString.endsWith('Z') && !dateString.includes('+')) {
+    utcString = dateString + 'Z';
+  }
+
+  const date = new Date(utcString);
+  // Convert to Asia/Kolkata timezone and format in 12-hour format
+  const timeStr = date.toLocaleTimeString('en-US', {
+    timeZone: 'Asia/Kolkata',
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    hour12: true
+  });
+  return timeStr;
 }
 
 function truncate(text: string, maxLen: number): string {
@@ -221,10 +245,10 @@ export function generateReceiptHtml(
   <meta charset="UTF-8">
   <title>Bill #${bill.bill_number}</title>
   <style>
-    @page { size: 80mm auto; margin: 2mm; }
+    @page { size: 80mm auto; margin: 0mm; }
     @media print {
       html, body { margin: 0 !important; padding: 0 !important; }
-      body { width: ${PAPER_WIDTH} !important; }
+      body { width: ${PAPER_WIDTH} !important; margin: 0 auto !important; }
     }
     * { margin: 0; padding: 0; box-sizing: border-box; }
     body {
@@ -236,7 +260,8 @@ export function generateReceiptHtml(
       font-size: ${FONT_SIZE};
       font-weight: 400;
       line-height: 1.3;
-      padding: 2mm;
+      padding: 2mm 1mm;
+      margin: 0 auto;
       letter-spacing: -0.3px;
       -webkit-font-smoothing: none;
       -moz-osx-font-smoothing: grayscale;
