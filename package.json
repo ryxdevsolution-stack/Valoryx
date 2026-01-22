@@ -39,14 +39,11 @@
     "copyright": "Copyright © 2024 RYX Solutions",
     "directories": {
       "output": "dist",
-      "buildResources": "electron/resources"
+      "buildResources": "build"
     },
     "files": [
       "electron/**/*",
       "package.json"
-    ],
-    "asarUnpack": [
-      "electron/**/*"
     ],
     "extraResources": [
       {
@@ -82,7 +79,7 @@
           ]
         }
       ],
-      "icon": "electron/resources/icon.ico",
+      "icon": "build/icon.ico",
       "artifactName": "${productName}-Setup-${version}.${ext}",
       "signAndEditExecutable": false,
       "publish": [
