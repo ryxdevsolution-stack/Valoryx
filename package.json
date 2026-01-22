@@ -57,17 +57,9 @@
         ]
       },
       {
-        "from": "frontend/.next/standalone/frontend",
+        "from": "frontend/.next/standalone",
         "to": "frontend",
         "filter": ["**/*"]
-      },
-      {
-        "from": "frontend/.next/static",
-        "to": "frontend/.next/static"
-      },
-      {
-        "from": "frontend/public",
-        "to": "frontend/public"
       }
     ],
     "win": {
