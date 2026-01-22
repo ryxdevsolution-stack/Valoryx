@@ -1,6 +1,12 @@
 from extensions import db
 from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
 from datetime import datetime
+import pytz
+
+def get_current_time():
+    """Returns current datetime in Asia/Kolkata timezone"""
+    kolkata_tz = pytz.timezone('Asia/Kolkata')
+    return datetime.now(kolkata_tz)
 
 class Customer(db.Model):
     """Customer master data table"""
@@ -23,8 +29,9 @@ class Customer(db.Model):
     first_purchase_date = db.Column(db.DateTime)
     status = db.Column(db.String(20), default='active')
     notes = db.Column(db.Text)
-    created_at = db.Column(db.DateTime, default=datetime.utcnow)
-    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = db.Column(db.DateTime, default=get_current_time)
+    updated_at = db.Column(db.DateTime, default=get_current_time, onupdate=get_current_time)
+    synced_at = db.Column(db.DateTime, nullable=True)  # Track sync to Supabase
 
     def to_dict(self):
         return {

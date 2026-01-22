@@ -1,5 +1,6 @@
 import uuid
 from datetime import datetime
+import pytz
 from dateutil import parser as date_parser
 from flask import Blueprint, request, jsonify, g
 from extensions import db
@@ -13,6 +14,15 @@ from utils.cache import cache, invalidate_cache
 from utils.bill_number_helper import get_next_bill_number
 
 billing_bp = Blueprint('billing', __name__)
+
+# Helper function to get current time in Asia/Kolkata timezone
+def get_current_time():
+    """Returns current datetime in Asia/Kolkata timezone as naive datetime"""
+    kolkata_tz = pytz.timezone('Asia/Kolkata')
+    # Get timezone-aware datetime in IST, then convert to naive for SQLite compatibility
+    aware_dt = datetime.now(kolkata_tz)
+    # Return naive datetime (without timezone info) representing IST time
+    return aware_dt.replace(tzinfo=None)
 
 
 @billing_bp.route('/gst', methods=['POST'])
@@ -80,7 +90,7 @@ def create_gst_bill():
             payment_type=data['payment_type'],
             status='final',
             created_by=g.user['user_id'],
-            created_at=datetime.utcnow()
+            created_at=get_current_time()
         )
 
         db.session.add(new_bill)
@@ -102,7 +112,7 @@ def create_gst_bill():
 
             # Reduce stock
             product.quantity -= item['quantity']
-            product.updated_at = datetime.utcnow()
+            product.updated_at = get_current_time()
 
         # Commit both bill creation and stock reduction atomically
         db.session.commit()
@@ -184,7 +194,7 @@ def create_non_gst_bill():
             payment_type=data['payment_type'],
             status='final',
             created_by=g.user['user_id'],
-            created_at=datetime.utcnow()
+            created_at=get_current_time()
         )
 
         db.session.add(new_bill)
@@ -206,7 +216,7 @@ def create_non_gst_bill():
 
             # Reduce stock
             product.quantity -= item['quantity']
-            product.updated_at = datetime.utcnow()
+            product.updated_at = get_current_time()
 
         # Commit both bill creation and stock reduction atomically
         db.session.commit()
@@ -488,12 +498,12 @@ def create_unified_bill():
         client_id = g.user['client_id']
 
         # Parse custom bill date if provided, otherwise use current datetime
-        bill_date = datetime.utcnow()
+        bill_date = get_current_time()
         if data.get('bill_date'):
             try:
                 bill_date = date_parser.parse(data['bill_date'])
                 # Prevent future dates
-                if bill_date.date() > datetime.utcnow().date():
+                if bill_date.date() > get_current_time().date():
                     return jsonify({'error': 'Bill date cannot be in the future'}), 400
             except (ValueError, TypeError):
                 # If parsing fails, return error to user
@@ -595,8 +605,8 @@ def create_unified_bill():
                     'unit': item.get('unit', 'pcs'),
                     'gst_percentage': item_gst_pct,
                     'hsn_code': item.get('hsn_code', ''),
-                    'created_at': datetime.utcnow(),
-                    'updated_at': datetime.utcnow()
+                    'created_at': get_current_time(),
+                    'updated_at': get_current_time()
                 }
                 new_products_to_create.append((new_product_data, new_product_id))
 
@@ -756,7 +766,7 @@ def create_unified_bill():
                     'final_amount': round(final_amount, 2),
                     'total_amount': round(subtotal, 2),
                     'payment_type': data['payment_type'],
-                    'created_at': new_bill.created_at.isoformat() if new_bill.created_at else datetime.utcnow().isoformat(),
+                    'created_at': new_bill.created_at.isoformat() if new_bill.created_at else get_current_time().isoformat(),
                     'type': 'gst',
                     'cgst': cgst,
                     'sgst': sgst,
@@ -836,7 +846,7 @@ def create_unified_bill():
                     'final_amount': total_amount,
                     'total_amount': round(subtotal, 2),
                     'payment_type': data['payment_type'],
-                    'created_at': new_bill.created_at.isoformat() if new_bill.created_at else datetime.utcnow().isoformat(),
+                    'created_at': new_bill.created_at.isoformat() if new_bill.created_at else get_current_time().isoformat(),
                     'type': 'non-gst',
                     'cgst': 0,
                     'sgst': 0,
@@ -933,7 +943,7 @@ def update_bill(bill_id):
         existing_bill.payment_type = data.get('payment_type', existing_bill.payment_type)
         existing_bill.amount_received = data.get('amount_received', existing_bill.amount_received)
         existing_bill.discount_percentage = data.get('discount_percentage', existing_bill.discount_percentage)
-        existing_bill.updated_at = datetime.utcnow()
+        existing_bill.updated_at = get_current_time()
 
         if is_gst:
             # Update GST-specific fields
@@ -1116,7 +1126,7 @@ def exchange_bill(bill_id):
         bill.payment_type = data.get('payment_type', bill.payment_type)
         bill.amount_received = data.get('amount_received', 0)
         bill.discount_percentage = data.get('discount_percentage', 0)
-        bill.updated_at = datetime.utcnow()
+        bill.updated_at = get_current_time()
 
         if is_gst:
             bill.subtotal = round(new_subtotal, 2)
@@ -1213,7 +1223,7 @@ def cancel_bill(bill_id):
 
         # Update bill status
         bill.status = 'cancelled'
-        bill.updated_at = datetime.utcnow()
+        bill.updated_at = get_current_time()
 
         db.session.commit()
 
@@ -1230,7 +1240,7 @@ def cancel_bill(bill_id):
                 'gst_billing' if is_gst else 'non_gst_billing',
                 bill_id,
                 old_bill_data,
-                {'status': 'cancelled', 'cancelled_at': datetime.utcnow().isoformat()}
+                {'status': 'cancelled', 'cancelled_at': get_current_time().isoformat()}
             )
         except Exception as log_error:
             # Log error but don't fail the request - cancellation already committed
@@ -1296,7 +1306,7 @@ def print_bill():
                 'billing',
                 str(bill_data.get('bill_number', 'unknown')),
                 None,
-                {'bill_number': bill_data.get('bill_number'), 'printed_at': datetime.utcnow().isoformat()}
+                {'bill_number': bill_data.get('bill_number'), 'printed_at': get_current_time().isoformat()}
             )
 
             return jsonify({
@@ -1414,7 +1424,7 @@ def print_labels():
                 {
                     'items_count': len(items),
                     'total_labels': total_labels,
-                    'printed_at': datetime.utcnow().isoformat()
+                    'printed_at': get_current_time().isoformat()
                 }
             )
 

@@ -105,10 +105,12 @@ class TypeConverter:
             return value
 
         elif column_type in ['JSONB', 'JSON']:
-            # TEXT → JSONB (parse JSON)
+            # TEXT → JSONB (keep as string for PostgreSQL)
+            # PostgreSQL will handle the JSON parsing
             if isinstance(value, str):
-                return json.loads(value)
-            return value
+                return value
+            # If it's already a dict/list, convert to JSON string
+            return json.dumps(value)
 
         elif column_type.startswith('NUMERIC') or column_type.startswith('DECIMAL'):
             # REAL → NUMERIC
@@ -201,15 +203,20 @@ STOCK_COLUMN_TYPES = {
     'rate': 'NUMERIC',
     'cost_price': 'NUMERIC',
     'mrp': 'NUMERIC',
+    'pricing': 'NUMERIC',
     'gst_percentage': 'NUMERIC',
     'created_at': 'TIMESTAMP',
-    'updated_at': 'TIMESTAMP'
+    'updated_at': 'TIMESTAMP',
+    'synced_at': 'TIMESTAMP'
 }
 
 CUSTOMER_COLUMN_TYPES = {
     'customer_id': 'UUID',
     'client_id': 'UUID',
     'total_spent': 'NUMERIC',
+    'last_purchase_date': 'TIMESTAMP',
+    'first_purchase_date': 'TIMESTAMP',
     'created_at': 'TIMESTAMP',
-    'updated_at': 'TIMESTAMP'
+    'updated_at': 'TIMESTAMP',
+    'synced_at': 'TIMESTAMP'
 }

@@ -7,6 +7,10 @@
     "email": "support@ryx-solutions.com"
   },
   "homepage": "https://ryx-billing.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ryxdevsolution-stack/mj-billing.git"
+  },
   "license": "Proprietary",
   "main": "electron/main.js",
   "scripts": {
@@ -79,8 +83,9 @@
       "signAndEditExecutable": false,
       "publish": [
         {
-          "provider": "generic",
-          "url": "https://your-update-server.com/updates"
+          "provider": "github",
+          "owner": "ryxdevsolution-stack",
+          "repo": "mj-billing"
         }
       ]
     },

@@ -1,7 +1,16 @@
 from extensions import db
 from datetime import datetime
+import pytz
 from sqlalchemy.dialects.postgresql import JSONB
 from database.flexible_types import FlexibleUUID, FlexibleJSON
+
+def get_current_time():
+    """Returns current datetime in Asia/Kolkata timezone as naive datetime"""
+    kolkata_tz = pytz.timezone('Asia/Kolkata')
+    # Get timezone-aware datetime in IST, then convert to naive for SQLite compatibility
+    aware_dt = datetime.now(kolkata_tz)
+    # Return naive datetime (without timezone info) representing IST time
+    return aware_dt.replace(tzinfo=None)
 
 class AuditLog(db.Model):
     """Complete audit trail of all actions"""
@@ -17,7 +26,7 @@ class AuditLog(db.Model):
     new_data = db.Column(FlexibleJSON)
     ip_address = db.Column(db.String(45))
     user_agent = db.Column(db.Text)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
+    timestamp = db.Column(db.DateTime, default=get_current_time)
 
     def to_dict(self):
         return {
