@@ -42,6 +42,10 @@
       "buildResources": "electron/resources"
     },
     "files": [
+      "electron/**/*",
+      "package.json"
+    ],
+    "asarUnpack": [
       "electron/**/*"
     ],
     "extraResources": [
