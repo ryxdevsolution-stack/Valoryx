@@ -9,7 +9,7 @@
   "homepage": "https://ryx-billing.com",
   "repository": {
     "type": "git",
-    "url": "https://github.com/ryxdevsolution-stack/mj-billing.git"
+    "url": "https://github.com/ryxdevsolution-stack/Valoryx.git"
   },
   "license": "Proprietary",
   "main": "electron/main.js",
@@ -86,7 +86,7 @@
         {
           "provider": "github",
           "owner": "ryxdevsolution-stack",
-          "repo": "mj-billing"
+          "repo": "Valoryx"
         }
       ]
     },
