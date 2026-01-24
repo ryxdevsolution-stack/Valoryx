@@ -1,6 +1,6 @@
 {
   "name": "ryx-billing",
-  "version": "1.0.0",
+  "version": "1.0.5",
   "description": "Professional Billing and Inventory Management System",
   "author": {
     "name": "RYX Solutions",
@@ -57,13 +57,8 @@
         ]
       },
       {
-        "from": "frontend/.next/standalone/frontend",
+        "from": "frontend/.next/standalone",
         "to": "frontend",
-        "filter": ["**/*"]
-      },
-      {
-        "from": "frontend/.next/static",
-        "to": "frontend/.next/static",
         "filter": ["**/*"]
       },
       {
