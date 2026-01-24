@@ -77,7 +77,7 @@
         }
       ],
       "icon": "build/icon.ico",
-      "artifactName": "${productName}-Setup-${version}.${ext}",
+      "artifactName": "RYX-Billing-Setup-${version}.${ext}",
       "signAndEditExecutable": false,
       "publish": [
         {
@@ -99,7 +99,7 @@
       "shortcutName": "RYX Billing"
     },
     "portable": {
-      "artifactName": "${productName}-Portable-${version}.${ext}"
+      "artifactName": "RYX-Billing-Portable-${version}.${ext}"
     }
   }
 }
