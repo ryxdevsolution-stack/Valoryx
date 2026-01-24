@@ -24,7 +24,7 @@ if (!isDev) {
   autoUpdater.setFeedURL({
     provider: 'github',
     owner: 'ryxdevsolution-stack',
-    repo: 'mj-billing'
+    repo: 'Valoryx'
   });
 }
 
