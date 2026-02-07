@@ -24,6 +24,7 @@ class BulkStockOrder(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     received_at = db.Column(db.DateTime, nullable=True)  # When order was marked as received
+    synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
 
     # Relationship
     items = db.relationship('BulkStockOrderItem', backref='order', lazy='dynamic', cascade='all, delete-orphan')
@@ -43,6 +44,7 @@ class BulkStockOrder(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'received_at': self.received_at.isoformat() if self.received_at else None,
+            'synced_at': self.synced_at.isoformat() if self.synced_at else None,
             'items': [item.to_dict() for item in self.items.all()]
         }
 
@@ -73,6 +75,8 @@ class BulkStockOrderItem(db.Model):
     hsn_code = db.Column(db.String(20), nullable=True)
     notes = db.Column(db.Text, nullable=True)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
 
     def to_dict(self):
         return {
@@ -92,5 +96,7 @@ class BulkStockOrderItem(db.Model):
             'gst_percentage': float(self.gst_percentage) if self.gst_percentage else 0,
             'hsn_code': self.hsn_code,
             'notes': self.notes,
-            'created_at': self.created_at.isoformat() if self.created_at else None
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'synced_at': self.synced_at.isoformat() if self.synced_at else None
         }

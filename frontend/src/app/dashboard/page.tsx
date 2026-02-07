@@ -7,6 +7,7 @@ import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
 import { DashboardSkeleton } from '@/components/SkeletonLoader'
 import { motion } from 'framer-motion'
+import SyncButton from '@/components/SyncButton'
 
 const RevenueAreaChart = dynamic(() => import('@/components/charts/RevenueAreaChart'), { ssr: false })
 const PeakHoursChart = dynamic(() => import('@/components/charts/PeakHoursChart'), { ssr: false })
@@ -216,6 +217,9 @@ export default function DashboardPage() {
             >
               {showPredictions ? 'Hide' : 'Show'} Forecast
             </button>
+
+            {/* Sync Button */}
+            <SyncButton />
           </div>
         </div>
       </div>

@@ -65,6 +65,8 @@ class UserPermission(db.Model):
     permission_id = db.Column(FlexibleUUID, db.ForeignKey('permissions.permission_id', ondelete='CASCADE'), nullable=False, index=True)
     granted_at = db.Column(db.DateTime, default=datetime.utcnow)
     granted_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id', ondelete='SET NULL'))
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
 
     # Relationships
     user = db.relationship('User', foreign_keys=[user_id], backref='user_permissions')
@@ -83,7 +85,9 @@ class UserPermission(db.Model):
             'permission_id': str(self.permission_id),
             'permission_name': self.permission.permission_name if self.permission else None,
             'granted_at': self.granted_at.isoformat() if self.granted_at else None,
-            'granted_by': str(self.granted_by) if self.granted_by else None
+            'granted_by': str(self.granted_by) if self.granted_by else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'synced_at': self.synced_at.isoformat() if self.synced_at else None
         }
 
 

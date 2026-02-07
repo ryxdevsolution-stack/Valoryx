@@ -50,7 +50,9 @@ def create_app():
         logging.info("[OK] Database initialized successfully")
 
     # Phase 1: Initialize background sync scheduler (2-hour interval)
-    if app.config.get('DB_MODE') == 'offline':
+    # Always enable sync if DB_URL is available (for both online and offline modes)
+    db_url = os.environ.get('DB_URL') or os.environ.get('DATABASE_URL')
+    if db_url:
         try:
             from services.sync_scheduler import init_sync_scheduler
             sync_scheduler = init_sync_scheduler(app)
@@ -59,7 +61,7 @@ def create_app():
         except Exception as e:
             logging.warning(f"[WARNING] Background sync scheduler failed to initialize: {e}")
     else:
-        logging.info("[INFO] Running in online mode - sync scheduler disabled")
+        logging.info("[INFO] No DB_URL configured - sync scheduler disabled")
 
     # Register blueprints with error handling
     blueprints_registered = []
@@ -337,26 +339,114 @@ def create_app():
         if sync_scheduler:
             status['sync'] = sync_scheduler.get_status()
         else:
-            status['sync'] = {'enabled': False, 'reason': 'Running in online mode or sync disabled'}
+            status['sync'] = {'enabled': False, 'reason': 'No DB_URL configured'}
 
         return status, 200
 
-    # Phase 1: Manual sync endpoint
+    # Sync endpoints - Bidirectional sync between SQLite and Supabase
+
     @app.route('/api/sync/trigger', methods=['POST'])
     def trigger_sync():
-        """Manually trigger a sync to Supabase"""
+        """
+        Manually trigger a sync.
+
+        Query params:
+            type: 'upload' (default), 'download', or 'full' (bidirectional)
+        """
+        from flask import request
         sync_scheduler = app.config.get('SYNC_SCHEDULER')
 
         if not sync_scheduler:
             return {
                 'error': 'Sync not available',
-                'message': 'Sync scheduler is not running (only available in offline mode)'
+                'message': 'Sync scheduler is not running (DB_URL not configured)'
             }, 400
 
-        result = sync_scheduler.trigger_sync_now()
+        sync_type = request.args.get('type', 'upload')
+        result = sync_scheduler.trigger_sync_now(sync_type)
         return result, 200
 
-    # Phase 1: Sync status endpoint
+    @app.route('/api/sync/download', methods=['POST'])
+    def trigger_download():
+        """
+        Trigger download sync from Supabase to SQLite.
+
+        Body:
+            client_id: The client UUID to download data for
+        """
+        from flask import request
+        sync_scheduler = app.config.get('SYNC_SCHEDULER')
+
+        if not sync_scheduler:
+            return {
+                'error': 'Sync not available',
+                'message': 'Sync scheduler is not running (DB_URL not configured)'
+            }, 400
+
+        data = request.get_json() or {}
+        client_id = data.get('client_id')
+
+        if not client_id:
+            return {'error': 'client_id is required'}, 400
+
+        sync_scheduler.set_client_id(client_id)
+        result = sync_scheduler.trigger_sync_now('download')
+        return result, 200
+
+    @app.route('/api/sync/initial', methods=['POST'])
+    def trigger_initial_load():
+        """
+        Trigger initial data load from Supabase to SQLite.
+        Use this when setting up a new device.
+
+        Body:
+            client_id: The client UUID to load data for
+        """
+        from flask import request
+        sync_scheduler = app.config.get('SYNC_SCHEDULER')
+
+        if not sync_scheduler:
+            return {
+                'error': 'Sync not available',
+                'message': 'Sync scheduler is not running (DB_URL not configured)'
+            }, 400
+
+        data = request.get_json() or {}
+        client_id = data.get('client_id')
+
+        if not client_id:
+            return {'error': 'client_id is required'}, 400
+
+        result = sync_scheduler.trigger_initial_load(client_id)
+        return result, 200
+
+    @app.route('/api/sync/full', methods=['POST'])
+    def trigger_full_sync():
+        """
+        Trigger full bidirectional sync (upload then download).
+
+        Body:
+            client_id: The client UUID
+        """
+        from flask import request
+        sync_scheduler = app.config.get('SYNC_SCHEDULER')
+
+        if not sync_scheduler:
+            return {
+                'error': 'Sync not available',
+                'message': 'Sync scheduler is not running (DB_URL not configured)'
+            }, 400
+
+        data = request.get_json() or {}
+        client_id = data.get('client_id')
+
+        if not client_id:
+            return {'error': 'client_id is required'}, 400
+
+        sync_scheduler.set_client_id(client_id)
+        result = sync_scheduler.trigger_sync_now('full')
+        return result, 200
+
     @app.route('/api/sync/status', methods=['GET'])
     def sync_status():
         """Get current sync status"""
@@ -365,10 +455,68 @@ def create_app():
         if not sync_scheduler:
             return {
                 'enabled': False,
-                'reason': 'Running in online mode or sync disabled'
+                'reason': 'DB_URL not configured'
             }, 200
 
         return sync_scheduler.get_status(), 200
+
+    @app.route('/api/sync/check-initial', methods=['GET'])
+    def check_initial_load():
+        """
+        Check if initial data load is needed for a client.
+
+        Query params:
+            client_id: The client UUID to check
+        """
+        from flask import request
+        sync_scheduler = app.config.get('SYNC_SCHEDULER')
+
+        if not sync_scheduler:
+            return {
+                'needed': False,
+                'reason': 'Sync not available'
+            }, 200
+
+        client_id = request.args.get('client_id')
+        if not client_id:
+            return {'error': 'client_id is required'}, 400
+
+        needed = sync_scheduler.check_initial_load_needed(client_id)
+        return {
+            'client_id': client_id,
+            'initial_load_needed': needed
+        }, 200
+
+    @app.route('/api/sync/set-client', methods=['POST'])
+    def set_sync_client():
+        """
+        Set the current client ID for sync operations.
+        Call this after user login.
+
+        Body:
+            client_id: The client UUID
+        """
+        from flask import request
+        sync_scheduler = app.config.get('SYNC_SCHEDULER')
+
+        if not sync_scheduler:
+            return {
+                'error': 'Sync not available',
+                'message': 'Sync scheduler is not running'
+            }, 400
+
+        data = request.get_json() or {}
+        client_id = data.get('client_id')
+
+        if not client_id:
+            return {'error': 'client_id is required'}, 400
+
+        sync_scheduler.set_client_id(client_id)
+        return {
+            'status': 'success',
+            'client_id': client_id,
+            'message': 'Client ID set for sync operations'
+        }, 200
 
     # Handle CORS preflight requests explicitly
     @app.before_request

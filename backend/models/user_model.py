@@ -22,9 +22,10 @@ class User(db.Model):
     phone = db.Column(db.String(20), default='')
     department = db.Column(db.String(100), default='')
     created_by = db.Column(FlexibleUUID, nullable=True)  # UUID stored as string
-    updated_at = db.Column(db.DateTime)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     updated_by = db.Column(FlexibleUUID, nullable=True)  # UUID stored as string
     deleted_at = db.Column(db.DateTime, nullable=True)  # For soft delete
+    synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
 
     def to_dict(self):
         return {
@@ -42,5 +43,6 @@ class User(db.Model):
             'created_by': self.created_by,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'updated_by': self.updated_by,
-            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None
+            'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None,
+            'synced_at': self.synced_at.isoformat() if self.synced_at else None
         }

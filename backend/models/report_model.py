@@ -21,6 +21,8 @@ class Report(db.Model):
     file_url = db.Column(db.String(500))
     generated_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
 
     def to_dict(self):
         return {
@@ -37,5 +39,7 @@ class Report(db.Model):
             'payment_breakdown': self.payment_breakdown,
             'file_url': self.file_url,
             'generated_by': self.generated_by,
-            'created_at': self.created_at.isoformat() if self.created_at else None
+            'created_at': self.created_at.isoformat() if self.created_at else None,
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'synced_at': self.synced_at.isoformat() if self.synced_at else None
         }

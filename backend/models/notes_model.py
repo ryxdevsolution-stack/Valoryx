@@ -14,6 +14,7 @@ class Note(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow, nullable=False)
     expires_at = db.Column(db.DateTime, nullable=False)
+    synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
 
     # Relationship to user
     user = db.relationship('User', backref='notes')
@@ -26,6 +27,7 @@ class Note(db.Model):
         self.created_at = datetime.utcnow()
         self.updated_at = datetime.utcnow()
         self.expires_at = datetime.utcnow() + timedelta(days=days_to_keep)
+        self.synced_at = None
 
     def to_dict(self):
         return {
@@ -36,6 +38,7 @@ class Note(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'expires_at': self.expires_at.isoformat() if self.expires_at else None,
+            'synced_at': self.synced_at.isoformat() if self.synced_at else None,
             'days_remaining': (self.expires_at - datetime.utcnow()).days if self.expires_at else 0
         }
 

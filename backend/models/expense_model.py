@@ -20,6 +20,7 @@ class Expense(db.Model):
     created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=datetime.utcnow, index=True)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
 
     def to_dict(self):
         return {
@@ -35,7 +36,8 @@ class Expense(db.Model):
             'extra_data': self.extra_data,
             'created_by': self.created_by,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'synced_at': self.synced_at.isoformat() if self.synced_at else None
         }
 
 
@@ -53,6 +55,7 @@ class ExpenseSummary(db.Model):
     expense_count = db.Column(db.Integer, default=0)
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
 
     def to_dict(self):
         return {
@@ -65,5 +68,6 @@ class ExpenseSummary(db.Model):
             'category_breakdown': self.category_breakdown,
             'expense_count': self.expense_count,
             'created_at': self.created_at.isoformat() if self.created_at else None,
-            'updated_at': self.updated_at.isoformat() if self.updated_at else None
+            'updated_at': self.updated_at.isoformat() if self.updated_at else None,
+            'synced_at': self.synced_at.isoformat() if self.synced_at else None
         }
