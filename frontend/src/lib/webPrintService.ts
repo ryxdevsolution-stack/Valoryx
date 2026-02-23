@@ -9,7 +9,7 @@
 // CONFIGURATION - Keep in sync with thermal_printer.py
 // ============================================================================
 const RECEIPT_CONFIG = {
-  PAPER_WIDTH: '72mm',      // Actual printable width (80mm - margins)
+  PAPER_WIDTH: '58mm',      // Actual printable width for thermal printers
   FONT_SIZE: '8pt',         // Base font size (smaller, cleaner)
   FONT_SIZE_LARGE: '11pt',  // Headers
   FONT_SIZE_XLARGE: '13pt', // Business name
@@ -118,11 +118,10 @@ function truncate(text: string, maxLen: number): string {
 }
 
 function formatNumber(val: number): string {
-  // Format numbers compactly for large values
-  if (val >= 1000) {
-    return Math.round(val).toString();
+  if (val < 100) {
+    return val.toFixed(2);
   }
-  return val.toFixed(2);
+  return Math.round(val).toString();
 }
 
 function escapeHtml(text: string): string {
@@ -258,9 +257,9 @@ export function generateReceiptHtml(
       background: #fff;
       color: #000;
       font-size: ${FONT_SIZE};
-      font-weight: 400;
+      font-weight: 600;
       line-height: 1.3;
-      padding: 2mm 1mm;
+      padding: 1mm 0mm;
       margin: 0 auto;
       letter-spacing: -0.3px;
       -webkit-font-smoothing: none;
@@ -268,7 +267,7 @@ export function generateReceiptHtml(
     }
     .center { text-align: center; }
     .bold { font-weight: 700; }
-    .dashed { border-bottom: 2px dashed #000; margin: 1.5mm 0; }
+    .dashed { border-bottom: 1px dashed #000; margin: 1.5mm 0; }
     .row { margin-bottom: 0.5mm; }
     .row-flex { display: flex; justify-content: space-between; margin-bottom: 0.5mm; }
     .item-header, .item-row {
@@ -278,10 +277,10 @@ export function generateReceiptHtml(
     }
     .item-header { font-weight: 700; }
     .col-product { flex: 1; min-width: 0; word-wrap: break-word; word-break: break-word; overflow-wrap: break-word; }
-    .col-qty { width: 10mm; text-align: center; }
-    .col-mrp { width: 12mm; text-align: right; }
-    .col-rate { width: 12mm; text-align: right; }
-    .col-amt { width: 14mm; text-align: right; font-weight: 700; }
+    .col-qty { width: 8mm; text-align: center; flex-shrink: 0; }
+    .col-mrp { width: 10mm; text-align: right; flex-shrink: 0; }
+    .col-rate { width: 10mm; text-align: right; flex-shrink: 0; }
+    .col-amt { width: 12mm; text-align: right; font-weight: 700; flex-shrink: 0; }
   </style>
 </head>
 <body>
@@ -290,10 +289,6 @@ export function generateReceiptHtml(
   ${clientInfo.address ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL};">${escapeHtml(clientInfo.address).replace(/\n/g, '<br>')}</div>` : ''}
   ${clientInfo.phone ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL};">${escapeHtml(clientInfo.phone)}</div>` : ''}
   ${clientInfo.gstin ? `<div class="center bold" style="font-size: ${FONT_SIZE_SMALL};">GST NO : ${escapeHtml(clientInfo.gstin)}</div>` : ''}
-  <div class="dashed"></div>
-
-  <!-- Bill Type -->
-  <div class="center bold" style="font-size: ${FONT_SIZE_LARGE};">*** TAX INVOICE ***</div>
   <div class="dashed"></div>
 
   <!-- Bill Info -->
@@ -310,7 +305,7 @@ export function generateReceiptHtml(
     <span class="col-qty">Qty</span>
     <span class="col-mrp">MRP</span>
     <span class="col-rate">Rate</span>
-    <span class="col-amt">Amount</span>
+    <span class="col-amt">Amt</span>
   </div>
   <div class="dashed"></div>
 
@@ -329,6 +324,14 @@ export function generateReceiptHtml(
 
   <!-- GST Breakdown (if GST bill) -->
   ${gstBreakdownText ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL};">${gstBreakdownText}</div>` : ''}
+
+  <!-- Savings Box -->
+  ${totalSavings > 0 ? `
+  <div style="text-align: center; margin: 2mm 0; padding: 1.5mm; border: 1px dashed #000;">
+    <div style="font-size: ${FONT_SIZE_SMALL};">TODAY'S SAVINGS</div>
+    <div style="font-size: ${FONT_SIZE_LARGE}; font-weight: bold; margin: 0.5mm 0;">&#8377;${totalSavings.toFixed(2)}</div>
+    <div style="font-size: ${FONT_SIZE_SMALL};">You saved compared to MRP!</div>
+  </div>` : ''}
 
   <!-- Footer -->
   <div class="center bold" style="font-size: ${FONT_SIZE}; margin-top: 2mm;">Sorry, No Exchange / No Refund</div>

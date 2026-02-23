@@ -240,6 +240,22 @@ class OptimizedConfig:
     PROPAGATE_EXCEPTIONS = True
 
     # -------------------------------
+    # Razorpay (optional — payment features disabled if not set)
+    # -------------------------------
+    RAZORPAY_KEY_ID = os.getenv('RAZORPAY_KEY_ID', '')
+    RAZORPAY_KEY_SECRET = os.getenv('RAZORPAY_KEY_SECRET', '')
+
+    # -------------------------------
+    # Email (SMTP — optional, emails disabled if not set)
+    # -------------------------------
+    SMTP_HOST = os.getenv('SMTP_HOST', '')
+    SMTP_PORT = int(os.getenv('SMTP_PORT', '587'))
+    SMTP_USER = os.getenv('SMTP_USER', '')
+    SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
+    SMTP_FROM_EMAIL = os.getenv('SMTP_FROM_EMAIL', '')
+    SMTP_FROM_NAME = os.getenv('SMTP_FROM_NAME', 'RYX Billing')
+
+    # -------------------------------
     # CORS
     # -------------------------------
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")

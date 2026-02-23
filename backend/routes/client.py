@@ -62,7 +62,7 @@ def create_client():
 
 
 @client_bp.route('/<client_id>', methods=['GET'])
-@authenticate
+@authenticate(allow_expired=True)
 def get_client(client_id):
     """
     Get client details

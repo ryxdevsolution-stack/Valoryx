@@ -12,7 +12,7 @@ from models.report_model import Report
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_super_admin, require_permission
 import bcrypt
-from datetime import datetime
+from datetime import datetime, timedelta
 import uuid
 from sqlalchemy import or_, and_, func
 from sqlalchemy.orm import joinedload
@@ -1419,6 +1419,81 @@ def toggle_client_status(client_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to toggle client status: {str(e)}'}), 500
+
+@admin_bp.route('/clients/<client_id>/activate', methods=['POST'])
+@authenticate
+@require_super_admin
+def activate_client_subscription(client_id):
+    """Manually activate a client's subscription (admin override)"""
+    try:
+        from models.subscription_model import SubscriptionPlan, PaymentTransaction
+
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+
+        data = request.get_json() or {}
+        plan_id = data.get('plan_id')
+        billing_cycle = data.get('billing_cycle', 'monthly')
+
+        if not plan_id:
+            return jsonify({'error': 'plan_id is required'}), 400
+
+        plan = SubscriptionPlan.query.filter_by(plan_id=plan_id, is_active=True).first()
+        if not plan:
+            return jsonify({'error': 'Plan not found'}), 404
+
+        old_data = client.to_dict()
+        now = datetime.utcnow()
+
+        if billing_cycle == 'yearly':
+            end_date = now + timedelta(days=365)
+            amount = plan.yearly_price
+        else:
+            end_date = now + timedelta(days=30)
+            amount = plan.monthly_price
+
+        client.subscription_status = 'active'
+        client.plan_id = plan_id
+        client.subscription_end_date = end_date
+        client.is_active = True
+
+        # Record the manual activation as a transaction
+        transaction = PaymentTransaction(
+            transaction_id=str(uuid.uuid4()),
+            client_id=client_id,
+            plan_id=plan_id,
+            amount=amount,
+            currency='INR',
+            billing_cycle=billing_cycle,
+            status='paid',
+            notes='manual_activation',
+            created_at=now,
+            paid_at=now,
+        )
+        db.session.add(transaction)
+        db.session.commit()
+
+        log_admin_action(
+            action_type='UPDATE',
+            table_name='client_entry',
+            record_id=client_id,
+            old_data=old_data,
+            new_data=client.to_dict()
+        )
+
+        return jsonify({
+            'success': True,
+            'message': f"Subscription activated for {client.client_name}",
+            'subscription_status': 'active',
+            'plan_name': plan.name,
+            'subscription_end_date': end_date.isoformat(),
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to activate subscription: {str(e)}'}), 500
+
 
 @admin_bp.route('/clients/<client_id>', methods=['DELETE'])
 @authenticate

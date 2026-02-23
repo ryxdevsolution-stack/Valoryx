@@ -1,5 +1,4 @@
 const { app, BrowserWindow, ipcMain, Tray, Menu } = require('electron');
-const { autoUpdater } = require('electron-updater');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -7,26 +6,11 @@ const fs = require('fs');
 // Configuration
 const isDev = process.argv.includes('--dev');
 const BACKEND_PORT = 5000;
-const FRONTEND_PORT = 3000;
-const LOGIN_PATH = '/auth/login'; // Direct to login page
+const FRONTEND_PORT = 3000; // Only used in dev mode (Vite dev server)
 
 let mainWindow = null;
 let backendProcess = null;
-let frontendProcess = null;
 let tray = null;
-
-// Auto-updater configuration
-autoUpdater.autoDownload = false;
-autoUpdater.autoInstallOnAppQuit = true;
-
-// Configure update server - GitHub Releases
-if (!isDev) {
-  autoUpdater.setFeedURL({
-    provider: 'github',
-    owner: 'ryxdevsolution-stack',
-    repo: 'Valoryx'
-  });
-}
 
 // =======================
 // Backend Management
@@ -101,82 +85,11 @@ function stopBackend() {
 }
 
 // =======================
-// Frontend Management
+// Frontend Loading (Static Files - No Server Needed!)
 // =======================
-
-function startFrontend() {
-  return new Promise((resolve, reject) => {
-    if (isDev) {
-      console.log('[Frontend] Using development server at http://localhost:3000');
-      resolve();
-      return;
-    }
-
-    console.log('[Frontend] Starting Next.js standalone server...');
-
-    const resourcesPath = process.resourcesPath;
-    const frontendPath = path.join(resourcesPath, 'frontend');
-    const serverPath = path.join(frontendPath, 'server.js');
-
-    // Set environment variables for Next.js
-    const env = { ...process.env };
-    env.NODE_ENV = 'production';
-    env.PORT = FRONTEND_PORT.toString();
-    env.HOSTNAME = '0.0.0.0';
-
-    frontendProcess = spawn('node', [serverPath], {
-      cwd: frontendPath,
-      env: env,
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-
-    let resolved = false;
-
-    frontendProcess.stdout.on('data', (data) => {
-      const output = data.toString().trim();
-      console.log(`[Frontend] ${output}`);
-
-      // Resolve when server is ready
-      if (!resolved && (output.includes('ready') || output.includes('started') || output.includes('Listening'))) {
-        resolved = true;
-        resolve();
-      }
-    });
-
-    frontendProcess.stderr.on('data', (data) => {
-      console.error(`[Frontend] ${data.toString().trim()}`);
-    });
-
-    frontendProcess.on('error', (error) => {
-      console.error('[Frontend] Failed to start:', error);
-      if (!resolved) {
-        reject(error);
-      }
-    });
-
-    frontendProcess.on('exit', (code) => {
-      console.log(`[Frontend] Process exited with code ${code}`);
-      frontendProcess = null;
-    });
-
-    // Timeout - resolve after 15 seconds anyway (Next.js might take time)
-    setTimeout(() => {
-      if (!resolved) {
-        console.log('[Frontend] Timeout - assuming server started');
-        resolved = true;
-        resolve();
-      }
-    }, 15000);
-  });
-}
-
-function stopFrontend() {
-  if (frontendProcess && !frontendProcess.killed) {
-    console.log('[Frontend] Stopping Next.js server...');
-    frontendProcess.kill('SIGTERM');
-    frontendProcess = null;
-  }
-}
+// In production, frontend is built as static files by Vite.
+// Electron loads them directly from disk - no localhost:3000 needed.
+// In dev mode, connects to Vite dev server at localhost:3000.
 
 // =======================
 // Window Management
@@ -194,20 +107,59 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js')
     },
-    show: false,
-    backgroundColor: '#ffffff'
+    show: true,
+    backgroundColor: '#0f172a'
   });
 
-  // Show window when ready
-  mainWindow.once('ready-to-show', () => {
-    mainWindow.show();
-  });
+  // Show loading splash screen immediately while app loads
+  const loadingHTML = `
+    <html>
+    <head><style>
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      body {
+        background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
+        display: flex; align-items: center; justify-content: center;
+        height: 100vh; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+        color: white; overflow: hidden;
+      }
+      .container { text-align: center; }
+      .logo { font-size: 48px; font-weight: 800; letter-spacing: 2px; margin-bottom: 20px;
+        background: linear-gradient(135deg, #60a5fa, #a78bfa, #60a5fa);
+        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
+        animation: shimmer 2s ease-in-out infinite; }
+      @keyframes shimmer {
+        0%, 100% { opacity: 1; } 50% { opacity: 0.7; }
+      }
+      .spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1);
+        border-top-color: #60a5fa; border-radius: 50%;
+        animation: spin 0.8s linear infinite; margin: 20px auto; }
+      @keyframes spin { to { transform: rotate(360deg); } }
+      .text { color: #94a3b8; font-size: 14px; }
+    </style></head>
+    <body><div class="container">
+      <div class="logo">RYX Billing</div>
+      <div class="spinner"></div>
+      <div class="text">Starting application...</div>
+    </div></body></html>`;
+  mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(loadingHTML)}`);
 
-  // Load frontend - connect to Next.js server and go to login page
-  const frontendURL = `http://localhost:${FRONTEND_PORT}${LOGIN_PATH}`;
+  // Load the actual frontend once backend is ready
+  const loadFrontend = () => {
+    if (isDev) {
+      // Dev mode: connect to Vite dev server
+      const devURL = `http://localhost:${FRONTEND_PORT}/#/auth/login`;
+      console.log('[App] Loading frontend from dev server:', devURL);
+      mainWindow.loadURL(devURL);
+    } else {
+      // Production: load static files directly from disk (NO server needed!)
+      const frontendPath = path.join(process.resourcesPath, 'frontend-react', 'dist', 'index.html');
+      console.log('[App] Loading frontend from static file:', frontendPath);
+      mainWindow.loadFile(frontendPath, { hash: '/auth/login' });
+    }
+  };
 
-  console.log('[App] Loading frontend from:', frontendURL);
-  mainWindow.loadURL(frontendURL);
+  // Wait a moment for the splash to render, then load the app
+  setTimeout(loadFrontend, 1500);
 
   // Open DevTools in development
   if (isDev) {
@@ -244,12 +196,6 @@ function createTray() {
         }
       }
     },
-    {
-      label: 'Check for Updates',
-      click: () => {
-        checkForUpdates();
-      }
-    },
     { type: 'separator' },
     {
       label: 'Quit',
@@ -269,93 +215,6 @@ function createTray() {
     }
   });
 }
-
-// =======================
-// Auto-Update Functions
-// =======================
-
-function checkForUpdates() {
-  if (isDev) {
-    console.log('[Update] Skipping update check in development mode');
-    return;
-  }
-
-  console.log('[Update] Checking for updates...');
-  autoUpdater.checkForUpdates();
-}
-
-// Auto-updater events
-autoUpdater.on('checking-for-update', () => {
-  console.log('[Update] Checking for update...');
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', { status: 'checking' });
-  }
-});
-
-autoUpdater.on('update-available', (info) => {
-  console.log('[Update] Update available:', info.version);
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', {
-      status: 'available',
-      version: info.version
-    });
-  }
-  // Auto-download the update
-  autoUpdater.downloadUpdate();
-});
-
-autoUpdater.on('update-not-available', () => {
-  console.log('[Update] No updates available');
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', { status: 'not-available' });
-  }
-});
-
-autoUpdater.on('download-progress', (progressObj) => {
-  console.log(`[Update] Download progress: ${progressObj.percent}%`);
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', {
-      status: 'downloading',
-      percent: progressObj.percent
-    });
-  }
-});
-
-autoUpdater.on('update-downloaded', (info) => {
-  console.log('[Update] Update downloaded:', info.version);
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', {
-      status: 'downloaded',
-      version: info.version
-    });
-  }
-  // Install update on quit
-  autoUpdater.quitAndInstall(false, true);
-});
-
-autoUpdater.on('error', (error) => {
-  console.error('[Update] Error:', error);
-  if (mainWindow) {
-    mainWindow.webContents.send('update-status', {
-      status: 'error',
-      error: error.message
-    });
-  }
-});
-
-// =======================
-// IPC Handlers
-// =======================
-
-ipcMain.handle('check-for-updates', async () => {
-  checkForUpdates();
-  return { success: true };
-});
-
-ipcMain.handle('install-update', async () => {
-  autoUpdater.quitAndInstall(false, true);
-  return { success: true };
-});
 
 // =======================
 // Printing Handlers
@@ -452,29 +311,19 @@ app.on('ready', async () => {
     await startBackend();
     console.log('[App] Backend started successfully on http://localhost:5000');
 
-    // Start frontend (Next.js standalone server in production, dev server in development)
-    if (!isDev) {
-      await startFrontend();
-      console.log('[App] Frontend started successfully on http://localhost:3000');
-    } else {
-      console.log('[App] Frontend: Using dev server at http://localhost:3000');
+    // Frontend: In production, static files are loaded directly (no server needed)
+    // In dev mode, user should run `npm run dev` in frontend-react/ separately
+    if (isDev) {
+      console.log('[App] Frontend: Connect to Vite dev server at http://localhost:3000');
+      // Small delay for backend to be ready
+      await new Promise(resolve => setTimeout(resolve, 1000));
     }
-
-    // Wait a bit for servers to be fully ready
-    await new Promise(resolve => setTimeout(resolve, 2000));
 
     // Create window and load login page
     createWindow();
 
     // Create system tray
     createTray();
-
-    // Check for updates on startup (after 5 seconds)
-    if (!isDev) {
-      setTimeout(() => {
-        checkForUpdates();
-      }, 5000);
-    }
 
     console.log('[App] RYX Billing Desktop ready!');
 
@@ -506,7 +355,6 @@ app.on('before-quit', () => {
 
 app.on('will-quit', () => {
   console.log('[App] Shutting down...');
-  stopFrontend();
   stopBackend();
 });
 

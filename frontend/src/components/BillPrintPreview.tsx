@@ -149,7 +149,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
           </div>
 
           <div className="flex-1 overflow-auto bg-gray-50 p-6">
-            <div className="bg-white shadow-lg" style={{ maxWidth: '72mm', width: '72mm', margin: '0 auto' }}>
+            <div className="bg-white shadow-lg" style={{ maxWidth: '68mm', width: '68mm', margin: '0 auto' }}>
               <div ref={printRef} className="bill-receipt">
               {/* Header - Clean and Simple */}
               <div className="text-center" style={{ marginTop: '1mm', marginBottom: '1mm' }}>
@@ -194,10 +194,10 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
               {/* Items Header */}
               <div style={{ fontSize: '7pt', display: 'flex', alignItems: 'center', marginBottom: '1mm', fontWeight: '700', color: '#000000' }}>
                 <span style={{ flex: 1, minWidth: 0, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>Product</span>
-                <span style={{ width: '10mm', textAlign: 'center', flexShrink: 0 }}>Qty</span>
-                <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0 }}>MRP</span>
-                <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0 }}>Rate</span>
-                <span style={{ width: '14mm', textAlign: 'right', flexShrink: 0 }}>Amount</span>
+                <span style={{ width: '8mm', textAlign: 'center', flexShrink: 0 }}>Qty</span>
+                <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0 }}>MRP</span>
+                <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0 }}>Rate</span>
+                <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0 }}>Amount</span>
               </div>
 
               {/* Items */}
@@ -211,10 +211,10 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                 return (
                   <div key={index} style={{ fontSize: '7pt', display: 'flex', alignItems: 'center', marginBottom: '0.5mm', color: '#000000' }}>
                     <span style={{ flex: 1, minWidth: 0, wordWrap: 'break-word', wordBreak: 'break-word', overflowWrap: 'break-word' }}>{name}</span>
-                    <span style={{ width: '10mm', textAlign: 'center', flexShrink: 0 }}>{item.quantity}</span>
-                    <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(mrp)}</span>
-                    <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(rate)}</span>
-                    <span style={{ width: '14mm', textAlign: 'right', flexShrink: 0, fontWeight: '700' }}>{formatNum(amt)}</span>
+                    <span style={{ width: '8mm', textAlign: 'center', flexShrink: 0 }}>{item.quantity}</span>
+                    <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(mrp)}</span>
+                    <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(rate)}</span>
+                    <span style={{ width: '12mm', textAlign: 'right', flexShrink: 0, fontWeight: '700' }}>{formatNum(amt)}</span>
                   </div>
                 );
               })}
@@ -363,13 +363,13 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
       <style dangerouslySetInnerHTML={{__html: `
         .bill-receipt {
           font-family: Arial, Helvetica, sans-serif;
-          max-width: 72mm;
-          width: 72mm;
+          max-width: 68mm;
+          width: 68mm;
           margin: 0 auto;
           background: white;
           color: #000000;
           line-height: 1.3;
-          padding: 2mm;
+          padding: 1mm 0mm;
           box-sizing: border-box;
           font-weight: 700;
           letter-spacing: -0.3px;
@@ -420,10 +420,10 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
             padding: 0 !important;
           }
           .bill-receipt {
-            width: 72mm !important;
-            max-width: 72mm !important;
+            width: 68mm !important;
+            max-width: 68mm !important;
             margin: 0 auto !important;
-            padding: 2mm 1mm !important;
+            padding: 1mm 0mm !important;
             box-sizing: border-box !important;
             font-weight: 700 !important;
             color: #000000 !important;

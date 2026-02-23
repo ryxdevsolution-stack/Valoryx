@@ -97,7 +97,10 @@ def login():
             'address': client.address,
             'phone': client.phone,
             'email': client.email,
-            'gstin': client.gst_number
+            'gstin': client.gst_number,
+            'subscription_status': client.subscription_status,
+            'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
+            'trial_days_remaining': client.trial_days_remaining,
         }
 
         # Cache user and client data in Redis
@@ -114,6 +117,15 @@ def login():
         except Exception:
             db.session.rollback()  # Don't fail login if last_login update fails
 
+        # Build trial info if on trial
+        trial_info = None
+        if client.subscription_status == 'trial':
+            trial_info = {
+                'status': client.subscription_status,
+                'days_remaining': client.trial_days_remaining,
+                'end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
+            }
+
         # Return token with client info and permissions (convert all UUIDs to strings)
         return jsonify({
             'success': True,
@@ -125,7 +137,11 @@ def login():
             'client_phone': client.phone,
             'client_email': client.email,
             'client_gstin': client.gst_number,
-            'user': user_data
+            'subscription_status': client.subscription_status,
+            'subscription_end_date': client.subscription_end_date.isoformat() if client.subscription_end_date else None,
+            'plan_id': str(client.plan_id) if client.plan_id else None,
+            'user': user_data,
+            'trial': trial_info,
         }), 200
 
     except Exception as e:
@@ -184,6 +200,162 @@ def register():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Registration failed', 'message': str(e)}), 500
+
+
+@auth_bp.route('/signup', methods=['POST'])
+def signup():
+    """
+    Self-signup: Create new client + admin user in one step.
+    No client_id needed. Returns JWT for auto-login.
+    """
+    try:
+        data = request.get_json()
+
+        business_name = data.get('business_name', '').strip()
+        email = data.get('email', '').strip().lower()
+        password = data.get('password', '')
+        phone = data.get('phone', '').strip()
+
+        if not business_name or not email or not password:
+            return jsonify({'error': 'Business name, email, and password are required'}), 400
+
+        if len(password) < 8:
+            return jsonify({'error': 'Password must be at least 8 characters'}), 400
+
+        # Check if email already exists
+        existing_user = User.query.filter_by(email=email).first()
+        if existing_user:
+            return jsonify({'error': 'An account with this email already exists'}), 409
+
+        existing_client = ClientEntry.query.filter_by(email=email).first()
+        if existing_client:
+            return jsonify({'error': 'A business with this email already exists'}), 409
+
+        # Create client with 14-day trial
+        now = datetime.utcnow()
+        trial_end = now + timedelta(days=14)
+        client_id = str(uuid.uuid4())
+        user_id = str(uuid.uuid4())
+
+        new_client = ClientEntry(
+            client_id=client_id,
+            client_name=business_name,
+            email=email,
+            phone=phone or None,
+            created_at=now,
+            is_active=True,
+            subscription_status='trial',
+            trial_start_date=now,
+            trial_end_date=trial_end,
+        )
+
+        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+        new_user = User(
+            user_id=user_id,
+            email=email,
+            password_hash=password_hash,
+            client_id=client_id,
+            role='admin',
+            is_super_admin=False,
+            created_at=now,
+            is_active=True,
+            full_name=business_name,
+        )
+
+        db.session.add(new_client)
+        db.session.add(new_user)
+        db.session.flush()
+
+        # Assign all admin-level permissions to trial owner
+        from models.permission_model import Permission, UserPermission
+        admin_permissions = [
+            'view_dashboard', 'gst_billing', 'non_gst_billing',
+            'view_all_bills', 'view_own_bills', 'view_customers',
+            'manage_customers', 'view_stock', 'manage_stock',
+            'view_sales_reports', 'view_audit_logs', 'manage_payment_types',
+        ]
+        all_perms = Permission.query.filter(
+            Permission.permission_name.in_(admin_permissions)
+        ).all()
+        for perm in all_perms:
+            db.session.add(UserPermission(
+                id=str(uuid.uuid4()),
+                user_id=user_id,
+                permission_id=perm.permission_id,
+                granted_by=user_id,
+            ))
+
+        db.session.commit()
+
+        # Generate JWT token (same as login)
+        user_permissions = get_user_permissions(user_id)
+
+        token_payload = {
+            'user_id': user_id,
+            'email': email,
+            'client_id': client_id,
+            'role': 'admin',
+            'is_super_admin': False,
+            'permissions': user_permissions,
+            'exp': datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS)
+        }
+
+        token = jwt.encode(token_payload, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
+
+        user_data = {
+            'user_id': user_id,
+            'email': email,
+            'full_name': business_name,
+            'phone': phone or None,
+            'department': None,
+            'role': 'admin',
+            'is_super_admin': False,
+            'permissions': user_permissions,
+        }
+
+        client_data = {
+            'client_id': client_id,
+            'client_name': business_name,
+            'logo_url': None,
+            'address': None,
+            'phone': phone or None,
+            'email': email,
+            'gstin': None,
+            'subscription_status': 'trial',
+            'trial_end_date': trial_end.isoformat(),
+            'trial_days_remaining': 14,
+        }
+
+        # Cache user session
+        cache = get_cache_manager()
+        cache_key = f"user_session:{user_id}"
+        cache.set(cache_key, {
+            'user': user_data,
+            'client': client_data
+        }, USER_SESSION_CACHE_TIMEOUT)
+
+        return jsonify({
+            'success': True,
+            'token': token,
+            'client_id': client_id,
+            'client_name': business_name,
+            'client_logo': None,
+            'client_address': None,
+            'client_phone': phone or None,
+            'client_email': email,
+            'client_gstin': None,
+            'user': user_data,
+            'trial': {
+                'status': 'trial',
+                'days_remaining': 14,
+                'end_date': trial_end.isoformat(),
+            }
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Signup failed', 'message': str(e)}), 500
 
 
 @auth_bp.route('/logout', methods=['POST'])

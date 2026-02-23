@@ -1,6 +1,6 @@
 import os
 import sys
-from flask import Flask
+from flask import Flask, send_from_directory
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 
@@ -162,6 +162,13 @@ def create_app():
         import_errors.append(f"profile: {str(e)}")
         logging.error(f"Failed to import profile blueprint: {e}")
 
+    subscription_bp = None
+    try:
+        from routes.subscription import subscription_bp
+    except Exception as e:
+        import_errors.append(f"subscription: {str(e)}")
+        logging.error(f"Failed to import subscription blueprint: {e}")
+
     # Store import errors for debugging
     app.config['IMPORT_ERRORS'] = import_errors
     if import_errors:
@@ -272,6 +279,13 @@ def create_app():
             blueprints_registered.append('profile')
         except Exception as e:
             print(f"Warning: Could not register profile blueprint: {e}")
+
+    if subscription_bp:
+        try:
+            app.register_blueprint(subscription_bp, url_prefix='/api/subscription')
+            blueprints_registered.append('subscription')
+        except Exception as e:
+            print(f"Warning: Could not register subscription blueprint: {e}")
 
     # Store blueprint registration status
     app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered
@@ -603,6 +617,32 @@ def create_app():
     def root():
         return {"status": "ok", "message": "MJ Billing backend running"}, 200
 
+    # ==================== SERVE REACT FRONTEND ====================
+    # Serve the React production build from frontend-react/dist/
+    FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frontend-react', 'dist')
+
+    @app.route('/frontend/')
+    @app.route('/frontend')
+    def serve_frontend():
+        return send_from_directory(FRONTEND_DIR, 'index.html')
+
+    @app.route('/frontend/<path:path>')
+    def serve_frontend_files(path):
+        # Try to serve the exact file (JS, CSS, images, etc.)
+        file_path = os.path.join(FRONTEND_DIR, path)
+        if os.path.isfile(file_path):
+            return send_from_directory(FRONTEND_DIR, path)
+        # For any non-file route, serve index.html (SPA client-side routing)
+        return send_from_directory(FRONTEND_DIR, 'index.html')
+
+    @app.route('/<path:filename>')
+    def serve_frontend_static(filename):
+        """Serve static files (images, favicon, etc.) from frontend dist at root level.
+        This handles hardcoded paths like /RYX_Logo.png in the React app."""
+        file_path = os.path.join(FRONTEND_DIR, filename)
+        if os.path.isfile(file_path):
+            return send_from_directory(FRONTEND_DIR, filename)
+        return {"error": "Not found"}, 404
 
     return app
 
@@ -625,6 +665,182 @@ if __name__ == '__main__':
         except Exception as e:
             print(f"[WARNING]  db.create_all() skipped: {e}")
             print("Database tables likely already exist - continuing...")
+
+        # Phase 1.5: Run pending column migrations (safe to re-run)
+        try:
+            from sqlalchemy import text, inspect as sa_inspect
+            inspector = sa_inspect(db.engine)
+            existing_cols = [col['name'] for col in inspector.get_columns('client_entry')]
+            if 'subscription_status' not in existing_cols:
+                print("[Migration] Adding trial/subscription columns to client_entry...")
+                db.session.execute(text("ALTER TABLE client_entry ADD COLUMN subscription_status VARCHAR(20) NULL"))
+                db.session.execute(text("ALTER TABLE client_entry ADD COLUMN trial_start_date TIMESTAMP NULL"))
+                db.session.execute(text("ALTER TABLE client_entry ADD COLUMN trial_end_date TIMESTAMP NULL"))
+                db.session.commit()
+                print("[Migration] ✓ Trial columns added successfully")
+        except Exception as e:
+            db.session.rollback()
+            print(f"[Migration] Skipped trial columns (may already exist): {e}")
+
+        # Phase 1.6: Subscription tables + plan_id column migration
+        try:
+            from sqlalchemy import text, inspect as sa_inspect
+            inspector = sa_inspect(db.engine)
+            existing_tables = inspector.get_table_names()
+
+            # Create subscription_plan table if missing
+            if 'subscription_plan' not in existing_tables:
+                print("[Migration] Creating subscription_plan table...")
+                db.session.execute(text("""
+                    CREATE TABLE subscription_plan (
+                        plan_id TEXT PRIMARY KEY,
+                        name VARCHAR(50) NOT NULL,
+                        description VARCHAR(255),
+                        monthly_price INTEGER NOT NULL,
+                        yearly_price INTEGER NOT NULL,
+                        features TEXT,
+                        limits TEXT,
+                        is_popular BOOLEAN DEFAULT 0,
+                        is_active BOOLEAN DEFAULT 1,
+                        display_order INTEGER DEFAULT 0,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    )
+                """))
+                db.session.commit()
+                print("[Migration] subscription_plan table created")
+
+            # Create payment_transaction table if missing
+            if 'payment_transaction' not in existing_tables:
+                print("[Migration] Creating payment_transaction table...")
+                db.session.execute(text("""
+                    CREATE TABLE payment_transaction (
+                        transaction_id TEXT PRIMARY KEY,
+                        client_id TEXT NOT NULL,
+                        plan_id TEXT NOT NULL,
+                        razorpay_order_id VARCHAR(100),
+                        razorpay_payment_id VARCHAR(100),
+                        razorpay_signature VARCHAR(255),
+                        amount INTEGER NOT NULL,
+                        currency VARCHAR(3) DEFAULT 'INR',
+                        billing_cycle VARCHAR(10) NOT NULL,
+                        status VARCHAR(20) DEFAULT 'created',
+                        notes VARCHAR(255),
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        paid_at TIMESTAMP,
+                        FOREIGN KEY (client_id) REFERENCES client_entry(client_id),
+                        FOREIGN KEY (plan_id) REFERENCES subscription_plan(plan_id)
+                    )
+                """))
+                db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_pt_client ON payment_transaction(client_id)"))
+                db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_pt_order ON payment_transaction(razorpay_order_id)"))
+                db.session.commit()
+                print("[Migration] payment_transaction table created")
+
+            # Add plan_id and subscription_end_date to client_entry if missing
+            existing_cols = [col['name'] for col in inspector.get_columns('client_entry')]
+            if 'plan_id' not in existing_cols:
+                print("[Migration] Adding plan_id and subscription_end_date to client_entry...")
+                db.session.execute(text("ALTER TABLE client_entry ADD COLUMN plan_id TEXT NULL"))
+                db.session.execute(text("ALTER TABLE client_entry ADD COLUMN subscription_end_date TIMESTAMP NULL"))
+                db.session.commit()
+                print("[Migration] plan_id and subscription_end_date columns added")
+
+            # Seed default plans if table is empty
+            from models.subscription_model import SubscriptionPlan
+            import uuid as _uuid
+            plan_count = db.session.query(SubscriptionPlan).count()
+            if plan_count == 0:
+                print("[Seed] Inserting default subscription plans...")
+                default_plans = [
+                    SubscriptionPlan(
+                        plan_id=str(_uuid.uuid4()),
+                        name='Starter',
+                        description='Perfect for small businesses just getting started',
+                        monthly_price=99900,
+                        yearly_price=999900,
+                        features=['Basic invoicing', 'Customer management', 'Email support', 'Basic reports'],
+                        limits={'users': 3, 'bills_per_month': 100, 'storage_gb': 5},
+                        is_popular=False,
+                        display_order=1,
+                    ),
+                    SubscriptionPlan(
+                        plan_id=str(_uuid.uuid4()),
+                        name='Professional',
+                        description='For growing businesses with advanced needs',
+                        monthly_price=249900,
+                        yearly_price=2499900,
+                        features=['Everything in Starter', 'GST billing', 'Inventory management', 'Priority support', 'Advanced reports', 'Multi-user access'],
+                        limits={'users': 10, 'bills_per_month': 500, 'storage_gb': 25},
+                        is_popular=True,
+                        display_order=2,
+                    ),
+                    SubscriptionPlan(
+                        plan_id=str(_uuid.uuid4()),
+                        name='Enterprise',
+                        description='For large organizations with custom requirements',
+                        monthly_price=799900,
+                        yearly_price=7999900,
+                        features=['Everything in Professional', 'Unlimited users', 'Custom integrations', '24/7 phone support', 'Dedicated account manager', 'SLA guarantee', 'White-label options'],
+                        limits={'users': -1, 'bills_per_month': -1, 'storage_gb': 100},
+                        is_popular=False,
+                        display_order=3,
+                    ),
+                ]
+                for plan in default_plans:
+                    db.session.add(plan)
+                db.session.commit()
+                print("[Seed] 3 default subscription plans created")
+
+        except Exception as e:
+            db.session.rollback()
+            print(f"[Migration] Subscription migration/seed skipped: {e}")
+
+        # Phase 1.7: Seed default permissions if table is empty
+        try:
+            from models.permission_model import Permission
+            import uuid as _uuid
+            has_view_dashboard = db.session.query(Permission).filter_by(permission_name='view_dashboard').first()
+            if not has_view_dashboard:
+                print("[Seed] Inserting default permissions...")
+                default_perms = [
+                    # Dashboard
+                    ('view_dashboard', 'View dashboard page'),
+                    # Billing
+                    ('gst_billing', 'Create GST bills'),
+                    ('non_gst_billing', 'Create Non-GST bills'),
+                    ('view_all_bills', 'View all bills'),
+                    ('view_own_bills', 'View own created bills'),
+                    ('edit_bills', 'Edit existing bills'),
+                    ('delete_bills', 'Delete bills'),
+                    ('print_bills', 'Print bills'),
+                    # Customers
+                    ('view_customers', 'View customers'),
+                    ('manage_customers', 'Create/edit/delete customers'),
+                    # Stock
+                    ('view_stock', 'View stock/inventory'),
+                    ('manage_stock', 'Create/edit/delete stock items'),
+                    # Reports
+                    ('view_sales_reports', 'View sales reports'),
+                    ('export_reports', 'Export reports'),
+                    # Audit
+                    ('view_audit_logs', 'View audit logs'),
+                    # Payment Types
+                    ('manage_payment_types', 'Manage payment types'),
+                    # Users (admin)
+                    ('manage_users', 'Create/edit/delete users'),
+                    ('manage_permissions', 'Manage user permissions'),
+                ]
+                for perm_name, desc in default_perms:
+                    db.session.add(Permission(
+                        permission_id=str(_uuid.uuid4()),
+                        permission_name=perm_name,
+                        description=desc,
+                    ))
+                db.session.commit()
+                print(f"[Seed] {len(default_perms)} default permissions created")
+        except Exception as e:
+            db.session.rollback()
+            print(f"[Seed] Permission seeding skipped: {e}")
 
     # [OK] Use environment PORT if available (Render/Railway sets this)
     port = int(os.environ.get("PORT", 5000))

@@ -17,4 +17,5 @@ reportlab==4.2.5
 redis==5.0.1
 python-barcode==0.15.1
 pytz==2024.1
+razorpay==1.4.2
 pywin32==306; sys_platform == 'win32'

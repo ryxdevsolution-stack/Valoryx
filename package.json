@@ -15,18 +15,15 @@
   "main": "electron/main.js",
   "scripts": {
     "dev:backend": "cd backend && python app.py",
-    "dev:frontend": "cd frontend && npm run dev",
-    "build:frontend": "cd frontend && npm run build",
+    "dev:frontend": "cd frontend-react && npm run dev",
+    "build:frontend": "cd frontend-react && npm run build",
     "build": "npm run build:frontend",
-    "electron:dev": "electron .",
+    "electron:dev": "electron . --dev",
     "electron:start": "npm run build:frontend && electron .",
-    "electron:build": "npm run build:frontend && electron-builder",
-    "electron:build:win": "npm run build:frontend && electron-builder --win",
+    "electron:build": "cd frontend-react && npm run build:electron && cd .. && electron-builder",
+    "electron:build:win": "cd frontend-react && npm run build:electron && cd .. && electron-builder --win",
     "electron:pack": "electron-builder --dir",
     "postinstall": "electron-builder install-app-deps"
-  },
-  "dependencies": {
-    "electron-updater": "^6.1.7"
   },
   "devDependencies": {
     "electron": "^28.0.0",
@@ -57,14 +54,11 @@
         ]
       },
       {
-        "from": "frontend/.next/standalone",
-        "to": "frontend",
-        "filter": ["**/*"]
-      },
-      {
-        "from": "frontend/public",
-        "to": "frontend/public",
-        "filter": ["**/*"]
+        "from": "frontend-react/dist",
+        "to": "frontend-react/dist",
+        "filter": [
+          "**/*"
+        ]
       }
     ],
     "win": {
@@ -78,14 +72,7 @@
       ],
       "icon": "build/icon.ico",
       "artifactName": "RYX-Billing-Setup-${version}.${ext}",
-      "signAndEditExecutable": false,
-      "publish": [
-        {
-          "provider": "github",
-          "owner": "ryxdevsolution-stack",
-          "repo": "Valoryx"
-        }
-      ]
+      "signAndEditExecutable": false
     },
     "nsis": {
       "oneClick": false,

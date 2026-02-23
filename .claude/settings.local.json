@@ -149,7 +149,9 @@
       "Bash(if not exist services mkdir services)",
       "Bash(tasklist:*)",
       "Bash(git ls-tree:*)",
-      "Bash(git tag:*)"
+      "Bash(git tag:*)",
+      "Bash(powershell -Command \"Get-ChildItem -Path 'C:\\\\Users\\\\loges\\\\Documents\\\\GitHub\\\\mj-billing\\\\dist\\\\win-unpacked\\\\resources\\\\frontend' -Filter 'server.js' -Recurse\":*)",
+      "Bash(npx:*)"
     ],
     "deny": [],
     "ask": [],
