@@ -71,6 +71,7 @@ def create_app():
     auth_bp = billing_bp = stock_bp = report_bp = audit_bp = None
     client_bp = payment_bp = customer_bp = analytics_bp = None
     permissions_bp = admin_bp = notes_bp = bulk_order_bp = expense_bp = profile_bp = None
+    branch_bp = stock_transfer_bp = None
 
     try:
         from routes.auth import auth_bp
@@ -168,6 +169,18 @@ def create_app():
     except Exception as e:
         import_errors.append(f"subscription: {str(e)}")
         logging.error(f"Failed to import subscription blueprint: {e}")
+
+    try:
+        from routes.branches import branch_bp
+    except Exception as e:
+        import_errors.append(f"branches: {str(e)}")
+        logging.error(f"Failed to import branches blueprint: {e}")
+
+    try:
+        from routes.stock_transfer import stock_transfer_bp
+    except Exception as e:
+        import_errors.append(f"stock_transfer: {str(e)}")
+        logging.error(f"Failed to import stock_transfer blueprint: {e}")
 
     # Store import errors for debugging
     app.config['IMPORT_ERRORS'] = import_errors
@@ -286,6 +299,20 @@ def create_app():
             blueprints_registered.append('subscription')
         except Exception as e:
             print(f"Warning: Could not register subscription blueprint: {e}")
+
+    if branch_bp:
+        try:
+            app.register_blueprint(branch_bp, url_prefix='/api/branches')
+            blueprints_registered.append('branches')
+        except Exception as e:
+            print(f"Warning: Could not register branches blueprint: {e}")
+
+    if stock_transfer_bp:
+        try:
+            app.register_blueprint(stock_transfer_bp, url_prefix='/api/stock-transfers')
+            blueprints_registered.append('stock_transfers')
+        except Exception as e:
+            print(f"Warning: Could not register stock_transfer blueprint: {e}")
 
     # Store blueprint registration status
     app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered
@@ -652,6 +679,11 @@ app = create_app()
 
 if __name__ == '__main__':
     with app.app_context():
+        # Import new branch/transfer models so SQLAlchemy registers them for table creation
+        from models.branch_model import Branch
+        from models.branch_inventory_model import BranchInventory
+        from models.stock_transfer_model import StockTransfer, StockTransferItem
+
         # Phase 1: Create tables automatically for SQLite (offline mode)
         try:
             if app.config.get('DB_MODE') == 'offline':
