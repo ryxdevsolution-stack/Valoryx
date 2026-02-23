@@ -7,6 +7,9 @@ import { useNavigate } from 'react-router-dom'
 import { useData } from '@/contexts/DataContext'
 import { useClient } from '@/contexts/ClientContext'
 import { SystemNotification } from '@/utils/notifications'
+import ProductCardGrid from '@/components/billing/ProductCardGrid'
+import ProfitSummaryBar from '@/components/billing/ProfitSummaryBar'
+import MobileCartList from '@/components/billing/MobileCartList'
 
 interface Product {
   product_id: string
@@ -73,7 +76,7 @@ interface BillTab {
 export default function UnifiedBillingPage() {
   const navigate = useNavigate()
   const { fetchProducts, invalidateCache: invalidateDataCache } = useData()
-  const { client, hasPermission } = useClient()
+  const { client, user, hasPermission } = useClient()
 
   // Permission-based billing mode
   const hasGstPermission = hasPermission('gst_billing')
@@ -98,6 +101,12 @@ export default function UnifiedBillingPage() {
   const hasInitialized = useRef(false)
   const isRestoringFromStorage = useRef(false)
   const barcodeBuffer = useRef('')
+
+  // POS Card View state
+  const [viewMode, setViewMode] = useState<'list' | 'card'>(() => {
+    const stored = localStorage.getItem('billing_view_mode')
+    return stored === 'list' || stored === 'card' ? stored : 'list'
+  })
   const barcodeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // For detecting fast typing (barcode scanner) in product search field
@@ -277,6 +286,10 @@ export default function UnifiedBillingPage() {
         e.preventDefault()
         productSearchRef.current?.focus()
       }
+      if (e.key === 'F3') {
+        e.preventDefault()
+        setViewMode(prev => prev === 'list' ? 'card' : 'list')
+      }
       if (e.key === 'Escape') {
         setBarcodeInput('')
         setShowProductDropdown(false)
@@ -383,6 +396,11 @@ export default function UnifiedBillingPage() {
       console.error('Failed to save draft to localStorage:', e)
     }
   }, [billTabs, activeTabId])
+
+  // Persist view mode preference
+  useEffect(() => {
+    localStorage.setItem('billing_view_mode', viewMode)
+  }, [viewMode])
 
   // Function to clear draft from localStorage (called after successful bill creation)
   const clearDraftFromStorage = useCallback((tabIdToRemove?: string) => {
@@ -1658,7 +1676,43 @@ export default function UnifiedBillingPage() {
               </div>
             </div>
 
-            {/* Manual Product Selection Row */}
+            {/* View Mode Toggle */}
+            <div className="flex items-center justify-between px-2 py-1.5 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
+              <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-700 rounded-lg p-0.5">
+                <button
+                  type="button"
+                  onClick={() => setViewMode('list')}
+                  className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                    viewMode === 'list'
+                      ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm'
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700'
+                  }`}
+                >
+                  <span className="hidden sm:inline">List</span>
+                  <svg className="w-4 h-4 sm:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setViewMode('card')}
+                  className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
+                    viewMode === 'card'
+                      ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm'
+                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700'
+                  }`}
+                >
+                  <span className="hidden sm:inline">Cards</span>
+                  <svg className="w-4 h-4 sm:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                  </svg>
+                </button>
+              </div>
+              <span className="text-[10px] text-gray-400 dark:text-gray-500 hidden sm:block">F3 to toggle</span>
+            </div>
+
+            {viewMode === 'list' ? (
+            /* Manual Product Selection Row */
             <div
               className={`border-t border-gray-200 dark:border-gray-700 p-2 ${
                 isNewProduct
@@ -1681,8 +1735,8 @@ export default function UnifiedBillingPage() {
                   </div>
                 </div>
               )}
-              <div className="flex gap-2 items-end">
-                <div className="flex-1 relative product-search-container">
+              <div className="flex flex-wrap md:flex-nowrap gap-2 items-end">
+                <div className="flex-1 min-w-[200px] relative product-search-container">
                   <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
                     Search Product (F2)
                   </label>
@@ -1897,8 +1951,18 @@ export default function UnifiedBillingPage() {
                 </div>
               )}
             </div>
+            ) : (
+              <ProductCardGrid
+                products={products}
+                billItems={activeTab.items}
+                onProductTap={addProductToItems}
+                isLoading={productsLoading}
+              />
+            )}
           </div>
 
+          {/* Items Display - Table on desktop, Cards on mobile */}
+          <div className="hidden md:block">
           {/* Items Table */}
           <div className="bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700">
             <div className="overflow-x-auto max-h-64 overflow-y-auto">
@@ -2129,6 +2193,21 @@ export default function UnifiedBillingPage() {
               </table>
             </div>
           </div>
+          </div>
+          <div className="block md:hidden">
+            <MobileCartList
+              items={activeTab.items}
+              showGst={showGstColumns()}
+              onUpdateQuantity={updateItemQuantity}
+              onRemoveItem={(index) => removeItem(index)}
+            />
+          </div>
+
+          {/* Profit Summary - Owner/Manager only */}
+          <ProfitSummaryBar
+            items={activeTab.items}
+            userRole={user?.role || 'staff'}
+          />
 
           {/* Payment Splits Section - MULTI-PAYMENT */}
           <div className="bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700 p-2">
@@ -2138,7 +2217,7 @@ export default function UnifiedBillingPage() {
               </h3>
 
               {/* Amount Received & Discount - Side by Side */}
-              <div className="flex items-center gap-6 mb-3 bg-gray-50 dark:bg-gray-900 p-4 rounded-lg border border-gray-200 dark:border-gray-700">
+              <div className="flex flex-wrap items-center gap-4 md:gap-6 mb-3 bg-gray-50 dark:bg-gray-900 p-3 md:p-4 rounded-lg border border-gray-200 dark:border-gray-700">
                 {/* Received */}
                 <div className="flex items-center gap-3">
                   <label className="text-sm font-semibold text-gray-700 dark:text-gray-300">
