@@ -874,6 +874,68 @@ if __name__ == '__main__':
             db.session.rollback()
             print(f"[Seed] Permission seeding skipped: {e}")
 
+        # Phase 1.8: Auto-create Main Branch for existing clients and migrate stock to branch_inventory
+        try:
+            from models.branch_model import Branch
+            from models.branch_inventory_model import BranchInventory
+            from models.stock_model import StockEntry
+            from models.client_model import ClientEntry
+            import uuid as _uuid
+
+            # Find all clients
+            all_clients = db.session.query(ClientEntry.client_id).all()
+            migrated_count = 0
+
+            for (client_id_row,) in all_clients:
+                client_id = str(client_id_row)
+
+                # Skip clients that already have at least one branch (idempotent)
+                existing_branch = db.session.query(Branch).filter_by(client_id=client_id).first()
+                if existing_branch:
+                    continue
+
+                # Skip clients that have no stock entries (nothing to migrate)
+                stock_entries = db.session.query(StockEntry).filter_by(client_id=client_id).all()
+                if not stock_entries:
+                    continue
+
+                # Create a "Main Branch" for this client
+                main_branch = Branch(
+                    branch_id=str(_uuid.uuid4()),
+                    client_id=client_id,
+                    name='Main Branch',
+                    location=None,
+                    is_active=True
+                )
+                db.session.add(main_branch)
+                db.session.flush()  # Ensure branch_id is available for FK references
+
+                # Create branch_inventory rows mirroring each stock entry
+                for stock in stock_entries:
+                    inv = BranchInventory(
+                        id=str(_uuid.uuid4()),
+                        branch_id=main_branch.branch_id,
+                        product_id=stock.product_id,
+                        client_id=client_id,
+                        quantity=stock.quantity,
+                        low_stock_alert=stock.low_stock_alert
+                    )
+                    db.session.add(inv)
+
+                db.session.commit()
+                migrated_count += 1
+                print(f'[Migration] Created Main Branch for client {client_id} with {len(stock_entries)} inventory items')
+
+            if migrated_count > 0:
+                print(f'[Migration] Main Branch migration complete: {migrated_count} client(s) migrated')
+            else:
+                print('[Migration] Main Branch migration complete: no clients needed migration')
+
+        except Exception as e:
+            db.session.rollback()
+            print(f'[Migration] Main Branch migration skipped: {e}')
+
+
     # [OK] Use environment PORT if available (Render/Railway sets this)
     port = int(os.environ.get("PORT", 5000))
     app.run(host="0.0.0.0", port=port, debug=app.config.get('DEBUG', False))
