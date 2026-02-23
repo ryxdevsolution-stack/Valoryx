@@ -15,7 +15,8 @@ import {
   Sun,
   Moon,
   Building2,
-  User
+  User,
+  ArrowLeftRight
 } from 'lucide-react'
 
 // Define navigation items with new permission names
@@ -25,6 +26,7 @@ const allNavigation = [
   { name: 'Bills', href: '/billing', icon: FileText, permissions: ['view_all_bills', 'view_own_bills'] },
   { name: 'Customers', href: '/customers', icon: Users, permission: 'view_customers' },
   { name: 'Stock Management', href: '/stock', icon: Package, permission: 'view_stock' },
+  { name: 'Stock Transfer', href: '/stock-transfer', icon: ArrowLeftRight, ownerOnly: true },
   { name: 'Reports', href: '/reports', icon: TrendingUp, permission: 'view_sales_reports' },
   { name: 'Audit Logs', href: '/audit', icon: Search, permission: 'view_audit_logs' },
 ]
@@ -45,6 +47,10 @@ export default function Sidebar() {
   const navigation = useMemo(() => {
     if (!user) return []
     return allNavigation.filter(item => {
+      // Handle owner-only items (Stock Transfer)
+      if ('ownerOnly' in item && item.ownerOnly) {
+        return user.role === 'owner' || user.role === 'admin'
+      }
       // Handle multiple permissions (any one of them grants access)
       if ('permissions' in item && item.permissions) {
         return item.permissions.some(p => hasPermission(p))

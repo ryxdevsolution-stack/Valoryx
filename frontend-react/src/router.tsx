@@ -21,6 +21,9 @@ const Docs = React.lazy(() => import('@/pages/Docs'))
 const TrialExpired = React.lazy(() => import('@/pages/TrialExpired'))
 const Pricing = React.lazy(() => import('@/pages/Pricing'))
 
+const StockTransfer = React.lazy(() => import('@/pages/stock-transfer/StockTransfer'))
+const BranchManagement = React.lazy(() => import('@/pages/stock-transfer/BranchManagement'))
+
 // Admin pages
 const AdminDashboard = React.lazy(() => import('@/pages/admin/AdminDashboard'))
 const AdminUsers = React.lazy(() => import('@/pages/admin/Users'))
@@ -71,6 +74,8 @@ export function AppRoutes() {
         <Route path="/billing/create" element={<CreateBill />} />
         <Route path="/billing/exchange/:billId" element={<Exchange />} />
         <Route path="/stock" element={<Stock />} />
+        <Route path="/stock-transfer" element={<StockTransfer />} />
+        <Route path="/stock-transfer/branches" element={<BranchManagement />} />
         <Route path="/customers" element={<Customers />} />
         <Route path="/reports" element={<Reports />} />
         <Route path="/audit" element={<Audit />} />
