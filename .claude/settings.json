@@ -1,0 +1,8 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(/home/development1/Desktop/Valoryx/backend/migrations/020_create_branches_and_transfers.sql:*)",
+      "Bash(/home/development1/Desktop/Valoryx/backend/routes/branches.py:*)"
+    ]
+  }
+}

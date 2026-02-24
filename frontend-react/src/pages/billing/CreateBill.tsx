@@ -1460,18 +1460,54 @@ export default function UnifiedBillingPage() {
         <form onSubmit={handleSubmit} className="flex flex-col gap-2">
           {/* Bill Info Container */}
           <div className="bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700">
-            {/* Bill Number and Date Header */}
-            <div className="grid grid-cols-2 gap-4 p-2 border-b border-gray-200 dark:border-gray-700">
+            {/* Bill Number, Toggle, and Date Header */}
+            <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2 border-b border-gray-200 dark:border-gray-700">
               <div className="flex flex-col">
-                <span className="text-base dark:text-gray-400 mb-1 font-medium">
+                <span className="text-xs text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wide">
                   Bill Number
                 </span>
                 <span className="text-lg font-bold text-gray-900 dark:text-white">
                   #{nextBillNumber || '...'}
                 </span>
               </div>
+
+              {/* Centered List / Cards Toggle */}
+              <div className="flex flex-col items-center gap-0.5">
+                <div className="flex items-center gap-0.5 bg-gray-100 dark:bg-gray-700 rounded-xl p-1 shadow-inner">
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('list')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      viewMode === 'list'
+                        ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                    <span>List</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setViewMode('card')}
+                    className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold transition-all ${
+                      viewMode === 'card'
+                        ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm'
+                        : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+                    }`}
+                  >
+                    <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
+                    </svg>
+                    <span>Cards</span>
+                  </button>
+                </div>
+                <span className="text-[9px] text-gray-400 dark:text-gray-500 hidden sm:block">F3 to toggle</span>
+              </div>
+
               <div className="flex flex-col items-end">
-                <span className="text-base dark:text-gray-400 mb-1 font-medium">Date</span>
+                <span className="text-xs text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wide">Date</span>
                 <input
                   type="date"
                   value={billDate.toISOString().split('T')[0]}
@@ -1674,41 +1710,6 @@ export default function UnifiedBillingPage() {
                   className="w-full p-2 text-xs border-2 border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
               </div>
-            </div>
-
-            {/* View Mode Toggle */}
-            <div className="flex items-center justify-between px-2 py-1.5 border-t border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800">
-              <div className="flex items-center gap-1 bg-gray-100 dark:bg-gray-700 rounded-lg p-0.5">
-                <button
-                  type="button"
-                  onClick={() => setViewMode('list')}
-                  className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                    viewMode === 'list'
-                      ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm'
-                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700'
-                  }`}
-                >
-                  <span className="hidden sm:inline">List</span>
-                  <svg className="w-4 h-4 sm:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-                  </svg>
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setViewMode('card')}
-                  className={`px-3 py-1 text-xs font-semibold rounded-md transition-all ${
-                    viewMode === 'card'
-                      ? 'bg-white dark:bg-gray-600 text-blue-600 dark:text-blue-400 shadow-sm'
-                      : 'text-gray-500 dark:text-gray-400 hover:text-gray-700'
-                  }`}
-                >
-                  <span className="hidden sm:inline">Cards</span>
-                  <svg className="w-4 h-4 sm:hidden" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2V6zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2V6zM4 16a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2H6a2 2 0 01-2-2v-2zm10 0a2 2 0 012-2h2a2 2 0 012 2v2a2 2 0 01-2 2h-2a2 2 0 01-2-2v-2z" />
-                  </svg>
-                </button>
-              </div>
-              <span className="text-[10px] text-gray-400 dark:text-gray-500 hidden sm:block">F3 to toggle</span>
             </div>
 
             {viewMode === 'list' ? (

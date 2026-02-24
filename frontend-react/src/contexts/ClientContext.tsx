@@ -88,6 +88,26 @@ export function ClientProvider({ children }: { children: ReactNode }) {
               localStorage.setItem('client', JSON.stringify(updated))
             }
           }).catch(() => { /* silent — non-blocking */ })
+
+          // Background refresh: sync user role/permissions from backend
+          // so role changes in DB are reflected without requiring re-login
+          api.get('/profile').then(res => {
+            if (res.data) {
+              const profile = res.data
+              const updatedUser: User = {
+                user_id: profile.user_id,
+                email: profile.email,
+                role: profile.role,
+                is_super_admin: profile.is_super_admin,
+                permissions: profile.permissions,
+                full_name: profile.full_name,
+                phone: profile.phone,
+                department: profile.department,
+              }
+              setUser(updatedUser)
+              localStorage.setItem('user', JSON.stringify(updatedUser))
+            }
+          }).catch(() => { /* silent — non-blocking */ })
         }
       } catch (error) {
         // Clear invalid data
