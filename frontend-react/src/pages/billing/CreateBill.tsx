@@ -102,9 +102,16 @@ export default function UnifiedBillingPage() {
   const isRestoringFromStorage = useRef(false)
   const barcodeBuffer = useRef('')
 
+  // Derive per-user localStorage keys so drafts are isolated between users
+  const userId = (() => {
+    try { return JSON.parse(localStorage.getItem('user') || '{}').user_id || 'guest' } catch { return 'guest' }
+  })()
+  const DRAFT_STORAGE_KEY = `billing_draft_tabs_${userId}`
+  const VIEW_MODE_KEY = `billing_view_mode_${userId}`
+
   // POS Card View state
   const [viewMode, setViewMode] = useState<'list' | 'card'>(() => {
-    const stored = localStorage.getItem('billing_view_mode')
+    const stored = localStorage.getItem(`billing_view_mode_${userId}`)
     return stored === 'list' || stored === 'card' ? stored : 'list'
   })
   const barcodeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -113,9 +120,6 @@ export default function UnifiedBillingPage() {
   const searchInputTimestamp = useRef<number>(0)
   const searchInputBuffer = useRef<string>('')
   const searchBarcodeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
-
-  // LocalStorage key for draft persistence
-  const DRAFT_STORAGE_KEY = 'billing_draft_tabs'
 
   // Hardcoded payment types
   const paymentTypes = ['Cash', 'Card', 'UPI']
@@ -232,42 +236,21 @@ export default function UnifiedBillingPage() {
   // Get current active tab
   const activeTab = billTabs.find((tab) => tab.id === activeTabId) || billTabs[0]
 
-  const loadInitialData = useCallback(async (retryCount = 0) => {
+  const loadInitialData = useCallback(async () => {
     try {
       setProductsLoading(true)
-      // OPTIMIZED: Use lightweight /next-number endpoint instead of fetching full bill list
-      // Use cache normally - cache is invalidated after mutations (create/update/delete stock/bills)
-      // Backend has fallback lookup by product_name if product_id is stale
+      // Single parallel load — no retries, no recursive loops
       const [productsData, billNumberResponse] = await Promise.all([
-        fetchProducts(retryCount > 0), // Force refresh only on retry
+        fetchProducts(false),
         api.get('/billing/next-number'),
       ])
       setProducts(productsData)
-      setProductsLoading(false)
-
-      // Use dedicated endpoint response (much faster than list?limit=1)
       setNextBillNumber(billNumberResponse.data.next_bill_number || 1)
-
-      // If products is empty and we haven't retried too many times, retry after delay
-      if (productsData.length === 0 && retryCount < 3) {
-        console.log(`Products empty, retrying (attempt ${retryCount + 1}/3)...`)
-        setTimeout(() => {
-          loadInitialData(retryCount + 1)
-        }, 1000)
-      }
     } catch (error) {
       console.error('Failed to load initial data:', error)
       setNextBillNumber(1)
-
-      // Retry on error if we haven't exceeded retry limit
-      if (retryCount < 3) {
-        console.log(`Error loading data, retrying (attempt ${retryCount + 1}/3)...`)
-        setTimeout(() => {
-          loadInitialData(retryCount + 1)
-        }, 1000)
-      } else {
-        setProductsLoading(false) // Stop loading indicator after max retries
-      }
+    } finally {
+      setProductsLoading(false)
     }
   }, [fetchProducts])
 
@@ -397,10 +380,10 @@ export default function UnifiedBillingPage() {
     }
   }, [billTabs, activeTabId])
 
-  // Persist view mode preference
+  // Persist view mode preference (per user)
   useEffect(() => {
-    localStorage.setItem('billing_view_mode', viewMode)
-  }, [viewMode])
+    localStorage.setItem(VIEW_MODE_KEY, viewMode)
+  }, [viewMode, VIEW_MODE_KEY])
 
   // Function to clear draft from localStorage (called after successful bill creation)
   const clearDraftFromStorage = useCallback((tabIdToRemove?: string) => {

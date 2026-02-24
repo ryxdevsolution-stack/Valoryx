@@ -188,6 +188,7 @@ api.interceptors.response.use(
 
     if (error.response?.status === 401) {
       // Token expired or invalid
+      // Clear auth keys only — billing draft stays so user sees it on next login
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       localStorage.removeItem('client')

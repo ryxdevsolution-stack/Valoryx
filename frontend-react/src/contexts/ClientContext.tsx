@@ -181,7 +181,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setClient(null)
     setIsAuthenticated(false)
 
-    // Clear localStorage
+    // Clear auth keys only — billing draft stays so user sees it on next login
     localStorage.removeItem('token')
     localStorage.removeItem('user')
     localStorage.removeItem('client')

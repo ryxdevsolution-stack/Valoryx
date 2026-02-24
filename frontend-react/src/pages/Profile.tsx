@@ -70,12 +70,14 @@ interface ActivityItem {
 }
 
 export default function ProfilePage() {
-  const { client, refreshUserData, updateSubscriptionStatus } = useClient()
-  const [profile, setProfile] = useState<ProfileData | null>(null)
-  const [loading, setLoading] = useState(true)
+  const { user, client, refreshUserData, updateSubscriptionStatus } = useClient()
   const [saving, setSaving] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
-  const [editForm, setEditForm] = useState({ full_name: '', phone: '', department: '' })
+  const [editForm, setEditForm] = useState({
+    full_name: user?.full_name || '',
+    phone: user?.phone || '',
+    department: user?.department || '',
+  })
   const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null)
 
   // Password change state
@@ -99,28 +101,42 @@ export default function ProfilePage() {
   const [activityTotal, setActivityTotal] = useState(0)
   const [loadingActivity, setLoadingActivity] = useState(false)
 
+  // Single mount effect — profile data comes from ClientContext (already fetched on app init)
   useEffect(() => {
-    fetchProfile()
     fetchActivity()
     fetchPaymentHistory()
   }, [])
 
-  const fetchProfile = async () => {
-    try {
-      setLoading(true)
-      const response = await api.get('/profile')
-      setProfile(response.data)
+  // Sync editForm when user data arrives from ClientContext
+  useEffect(() => {
+    if (user) {
       setEditForm({
-        full_name: response.data.full_name || '',
-        phone: response.data.phone || '',
-        department: response.data.department || ''
+        full_name: user.full_name || '',
+        phone: user.phone || '',
+        department: user.department || '',
       })
-    } catch (error: any) {
-      setMessage({ type: 'error', text: error.response?.data?.error || 'Failed to load profile' })
-    } finally {
-      setLoading(false)
     }
-  }
+  }, [user])
+
+  // Derive profile from ClientContext — no API call needed
+  const profile = user ? {
+    user_id: user.user_id,
+    email: user.email,
+    full_name: user.full_name || '',
+    phone: user.phone || '',
+    department: user.department || '',
+    role: user.role,
+    is_super_admin: user.is_super_admin || false,
+    is_active: true,
+    created_at: null,
+    last_login: null,
+    client: client ? {
+      client_id: client.client_id,
+      client_name: client.client_name,
+      email: client.email || '',
+      logo_url: client.logo_url,
+    } : null,
+  } : null
 
   const fetchActivity = async (page = 1) => {
     try {
@@ -185,7 +201,6 @@ export default function ProfilePage() {
       await api.put('/profile', editForm)
       setMessage({ type: 'success', text: 'Profile updated successfully' })
       setIsEditing(false)
-      await fetchProfile()
       await refreshUserData()
     } catch (error: any) {
       setMessage({ type: 'error', text: error.response?.data?.error || 'Failed to update profile' })
@@ -242,21 +257,11 @@ export default function ProfilePage() {
     }
   }
 
-  if (loading) {
+  if (!user || !profile) {
     return (
       <DashboardLayout>
         <div className="min-h-screen flex items-center justify-center">
           <Loader2 className="w-8 h-8 animate-spin text-gray-400" />
-        </div>
-      </DashboardLayout>
-    )
-  }
-
-  if (!profile) {
-    return (
-      <DashboardLayout>
-        <div className="min-h-screen flex items-center justify-center">
-          <p className="text-gray-500">Failed to load profile</p>
         </div>
       </DashboardLayout>
     )
