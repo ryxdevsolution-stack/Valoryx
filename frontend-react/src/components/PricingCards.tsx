@@ -52,7 +52,7 @@ const planIcons: Record<string, any> = {
 }
 
 export default function PricingCards({ onSubscribed, showTrialCTA = false }: PricingCardsProps) {
-  const { token, client, updateSubscriptionStatus } = useClient()
+  const { token, client, updateSubscriptionStatus, refreshClientData } = useClient()
   const [plans, setPlans] = useState<Plan[]>([])
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly')
   const [loading, setLoading] = useState(true)
@@ -93,10 +93,28 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
     return value === -1 ? 'Unlimited' : value.toString()
   }
 
+  function redirectToDashboard() {
+    const isElectron = !!(window as any).electronAPI?.isElectron
+    if (onSubscribed) {
+      onSubscribed()
+    } else {
+      window.location.href = isElectron ? '#/dashboard' : '/dashboard'
+    }
+  }
+
+  async function pollForActivation(maxAttempts: number, intervalMs: number) {
+    for (let i = 0; i < maxAttempts; i++) {
+      await new Promise(r => setTimeout(r, intervalMs))
+      await refreshClientData()
+    }
+    // Redirect regardless — webhook will have caught up by now
+    redirectToDashboard()
+  }
+
   async function handleSubscribe(plan: Plan) {
     if (!token) {
       const isElectron = !!(window as any).electronAPI?.isElectron
-      window.location.href = isElectron ? '#/auth/register' : '/frontend/auth/register'
+      window.location.href = isElectron ? '#/auth/register' : '/auth/register'
       return
     }
 
@@ -104,13 +122,13 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
     setError('')
 
     try {
-      // Create order
-      const orderRes = await api.post('/subscription/create-order', {
+      // Create Razorpay Subscription (auto-renewal)
+      const subRes = await api.post('/subscription/create-subscription', {
         plan_id: plan.plan_id,
         billing_cycle: billingCycle,
       })
 
-      const { order_id, amount, razorpay_key_id } = orderRes.data
+      const { subscription_id, razorpay_key_id, plan_name } = subRes.data
 
       // Load Razorpay script
       const loaded = await loadRazorpayScript()
@@ -120,30 +138,31 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
         return
       }
 
-      // Open Razorpay checkout
+      // Open Razorpay checkout with subscription_id (no amount field for subscriptions)
       const options = {
         key: razorpay_key_id,
-        amount: amount,
-        currency: 'INR',
+        subscription_id: subscription_id,
         name: 'RYX Billing',
-        description: `${plan.name} Plan - ${billingCycle === 'yearly' ? 'Yearly' : 'Monthly'}`,
-        order_id: order_id,
+        description: `${plan_name} Plan - ${billingCycle === 'yearly' ? 'Yearly' : 'Monthly'}`,
         handler: async function (response: any) {
           try {
             const verifyRes = await api.post('/subscription/verify-payment', {
-              razorpay_order_id: response.razorpay_order_id,
               razorpay_payment_id: response.razorpay_payment_id,
+              razorpay_subscription_id: response.razorpay_subscription_id,
               razorpay_signature: response.razorpay_signature,
             })
-            // Update client context with new subscription status + plan_id
-            if (verifyRes.data?.subscription_status) {
-              updateSubscriptionStatus(verifyRes.data.subscription_status, verifyRes.data.subscription_end_date, verifyRes.data.plan_id)
-            }
-            if (onSubscribed) {
-              onSubscribed()
+
+            if (verifyRes.data?.subscription_status === 'active') {
+              // Webhook already fired and activated — update context and redirect
+              updateSubscriptionStatus(
+                verifyRes.data.subscription_status,
+                verifyRes.data.subscription_end_date,
+                verifyRes.data.plan_id,
+              )
+              redirectToDashboard()
             } else {
-              const isElectron = !!(window as any).electronAPI?.isElectron
-              window.location.href = isElectron ? '#/dashboard' : '/frontend/dashboard'
+              // Webhook hasn't fired yet — poll up to 3 times (3s apart), then redirect
+              await pollForActivation(3, 3000)
             }
           } catch {
             setError('Payment verification failed. Please contact support.')
@@ -304,7 +323,7 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
                   href={
                     (window as any).electronAPI?.isElectron
                       ? '#/auth/register'
-                      : '/frontend/auth/register'
+                      : '/auth/register'
                   }
                   className={`block text-center py-3 px-4 rounded-lg font-semibold transition ${
                     plan.is_popular

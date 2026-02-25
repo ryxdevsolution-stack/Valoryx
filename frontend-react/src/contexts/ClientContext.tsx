@@ -24,6 +24,7 @@ interface Client {
   gstin?: string
   subscription_status?: string
   plan_id?: string
+  subscription_end_date?: string
   trial_end_date?: string
   trial_days_remaining?: number
 }
@@ -81,6 +82,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
                 ...clientData,
                 subscription_status: fresh.subscription_status,
                 plan_id: fresh.plan_id,
+                subscription_end_date: fresh.subscription_end_date,
                 trial_end_date: fresh.trial_end_date,
                 trial_days_remaining: fresh.trial_days_remaining,
               }
@@ -149,6 +151,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         gstin: client_gstin,
         subscription_status: response.data.subscription_status || response.data.trial?.status,
         plan_id: response.data.plan_id,
+        subscription_end_date: response.data.subscription_end_date,
         trial_end_date: response.data.trial?.end_date,
         trial_days_remaining: response.data.trial?.days_remaining,
       }
@@ -239,6 +242,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           gstin: freshClient.gst_number,
           subscription_status: freshClient.subscription_status,
           plan_id: freshClient.plan_id,
+          subscription_end_date: freshClient.subscription_end_date,
           trial_end_date: freshClient.trial_end_date,
           trial_days_remaining: freshClient.trial_days_remaining,
         }

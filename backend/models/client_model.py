@@ -18,11 +18,12 @@ class ClientEntry(db.Model):
     is_active = db.Column(db.Boolean, default=True)
 
     # Trial / Subscription fields
-    subscription_status = db.Column(db.String(20), nullable=True)  # 'trial' | 'active' | 'expired'
+    subscription_status = db.Column(db.String(20), nullable=True)  # 'trial' | 'active' | 'cancelled' | 'expired'
     trial_start_date = db.Column(db.DateTime, nullable=True)
     trial_end_date = db.Column(db.DateTime, nullable=True)
     plan_id = db.Column(FlexibleUUID, nullable=True)
     subscription_end_date = db.Column(db.DateTime, nullable=True)
+    razorpay_subscription_id = db.Column(db.String(100), nullable=True)  # set after first invoice.paid webhook
 
     @property
     def is_trial_expired(self):
@@ -62,4 +63,5 @@ class ClientEntry(db.Model):
             'trial_days_remaining': self.trial_days_remaining,
             'plan_id': str(self.plan_id) if self.plan_id else None,
             'subscription_end_date': self.subscription_end_date.isoformat() if self.subscription_end_date else None,
+            'razorpay_subscription_id': self.razorpay_subscription_id,
         }

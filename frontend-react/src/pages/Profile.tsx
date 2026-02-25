@@ -504,7 +504,7 @@ export default function ProfilePage() {
                    client?.subscription_status === 'trial'
                      ? `${client.trial_days_remaining ?? 0} days remaining`
                      : client?.subscription_status === 'cancelled'
-                     ? 'Your subscription has been cancelled'
+                     ? `Cancelled — access until ${client.subscription_end_date ? formatDate(client.subscription_end_date) : 'end of period'}`
                      : 'Please upgrade to continue'}
                 </p>
               </div>
@@ -638,7 +638,7 @@ export default function ProfilePage() {
                       txn.status === 'refunded' ? 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400' :
                       'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300'
                     }`}>
-                      {txn.status}
+                      {txn.status === 'paid' ? 'Successful' : txn.status}
                     </span>
                   </div>
                 ))}
