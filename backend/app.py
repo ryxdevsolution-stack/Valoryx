@@ -63,6 +63,36 @@ def create_app():
     else:
         logging.info("[INFO] No DB_URL configured - sync scheduler disabled")
 
+    # Telegram: add telegram_chat_id column to users table if missing (runs on every startup)
+    if db_initialized:
+        try:
+            with app.app_context():
+                from sqlalchemy import text, inspect as sa_inspect
+                _inspector = sa_inspect(db.engine)
+                _user_cols = [c['name'] for c in _inspector.get_columns('users')]
+                if 'telegram_chat_id' not in _user_cols:
+                    db.session.execute(text("ALTER TABLE users ADD COLUMN telegram_chat_id VARCHAR(50) NULL"))
+                    db.session.commit()
+                    logging.info("[Migration] telegram_chat_id column added to users table")
+        except Exception as _e:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            logging.warning(f"[Migration] users.telegram_chat_id migration skipped: {_e}")
+
+    # Telegram daily report scheduler (runs at TELEGRAM_REPORT_HOUR:TELEGRAM_REPORT_MINUTE IST)
+    try:
+        from services.telegram_scheduler import init_telegram_scheduler
+        tg_scheduler = init_telegram_scheduler(app)
+        if tg_scheduler:
+            app.config['TELEGRAM_SCHEDULER'] = tg_scheduler
+            logging.info("[OK] Telegram daily report scheduler initialized")
+        else:
+            logging.info("[INFO] Telegram scheduler disabled (TELEGRAM_BOT_TOKEN not set)")
+    except Exception as e:
+        logging.warning(f"[WARNING] Telegram scheduler failed to initialize: {e}")
+
     # Register blueprints with error handling
     blueprints_registered = []
     import_errors = []
@@ -316,6 +346,20 @@ def create_app():
 
     # Store blueprint registration status
     app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered
+
+    # Telegram: manually trigger daily report (for testing)
+    @app.route('/api/telegram/trigger-report', methods=['POST'])
+    def trigger_telegram_report():
+        """Fire the daily Telegram report immediately (useful for testing)."""
+        sched = app.config.get('TELEGRAM_SCHEDULER')
+        if not sched:
+            return {
+                'error': 'Telegram scheduler not configured',
+                'message': 'Set TELEGRAM_BOT_TOKEN in .env and restart the server'
+            }, 400
+        import threading as _threading
+        _threading.Thread(target=sched.trigger_now, daemon=True).start()
+        return {'status': 'triggered', 'message': 'Daily report is being sent in the background'}, 200
 
     # Health check endpoint (basic uptime check)
     @app.route('/api/health', methods=['GET'])
@@ -713,6 +757,34 @@ if __name__ == '__main__':
         except Exception as e:
             db.session.rollback()
             print(f"[Migration] Skipped trial columns (may already exist): {e}")
+
+        # Telegram chat ID column migration (client_entry — legacy, kept for backward compat)
+        try:
+            from sqlalchemy import text, inspect as sa_inspect
+            inspector = sa_inspect(db.engine)
+            existing_cols = [col['name'] for col in inspector.get_columns('client_entry')]
+            if 'telegram_chat_id' not in existing_cols:
+                print("[Migration] Adding telegram_chat_id to client_entry...")
+                db.session.execute(text("ALTER TABLE client_entry ADD COLUMN telegram_chat_id VARCHAR(50) NULL"))
+                db.session.commit()
+                print("[Migration] ✓ telegram_chat_id column added to client_entry")
+        except Exception as e:
+            db.session.rollback()
+            print(f"[Migration] telegram_chat_id (client_entry) skipped (may already exist): {e}")
+
+        # Telegram chat ID per-user migration (users table)
+        try:
+            from sqlalchemy import text, inspect as sa_inspect
+            inspector = sa_inspect(db.engine)
+            existing_cols = [col['name'] for col in inspector.get_columns('users')]
+            if 'telegram_chat_id' not in existing_cols:
+                print("[Migration] Adding telegram_chat_id to users table...")
+                db.session.execute(text("ALTER TABLE users ADD COLUMN telegram_chat_id VARCHAR(50) NULL"))
+                db.session.commit()
+                print("[Migration] ✓ telegram_chat_id column added to users")
+        except Exception as e:
+            db.session.rollback()
+            print(f"[Migration] telegram_chat_id (users) skipped (may already exist): {e}")
 
         # Phase 1.6: Subscription tables + plan_id column migration
         try:

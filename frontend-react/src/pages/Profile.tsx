@@ -25,6 +25,8 @@ import {
   XCircle,
   RefreshCw,
   ArrowRightLeft,
+  Send,
+  MessageCircle,
 } from 'lucide-react'
 
 interface ProfileData {
@@ -70,7 +72,7 @@ interface ActivityItem {
 }
 
 export default function ProfilePage() {
-  const { user, client, refreshUserData, updateSubscriptionStatus } = useClient()
+  const { user, client, refreshUserData, refreshClientData, updateSubscriptionStatus } = useClient()
   const [saving, setSaving] = useState(false)
   const [isEditing, setIsEditing] = useState(false)
   const [editForm, setEditForm] = useState({
@@ -95,6 +97,11 @@ export default function ProfilePage() {
   const [cancelReason, setCancelReason] = useState('')
   const [cancelReasonOther, setCancelReasonOther] = useState('')
 
+  // Telegram notification state
+  const [telegramChatId, setTelegramChatId] = useState(user?.telegram_chat_id || '')
+  const [savingTelegram, setSavingTelegram] = useState(false)
+  const [testingTelegram, setTestingTelegram] = useState(false)
+
   // Activity history state
   const [activity, setActivity] = useState<ActivityItem[]>([])
   const [activityPage, setActivityPage] = useState(1)
@@ -117,6 +124,11 @@ export default function ProfilePage() {
       })
     }
   }, [user])
+
+  // Sync telegram chat ID when user data refreshes
+  useEffect(() => {
+    setTelegramChatId(user?.telegram_chat_id || '')
+  }, [user?.telegram_chat_id])
 
   // Derive profile from ClientContext — no API call needed
   const profile = user ? {
@@ -232,6 +244,31 @@ export default function ProfilePage() {
       setMessage({ type: 'error', text: error.response?.data?.error || 'Failed to change password' })
     } finally {
       setChangingPassword(false)
+    }
+  }
+
+  const handleSaveTelegramChatId = async () => {
+    try {
+      setSavingTelegram(true)
+      await api.put('/profile', { telegram_chat_id: telegramChatId.trim() || null })
+      await refreshUserData()
+      setMessage({ type: 'success', text: 'Telegram chat ID saved. Daily reports will now be sent to your Telegram.' })
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.response?.data?.error || 'Failed to save Telegram chat ID' })
+    } finally {
+      setSavingTelegram(false)
+    }
+  }
+
+  const handleSendTestReport = async () => {
+    try {
+      setTestingTelegram(true)
+      await api.post('/telegram/trigger-report')
+      setMessage({ type: 'success', text: 'Test report sent! Check your Telegram.' })
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.response?.data?.error || 'Failed to send test report' })
+    } finally {
+      setTestingTelegram(false)
     }
   }
 
@@ -716,6 +753,87 @@ export default function ProfilePage() {
               </div>
             )}
           </div>
+          {/* Telegram Notifications */}
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+              <div className="flex items-center gap-2 mb-1">
+                <MessageCircle className="w-5 h-5 text-sky-500" />
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Telegram Daily Reports</h3>
+              </div>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                Receive an automatic daily business summary every night at 9:00 PM IST.
+              </p>
+
+              {/* Step-by-step setup guide */}
+              {!user?.telegram_chat_id && (
+                <div className="mb-4 p-3 bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-700 rounded-xl space-y-2">
+                  <p className="text-xs font-semibold text-sky-700 dark:text-sky-400 uppercase tracking-wide">How to connect</p>
+                  <ol className="space-y-1.5 text-sm text-gray-700 dark:text-gray-300">
+                    <li className="flex items-start gap-2">
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-sky-500 text-white text-xs flex items-center justify-center font-bold mt-0.5">1</span>
+                      <span>Open Telegram and message <a href="https://t.me/Valoryxv1bot" target="_blank" rel="noopener noreferrer" className="font-semibold text-sky-600 dark:text-sky-400 underline underline-offset-2">@Valoryxv1bot</a> — send any message (e.g. "hi")</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-sky-500 text-white text-xs flex items-center justify-center font-bold mt-0.5">2</span>
+                      <span>The bot will instantly reply with <strong>your Chat ID</strong> (a number like 1234567890)</span>
+                    </li>
+                    <li className="flex items-start gap-2">
+                      <span className="flex-shrink-0 w-5 h-5 rounded-full bg-sky-500 text-white text-xs flex items-center justify-center font-bold mt-0.5">3</span>
+                      <span>Copy that number, paste it below, and click <strong>Save</strong></span>
+                    </li>
+                  </ol>
+                  <a
+                    href="https://t.me/Valoryxv1bot"
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="inline-flex items-center gap-1.5 mt-1 px-3 py-1.5 bg-sky-500 hover:bg-sky-600 text-white text-xs font-medium rounded-lg transition-colors"
+                  >
+                    <Send className="w-3 h-3" /> Open @Valoryxv1bot in Telegram
+                  </a>
+                </div>
+              )}
+
+              <div className="space-y-3">
+                <div className="space-y-1">
+                  <label className="text-sm font-medium text-gray-700 dark:text-gray-300">
+                    Your Telegram Chat ID
+                  </label>
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={telegramChatId}
+                      onChange={(e) => setTelegramChatId(e.target.value)}
+                      placeholder="Paste your chat ID here (e.g. 1234567890)"
+                      className="flex-1 px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-sky-500 focus:border-transparent text-sm"
+                    />
+                    <button
+                      onClick={handleSaveTelegramChatId}
+                      disabled={savingTelegram}
+                      className="flex items-center gap-1.5 px-4 py-2 text-sm font-medium text-white bg-sky-600 hover:bg-sky-700 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {savingTelegram ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
+                      Save
+                    </button>
+                  </div>
+                </div>
+
+                {user?.telegram_chat_id && (
+                  <div className="flex items-center justify-between p-3 bg-sky-50 dark:bg-sky-900/20 border border-sky-200 dark:border-sky-800 rounded-xl">
+                    <div>
+                      <p className="text-xs font-medium text-sky-700 dark:text-sky-400">Connected</p>
+                      <p className="text-sm text-gray-700 dark:text-gray-300">Chat ID: <span className="font-mono">{user.telegram_chat_id}</span></p>
+                    </div>
+                    <button
+                      onClick={handleSendTestReport}
+                      disabled={testingTelegram}
+                      className="flex items-center gap-1.5 px-3 py-1.5 text-sm font-medium text-sky-700 dark:text-sky-400 border border-sky-300 dark:border-sky-700 hover:bg-sky-100 dark:hover:bg-sky-900/40 rounded-lg transition-colors disabled:opacity-50"
+                    >
+                      {testingTelegram ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                      Send Test Report
+                    </button>
+                  </div>
+                )}
+              </div>
+            </div>
         </div>
 
         {/* Right Column - Recent Activity */}

@@ -117,6 +117,8 @@ def update_client(client_id):
             client.gst_number = data['gst_number']
         if 'phone' in data:
             client.phone = data['phone']
+        if 'telegram_chat_id' in data:
+            client.telegram_chat_id = data['telegram_chat_id'] or None
 
         db.session.commit()
 

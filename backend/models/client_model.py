@@ -24,6 +24,7 @@ class ClientEntry(db.Model):
     plan_id = db.Column(FlexibleUUID, nullable=True)
     subscription_end_date = db.Column(db.DateTime, nullable=True)
     razorpay_subscription_id = db.Column(db.String(100), nullable=True)  # set after first invoice.paid webhook
+    telegram_chat_id = db.Column(db.String(50), nullable=True)  # Telegram chat ID for daily summary reports
 
     @property
     def is_trial_expired(self):
@@ -64,4 +65,5 @@ class ClientEntry(db.Model):
             'plan_id': str(self.plan_id) if self.plan_id else None,
             'subscription_end_date': self.subscription_end_date.isoformat() if self.subscription_end_date else None,
             'razorpay_subscription_id': self.razorpay_subscription_id,
+            'telegram_chat_id': self.telegram_chat_id,
         }

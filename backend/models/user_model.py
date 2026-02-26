@@ -26,6 +26,7 @@ class User(db.Model):
     updated_by = db.Column(FlexibleUUID, nullable=True)  # UUID stored as string
     deleted_at = db.Column(db.DateTime, nullable=True)  # For soft delete
     synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
+    telegram_chat_id = db.Column(db.String(50), nullable=True)  # Telegram chat ID for daily reports
 
     def to_dict(self):
         return {
@@ -44,5 +45,6 @@ class User(db.Model):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'updated_by': self.updated_by,
             'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None,
-            'synced_at': self.synced_at.isoformat() if self.synced_at else None
+            'synced_at': self.synced_at.isoformat() if self.synced_at else None,
+            'telegram_chat_id': self.telegram_chat_id,
         }

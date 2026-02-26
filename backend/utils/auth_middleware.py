@@ -105,8 +105,8 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                 'subscription_end_date': client_data.get('subscription_end_date'),
             }
 
-            # Check subscription status — skip if allow_expired is True
-            if not allow_expired:
+            # Check subscription status — skip if allow_expired is True or user is super admin
+            if not allow_expired and not user_data.get('is_super_admin', False):
                 sub_status = client_data.get('subscription_status')
                 if sub_status == 'expired':
                     return jsonify({
@@ -154,8 +154,9 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
             if not client:
                 return jsonify({'error': 'Client not found or inactive'}), 401
 
-            # Check subscription status — skip if allow_expired is True
-            if not allow_expired:
+            # Check subscription status — skip if allow_expired is True or user is super admin
+            is_super_admin = decoded.get('is_super_admin', False)
+            if not allow_expired and not is_super_admin:
                 if client.subscription_status == 'expired':
                     return jsonify({
                         'error': 'Trial expired',

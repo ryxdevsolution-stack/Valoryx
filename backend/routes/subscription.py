@@ -785,6 +785,64 @@ def cancel_subscription():
         return jsonify({'error': 'Failed to cancel subscription', 'message': str(e)}), 500
 
 
+@subscription_bp.route('/admin/activate', methods=['POST'])
+@authenticate()
+def admin_activate_subscription():
+    """
+    Super-admin only: Manually activate a subscription for a client.
+    Use this when the Razorpay webhook hasn't fired yet after a payment.
+
+    Body:
+        client_id: The client UUID to activate
+        billing_cycle: 'monthly' or 'yearly' (default: 'monthly')
+        plan_id: (optional) Plan ID to assign
+    """
+    try:
+        if not g.user.get('is_super_admin'):
+            return jsonify({'error': 'Super admin access required'}), 403
+
+        data = request.get_json() or {}
+        target_client_id = data.get('client_id')
+        billing_cycle = data.get('billing_cycle', 'monthly')
+        plan_id = data.get('plan_id')
+
+        if not target_client_id:
+            return jsonify({'error': 'client_id is required'}), 400
+
+        client_entry = ClientEntry.query.filter_by(client_id=str(target_client_id)).first()
+        if not client_entry:
+            return jsonify({'error': 'Client not found'}), 404
+
+        now = datetime.utcnow()
+        end_date = now + timedelta(days=365 if billing_cycle == 'yearly' else 30)
+
+        old_status = client_entry.subscription_status
+        client_entry.subscription_status = 'active'
+        client_entry.subscription_end_date = end_date
+        if plan_id:
+            client_entry.plan_id = plan_id
+
+        db.session.commit()
+
+        # Clear session cache so the new status is picked up immediately
+        cache = get_cache_manager()
+        cache.delete(f"user_session:{str(target_client_id)}")
+
+        logger.info(f'[AdminActivate] Manually activated subscription for client {target_client_id} by super admin {g.user["user_id"]}')
+
+        return jsonify({
+            'success': True,
+            'message': f'Subscription activated (was: {old_status})',
+            'client_id': str(target_client_id),
+            'subscription_status': 'active',
+            'subscription_end_date': end_date.isoformat(),
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to activate subscription', 'message': str(e)}), 500
+
+
 @subscription_bp.route('/admin/seed-razorpay-plans', methods=['POST'])
 @authenticate()
 def seed_razorpay_plans():

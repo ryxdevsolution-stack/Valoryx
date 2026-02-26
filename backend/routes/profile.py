@@ -43,6 +43,7 @@ def get_profile():
             'is_active': user.is_active,
             'created_at': user.created_at.isoformat() if user.created_at else None,
             'last_login': user.last_login.isoformat() if user.last_login else None,
+            'telegram_chat_id': user.telegram_chat_id,
             'permissions': permissions,
             'client': {
                 'client_id': client.client_id,
@@ -79,6 +80,8 @@ def update_profile():
             user.phone = data['phone']
         if 'department' in data:
             user.department = data['department']
+        if 'telegram_chat_id' in data:
+            user.telegram_chat_id = data['telegram_chat_id'] or None
 
         user.updated_at = datetime.utcnow()
         user.updated_by = user_id
@@ -98,7 +101,8 @@ def update_profile():
             'profile': {
                 'full_name': user.full_name,
                 'phone': user.phone,
-                'department': user.department
+                'department': user.department,
+                'telegram_chat_id': user.telegram_chat_id,
             }
         }), 200
 

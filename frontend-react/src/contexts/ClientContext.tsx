@@ -12,6 +12,7 @@ interface User {
   full_name?: string
   phone?: string
   department?: string
+  telegram_chat_id?: string
 }
 
 interface Client {
@@ -105,6 +106,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
                 full_name: profile.full_name,
                 phone: profile.phone,
                 department: profile.department,
+                telegram_chat_id: profile.telegram_chat_id,
               }
               setUser(updatedUser)
               localStorage.setItem('user', JSON.stringify(updatedUser))
@@ -138,7 +140,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         permissions: user.permissions,
         full_name: user.full_name,
         phone: user.phone,
-        department: user.department
+        department: user.department,
+        telegram_chat_id: user.telegram_chat_id,
       }
 
       const clientData: Client = {
@@ -280,7 +283,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           permissions: profile.permissions,
           full_name: profile.full_name,
           phone: profile.phone,
-          department: profile.department
+          department: profile.department,
+          telegram_chat_id: profile.telegram_chat_id,
         }
         setUser(updatedUser)
         localStorage.setItem('user', JSON.stringify(updatedUser))

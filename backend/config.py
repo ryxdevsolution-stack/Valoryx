@@ -257,6 +257,13 @@ class OptimizedConfig:
     SMTP_FROM_NAME = os.getenv('SMTP_FROM_NAME', 'RYX Billing')
 
     # -------------------------------
+    # Telegram Bot (optional — scheduler disabled when token is absent)
+    # -------------------------------
+    TELEGRAM_BOT_TOKEN = os.getenv('TELEGRAM_BOT_TOKEN', '')
+    TELEGRAM_REPORT_HOUR = int(os.getenv('TELEGRAM_REPORT_HOUR', '21'))
+    TELEGRAM_REPORT_MINUTE = int(os.getenv('TELEGRAM_REPORT_MINUTE', '0'))
+
+    # -------------------------------
     # CORS
     # -------------------------------
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
