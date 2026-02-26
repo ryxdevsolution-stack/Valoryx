@@ -689,8 +689,8 @@ def create_app():
         return {"status": "ok", "message": "MJ Billing backend running"}, 200
 
     # ==================== SERVE REACT FRONTEND ====================
-    # Serve the React production build from frontend-react/dist/
-    FRONTEND_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'frontend-react', 'dist')
+    # Serve the React production build from backend/static/frontend/
+    FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'frontend')
 
     @app.route('/frontend/')
     @app.route('/frontend')
