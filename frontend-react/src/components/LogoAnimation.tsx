@@ -17,15 +17,13 @@ export default function LogoAnimation({
   const [imageError, setImageError] = useState(false)
 
   useEffect(() => {
-    // Ensure minimum 5 seconds duration for slower, more elegant animation
-    const animDuration = Math.max(duration, 5000)
-    const timer = setTimeout(onComplete, animDuration)
+    const timer = setTimeout(onComplete, duration)
     return () => clearTimeout(timer)
   }, [onComplete, duration])
 
   // Determine which logo to show
   const showCustomLogo = logoUrl && !imageError
-  const animationDuration = Math.max(duration, 5000) / 1000 // Minimum 5 seconds for slower animation
+  const animationDuration = duration / 1000
 
   return (
     <motion.div
@@ -54,7 +52,7 @@ export default function LogoAnimation({
         ) : (
           <div className="relative w-full max-w-[600px] aspect-square">
             <img
-              src="/RYX_Logo.png"
+              src={`${import.meta.env.BASE_URL}RYX_Logo.png`}
               alt="RYX"
               className="object-contain drop-shadow-2xl w-full h-full"
             />

@@ -1,19 +1,42 @@
-import { Clock, LogOut, MessageCircle, Mail } from 'lucide-react'
+import { Clock, LogOut, MessageCircle, Mail, ArrowLeft } from 'lucide-react'
+import { useNavigate } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
 import PricingCards from '@/components/PricingCards'
 
 export default function TrialExpiredPage() {
   const { logout, client } = useClient()
+  const navigate = useNavigate()
 
   function handleSubscribed() {
     const isElectron = !!(window as any).electronAPI?.isElectron
     window.location.href = isElectron ? '#/dashboard' : '/frontend/dashboard'
   }
 
+  function handleBack() {
+    if (window.history.length > 2) {
+      navigate(-1)
+    } else {
+      const isElectron = !!(window as any).electronAPI?.isElectron
+      window.location.href = isElectron ? '#/billing/create' : '/frontend/billing/create'
+    }
+  }
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 to-gray-100 dark:from-gray-900 dark:to-gray-800">
+      {/* Top bar with back button */}
+      <div className="flex items-center px-4 pt-4">
+        <button
+          type="button"
+          onClick={handleBack}
+          className="inline-flex items-center gap-2 text-sm font-medium text-gray-600 hover:text-gray-900 dark:text-gray-400 dark:hover:text-white bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 hover:border-gray-300 dark:hover:border-gray-600 rounded-lg px-3 py-2 shadow-sm transition-all duration-150"
+        >
+          <ArrowLeft className="w-4 h-4" />
+          Back
+        </button>
+      </div>
+
       {/* Header */}
-      <div className="text-center pt-12 pb-6 px-4">
+      <div className="text-center pt-8 pb-6 px-4">
         <div className="w-16 h-16 mx-auto mb-4 rounded-full bg-orange-100 dark:bg-orange-900/30 flex items-center justify-center">
           <Clock className="w-8 h-8 text-orange-600 dark:text-orange-400" />
         </div>

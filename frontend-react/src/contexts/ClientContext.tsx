@@ -12,6 +12,8 @@ interface User {
   full_name?: string
   phone?: string
   department?: string
+  created_at?: string | null
+  last_login?: string | null
   telegram_chat_id?: string
 }
 
@@ -57,7 +59,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   const navigate = useNavigate()
 
   useEffect(() => {
-    // Check for stored token on mount
+    const REFRESH_INTERVAL = 5 * 60 * 1000 // 5 minutes
+
     const initializeAuth = async () => {
       try {
         const storedToken = localStorage.getItem('token')
@@ -74,8 +77,14 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           setIsAuthenticated(true)
           api.defaults.headers.common['Authorization'] = `Bearer ${storedToken}`
 
+          // Only do background refresh if data is stale (older than 5 minutes)
+          const lastRefresh = parseInt(localStorage.getItem('last_refresh') || '0', 10)
+          const now = Date.now()
+          if (now - lastRefresh < REFRESH_INTERVAL) return
+
+          localStorage.setItem('last_refresh', String(now))
+
           // Background refresh: sync subscription status from backend
-          // so users don't need to re-login to see updated status
           api.get(`/clients/${clientData.client_id}`).then(res => {
             if (res.data?.client) {
               const fresh = res.data.client
@@ -90,10 +99,9 @@ export function ClientProvider({ children }: { children: ReactNode }) {
               setClient(updated)
               localStorage.setItem('client', JSON.stringify(updated))
             }
-          }).catch(() => { /* silent — non-blocking */ })
+          }).catch(() => { /* silent */ })
 
           // Background refresh: sync user role/permissions from backend
-          // so role changes in DB are reflected without requiring re-login
           api.get('/profile').then(res => {
             if (res.data) {
               const profile = res.data
@@ -106,18 +114,20 @@ export function ClientProvider({ children }: { children: ReactNode }) {
                 full_name: profile.full_name,
                 phone: profile.phone,
                 department: profile.department,
+                created_at: profile.created_at ?? null,
+                last_login: profile.last_login ?? null,
                 telegram_chat_id: profile.telegram_chat_id,
               }
               setUser(updatedUser)
               localStorage.setItem('user', JSON.stringify(updatedUser))
             }
-          }).catch(() => { /* silent — non-blocking */ })
+          }).catch(() => { /* silent */ })
         }
       } catch (error) {
-        // Clear invalid data
         localStorage.removeItem('token')
         localStorage.removeItem('user')
         localStorage.removeItem('client')
+        localStorage.removeItem('last_refresh')
         setIsAuthenticated(false)
       } finally {
         setIsLoading(false)
@@ -125,7 +135,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }
 
     initializeAuth()
-  }, [navigate])
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   const login = async (email: string, password: string) => {
     try {
@@ -191,6 +201,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('token')
     localStorage.removeItem('user')
     localStorage.removeItem('client')
+    localStorage.removeItem('last_refresh')
 
     // Clear axios header
     delete api.defaults.headers.common['Authorization']
@@ -285,6 +296,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           phone: profile.phone,
           department: profile.department,
           telegram_chat_id: profile.telegram_chat_id,
+          created_at: profile.created_at ?? null,
+          last_login: profile.last_login ?? null,
         }
         setUser(updatedUser)
         localStorage.setItem('user', JSON.stringify(updatedUser))

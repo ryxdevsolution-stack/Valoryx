@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react'
-import { Routes, Route, Outlet } from 'react-router-dom'
+import { Routes, Route } from 'react-router-dom'
 import AdminLayout from '@/components/AdminLayout'
 
 // Lazy load all pages for automatic code splitting
@@ -7,6 +7,8 @@ const Home = React.lazy(() => import('@/pages/Home'))
 const Landing = React.lazy(() => import('@/pages/Landing'))
 const Login = React.lazy(() => import('@/pages/auth/Login'))
 const Register = React.lazy(() => import('@/pages/auth/Register'))
+const ForgotPassword = React.lazy(() => import('@/pages/auth/ForgotPassword'))
+const ResetPassword = React.lazy(() => import('@/pages/auth/ResetPassword'))
 const Dashboard = React.lazy(() => import('@/pages/Dashboard'))
 const BillingList = React.lazy(() => import('@/pages/billing/BillingList'))
 const CreateBill = React.lazy(() => import('@/pages/billing/CreateBill'))
@@ -32,22 +34,49 @@ const AdminEditUser = React.lazy(() => import('@/pages/admin/EditUser'))
 const AdminClients = React.lazy(() => import('@/pages/admin/Clients'))
 const AdminCreateClient = React.lazy(() => import('@/pages/admin/CreateClient'))
 const AdminEditClient = React.lazy(() => import('@/pages/admin/EditClient'))
-const AdminAnalytics = React.lazy(() => import('@/pages/admin/Analytics'))
 const AdminAudit = React.lazy(() => import('@/pages/admin/AdminAudit'))
-const AdminBackup = React.lazy(() => import('@/pages/admin/Backup'))
-const AdminHealth = React.lazy(() => import('@/pages/admin/Health'))
-const AdminIntegrations = React.lazy(() => import('@/pages/admin/Integrations'))
-const AdminNotifications = React.lazy(() => import('@/pages/admin/Notifications'))
-const AdminSecurity = React.lazy(() => import('@/pages/admin/Security'))
 const AdminSettings = React.lazy(() => import('@/pages/admin/Settings'))
-const AdminStorage = React.lazy(() => import('@/pages/admin/Storage'))
 const AdminSubscriptions = React.lazy(() => import('@/pages/admin/Subscriptions'))
-const AdminWebhooks = React.lazy(() => import('@/pages/admin/Webhooks'))
+
+function SkeletonBlock({ className }: { className: string }) {
+  return (
+    <div className={`relative overflow-hidden rounded bg-gray-200 ${className}`}>
+      <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/60 to-transparent animate-shimmer" />
+    </div>
+  )
+}
 
 function PageFallback() {
   return (
-    <div className="flex items-center justify-center min-h-[50vh]">
-      <div className="w-8 h-8 rounded-full border-4 border-primary-200 border-t-primary-600 animate-spin"></div>
+    <div className="flex min-h-screen bg-gray-50">
+      {/* Sidebar skeleton */}
+      <div className="hidden md:flex flex-col gap-3 w-56 shrink-0 bg-white border-r border-gray-200 p-4">
+        <SkeletonBlock className="h-8 w-32 mb-4" />
+        {[...Array(6)].map((_, i) => (
+          <SkeletonBlock key={i} className="h-7 w-full" />
+        ))}
+      </div>
+
+      {/* Main content skeleton */}
+      <div className="flex-1 p-6 flex flex-col gap-5">
+        {/* Page title */}
+        <SkeletonBlock className="h-8 w-48" />
+
+        {/* Stat cards */}
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+          {[...Array(4)].map((_, i) => (
+            <SkeletonBlock key={i} className="h-24 w-full" />
+          ))}
+        </div>
+
+        {/* Table rows */}
+        <div className="flex flex-col gap-2 mt-2">
+          <SkeletonBlock className="h-10 w-full" />
+          {[...Array(6)].map((_, i) => (
+            <SkeletonBlock key={i} className="h-12 w-full" />
+          ))}
+        </div>
+      </div>
     </div>
   )
 }
@@ -63,6 +92,8 @@ export function AppRoutes() {
         {/* Auth routes */}
         <Route path="/auth/login" element={<Login />} />
         <Route path="/auth/register" element={<Register />} />
+        <Route path="/auth/forgot-password" element={<ForgotPassword />} />
+        <Route path="/reset-password" element={<ResetPassword />} />
 
         {/* Upgrade / Trial expired / Pricing */}
         <Route path="/upgrade" element={<TrialExpired />} />
@@ -92,17 +123,9 @@ export function AppRoutes() {
           <Route path="clients" element={<AdminClients />} />
           <Route path="clients/create" element={<AdminCreateClient />} />
           <Route path="clients/:clientId" element={<AdminEditClient />} />
-          <Route path="analytics" element={<AdminAnalytics />} />
           <Route path="audit" element={<AdminAudit />} />
-          <Route path="backup" element={<AdminBackup />} />
-          <Route path="health" element={<AdminHealth />} />
-          <Route path="integrations" element={<AdminIntegrations />} />
-          <Route path="notifications" element={<AdminNotifications />} />
-          <Route path="security" element={<AdminSecurity />} />
           <Route path="settings" element={<AdminSettings />} />
-          <Route path="storage" element={<AdminStorage />} />
           <Route path="subscriptions" element={<AdminSubscriptions />} />
-          <Route path="webhooks" element={<AdminWebhooks />} />
         </Route>
       </Routes>
     </Suspense>

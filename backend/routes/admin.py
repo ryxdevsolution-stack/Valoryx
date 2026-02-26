@@ -11,6 +11,11 @@ from models.payment_model import PaymentType
 from models.report_model import Report
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_super_admin, require_permission
+from utils.email_service import (
+    send_account_deactivated_email,
+    send_account_reactivated_email,
+    send_account_deleted_email,
+)
 import bcrypt
 from datetime import datetime, timedelta
 import uuid
@@ -53,10 +58,13 @@ def get_all_users():
         search = request.args.get('search', '')
         role_filter = request.args.get('role', '')
         status_filter = request.args.get('status', '')
-        client_id = request.args.get('client_id', g.user['client_id'])
+        client_id_filter = request.args.get('client_id', '')
 
         # Base query (exclude deleted users)
-        query = User.query.filter_by(client_id=client_id).filter(User.deleted_at.is_(None))
+        # Super admins see ALL users unless a specific client_id is requested
+        query = User.query.filter(User.deleted_at.is_(None))
+        if client_id_filter:
+            query = query.filter(User.client_id == client_id_filter)
 
         # Apply search filter
         if search:
@@ -103,7 +111,12 @@ def get_all_users():
                 perm_map[user_id] = []
             perm_map[user_id].append(perm_name)
 
-        # Build user data with pre-fetched permissions
+        # Batch fetch client names for all users (avoid N+1)
+        client_ids = list({u.client_id for u in users})
+        clients = ClientEntry.query.filter(ClientEntry.client_id.in_(client_ids)).all() if client_ids else []
+        client_name_map = {c.client_id: c.client_name for c in clients}
+
+        # Build user data with pre-fetched permissions and client names
         users_data = []
         for user in users:
             user_dict = {
@@ -117,7 +130,9 @@ def get_all_users():
                 'is_active': user.is_active,
                 'created_at': user.created_at.isoformat() if user.created_at else None,
                 'last_login': user.last_login.isoformat() if user.last_login else None,
-                'permissions': perm_map.get(user.user_id, [])
+                'permissions': perm_map.get(user.user_id, []),
+                'client_id': user.client_id,
+                'client_name': client_name_map.get(user.client_id, 'Unknown')
             }
             users_data.append(user_dict)
 
@@ -148,10 +163,26 @@ def get_user_details(user_id):
         # Get user's client information
         client = ClientEntry.query.filter_by(client_id=user.client_id).first()
 
+        # Get branch info if assigned
+        from models.branch_model import Branch
+        branch = Branch.query.filter_by(branch_id=user.branch_id).first() if user.branch_id else None
+
         # Get audit logs for this user (last 10 actions)
         audit_logs = AuditLog.query.filter_by(user_id=user_id).order_by(
             AuditLog.timestamp.desc()
         ).limit(10).all()
+
+        # Derive billing_type from permissions
+        has_gst = 'gst_billing' in permissions
+        has_non_gst = 'non_gst_billing' in permissions
+        if has_gst and has_non_gst:
+            billing_type = 'both'
+        elif has_gst:
+            billing_type = 'gst'
+        elif has_non_gst:
+            billing_type = 'non_gst'
+        else:
+            billing_type = 'none'
 
         user_data = {
             'user_id': user.user_id,
@@ -168,6 +199,9 @@ def get_user_details(user_id):
             'updated_at': user.updated_at.isoformat() if user.updated_at else None,
             'updated_by': user.updated_by,
             'permissions': permissions,
+            'billing_type': billing_type,
+            'branch_id': str(user.branch_id) if user.branch_id else None,
+            'branch_name': branch.name if branch else None,
             'client': {
                 'client_id': client.client_id,
                 'client_name': client.client_name,
@@ -225,6 +259,7 @@ def create_user():
             client_id=data.get('client_id', g.user['client_id']),
             is_super_admin=data.get('is_super_admin', False),
             is_active=data.get('is_active', True),
+            branch_id=data.get('branch_id') or None,
             created_by=g.user['user_id'],
             created_at=datetime.utcnow()
         )
@@ -232,8 +267,19 @@ def create_user():
         db.session.add(new_user)
         db.session.flush()  # Get the user_id before committing
 
-        # Assign permissions if provided
-        permissions = data.get('permissions', [])
+        # Build permissions list — merge explicit permissions + billing_type shortcut
+        permissions = list(data.get('permissions', []))
+        billing_type = data.get('billing_type', 'both')  # 'gst', 'non_gst', 'both'
+        if billing_type == 'gst':
+            if 'gst_billing' not in permissions:
+                permissions.append('gst_billing')
+            permissions = [p for p in permissions if p != 'non_gst_billing']
+        elif billing_type == 'non_gst':
+            if 'non_gst_billing' not in permissions:
+                permissions.append('non_gst_billing')
+            permissions = [p for p in permissions if p != 'gst_billing']
+        # 'both' — keep whatever was passed (both already set by caller or permissions list)
+
         if permissions:
             for perm_name in permissions:
                 permission = Permission.query.filter_by(permission_name=perm_name).first()
@@ -320,6 +366,11 @@ def update_user(user_id):
             changes['is_active'] = {'old': user.is_active, 'new': data['is_active']}
             user.is_active = data['is_active']
 
+        if 'branch_id' in data:
+            new_branch_id = data['branch_id'] or None
+            changes['branch_id'] = {'old': str(user.branch_id) if user.branch_id else None, 'new': new_branch_id}
+            user.branch_id = new_branch_id
+
         # Update metadata
         user.updated_at = datetime.utcnow()
         user.updated_by = g.user['user_id']
@@ -354,6 +405,10 @@ def delete_user(user_id):
         if not user:
             return jsonify({'error': 'User not found'}), 404
 
+        # Capture before soft delete
+        user_email = user.email
+        user_name = user.full_name or user.email
+
         # Soft delete
         user.is_active = False
         user.deleted_at = datetime.utcnow()
@@ -368,6 +423,9 @@ def delete_user(user_id):
             record_id=user_id,
             old_data={'email': user.email, 'full_name': user.full_name}
         )
+
+        # Notify user their account was deleted
+        send_account_deleted_email(user_email, user_name)
 
         return jsonify({'message': 'User deleted successfully'}), 200
 
@@ -447,6 +505,11 @@ def toggle_user_status(user_id):
         user.updated_at = datetime.utcnow()
         user.updated_by = g.user['user_id']
 
+        # Capture for email before commit
+        user_email = user.email
+        user_name = user.full_name or user.email
+        new_status = user.is_active
+
         db.session.commit()
 
         # Log the action
@@ -457,6 +520,12 @@ def toggle_user_status(user_id):
             old_data={'is_active': old_status},
             new_data={'is_active': user.is_active}
         )
+
+        # Notify user of status change
+        if new_status:
+            send_account_reactivated_email(user_email, user_name)
+        else:
+            send_account_deactivated_email(user_email, user_name)
 
         return jsonify({
             'message': f"User {'activated' if user.is_active else 'deactivated'} successfully",
@@ -1114,7 +1183,8 @@ def get_all_clients():
             User.client_id,
             func.count(User.user_id).label('count')
         ).filter(
-            User.client_id.in_(client_ids)
+            User.client_id.in_(client_ids),
+            User.deleted_at.is_(None)
         ).group_by(User.client_id).all() if client_ids else []
         user_count_map = {client_id: count for client_id, count in user_counts}
 
@@ -1395,6 +1465,15 @@ def toggle_client_status(client_id):
 
         old_status = client.is_active
         client.is_active = not client.is_active
+        new_status = client.is_active
+
+        # Capture client email + users before bulk update
+        client_email = client.email
+        client_name = client.client_name
+        # Collect all user emails for notification
+        affected_users = User.query.filter_by(client_id=client_id).with_entities(
+            User.email, User.full_name
+        ).all()
 
         # Also deactivate all users if deactivating client
         if not client.is_active:
@@ -1410,6 +1489,20 @@ def toggle_client_status(client_id):
             old_data={'is_active': old_status},
             new_data={'is_active': client.is_active}
         )
+
+        # Notify client owner email + all users
+        all_emails = set()
+        if client_email:
+            all_emails.add((client_email, client_name))
+        for u_email, u_name in affected_users:
+            if u_email:
+                all_emails.add((u_email, u_name or client_name))
+
+        for email, name in all_emails:
+            if new_status:
+                send_account_reactivated_email(email, name)
+            else:
+                send_account_deactivated_email(email, name)
 
         return jsonify({
             'message': f"Client {'activated' if client.is_active else 'deactivated'} successfully",
@@ -1507,10 +1600,18 @@ def delete_client(client_id):
             return jsonify({'error': 'Client not found'}), 404
 
         client_name = client.client_name
+        client_email = client.email
 
-        # Get all users for logging before deletion
+        # Get all users for logging + email notification before deletion
         users = User.query.filter_by(client_id=client_id).all()
         user_count = len(users)
+        # Capture emails before cascade delete wipes them
+        notify_emails = set()
+        if client_email:
+            notify_emails.add((client_email, client_name))
+        for u in users:
+            if u.email:
+                notify_emails.add((u.email, u.full_name or client_name))
 
         # Count all data before deletion for logging
         gst_bills_count = GSTBilling.query.filter_by(client_id=client_id).count()
@@ -1588,6 +1689,10 @@ def delete_client(client_id):
         # Commit all deletions
         db.session.commit()
 
+        # Notify all users/client email that account was deleted (after commit)
+        for email, name in notify_emails:
+            send_account_deleted_email(email, name)
+
         return jsonify({
             'message': f"Client '{client_name}' and all associated data deleted successfully",
             'summary': deletion_summary
@@ -1642,3 +1747,18 @@ def get_client_users(client_id):
 
     except Exception as e:
         return jsonify({'error': f'Failed to fetch client users: {str(e)}'}), 500
+
+
+@admin_bp.route('/clients/<client_id>/branches', methods=['GET'])
+@authenticate
+@require_super_admin
+def get_client_branches(client_id):
+    """Get all active branches for a specific client"""
+    try:
+        from models.branch_model import Branch
+        branches = Branch.query.filter_by(client_id=client_id, is_active=True).order_by(Branch.name).all()
+        return jsonify({
+            'branches': [b.to_dict() for b in branches]
+        }), 200
+    except Exception as e:
+        return jsonify({'error': f'Failed to fetch client branches: {str(e)}'}), 500

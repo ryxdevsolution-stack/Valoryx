@@ -255,6 +255,7 @@ class OptimizedConfig:
     SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
     SMTP_FROM_EMAIL = os.getenv('SMTP_FROM_EMAIL', '')
     SMTP_FROM_NAME = os.getenv('SMTP_FROM_NAME', 'RYX Billing')
+    FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3002')
 
     # -------------------------------
     # Telegram Bot (optional — scheduler disabled when token is absent)

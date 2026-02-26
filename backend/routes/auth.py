@@ -6,10 +6,17 @@ from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.user_model import User
 from models.client_model import ClientEntry
+from models.branch_model import Branch
 from models.permission_model import get_user_permissions
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager
+from utils.email_service import (
+    send_welcome_email,
+    send_login_notification,
+    send_password_reset_email,
+    send_password_changed_email,
+)
 from config import Config
 
 auth_bp = Blueprint('auth', __name__)
@@ -111,11 +118,28 @@ def login():
             'client': client_data
         }, USER_SESSION_CACHE_TIMEOUT)
 
+        # Detect IP — check X-Forwarded-For first (proxy/nginx), fallback to remote_addr
+        incoming_ip = (
+            request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+            or request.remote_addr
+            or 'unknown'
+        )
+        is_new_ip = user.last_login_ip != incoming_ip
+
+        # Update last_login and last_login_ip
+        user.last_login = datetime.utcnow()
+        user.last_login_ip = incoming_ip
+
         # OPTIMIZED: Single commit for last_login update (non-blocking)
         try:
             db.session.commit()
         except Exception:
             db.session.rollback()  # Don't fail login if last_login update fails
+
+        # Send login notification only when IP is new/different
+        if is_new_ip:
+            login_time = datetime.utcnow().strftime('%d %b %Y, %H:%M')
+            send_login_notification(user.email, client.client_name, login_time, incoming_ip)
 
         # Build trial info if on trial
         trial_info = None
@@ -263,8 +287,16 @@ def signup():
             full_name=business_name,
         )
 
+        main_branch = Branch(
+            branch_id=str(uuid.uuid4()),
+            client_id=client_id,
+            name='Main Branch',
+            is_active=True,
+        )
+
         db.session.add(new_client)
         db.session.add(new_user)
+        db.session.add(main_branch)
         db.session.flush()
 
         # Assign all admin-level permissions to trial owner
@@ -335,6 +367,10 @@ def signup():
             'client': client_data
         }, USER_SESSION_CACHE_TIMEOUT)
 
+        # Send welcome email (non-blocking background thread)
+        trial_end_str = trial_end.strftime('%d %b %Y')
+        send_welcome_email(email, business_name, trial_end_str)
+
         return jsonify({
             'success': True,
             'token': token,
@@ -392,3 +428,93 @@ def verify_token():
         'user': user_data,
         'client': g.client
     }), 200
+
+
+@auth_bp.route('/forgot-password', methods=['POST'])
+def forgot_password():
+    """
+    Request a password reset link.
+    Generates a secure token, stores it on the user, and emails the reset link.
+    Always returns 200 to avoid exposing whether an email exists.
+    """
+    import secrets
+    try:
+        data = request.get_json() or {}
+        email = (data.get('email') or '').strip().lower()
+
+        if not email:
+            return jsonify({'error': 'Email is required'}), 400
+
+        user = User.query.filter_by(email=email).first()
+        if not user:
+            # Return 200 to avoid user enumeration
+            return jsonify({'success': True, 'message': 'If that email exists, a reset link has been sent.'}), 200
+
+        client = ClientEntry.query.filter_by(client_id=str(user.client_id)).first()
+        client_name = client.client_name if client else user.full_name or email
+
+        # Generate a secure 32-byte (64 hex char) token
+        token = secrets.token_hex(32)
+        user.reset_token = token
+        user.reset_token_expires = datetime.utcnow() + timedelta(hours=1)
+        db.session.commit()
+
+        reset_link = f"{Config.FRONTEND_URL}/reset-password?token={token}"
+        send_password_reset_email(email, client_name, reset_link)
+
+        return jsonify({'success': True, 'message': 'If that email exists, a reset link has been sent.'}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to process request', 'message': str(e)}), 500
+
+
+@auth_bp.route('/reset-password', methods=['POST'])
+def reset_password():
+    """
+    Complete a password reset using the token from the email link.
+    Validates token expiry, sets the new password, invalidates the token.
+    """
+    try:
+        data = request.get_json() or {}
+        token = (data.get('token') or '').strip()
+        new_password = data.get('new_password') or ''
+
+        if not token or not new_password:
+            return jsonify({'error': 'Token and new_password are required'}), 400
+
+        if len(new_password) < 8:
+            return jsonify({'error': 'Password must be at least 8 characters'}), 400
+
+        user = User.query.filter_by(reset_token=token).first()
+
+        if not user:
+            return jsonify({'error': 'Invalid or expired reset link'}), 400
+
+        if not user.reset_token_expires or datetime.utcnow() > user.reset_token_expires:
+            # Invalidate expired token
+            user.reset_token = None
+            user.reset_token_expires = None
+            db.session.commit()
+            return jsonify({'error': 'Reset link has expired. Please request a new one.'}), 400
+
+        # Set new password and clear token
+        user.password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        user.reset_token = None
+        user.reset_token_expires = None
+        db.session.commit()
+
+        # Invalidate any cached sessions for this user
+        cache = get_cache_manager()
+        cache.delete(f"user_session:{str(user.user_id)}")
+
+        client = ClientEntry.query.filter_by(client_id=str(user.client_id)).first()
+        client_name = client.client_name if client else user.full_name or user.email
+        changed_at = datetime.utcnow().strftime('%d %b %Y, %H:%M')
+        send_password_changed_email(user.email, client_name, changed_at)
+
+        return jsonify({'success': True, 'message': 'Password reset successfully. You can now log in.'}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Password reset failed', 'message': str(e)}), 500

@@ -14,13 +14,10 @@
   --background-end-rgb: 31, 41, 55;
 }
 
+/* Auth pages set their own dark background via className */
+
 body {
   color: rgb(var(--foreground-rgb));
-  background: linear-gradient(
-      to bottom,
-      rgb(var(--background-start-rgb)),
-      rgb(var(--background-end-rgb))
-    );
   font-size: clamp(0.75rem, 0.5vw + 0.5rem, 1rem);
 }
 

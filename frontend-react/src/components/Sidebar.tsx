@@ -109,7 +109,7 @@ export default function Sidebar() {
           <div className="flex items-center gap-3">
             <div className="w-8 h-8 sm:w-10 sm:h-10 rounded-xl shadow-md overflow-hidden bg-white dark:bg-gray-800 flex items-center justify-center p-1 relative">
               <img
-                src={client?.logo_url || '/RYX_Logo.png'}
+                src={client?.logo_url || `${import.meta.env.BASE_URL}RYX_Logo.png`}
                 alt={client?.client_name || 'RYX Billing'}
                 className="object-contain"
                 style={{ position: 'absolute', width: '100%', height: '100%' }}
@@ -155,7 +155,7 @@ export default function Sidebar() {
             <div className="flex items-center gap-3">
               <div className="w-9 h-9 xs:w-10 xs:h-10 rounded-xl shadow-md overflow-hidden bg-white dark:bg-gray-800 flex items-center justify-center p-1 ring-2 ring-blue-500/20 relative">
                 <img
-                  src={client?.logo_url || '/RYX_Logo.png'}
+                  src={client?.logo_url || `${import.meta.env.BASE_URL}RYX_Logo.png`}
                   alt={client?.client_name || 'RYX Billing'}
                   className="object-contain"
                   style={{ position: 'absolute', width: '100%', height: '100%' }}
@@ -172,7 +172,7 @@ export default function Sidebar() {
             <div className="flex items-start gap-3">
               <div className="w-10 h-10 xs:w-12 xs:h-12 rounded-xl overflow-hidden bg-white dark:bg-gray-800 flex items-center justify-center flex-shrink-0 border border-slate-200/50 dark:border-gray-700/50 p-1.5 relative">
                 <img
-                  src={client?.logo_url || '/RYX_Logo.png'}
+                  src={client?.logo_url || `${import.meta.env.BASE_URL}RYX_Logo.png`}
                   alt={client?.client_name || 'RYX Billing'}
                   className="object-contain"
                   style={{ position: 'absolute', width: '100%', height: '100%' }}

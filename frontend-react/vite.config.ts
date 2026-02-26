@@ -12,7 +12,7 @@ export default defineConfig({
   // Use /frontend/ for web (Flask-served), './' for Electron (file:// protocol)
   base: process.env.ELECTRON_BUILD === 'true' ? './' : '/frontend/',
   build: {
-    outDir: process.env.ELECTRON_BUILD === 'true' ? 'dist' : '../backend/static/frontend',
+    outDir: 'dist',
     sourcemap: false,
     rollupOptions: {
       output: {

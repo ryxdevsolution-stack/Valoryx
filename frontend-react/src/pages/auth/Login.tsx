@@ -1,7 +1,8 @@
 import React, { useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, Link } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
+import LightPillar from '@/components/LightPillar'
 
 export default function LoginPage() {
   const [email, setEmail] = useState('')
@@ -54,61 +55,81 @@ export default function LoginPage() {
   }
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4 bg-gradient-to-br from-amber-50 via-yellow-50/50 to-slate-100 relative overflow-hidden">
-      {/* Rich Gradient Overlays Matching Logo */}
-      <div className="absolute inset-0 pointer-events-none">
-        <div className="absolute top-0 left-0 w-full h-full bg-gradient-to-br from-amber-200/30 via-yellow-100/20 to-transparent"></div>
-        <div className="absolute bottom-0 right-0 w-full h-full bg-gradient-to-tl from-slate-300/20 via-gray-200/15 to-transparent"></div>
-        <div className="absolute inset-0 bg-gradient-to-r from-amber-300/20 via-transparent to-amber-200/15"></div>
+    <div className="min-h-screen flex items-center justify-center p-4 bg-[#271E37] relative overflow-hidden">
+      {/* LightPillar Background */}
+      <div className="absolute inset-0">
+        <LightPillar
+          topColor="#3a1acc"
+          bottomColor="#9b4fa8"
+          intensity={0.45}
+          rotationSpeed={0.3}
+          glowAmount={0.002}
+          pillarWidth={3}
+          pillarHeight={0.4}
+          noiseIntensity={0.5}
+          pillarRotation={25}
+          interactive={false}
+          mixBlendMode="screen"
+          quality="high"
+        />
       </div>
 
-      {/* Gradient Orbs (static, no animation) */}
-      <div className="absolute inset-0 pointer-events-none opacity-60">
-        <div className="absolute top-0 -left-1/4 w-[600px] h-[600px] bg-gradient-to-br from-amber-300/40 via-yellow-200/30 to-transparent rounded-full blur-3xl"></div>
-        <div className="absolute bottom-0 -right-1/4 w-[500px] h-[500px] bg-gradient-to-tl from-amber-400/25 via-orange-200/20 to-transparent rounded-full blur-3xl"></div>
-        <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-[700px] h-[700px] bg-gradient-to-r from-yellow-200/25 via-transparent to-amber-300/20 rounded-full blur-3xl"></div>
-        <div className="absolute top-1/3 left-1/3 w-[400px] h-[400px] bg-gradient-to-bl from-amber-200/30 to-transparent rounded-full blur-2xl"></div>
-      </div>
+      {/* RYX Elegant Centerpiece */}
+      <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[1]">
+        {/* Radiating lines */}
+        <svg className="absolute inset-0 w-full h-full opacity-[0.08]" xmlns="http://www.w3.org/2000/svg">
+          <line x1="50%" y1="50%" x2="0%" y2="20%" stroke="#a78bfa" strokeWidth="0.5"/>
+          <line x1="50%" y1="50%" x2="100%" y2="10%" stroke="#a78bfa" strokeWidth="0.5"/>
+          <line x1="50%" y1="50%" x2="100%" y2="50%" stroke="#a78bfa" strokeWidth="0.5"/>
+          <line x1="50%" y1="50%" x2="100%" y2="90%" stroke="#a78bfa" strokeWidth="0.5"/>
+          <line x1="50%" y1="50%" x2="0%" y2="80%" stroke="#a78bfa" strokeWidth="0.5"/>
+          <line x1="50%" y1="50%" x2="0%" y2="50%" stroke="#a78bfa" strokeWidth="0.5"/>
+          <line x1="50%" y1="50%" x2="30%" y2="0%" stroke="#a78bfa" strokeWidth="0.5"/>
+          <line x1="50%" y1="50%" x2="70%" y2="100%" stroke="#a78bfa" strokeWidth="0.5"/>
+          <line x1="50%" y1="50%" x2="20%" y2="100%" stroke="#a78bfa" strokeWidth="0.5"/>
+          <line x1="50%" y1="50%" x2="80%" y2="0%" stroke="#a78bfa" strokeWidth="0.5"/>
+        </svg>
 
-      {/* Subtle Elegant Pattern */}
-      <div className="absolute inset-0 pointer-events-none opacity-8">
-        <div className="absolute top-0 left-0 w-full h-full" style={{
-          backgroundImage: `radial-gradient(circle at 25% 25%, rgba(251, 191, 36, 0.2) 1px, transparent 1px),
-                           radial-gradient(circle at 75% 75%, rgba(217, 119, 6, 0.15) 1px, transparent 1px)`,
-          backgroundSize: '60px 60px'
-        }}></div>
-      </div>
+        {/* Glow bloom */}
+        <div className="absolute w-[700px] h-[700px] rounded-full" style={{
+          background: 'radial-gradient(circle, rgba(90,50,200,0.12) 0%, rgba(60,20,140,0.05) 50%, transparent 75%)',
+        }} />
 
-      {/* Background Logo */}
-      <div className="absolute inset-0 flex items-center justify-center pointer-events-none -mt-8 sm:-mt-12 md:-mt-16">
-        <div className="relative w-[200%] h-[100%] sm:w-[180%] sm:h-[95%] md:w-[160%] md:h-[90%]">
-          <img
-            src="/RYX_Logo.png"
-            alt="RYX"
-            className="object-contain scale-[2] sm:scale-[1.75] md:scale-[1.5] opacity-95"
-            style={{ position: 'absolute', width: '100%', height: '100%' }}
-          />
-        </div>
+        {/* The letters — truly centered, compensating for letter-spacing offset */}
+        <span
+          aria-hidden="true"
+          className="select-none leading-none whitespace-nowrap"
+          style={{
+            fontFamily: '"Lavishly Yours", cursive',
+            fontSize: 'clamp(200px, 28vw, 420px)',
+            fontWeight: '400',
+            letterSpacing: '0.1em',
+            marginRight: '-0.1em',
+            color: 'rgba(160, 155, 170, 0.32)',
+          }}
+        >
+          RYX
+        </span>
       </div>
 
       {/* Card Container */}
       <div className="w-full max-w-md relative z-10">
-        <div className="backdrop-blur-[2px] rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.3)] border border-white/70 p-8 sm:p-10 bg-white/25">
+        <div className="backdrop-blur-md rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] border border-white/10 p-8 sm:p-10 bg-white/5">
           {/* Header */}
           <div className="mb-8 text-center">
-            <h2 className="text-3xl font-bold text-slate-900 mb-2">Welcome Back</h2>
-            <p className="text-slate-600">Sign in to access your billing dashboard</p>
+            <h2 className="text-3xl font-bold text-white mb-2">Welcome Back</h2>
+            <p className="text-slate-400">Sign in to access your billing dashboard</p>
           </div>
 
           {error && (
-            <div className="bg-red-50 border border-red-300 text-red-700 px-4 py-3 rounded-lg mb-6">
+            <div className="bg-red-900/40 border border-red-500/50 text-red-300 px-4 py-3 rounded-lg mb-6">
               {error}
             </div>
           )}
 
           <form onSubmit={handleSubmit} className="space-y-5">
             <div className="relative">
-              <label htmlFor="email" className="block text-sm font-semibold text-slate-700 mb-2">
+              <label htmlFor="email" className="block text-sm font-semibold text-slate-300 mb-2">
                 Email Address
               </label>
               <input
@@ -116,13 +137,13 @@ export default function LoginPage() {
                 type="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none transition-all duration-200 text-slate-900 placeholder-slate-400"
+                className="w-full px-4 py-3 bg-white/5 border border-white/15 rounded-lg focus:ring-2 focus:ring-[#5227FF] focus:border-transparent outline-none transition-all duration-200 text-white placeholder-slate-500 [&:-webkit-autofill]:[-webkit-box-shadow:0_0_0_1000px_#2d2145_inset] [&:-webkit-autofill]:[-webkit-text-fill-color:#ffffff]"
                 placeholder="Enter your email"
               />
             </div>
 
             <div className="relative">
-              <label htmlFor="password" className="block text-sm font-semibold text-slate-700 mb-2">
+              <label htmlFor="password" className="block text-sm font-semibold text-slate-300 mb-2">
                 Password
               </label>
               <div className="relative">
@@ -131,13 +152,13 @@ export default function LoginPage() {
                   type={showPassword ? "text" : "password"}
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  className="w-full px-4 py-3 pr-12 bg-slate-50 border border-slate-300 rounded-lg focus:ring-2 focus:ring-slate-900 focus:border-transparent outline-none transition-all duration-200 text-slate-900 placeholder-slate-400"
+                  className="w-full px-4 py-3 pr-12 bg-white/5 border border-white/15 rounded-lg focus:ring-2 focus:ring-[#5227FF] focus:border-transparent outline-none transition-all duration-200 text-white placeholder-slate-500 [&:-webkit-autofill]:[-webkit-box-shadow:0_0_0_1000px_#2d2145_inset] [&:-webkit-autofill]:[-webkit-text-fill-color:#ffffff]"
                   placeholder="Enter your password"
                 />
                 <button
                   type="button"
                   onClick={() => setShowPassword(!showPassword)}
-                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-700 transition-colors focus:outline-none"
+                  className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500 hover:text-slate-300 transition-colors focus:outline-none"
                   aria-label={showPassword ? "Hide password" : "Show password"}
                 >
                   {showPassword ? (
@@ -154,10 +175,19 @@ export default function LoginPage() {
               </div>
             </div>
 
+            <div className="flex justify-end -mt-1">
+              <Link
+                to="/auth/forgot-password"
+                className="text-sm text-slate-400 hover:text-white font-medium transition-colors"
+              >
+                Forgot password?
+              </Link>
+            </div>
+
             <button
               type="submit"
               disabled={loading}
-              className="w-full bg-slate-900 hover:bg-slate-800 text-white font-semibold py-3.5 px-6 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg mt-6"
+              className="w-full bg-[#5227FF] hover:bg-[#6340ff] text-white font-semibold py-3.5 px-6 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg mt-2"
             >
               {loading ? (
                 <span className="flex items-center justify-center gap-2">
@@ -169,6 +199,13 @@ export default function LoginPage() {
               )}
             </button>
           </form>
+
+          <p className="text-center mt-6 text-sm text-slate-400">
+            Don't have an account?{' '}
+            <Link to="/auth/register" className="font-semibold text-white hover:text-[#a98bff] transition-colors">
+              Create account
+            </Link>
+          </p>
         </div>
       </div>
     </div>

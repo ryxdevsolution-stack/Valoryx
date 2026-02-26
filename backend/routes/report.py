@@ -180,358 +180,760 @@ def get_report_details(report_id):
 @authenticate
 def export_pdf():
     """
-    Generate professional PDF report for GST bills with business header and logo watermark
+    Generate professional PDF report for GST bills with business header and logo watermark.
+    Re-queries client/user from DB for accurate data (never trusts Redis cache).
     """
     try:
         from reportlab.lib import colors
         from reportlab.lib.pagesizes import A4
         from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
-        from reportlab.lib.units import inch, cm, mm
-        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable, Image
+        from reportlab.lib.units import cm
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
         from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
         from reportlab.pdfgen import canvas
-        from reportlab.pdfbase import pdfmetrics
-        from reportlab.pdfbase.ttfonts import TTFont
         import urllib.request
         import tempfile
         import os
 
-        data = request.get_json()
-        bills = data.get('bills', [])
-        start_date = data.get('start_date', '')
-        end_date = data.get('end_date', '')
+        data = request.get_json(silent=True)
+        if not data:
+            return jsonify({'error': 'Request body must be valid JSON'}), 400
 
-        # Get client and user info from g object (populated by auth middleware from Redis cache)
+        start_date = (data.get('start_date') or '').strip()
+        end_date = (data.get('end_date') or '').strip()
+
+        client_id = g.user['client_id']
+        user_id = g.user['user_id']
+
+        if not start_date or not end_date:
+            return jsonify({'error': 'start_date and end_date are required'}), 400
+
+        try:
+            date_from_obj = datetime.fromisoformat(start_date).date()
+            date_to_obj = datetime.fromisoformat(end_date).date()
+        except ValueError:
+            return jsonify({'error': 'Invalid date format. Use ISO 8601 (YYYY-MM-DD)'}), 400
+
+        if date_from_obj > date_to_obj:
+            return jsonify({'error': 'start_date must not be after end_date'}), 400
+
+        # Re-query bills from DB (never trust client-supplied financial data)
+        user_permissions = g.user.get('permissions', [])
+        is_super_admin = g.user.get('is_super_admin', False)
+        has_view_all = is_super_admin or 'view_all_bills' in user_permissions
+
+        from models.billing_model import GSTBilling
+        from models.client_model import ClientEntry as _ClientEntry
+        from models.user_model import User as _User
+
+        gst_query = GSTBilling.query.filter(
+            GSTBilling.client_id == client_id,
+            func.date(GSTBilling.created_at) >= date_from_obj,
+            func.date(GSTBilling.created_at) <= date_to_obj,
+            GSTBilling.status == 'final',
+        )
+        if not has_view_all:
+            gst_query = gst_query.filter(GSTBilling.created_by == user_id)
+
+        db_bills = gst_query.order_by(GSTBilling.created_at.asc()).all()
+
+        if not db_bills:
+            return jsonify({'error': 'No GST bills found for the selected date range'}), 400
+
+        bills = [
+            {
+                'customer_name': b.customer_name or 'Walk-in',
+                'created_at': b.created_at.isoformat() if b.created_at else '',
+                'subtotal': float(b.subtotal or 0),
+                'gst_percentage': float(b.gst_percentage or 0),
+                'gst_amount': float(b.gst_amount or 0),
+                'final_amount': float(b.final_amount or 0),
+            }
+            for b in db_bills
+        ]
+
+        # Always re-query client/user from DB for fresh, accurate data
+        db_client = _ClientEntry.query.filter_by(client_id=client_id).first()
+        db_user = _User.query.filter_by(user_id=user_id).first()
+
+        if not db_client:
+            return jsonify({'error': 'Client record not found'}), 404
+        if not db_user:
+            return jsonify({'error': 'User record not found'}), 404
+
         client_info = {
-            'client_name': g.client.get('client_name', ''),
-            'address': g.client.get('address', ''),
-            'phone': g.client.get('phone', ''),
-            'email': g.client.get('email', ''),
-            'gstin': g.client.get('gstin', '')
+            'client_name': db_client.client_name or '',
+            'address': db_client.address or '',
+            'phone': db_client.phone or '',
+            'email': db_client.email or '',
+            'gstin': db_client.gst_number or '',
         }
+        logo_url = db_client.logo_url or ''
+        subscription_status = db_client.subscription_status or ''
+        is_trial = subscription_status == 'trial'
 
-        # Get logo URL for watermark
-        logo_url = g.client.get('logo_url', '')
+        user_full_name = (db_user.full_name or '').strip()
+        if not user_full_name:
+            user_full_name = db_user.email.split('@')[0]
 
-        # Get user info for footer
-        user_full_name = g.user.get('full_name', g.user.get('email', 'User'))
+        # Totals
+        total_subtotal = sum(b['subtotal'] for b in bills)
+        total_gst = sum(b['gst_amount'] for b in bills)
+        total_final = sum(b['final_amount'] for b in bills)
 
-        if not bills:
-            return jsonify({'error': 'No bills to export'}), 400
-
-        # Create PDF buffer
+        kolkata_tz = pytz.timezone('Asia/Kolkata')
+        generated_at = datetime.now(kolkata_tz).strftime('%d/%m/%Y %H:%M')
         buffer = io.BytesIO()
 
-        # Download logo if available for watermark
+        # Download logo for watermark — only allow http/https to prevent SSRF
         logo_temp_path = None
         if logo_url:
             try:
-                logo_temp_path = tempfile.NamedTemporaryFile(delete=False, suffix='.png').name
-                urllib.request.urlretrieve(logo_url, logo_temp_path)
-            except Exception as e:
+                from urllib.parse import urlparse as _urlparse
+                _parsed = _urlparse(logo_url)
+                if _parsed.scheme in ('http', 'https'):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as _tmp:
+                        logo_temp_path = _tmp.name
+                    urllib.request.urlretrieve(logo_url, logo_temp_path)
+            except Exception:
                 logo_temp_path = None
 
-        # Custom canvas class to add logo watermark on each page
-        class WatermarkCanvas(canvas.Canvas):
+        # Capture closure vars
+        _generated_at = generated_at
+        _user_full_name = user_full_name
+        _is_trial = is_trial
+
+        class ExportWatermarkCanvas(canvas.Canvas):
             def __init__(self, *args, **kwargs):
-                self.logo_path = kwargs.pop('logo_path', None)
+                self._logo_path = kwargs.pop('logo_path', None)
                 canvas.Canvas.__init__(self, *args, **kwargs)
 
             def showPage(self):
-                self._draw_watermark()
+                self._draw_watermarks()
+                self._draw_footer()
                 canvas.Canvas.showPage(self)
 
             def save(self):
-                self._draw_watermark()
+                self._draw_watermarks()
+                self._draw_footer()
                 canvas.Canvas.save(self)
 
-            def _draw_watermark(self):
-                if self.logo_path and os.path.exists(self.logo_path):
+            def _draw_watermarks(self):
+                self.saveState()
+                page_w, page_h = A4
+                if self._logo_path and os.path.exists(self._logo_path):
                     try:
-                        self.saveState()
-                        # Center the logo watermark
-                        self.translate(A4[0]/2, A4[1]/2)
-                        # Make it very transparent
-                        self.setFillAlpha(0.06)
-                        # Draw logo centered, larger size for watermark
-                        self.drawImage(self.logo_path, -100, -100, width=200, height=200,
-                                      preserveAspectRatio=True, mask='auto')
-                        self.restoreState()
-                    except:
+                        self.translate(page_w / 2, page_h / 2)
+                        self.setFillAlpha(0.05)
+                        self.drawImage(
+                            self._logo_path, -90, -90, width=180, height=180,
+                            preserveAspectRatio=True, mask='auto',
+                        )
+                        self.translate(-page_w / 2, -page_h / 2)
+                    except Exception:
                         pass
+                if _is_trial:
+                    self.setFillColorRGB(0.8, 0.1, 0.1, alpha=0.08)
+                    self.setFont('Helvetica-Bold', 64)
+                    self.translate(page_w / 2, page_h / 2)
+                    self.rotate(45)
+                    self.drawCentredString(0, 0, 'TRIAL')
+                self.restoreState()
 
-        # Create PDF document (Portrait A4)
+            def _draw_footer(self):
+                self.saveState()
+                page_w, _ = A4
+                trial_note = ' · TRIAL ACCOUNT' if _is_trial else ''
+                footer_text = (
+                    f'Generated on {_generated_at} by {_user_full_name} · '
+                    f'VALORYX Billing{trial_note} · Computer-generated document'
+                )
+                self.setFont('Helvetica', 6.5)
+                self.setFillColorRGB(0.6, 0.6, 0.6)
+                self.setStrokeColorRGB(0.85, 0.85, 0.85)
+                self.setLineWidth(0.5)
+                self.line(1.2 * cm, 1.1 * cm, page_w - 1.2 * cm, 1.1 * cm)
+                self.drawCentredString(page_w / 2, 0.7 * cm, footer_text)
+                self.restoreState()
+
+        # Tight margins — maximize usable space
         doc = SimpleDocTemplate(
             buffer,
             pagesize=A4,
-            rightMargin=1.5*cm,
-            leftMargin=1.5*cm,
-            topMargin=1*cm,
-            bottomMargin=1*cm
+            rightMargin=1.2 * cm,
+            leftMargin=1.2 * cm,
+            topMargin=0.8 * cm,
+            bottomMargin=1.6 * cm,
         )
 
         elements = []
         styles = getSampleStyleSheet()
 
-        # Custom styles using Times-Roman for professional look
-        company_name_style = ParagraphStyle(
-            'CompanyName',
-            parent=styles['Heading1'],
-            fontSize=22,
-            alignment=TA_CENTER,
-            spaceAfter=4,
-            textColor=colors.HexColor('#1e293b'),
-            fontName='Times-Bold'
+        co_name_style = ParagraphStyle(
+            'CoName', parent=styles['Normal'],
+            fontSize=16, alignment=TA_CENTER, spaceAfter=2,
+            textColor=colors.HexColor('#1e293b'), fontName='Times-Bold', leading=18,
         )
-
-        company_details_style = ParagraphStyle(
-            'CompanyDetails',
-            parent=styles['Normal'],
-            fontSize=9,
-            alignment=TA_CENTER,
-            spaceAfter=2,
-            textColor=colors.HexColor('#475569'),
-            leading=12,
-            fontName='Times-Roman'
+        co_detail_style = ParagraphStyle(
+            'CoDetail', parent=styles['Normal'],
+            fontSize=8, alignment=TA_CENTER, spaceAfter=1,
+            textColor=colors.HexColor('#475569'), leading=11, fontName='Times-Roman',
         )
-
         gstin_style = ParagraphStyle(
-            'GSTIN',
-            parent=styles['Normal'],
-            fontSize=10,
-            alignment=TA_CENTER,
-            spaceAfter=8,
-            textColor=colors.HexColor('#1e293b'),
-            fontName='Times-Bold'
+            'GSTIN', parent=styles['Normal'],
+            fontSize=8, alignment=TA_CENTER, spaceAfter=4,
+            textColor=colors.HexColor('#1e293b'), fontName='Times-Bold',
         )
-
-        report_title_style = ParagraphStyle(
-            'ReportTitle',
-            parent=styles['Heading2'],
-            fontSize=14,
-            alignment=TA_CENTER,
-            spaceBefore=10,
-            spaceAfter=5,
-            textColor=colors.HexColor('#1e293b'),
-            fontName='Times-Bold'
+        title_style = ParagraphStyle(
+            'Title', parent=styles['Normal'],
+            fontSize=11, alignment=TA_CENTER, spaceBefore=4, spaceAfter=1,
+            textColor=colors.HexColor('#1e293b'), fontName='Times-Bold',
         )
-
         period_style = ParagraphStyle(
-            'Period',
-            parent=styles['Normal'],
-            fontSize=10,
-            alignment=TA_CENTER,
-            spaceAfter=15,
-            textColor=colors.HexColor('#64748b'),
-            fontName='Times-Roman'
+            'Period', parent=styles['Normal'],
+            fontSize=8, alignment=TA_CENTER, spaceAfter=6,
+            textColor=colors.HexColor('#64748b'), fontName='Times-Roman',
         )
 
-        # === HEADER SECTION ===
-        # Company Name
-        company_name = client_info.get('client_name', 'Business Name') if client_info else 'Business Name'
-        elements.append(Paragraph(company_name, company_name_style))
-
-        # Company Address and Contact
-        address = client_info.get('address', '') if client_info else ''
-        phone = client_info.get('phone', '') if client_info else ''
-        email = client_info.get('email', '') if client_info else ''
-
+        # Header
+        elements.append(Paragraph(client_info['client_name'] or 'Business', co_name_style))
         contact_parts = []
-        if address:
-            contact_parts.append(address)
-        if phone:
-            contact_parts.append(f"Phone: {phone}")
-        if email:
-            contact_parts.append(f"Email: {email}")
-
+        if client_info.get('address'):
+            contact_parts.append(client_info['address'])
+        if client_info.get('phone'):
+            contact_parts.append(f"Ph: {client_info['phone']}")
+        if client_info.get('email'):
+            contact_parts.append(client_info['email'])
         if contact_parts:
-            elements.append(Paragraph(" | ".join(contact_parts), company_details_style))
+            elements.append(Paragraph('  |  '.join(contact_parts), co_detail_style))
+        if client_info.get('gstin'):
+            elements.append(Paragraph(f"GSTIN: {client_info['gstin']}", gstin_style))
 
-        # GSTIN
-        gstin = client_info.get('gstin', '') if client_info else ''
-        if gstin:
-            elements.append(Paragraph(f"GSTIN: {gstin}", gstin_style))
+        elements.append(HRFlowable(
+            width='100%', thickness=0.8, color=colors.HexColor('#cbd5e1'),
+            spaceBefore=3, spaceAfter=4,
+        ))
+        elements.append(Paragraph('GST BILLS REPORT', title_style))
+        elements.append(Paragraph(f'Period: {start_date}  to  {end_date}', period_style))
 
-        # Divider line
-        elements.append(HRFlowable(width="100%", thickness=1, color=colors.HexColor('#e2e8f0'), spaceBefore=5, spaceAfter=10))
-
-        # Report Title
-        elements.append(Paragraph("GST BILLS REPORT", report_title_style))
-
-        # Period
-        elements.append(Paragraph(f"Period: {start_date} to {end_date}", period_style))
-
-        # Calculate totals
-        total_subtotal = sum(float(bill.get('subtotal', 0)) for bill in bills)
-        total_gst = sum(float(bill.get('gst_amount', 0)) for bill in bills)
-        total_final = sum(float(bill.get('final_amount', 0)) for bill in bills)
-
-        # === SUMMARY SECTION ===
+        # Summary bar
+        usable_w = A4[0] - 2.4 * cm
+        col_w = usable_w / 4
         summary_data = [
             ['Total Bills', 'Total Subtotal', 'Total GST', 'Grand Total'],
-            [
-                str(len(bills)),
-                f"Rs. {total_subtotal:,.2f}",
-                f"Rs. {total_gst:,.2f}",
-                f"Rs. {total_final:,.2f}"
-            ]
+            [str(len(bills)), f'Rs. {total_subtotal:,.2f}', f'Rs. {total_gst:,.2f}', f'Rs. {total_final:,.2f}'],
         ]
-
-        summary_table = Table(summary_data, colWidths=[4*cm, 4.5*cm, 4*cm, 4.5*cm])
+        summary_table = Table(summary_data, colWidths=[col_w] * 4)
         summary_table.setStyle(TableStyle([
             ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Times-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 9),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 10),
-            ('TOPPADDING', (0, 0), (-1, 0), 10),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 7),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 5),
+            ('TOPPADDING', (0, 0), (-1, 0), 5),
             ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f1f5f9')),
-            ('FONTNAME', (0, 1), (-1, -1), 'Times-Bold'),
-            ('FONTSIZE', (0, 1), (-1, -1), 10),
-            ('BOTTOMPADDING', (0, 1), (-1, -1), 10),
-            ('TOPPADDING', (0, 1), (-1, -1), 10),
-            ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#cbd5e1')),
-            ('LINEBELOW', (0, 0), (-1, 0), 1, colors.HexColor('#cbd5e1')),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+            ('TOPPADDING', (0, 1), (-1, -1), 6),
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+            ('LINEBELOW', (0, 0), (-1, 0), 0.5, colors.HexColor('#cbd5e1')),
         ]))
-
         elements.append(summary_table)
-        elements.append(Spacer(1, 20))
+        elements.append(Spacer(1, 6))
 
-        # === BILLS TABLE ===
-        table_header = ['#', 'Date', 'Customer', 'Subtotal', 'GST %', 'GST Amt', 'Final Amt']
-        table_data = [table_header]
+        # Bills table — columns fill full usable width
+        cw = [0.7 * cm, 1.9 * cm, 0, 2.6 * cm, 1.4 * cm, 2.3 * cm, 2.6 * cm]
+        cw[2] = usable_w - sum(c for c in cw if c)  # customer col takes remaining space
 
-        # Add bill rows
+        table_data = [['#', 'Date', 'Customer', 'Subtotal', 'GST%', 'GST Amt', 'Total']]
         for idx, bill in enumerate(bills, 1):
             created_at = bill.get('created_at', '')
             if created_at:
                 try:
                     date_obj = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
-                    # Convert to Asia/Kolkata timezone
-                    kolkata_tz = pytz.timezone('Asia/Kolkata')
                     if date_obj.tzinfo is None:
-                        # If naive datetime, assume UTC
                         date_obj = pytz.utc.localize(date_obj)
-                    date_obj = date_obj.astimezone(kolkata_tz)
-                    date_str = date_obj.strftime('%d/%m/%Y')
-                except:
+                    date_str = date_obj.astimezone(kolkata_tz).strftime('%d/%m/%y')
+                except Exception:
                     date_str = created_at[:10] if len(created_at) >= 10 else created_at
             else:
                 date_str = '-'
 
-            row = [
+            table_data.append([
                 str(idx),
                 date_str,
-                str(bill.get('customer_name', 'Walk-in'))[:20],
-                f"Rs. {float(bill.get('subtotal', 0)):,.2f}",
-                f"{bill.get('gst_percentage', 0)}%",
-                f"Rs. {float(bill.get('gst_amount', 0)):,.2f}",
-                f"Rs. {float(bill.get('final_amount', 0)):,.2f}"
-            ]
-            table_data.append(row)
+                str(bill.get('customer_name', 'Walk-in'))[:25],
+                f"Rs. {bill['subtotal']:,.2f}",
+                f"{bill['gst_percentage']}%",
+                f"Rs. {bill['gst_amount']:,.2f}",
+                f"Rs. {bill['final_amount']:,.2f}",
+            ])
 
-        # Add totals row
         table_data.append([
             '', '', 'TOTAL',
-            f"Rs. {total_subtotal:,.2f}",
-            '',
-            f"Rs. {total_gst:,.2f}",
-            f"Rs. {total_final:,.2f}"
+            f'Rs. {total_subtotal:,.2f}', '',
+            f'Rs. {total_gst:,.2f}',
+            f'Rs. {total_final:,.2f}',
         ])
 
-        # Create table with appropriate column widths
-        col_widths = [1*cm, 2.2*cm, 4.5*cm, 2.8*cm, 1.5*cm, 2.5*cm, 2.8*cm]
-        bills_table = Table(table_data, colWidths=col_widths, repeatRows=1)
-
+        bills_table = Table(table_data, colWidths=cw, repeatRows=1)
         bills_table.setStyle(TableStyle([
-            # Header styling
-            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+            # Header
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#334155')),
             ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
-            ('ALIGN', (0, 0), (-1, 0), 'CENTER'),
-            ('FONTNAME', (0, 0), (-1, 0), 'Times-Bold'),
-            ('FONTSIZE', (0, 0), (-1, 0), 8),
-            ('BOTTOMPADDING', (0, 0), (-1, 0), 8),
-            ('TOPPADDING', (0, 0), (-1, 0), 8),
-
-            # Data rows styling
-            ('FONTNAME', (0, 1), (-1, -2), 'Times-Roman'),
-            ('FONTSIZE', (0, 1), (-1, -2), 8),
-            ('BOTTOMPADDING', (0, 1), (-1, -2), 5),
-            ('TOPPADDING', (0, 1), (-1, -2), 5),
-
-            # Totals row styling
-            ('FONTNAME', (0, -1), (-1, -1), 'Times-Bold'),
-            ('FONTSIZE', (0, -1), (-1, -1), 9),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 7),
+            ('TOPPADDING', (0, 0), (-1, 0), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 5),
+            # Data rows
+            ('FONTNAME', (0, 1), (-1, -2), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -2), 7.5),
+            ('TOPPADDING', (0, 1), (-1, -2), 3),
+            ('BOTTOMPADDING', (0, 1), (-1, -2), 3),
+            # Totals row
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, -1), (-1, -1), 8),
             ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e2e8f0')),
-            ('BOTTOMPADDING', (0, -1), (-1, -1), 8),
-            ('TOPPADDING', (0, -1), (-1, -1), 8),
-
+            ('TOPPADDING', (0, -1), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, -1), (-1, -1), 5),
             # Alignment
-            ('ALIGN', (0, 1), (0, -1), 'CENTER'),  # # column
-            ('ALIGN', (1, 1), (1, -1), 'CENTER'),  # Date column
-            ('ALIGN', (2, 1), (2, -1), 'LEFT'),    # Customer column
-            ('ALIGN', (3, 1), (-1, -1), 'RIGHT'),  # Amount columns
-            ('ALIGN', (4, 1), (4, -1), 'CENTER'),  # GST % column
-
+            ('ALIGN', (0, 0), (1, -1), 'CENTER'),
+            ('ALIGN', (2, 0), (2, -1), 'LEFT'),
+            ('ALIGN', (3, 0), (-1, -1), 'RIGHT'),
+            ('ALIGN', (4, 0), (4, -1), 'CENTER'),
             # Grid
-            ('BOX', (0, 0), (-1, -1), 1, colors.HexColor('#cbd5e1')),
-            ('LINEBELOW', (0, 0), (-1, 0), 1, colors.HexColor('#cbd5e1')),
-            ('LINEABOVE', (0, -1), (-1, -1), 1, colors.HexColor('#94a3b8')),
-            ('INNERGRID', (0, 0), (-1, -2), 0.5, colors.HexColor('#e2e8f0')),
-
-            # Alternating row colors
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+            ('LINEBELOW', (0, 0), (-1, 0), 0.5, colors.HexColor('#94a3b8')),
+            ('LINEABOVE', (0, -1), (-1, -1), 0.8, colors.HexColor('#94a3b8')),
+            ('INNERGRID', (0, 1), (-1, -2), 0.3, colors.HexColor('#e2e8f0')),
             ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f8fafc')]),
         ]))
-
         elements.append(bills_table)
 
-        # Footer note
-        elements.append(Spacer(1, 20))
-        footer_style = ParagraphStyle(
-            'Footer',
-            parent=styles['Normal'],
-            fontSize=8,
-            alignment=TA_CENTER,
-            textColor=colors.HexColor('#94a3b8'),
-            fontName='Times-Roman'
-        )
-        # Get current time in Asia/Kolkata timezone
-        kolkata_tz = pytz.timezone('Asia/Kolkata')
-        current_time = datetime.now(kolkata_tz)
-        elements.append(Paragraph(f"Generated on {current_time.strftime('%d/%m/%Y %H:%M')} by {user_full_name} | This is a computer-generated document", footer_style))
-
-        # Build PDF with logo watermark
-        # Create a factory function that passes the logo path
         def canvas_maker(filename, **kwargs):
-            return WatermarkCanvas(filename, logo_path=logo_temp_path, **kwargs)
+            return ExportWatermarkCanvas(filename, logo_path=logo_temp_path, **kwargs)
 
-        doc.build(elements, canvasmaker=canvas_maker)
+        try:
+            doc.build(elements, canvasmaker=canvas_maker)
+        finally:
+            if logo_temp_path and os.path.exists(logo_temp_path):
+                try:
+                    os.unlink(logo_temp_path)
+                except Exception:
+                    pass
 
-        # Cleanup temp logo file
-        if logo_temp_path and os.path.exists(logo_temp_path):
-            try:
-                os.unlink(logo_temp_path)
-            except:
-                pass
-
-        # Get PDF bytes
         buffer.seek(0)
-
         return send_file(
             buffer,
             mimetype='application/pdf',
             as_attachment=True,
-            download_name=f'GST_Bills_{start_date}_to_{end_date}.pdf'
+            download_name=f'GST_Bills_{start_date}_to_{end_date}.pdf',
         )
 
     except ImportError as e:
         return jsonify({'error': 'PDF generation library not installed', 'message': str(e)}), 500
     except Exception as e:
-        # Cleanup temp logo file on error
         if 'logo_temp_path' in locals() and logo_temp_path and os.path.exists(logo_temp_path):
             try:
                 os.unlink(logo_temp_path)
-            except:
+            except Exception:
                 pass
         return jsonify({'error': 'Failed to generate PDF', 'message': str(e)}), 500
+
+
+@report_bp.route('/send-auditor-email', methods=['POST'])
+@authenticate
+def send_auditor_email():
+    """
+    Generate a GST bills PDF (with VALORYX watermark and optional TRIAL watermark)
+    and email it as an attachment to the provided auditor email address.
+    Restricted to admin / owner / manager roles.
+    """
+    import re as _re
+
+    # Role check — only admin-level roles may export financial data to external email
+    user_role = g.user.get('role', '')
+    is_super_admin = g.user.get('is_super_admin', False)
+    allowed_roles = {'owner', 'admin', 'manager'}
+    if not is_super_admin and user_role not in allowed_roles:
+        return jsonify({'error': 'Insufficient permissions to send audit reports'}), 403
+
+    try:
+        from reportlab.lib import colors
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+        from reportlab.lib.units import cm
+        from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
+        from reportlab.lib.enums import TA_CENTER, TA_RIGHT, TA_LEFT
+        from reportlab.pdfgen import canvas
+        import urllib.request
+        import tempfile
+        import os
+        from utils.email_service import send_audit_report_email
+
+        data = request.get_json()
+        to_email = (data.get('email') or '').strip()
+        start_date = (data.get('start_date') or '').strip()
+        end_date = (data.get('end_date') or '').strip()
+
+        # Validate email format (also prevents SMTP header injection)
+        _EMAIL_RE = _re.compile(r'^[a-zA-Z0-9._%+\-]+@[a-zA-Z0-9.\-]+\.[a-zA-Z]{2,}$')
+        if not to_email or not _EMAIL_RE.match(to_email):
+            return jsonify({'error': 'A valid auditor email address is required'}), 400
+
+        if not start_date or not end_date:
+            return jsonify({'error': 'start_date and end_date are required'}), 400
+
+        if start_date > end_date:
+            return jsonify({'error': 'start_date must not be after end_date'}), 400
+
+        # Re-query bills from the database (never trust client-supplied financial data)
+        client_id = g.user['client_id']
+        user_id = g.user['user_id']
+        user_permissions = g.user.get('permissions', [])
+        has_view_all = is_super_admin or 'view_all_bills' in user_permissions
+
+        from models.billing_model import GSTBilling
+
+        date_from_obj = datetime.fromisoformat(start_date).date()
+        date_to_obj = datetime.fromisoformat(end_date).date()
+
+        gst_query = GSTBilling.query.filter(
+            GSTBilling.client_id == client_id,
+            func.date(GSTBilling.created_at) >= date_from_obj,
+            func.date(GSTBilling.created_at) <= date_to_obj,
+            GSTBilling.status == 'final',
+        )
+        if not has_view_all:
+            gst_query = gst_query.filter(GSTBilling.created_by == user_id)
+
+        db_bills = gst_query.order_by(GSTBilling.created_at.asc()).all()
+
+        # Convert ORM objects to the dict shape the PDF builder expects
+        bills = [
+            {
+                'bill_id': str(b.bill_id),
+                'customer_name': b.customer_name or 'Walk-in',
+                'created_at': b.created_at.isoformat() if b.created_at else '',
+                'subtotal': float(b.subtotal or 0),
+                'gst_percentage': float(b.gst_percentage or 0),
+                'gst_amount': float(b.gst_amount or 0),
+                'final_amount': float(b.final_amount or 0),
+            }
+            for b in db_bills
+        ]
+
+        if not bills:
+            return jsonify({'error': 'No GST bills found for the selected date range'}), 404
+
+        # Always re-query client from DB to get fresh, accurate data
+        from models.client_model import ClientEntry as _ClientEntry
+        from models.user_model import User as _User
+        db_client = _ClientEntry.query.filter_by(client_id=client_id).first()
+        db_user = _User.query.filter_by(user_id=user_id).first()
+
+        client_info = {
+            'client_name': db_client.client_name if db_client else '',
+            'address': db_client.address or '' if db_client else '',
+            'phone': db_client.phone or '' if db_client else '',
+            'email': db_client.email or '' if db_client else '',
+            'gstin': db_client.gst_number or '' if db_client else '',
+        }
+        logo_url = db_client.logo_url or '' if db_client else ''
+        subscription_status = db_client.subscription_status or '' if db_client else ''
+        is_trial = subscription_status == 'trial'
+        # Use DB user name; fall back to email prefix only if name is genuinely blank
+        user_full_name = (db_user.full_name or '').strip() if db_user else ''
+        if not user_full_name:
+            user_full_name = (db_user.email.split('@')[0] if db_user else g.user.get('email', 'User'))
+
+        # ---- Build PDF in memory ----
+        kolkata_tz = pytz.timezone('Asia/Kolkata')
+        generated_at = datetime.now(kolkata_tz).strftime('%d/%m/%Y %H:%M')
+        buffer = io.BytesIO()
+
+        # Download logo for watermark — only allow http/https to prevent SSRF
+        logo_temp_path = None
+        if logo_url:
+            try:
+                from urllib.parse import urlparse as _urlparse
+                _parsed = _urlparse(logo_url)
+                if _parsed.scheme in ('http', 'https'):
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as _tmp:
+                        logo_temp_path = _tmp.name
+                    urllib.request.urlretrieve(logo_url, logo_temp_path)
+            except Exception:
+                logo_temp_path = None
+
+        # Totals (compute early so canvas footer can use them)
+        total_subtotal = sum(float(b.get('subtotal', 0)) for b in bills)
+        total_gst = sum(float(b.get('gst_amount', 0)) for b in bills)
+        total_final = sum(float(b.get('final_amount', 0)) for b in bills)
+
+        # Custom canvas: watermarks + fixed footer on every page
+        _generated_at = generated_at
+        _user_full_name = user_full_name
+        _is_trial = is_trial
+
+        class AuditWatermarkCanvas(canvas.Canvas):
+            def __init__(self, *args, **kwargs):
+                self._logo_path = kwargs.pop('logo_path', None)
+                canvas.Canvas.__init__(self, *args, **kwargs)
+
+            def showPage(self):
+                self._draw_watermarks()
+                self._draw_footer()
+                canvas.Canvas.showPage(self)
+
+            def save(self):
+                self._draw_watermarks()
+                self._draw_footer()
+                canvas.Canvas.save(self)
+
+            def _draw_watermarks(self):
+                self.saveState()
+                page_w, page_h = A4
+                if self._logo_path and os.path.exists(self._logo_path):
+                    try:
+                        self.translate(page_w / 2, page_h / 2)
+                        self.setFillAlpha(0.05)
+                        self.drawImage(
+                            self._logo_path, -90, -90, width=180, height=180,
+                            preserveAspectRatio=True, mask='auto',
+                        )
+                        self.translate(-page_w / 2, -page_h / 2)
+                    except Exception:
+                        pass
+                if _is_trial:
+                    self.setFillColorRGB(0.8, 0.1, 0.1, alpha=0.08)
+                    self.setFont('Helvetica-Bold', 64)
+                    self.translate(page_w / 2, page_h / 2)
+                    self.rotate(45)
+                    self.drawCentredString(0, 0, 'TRIAL')
+                self.restoreState()
+
+            def _draw_footer(self):
+                self.saveState()
+                page_w, page_h = A4
+                trial_note = ' · TRIAL ACCOUNT' if _is_trial else ''
+                footer_text = (
+                    f'Generated on {_generated_at} by {_user_full_name} · '
+                    f'VALORYX Billing{trial_note} · Computer-generated document'
+                )
+                self.setFont('Helvetica', 6.5)
+                self.setFillColorRGB(0.6, 0.6, 0.6)
+                # Thin separator line
+                self.setStrokeColorRGB(0.85, 0.85, 0.85)
+                self.setLineWidth(0.5)
+                self.line(1.2 * cm, 1.1 * cm, page_w - 1.2 * cm, 1.1 * cm)
+                self.drawCentredString(page_w / 2, 0.7 * cm, footer_text)
+                self.restoreState()
+
+        # Tight margins — more usable space on page
+        doc = SimpleDocTemplate(
+            buffer,
+            pagesize=A4,
+            rightMargin=1.2 * cm,
+            leftMargin=1.2 * cm,
+            topMargin=0.8 * cm,
+            bottomMargin=1.6 * cm,  # leave room for fixed footer
+        )
+
+        elements = []
+        styles = getSampleStyleSheet()
+
+        # ── Compact styles ──
+        co_name_style = ParagraphStyle(
+            'CoName', parent=styles['Normal'],
+            fontSize=16, alignment=TA_CENTER, spaceAfter=2,
+            textColor=colors.HexColor('#1e293b'), fontName='Times-Bold', leading=18,
+        )
+        co_detail_style = ParagraphStyle(
+            'CoDetail', parent=styles['Normal'],
+            fontSize=8, alignment=TA_CENTER, spaceAfter=1,
+            textColor=colors.HexColor('#475569'), leading=11, fontName='Times-Roman',
+        )
+        gstin_style = ParagraphStyle(
+            'GSTIN', parent=styles['Normal'],
+            fontSize=8, alignment=TA_CENTER, spaceAfter=4,
+            textColor=colors.HexColor('#1e293b'), fontName='Times-Bold',
+        )
+        title_style = ParagraphStyle(
+            'Title', parent=styles['Normal'],
+            fontSize=11, alignment=TA_CENTER, spaceBefore=4, spaceAfter=1,
+            textColor=colors.HexColor('#1e293b'), fontName='Times-Bold',
+        )
+        period_style = ParagraphStyle(
+            'Period', parent=styles['Normal'],
+            fontSize=8, alignment=TA_CENTER, spaceAfter=6,
+            textColor=colors.HexColor('#64748b'), fontName='Times-Roman',
+        )
+
+        # ── Header ──
+        elements.append(Paragraph(client_info['client_name'] or 'Business', co_name_style))
+
+        contact_parts = []
+        if client_info.get('address'):
+            contact_parts.append(client_info['address'])
+        if client_info.get('phone'):
+            contact_parts.append(f"Ph: {client_info['phone']}")
+        if client_info.get('email'):
+            contact_parts.append(client_info['email'])
+        if contact_parts:
+            elements.append(Paragraph('  |  '.join(contact_parts), co_detail_style))
+        if client_info.get('gstin'):
+            elements.append(Paragraph(f"GSTIN: {client_info['gstin']}", gstin_style))
+
+        elements.append(HRFlowable(
+            width='100%', thickness=0.8, color=colors.HexColor('#cbd5e1'),
+            spaceBefore=3, spaceAfter=4,
+        ))
+        elements.append(Paragraph('GST BILLS REPORT', title_style))
+        elements.append(Paragraph(f'Period: {start_date}  to  {end_date}', period_style))
+
+        # ── Summary bar (inline, single row) ──
+        usable_w = A4[0] - 2.4 * cm
+        col_w = usable_w / 4
+        summary_data = [
+            ['Total Bills', 'Total Subtotal', 'Total GST', 'Grand Total'],
+            [str(len(bills)), f'Rs. {total_subtotal:,.2f}', f'Rs. {total_gst:,.2f}', f'Rs. {total_final:,.2f}'],
+        ]
+        summary_table = Table(summary_data, colWidths=[col_w] * 4)
+        summary_table.setStyle(TableStyle([
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#1e293b')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 7),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 5),
+            ('TOPPADDING', (0, 0), (-1, 0), 5),
+            ('BACKGROUND', (0, 1), (-1, -1), colors.HexColor('#f1f5f9')),
+            ('FONTNAME', (0, 1), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 1), (-1, -1), 9),
+            ('BOTTOMPADDING', (0, 1), (-1, -1), 6),
+            ('TOPPADDING', (0, 1), (-1, -1), 6),
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+            ('LINEBELOW', (0, 0), (-1, 0), 0.5, colors.HexColor('#cbd5e1')),
+        ]))
+        elements.append(summary_table)
+        elements.append(Spacer(1, 6))
+
+        # ── Bills table ──
+        # Column widths fill the full usable width
+        cw = [0.7*cm, 1.9*cm, 0, 2.6*cm, 1.4*cm, 2.3*cm, 2.6*cm]
+        cw[2] = usable_w - sum(c for c in cw if c)  # customer col takes remaining space
+
+        table_data = [['#', 'Date', 'Customer', 'Subtotal', 'GST%', 'GST Amt', 'Total']]
+        for idx, bill in enumerate(bills, 1):
+            created_at = bill.get('created_at', '')
+            if created_at:
+                try:
+                    date_obj = datetime.fromisoformat(created_at.replace('Z', '+00:00'))
+                    if date_obj.tzinfo is None:
+                        date_obj = pytz.utc.localize(date_obj)
+                    date_str = date_obj.astimezone(kolkata_tz).strftime('%d/%m/%y')
+                except Exception:
+                    date_str = created_at[:10] if len(created_at) >= 10 else created_at
+            else:
+                date_str = '-'
+
+            table_data.append([
+                str(idx),
+                date_str,
+                str(bill.get('customer_name', 'Walk-in'))[:25],
+                f"Rs. {float(bill.get('subtotal', 0)):,.2f}",
+                f"{bill.get('gst_percentage', 0)}%",
+                f"Rs. {float(bill.get('gst_amount', 0)):,.2f}",
+                f"Rs. {float(bill.get('final_amount', 0)):,.2f}",
+            ])
+
+        table_data.append([
+            '', '', 'TOTAL',
+            f'Rs. {total_subtotal:,.2f}', '',
+            f'Rs. {total_gst:,.2f}',
+            f'Rs. {total_final:,.2f}',
+        ])
+
+        bills_table = Table(table_data, colWidths=cw, repeatRows=1)
+        bills_table.setStyle(TableStyle([
+            # Header
+            ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#334155')),
+            ('TEXTCOLOR', (0, 0), (-1, 0), colors.white),
+            ('FONTNAME', (0, 0), (-1, 0), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, 0), (-1, 0), 7),
+            ('TOPPADDING', (0, 0), (-1, 0), 5),
+            ('BOTTOMPADDING', (0, 0), (-1, 0), 5),
+            # Data rows
+            ('FONTNAME', (0, 1), (-1, -2), 'Helvetica'),
+            ('FONTSIZE', (0, 1), (-1, -2), 7.5),
+            ('TOPPADDING', (0, 1), (-1, -2), 3),
+            ('BOTTOMPADDING', (0, 1), (-1, -2), 3),
+            # Totals row
+            ('FONTNAME', (0, -1), (-1, -1), 'Helvetica-Bold'),
+            ('FONTSIZE', (0, -1), (-1, -1), 8),
+            ('BACKGROUND', (0, -1), (-1, -1), colors.HexColor('#e2e8f0')),
+            ('TOPPADDING', (0, -1), (-1, -1), 5),
+            ('BOTTOMPADDING', (0, -1), (-1, -1), 5),
+            # Alignment
+            ('ALIGN', (0, 0), (1, -1), 'CENTER'),
+            ('ALIGN', (2, 0), (2, -1), 'LEFT'),
+            ('ALIGN', (3, 0), (-1, -1), 'RIGHT'),
+            ('ALIGN', (4, 0), (4, -1), 'CENTER'),
+            # Grid
+            ('BOX', (0, 0), (-1, -1), 0.5, colors.HexColor('#cbd5e1')),
+            ('LINEBELOW', (0, 0), (-1, 0), 0.5, colors.HexColor('#94a3b8')),
+            ('LINEABOVE', (0, -1), (-1, -1), 0.8, colors.HexColor('#94a3b8')),
+            ('INNERGRID', (0, 1), (-1, -2), 0.3, colors.HexColor('#e2e8f0')),
+            ('ROWBACKGROUNDS', (0, 1), (-1, -2), [colors.white, colors.HexColor('#f8fafc')]),
+        ]))
+        elements.append(bills_table)
+
+        # Build PDF
+        def canvas_maker(filename, **kwargs):
+            return AuditWatermarkCanvas(
+                filename,
+                logo_path=logo_temp_path,
+                **kwargs,
+            )
+
+        try:
+            doc.build(elements, canvasmaker=canvas_maker)
+        finally:
+            # Always clean up temp logo file, even if PDF build fails
+            if logo_temp_path and os.path.exists(logo_temp_path):
+                try:
+                    os.unlink(logo_temp_path)
+                except Exception:
+                    pass
+
+        # Capture PDF bytes BEFORE passing to email thread (bytes are immutable — thread-safe)
+        buffer.seek(0)
+        pdf_bytes = buffer.read()
+
+        # Fire-and-forget email (returns False silently if SMTP not configured)
+        queued = send_audit_report_email(
+            to_email=to_email,
+            client_name=client_info.get('client_name', ''),
+            start_date=start_date,
+            end_date=end_date,
+            total_bills=len(bills),
+            grand_total=f'Rs. {total_final:,.2f}',
+            pdf_bytes=pdf_bytes,
+            is_trial=is_trial,
+            sent_by=user_full_name,
+        )
+
+        if queued is False:
+            return jsonify({'error': 'Email service is not configured on the server'}), 503
+
+        return jsonify({
+            'success': True,
+            'message': f'Report has been sent to {to_email}',
+        }), 200
+
+    except ImportError as e:
+        return jsonify({'error': 'PDF generation library not installed', 'message': str(e)}), 500
+    except Exception as e:
+        return jsonify({'error': 'Failed to send audit report', 'message': str(e)}), 500

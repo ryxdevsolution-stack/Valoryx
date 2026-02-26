@@ -5,19 +5,34 @@ import { useClient } from '@/contexts/ClientContext'
 
 export default function Home() {
   const navigate = useNavigate()
-  const { isAuthenticated } = useClient()
+  const { isAuthenticated, isLoading } = useClient()
+
+  // Once auth state is resolved, redirect immediately without animation delay
+  useEffect(() => {
+    if (!isLoading) {
+      if (isAuthenticated) {
+        navigate('/dashboard', { replace: true })
+      } else {
+        navigate('/auth/login', { replace: true })
+      }
+    }
+  }, [isLoading, isAuthenticated, navigate])
 
   const handleAnimationComplete = () => {
-    // After logo animation, redirect based on auth status
     if (isAuthenticated) {
-      navigate('/dashboard')
+      navigate('/dashboard', { replace: true })
     } else {
-      navigate('/auth/login')
+      navigate('/auth/login', { replace: true })
     }
   }
 
+  // Show dark background while auth is resolving (no flash of light background)
+  if (isLoading) {
+    return <div className="min-h-screen bg-[#271E37]" />
+  }
+
   return (
-    <main className="flex min-h-screen items-center justify-center bg-gradient-to-br from-blue-50 to-indigo-100">
+    <main className="flex min-h-screen items-center justify-center bg-[#271E37]">
       <LogoAnimation onComplete={handleAnimationComplete} />
     </main>
   )

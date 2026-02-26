@@ -28,6 +28,16 @@ class User(db.Model):
     synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
     telegram_chat_id = db.Column(db.String(50), nullable=True)  # Telegram chat ID for daily reports
 
+    # Branch assignment (nullable — unassigned = access to all branches)
+    branch_id = db.Column(FlexibleUUID, db.ForeignKey('branches.branch_id'), nullable=True, index=True)
+
+    # Password reset
+    reset_token = db.Column(db.String(64), nullable=True, index=True)
+    reset_token_expires = db.Column(db.DateTime, nullable=True)
+
+    # Login IP tracking (for new-location email alert)
+    last_login_ip = db.Column(db.String(45), nullable=True)  # 45 chars covers IPv6
+
     def to_dict(self):
         return {
             'user_id': self.user_id,
@@ -47,4 +57,5 @@ class User(db.Model):
             'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None,
             'synced_at': self.synced_at.isoformat() if self.synced_at else None,
             'telegram_chat_id': self.telegram_chat_id,
+            'branch_id': str(self.branch_id) if self.branch_id else None,
         }

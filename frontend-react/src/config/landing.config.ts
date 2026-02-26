@@ -31,7 +31,7 @@ export const siteConfig = {
   name: 'RYX Billing',
   tagline: 'Modern Billing for Modern Businesses',
   description: 'GST-compliant invoicing, real-time inventory, and powerful analytics. Everything you need to run your retail or service business efficiently.',
-  logoPath: '/RYX_Logo.png',
+  logoPath: `${import.meta.env.BASE_URL}RYX_Logo.png`,
   appUrl: 'app.ryxbilling.com',
 
   // Routes

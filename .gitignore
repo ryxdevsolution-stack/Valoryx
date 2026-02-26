@@ -66,13 +66,12 @@ htmlcov/
 temp/
 tmp/
 
-# Environment files
+# Environment files - ALL .env files in any directory
 .env
-.env.local
-.env.*.local
-backend/.env
-# frontend/.env is NOT gitignored - it contains Render URL for web deployment
-# Use frontend/.env.local for local/desktop overrides (gitignored)
+.env.*
+**/.env
+**/.env.*
+*.env
 
 # Electron / Desktop Build
 dist/
