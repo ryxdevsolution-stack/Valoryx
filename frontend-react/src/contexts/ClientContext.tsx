@@ -12,6 +12,8 @@ interface User {
   full_name?: string
   phone?: string
   department?: string
+  branch_id?: string | null
+  branch_name?: string | null
   created_at?: string | null
   last_login?: string | null
   telegram_chat_id?: string
@@ -114,6 +116,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
                 full_name: profile.full_name,
                 phone: profile.phone,
                 department: profile.department,
+                branch_id: profile.branch_id ?? null,
+                branch_name: profile.branch_name ?? null,
                 created_at: profile.created_at ?? null,
                 last_login: profile.last_login ?? null,
                 telegram_chat_id: profile.telegram_chat_id,
@@ -151,6 +155,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         full_name: user.full_name,
         phone: user.phone,
         department: user.department,
+        branch_id: user.branch_id ?? null,
+        branch_name: user.branch_name ?? null,
         telegram_chat_id: user.telegram_chat_id,
       }
 
@@ -295,6 +301,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           full_name: profile.full_name,
           phone: profile.phone,
           department: profile.department,
+          branch_id: profile.branch_id ?? null,
+          branch_name: profile.branch_name ?? null,
           telegram_chat_id: profile.telegram_chat_id,
           created_at: profile.created_at ?? null,
           last_login: profile.last_login ?? null,

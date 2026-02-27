@@ -9,6 +9,7 @@ from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.user_model import User
 from models.client_model import ClientEntry
+from models.branch_model import Branch
 from models.audit_model import AuditLog
 from models.permission_model import get_user_permissions
 from utils.auth_middleware import authenticate
@@ -32,6 +33,13 @@ def get_profile():
         client = ClientEntry.query.filter_by(client_id=user.client_id).first()
         permissions = get_user_permissions(user_id)
 
+        # Resolve branch name if user has a branch assigned
+        branch_name = None
+        if user.branch_id:
+            branch = Branch.query.filter_by(branch_id=user.branch_id).first()
+            if branch:
+                branch_name = branch.name
+
         profile_data = {
             'user_id': user.user_id,
             'email': user.email,
@@ -41,6 +49,8 @@ def get_profile():
             'role': user.role,
             'is_super_admin': user.is_super_admin,
             'is_active': user.is_active,
+            'branch_id': str(user.branch_id) if user.branch_id else None,
+            'branch_name': branch_name,
             'created_at': user.created_at.isoformat() if user.created_at else None,
             'last_login': user.last_login.isoformat() if user.last_login else None,
             'telegram_chat_id': user.telegram_chat_id,

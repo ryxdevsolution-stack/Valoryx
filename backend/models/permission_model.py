@@ -1,5 +1,6 @@
 from extensions import db
 from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
+from sqlalchemy.orm import joinedload
 from datetime import datetime
 import uuid
 
@@ -93,14 +94,6 @@ class UserPermission(db.Model):
 
 def get_user_permissions(user_id):
     """Get all permission names for a user"""
-    import logging
-    logging.info(f"[DEBUG] get_user_permissions called with user_id={user_id}, type={type(user_id)}")
-
-    # Ensure user_id is a UUID object if it's a string
-    if isinstance(user_id, str):
-        import uuid as uuid_mod
-        user_id = uuid_mod.UUID(user_id)
-
     permissions = db.session.query(Permission.permission_name).join(
         UserPermission, Permission.permission_id == UserPermission.permission_id
     ).filter(
@@ -217,8 +210,8 @@ def bulk_update_permissions(user_id, permission_names, granted_by_id):
             UserPermission.permission_id.in_(perm_ids)
         ).delete(synchronize_session=False)
 
-    # Single commit for all changes
-    db.session.commit()
+    # Flush only — let the caller commit as part of a wider transaction
+    db.session.flush()
 
     return {
         'added': list(to_add),
@@ -227,8 +220,13 @@ def bulk_update_permissions(user_id, permission_names, granted_by_id):
 
 
 def get_all_sections_with_permissions():
-    """Get all permission sections with their permissions in a tree structure"""
-    sections = PermissionSection.query.order_by(PermissionSection.display_order).all()
+    """Get all permission sections with their permissions in a tree structure (single query via joinedload)."""
+    sections = (
+        PermissionSection.query
+        .options(joinedload(PermissionSection.permissions))
+        .order_by(PermissionSection.display_order)
+        .all()
+    )
 
     result = []
     for section in sections:

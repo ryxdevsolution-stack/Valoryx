@@ -101,7 +101,7 @@ def create_app():
     auth_bp = billing_bp = stock_bp = report_bp = audit_bp = None
     client_bp = payment_bp = customer_bp = analytics_bp = None
     permissions_bp = admin_bp = notes_bp = bulk_order_bp = expense_bp = profile_bp = None
-    branch_bp = stock_transfer_bp = None
+    branch_bp = stock_transfer_bp = team_bp = None
 
     try:
         from routes.auth import auth_bp
@@ -211,6 +211,12 @@ def create_app():
     except Exception as e:
         import_errors.append(f"stock_transfer: {str(e)}")
         logging.error(f"Failed to import stock_transfer blueprint: {e}")
+
+    try:
+        from routes.team import team_bp
+    except Exception as e:
+        import_errors.append(f"team: {str(e)}")
+        logging.error(f"Failed to import team blueprint: {e}")
 
     # Store import errors for debugging
     app.config['IMPORT_ERRORS'] = import_errors
@@ -343,6 +349,13 @@ def create_app():
             blueprints_registered.append('stock_transfers')
         except Exception as e:
             print(f"Warning: Could not register stock_transfer blueprint: {e}")
+
+    if team_bp:
+        try:
+            app.register_blueprint(team_bp, url_prefix='/api/team')
+            blueprints_registered.append('team')
+        except Exception as e:
+            print(f"Warning: Could not register team blueprint: {e}")
 
     # Store blueprint registration status
     app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered

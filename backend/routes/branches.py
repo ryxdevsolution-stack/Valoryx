@@ -47,18 +47,32 @@ def create_branch():
         client_id = g.user['client_id']
 
         # Validate required fields
-        if not data or not data.get('name', '').strip():
+        name = (data.get('name', '') if data else '').strip()
+        if not name:
             return jsonify({
                 'success': False,
                 'error': 'Branch name is required'
             }), 400
+
+        # Check for duplicate branch name within the same tenant
+        existing = Branch.query.filter_by(
+            client_id=client_id,
+            name=name,
+            is_active=True,
+        ).first()
+        if existing:
+            return jsonify({
+                'success': True,
+                'data': existing.to_dict(),
+                'message': 'Branch already exists',
+            }), 200
 
         branch_id = str(uuid.uuid4())
 
         new_branch = Branch(
             branch_id=branch_id,
             client_id=client_id,
-            name=data['name'].strip(),
+            name=name,
             location=data.get('location', '').strip() or None,
             is_active=True,
             created_at=datetime.utcnow(),
@@ -78,9 +92,9 @@ def create_branch():
             'message': 'Branch created successfully'
         }), 201
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({'success': False, 'error': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Failed to create branch'}), 500
 
 
 @branch_bp.route('/<branch_id>', methods=['PUT'])

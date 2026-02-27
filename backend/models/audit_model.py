@@ -15,10 +15,13 @@ def get_current_time():
 class AuditLog(db.Model):
     """Complete audit trail of all actions"""
     __tablename__ = 'audit_log'
+    __table_args__ = (
+        db.Index('idx_audit_client_user_ts', 'client_id', 'user_id', 'timestamp'),
+    )
 
     log_id = db.Column(FlexibleUUID, primary_key=True)
     client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
-    user_id = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
+    user_id = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'), index=True)
     action_type = db.Column(db.String(50), nullable=False)
     table_name = db.Column(db.String(100))
     record_id = db.Column(FlexibleUUID)

@@ -1,0 +1,51 @@
+import { Users, CreditCard, User } from 'lucide-react'
+
+export type ProfileTab = 'account' | 'team' | 'subscription'
+
+interface ProfileTabsProps {
+  activeTab: ProfileTab
+  onTabChange: (tab: ProfileTab) => void
+  showTeamTab: boolean
+  showSubscriptionTab: boolean
+}
+
+const TABS: { id: ProfileTab; label: string; icon: typeof User }[] = [
+  { id: 'account', label: 'Account', icon: User },
+  { id: 'team', label: 'Team', icon: Users },
+  { id: 'subscription', label: 'Subscription', icon: CreditCard },
+]
+
+export default function ProfileTabs({ activeTab, onTabChange, showTeamTab, showSubscriptionTab }: ProfileTabsProps) {
+  const visibleTabs = TABS.filter(tab => {
+    if (tab.id === 'team') return showTeamTab
+    if (tab.id === 'subscription') return showSubscriptionTab
+    return true
+  })
+
+  return (
+    <div role="tablist" className="flex gap-1 px-4 pb-2 flex-shrink-0 overflow-x-auto" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
+      {visibleTabs.map(tab => {
+        const Icon = tab.icon
+        const isActive = activeTab === tab.id
+        return (
+          <button
+            key={tab.id}
+            role="tab"
+            type="button"
+            aria-selected={isActive}
+            aria-controls={`panel-${tab.id}`}
+            onClick={() => onTabChange(tab.id)}
+            className={`flex items-center gap-1.5 sm:gap-2 px-3 sm:px-4 py-2 text-xs sm:text-sm font-medium rounded-lg transition-colors whitespace-nowrap flex-shrink-0 ${
+              isActive
+                ? 'bg-gray-900 text-white dark:bg-white dark:text-gray-900'
+                : 'text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-700'
+            }`}
+          >
+            <Icon className="w-4 h-4" />
+            {tab.label}
+          </button>
+        )
+      })}
+    </div>
+  )
+}

@@ -42,15 +42,17 @@ def login():
         if not email or not password:
             return jsonify({'error': 'Email and password required'}), 400
 
-        # OPTIMIZED: Single JOIN query to get User + Client together
-        result = db.session.query(User, ClientEntry).join(
+        # OPTIMIZED: Single JOIN query to get User + Client + Branch together
+        result = db.session.query(User, ClientEntry, Branch).join(
             ClientEntry, User.client_id == ClientEntry.client_id
+        ).outerjoin(
+            Branch, User.branch_id == Branch.branch_id
         ).filter(User.email == email).first()
 
         if not result:
             return jsonify({'error': 'Email address not found'}), 401
 
-        user, client = result
+        user, client, branch = result
 
         # Verify password
         if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
@@ -84,7 +86,7 @@ def login():
         # Update last_login without blocking (will be committed with cache set)
         user.last_login = datetime.utcnow()
 
-        # Prepare user data for caching
+        # Prepare user data for caching (branch resolved via outerjoin above)
         user_data = {
             'user_id': str(user.user_id),
             'email': user.email,
@@ -93,7 +95,9 @@ def login():
             'department': user.department,
             'role': user.role,
             'is_super_admin': user.is_super_admin,
-            'permissions': user_permissions
+            'permissions': user_permissions,
+            'branch_id': str(user.branch_id) if user.branch_id else None,
+            'branch_name': branch.name if branch else None,
         }
 
         # Prepare client data for caching
@@ -344,6 +348,8 @@ def signup():
             'role': 'admin',
             'is_super_admin': False,
             'permissions': user_permissions,
+            'branch_id': None,
+            'branch_name': None,
         }
 
         client_data = {

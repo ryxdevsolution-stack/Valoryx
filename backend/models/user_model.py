@@ -6,6 +6,9 @@ import uuid
 class User(db.Model):
     """User authentication with client_id foreign key"""
     __tablename__ = 'users'
+    __table_args__ = (
+        db.Index('idx_users_client_role_deleted', 'client_id', 'role', 'deleted_at'),
+    )
 
     user_id = db.Column(FlexibleUUID, primary_key=True, default=lambda: str(uuid.uuid4()))
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
