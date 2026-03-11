@@ -1,24 +1,29 @@
-import { Users, CreditCard, User } from 'lucide-react'
+import { Users, CreditCard, User, MonitorSmartphone, ShieldCheck, Webhook } from 'lucide-react'
 
-export type ProfileTab = 'account' | 'team' | 'subscription'
+export type ProfileTab = 'account' | 'team' | 'subscription' | 'sessions' | 'two-factor' | 'webhooks'
 
 interface ProfileTabsProps {
   activeTab: ProfileTab
   onTabChange: (tab: ProfileTab) => void
   showTeamTab: boolean
   showSubscriptionTab: boolean
+  showWebhooksTab?: boolean
 }
 
 const TABS: { id: ProfileTab; label: string; icon: typeof User }[] = [
   { id: 'account', label: 'Account', icon: User },
   { id: 'team', label: 'Team', icon: Users },
   { id: 'subscription', label: 'Subscription', icon: CreditCard },
+  { id: 'sessions', label: 'Sessions', icon: MonitorSmartphone },
+  { id: 'two-factor', label: '2FA', icon: ShieldCheck },
+  { id: 'webhooks', label: 'Webhooks', icon: Webhook },
 ]
 
-export default function ProfileTabs({ activeTab, onTabChange, showTeamTab, showSubscriptionTab }: ProfileTabsProps) {
+export default function ProfileTabs({ activeTab, onTabChange, showTeamTab, showSubscriptionTab, showWebhooksTab }: ProfileTabsProps) {
   const visibleTabs = TABS.filter(tab => {
     if (tab.id === 'team') return showTeamTab
     if (tab.id === 'subscription') return showSubscriptionTab
+    if (tab.id === 'webhooks') return showWebhooksTab ?? false
     return true
   })
 

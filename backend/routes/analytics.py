@@ -64,119 +64,53 @@ def get_dashboard_analytics():
         month_start = now - timedelta(days=30)
         prev_month_start = now - timedelta(days=60)
 
-        # ==================== SQL AGGREGATIONS (N+1 FIX) ====================
-        # Revenue calculations using SQL instead of loading all records
-        # SECURITY: Apply user-level filtering for view_own_bills permission
+        # ==================== BATCHED SQL AGGREGATIONS (12 queries → 2) ====================
+        # All revenue + count metrics computed in a single round-trip per billing table.
+        # Previously: 12 separate .scalar() calls × ~300ms Supabase latency = 3.6s wasted.
+        # Now: 2 queries return all 6 aggregates each via CASE WHEN — 1 scan, 1 round-trip.
 
-        # Today's revenue - GST
-        gst_today_query = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
-            GSTBilling.client_id == client_id,
-            GSTBilling.created_at >= today_start
-        )
-        if not has_view_all:
-            gst_today_query = gst_today_query.filter(GSTBilling.created_by == user_id)
-        gst_today = gst_today_query.scalar() or 0
+        from sqlalchemy import case
 
-        # Today's revenue - Non-GST
-        non_gst_today_query = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
-            NonGSTBilling.client_id == client_id,
-            NonGSTBilling.created_at >= today_start
-        )
-        if not has_view_all:
-            non_gst_today_query = non_gst_today_query.filter(NonGSTBilling.created_by == user_id)
-        non_gst_today = non_gst_today_query.scalar() or 0
+        def _gst_aggs(extra_filter=None):
+            q = db.session.query(
+                func.coalesce(func.sum(case((GSTBilling.created_at >= today_start, GSTBilling.final_amount))), 0).label('today_rev'),
+                func.coalesce(func.sum(case((GSTBilling.created_at >= week_start, GSTBilling.final_amount))), 0).label('week_rev'),
+                func.coalesce(func.sum(case((GSTBilling.created_at >= month_start, GSTBilling.final_amount))), 0).label('month_rev'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= prev_month_start) & (GSTBilling.created_at < month_start), GSTBilling.final_amount))), 0).label('prev_rev'),
+                func.count(GSTBilling.bill_id).label('total_count'),
+                func.count(case((GSTBilling.created_at >= today_start, GSTBilling.bill_id))).label('today_count'),
+            ).filter(GSTBilling.client_id == client_id)
+            if extra_filter is not None:
+                q = q.filter(extra_filter)
+            return q.one()
 
-        revenue_today = float(gst_today) + float(non_gst_today)
+        def _non_gst_aggs(extra_filter=None):
+            q = db.session.query(
+                func.coalesce(func.sum(case((NonGSTBilling.created_at >= today_start, NonGSTBilling.total_amount))), 0).label('today_rev'),
+                func.coalesce(func.sum(case((NonGSTBilling.created_at >= week_start, NonGSTBilling.total_amount))), 0).label('week_rev'),
+                func.coalesce(func.sum(case((NonGSTBilling.created_at >= month_start, NonGSTBilling.total_amount))), 0).label('month_rev'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= prev_month_start) & (NonGSTBilling.created_at < month_start), NonGSTBilling.total_amount))), 0).label('prev_rev'),
+                func.count(NonGSTBilling.bill_id).label('total_count'),
+                func.count(case((NonGSTBilling.created_at >= today_start, NonGSTBilling.bill_id))).label('today_count'),
+            ).filter(NonGSTBilling.client_id == client_id)
+            if extra_filter is not None:
+                q = q.filter(extra_filter)
+            return q.one()
 
-        # Week's revenue
-        gst_week_query = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
-            GSTBilling.client_id == client_id,
-            GSTBilling.created_at >= week_start
-        )
-        if not has_view_all:
-            gst_week_query = gst_week_query.filter(GSTBilling.created_by == user_id)
-        gst_week = gst_week_query.scalar() or 0
+        user_filter_gst = GSTBilling.created_by == user_id if not has_view_all else None
+        user_filter_non_gst = NonGSTBilling.created_by == user_id if not has_view_all else None
 
-        non_gst_week_query = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
-            NonGSTBilling.client_id == client_id,
-            NonGSTBilling.created_at >= week_start
-        )
-        if not has_view_all:
-            non_gst_week_query = non_gst_week_query.filter(NonGSTBilling.created_by == user_id)
-        non_gst_week = non_gst_week_query.scalar() or 0
+        ga = _gst_aggs(user_filter_gst)
+        na = _non_gst_aggs(user_filter_non_gst)
 
-        revenue_week = float(gst_week) + float(non_gst_week)
-
-        # Month's revenue
-        gst_month_query = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
-            GSTBilling.client_id == client_id,
-            GSTBilling.created_at >= month_start
-        )
-        if not has_view_all:
-            gst_month_query = gst_month_query.filter(GSTBilling.created_by == user_id)
-        gst_month = gst_month_query.scalar() or 0
-
-        non_gst_month_query = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
-            NonGSTBilling.client_id == client_id,
-            NonGSTBilling.created_at >= month_start
-        )
-        if not has_view_all:
-            non_gst_month_query = non_gst_month_query.filter(NonGSTBilling.created_by == user_id)
-        non_gst_month = non_gst_month_query.scalar() or 0
-
-        revenue_month = float(gst_month) + float(non_gst_month)
-
-        # Previous month's revenue (for growth calculation)
-        gst_prev_month_query = db.session.query(func.coalesce(func.sum(GSTBilling.final_amount), 0)).filter(
-            GSTBilling.client_id == client_id,
-            GSTBilling.created_at >= prev_month_start,
-            GSTBilling.created_at < month_start
-        )
-        if not has_view_all:
-            gst_prev_month_query = gst_prev_month_query.filter(GSTBilling.created_by == user_id)
-        gst_prev_month = gst_prev_month_query.scalar() or 0
-
-        non_gst_prev_month_query = db.session.query(func.coalesce(func.sum(NonGSTBilling.total_amount), 0)).filter(
-            NonGSTBilling.client_id == client_id,
-            NonGSTBilling.created_at >= prev_month_start,
-            NonGSTBilling.created_at < month_start
-        )
-        if not has_view_all:
-            non_gst_prev_month_query = non_gst_prev_month_query.filter(NonGSTBilling.created_by == user_id)
-        non_gst_prev_month = non_gst_prev_month_query.scalar() or 0
-
-        revenue_prev_month = float(gst_prev_month) + float(non_gst_prev_month)
-
-        # Bill counts using SQL
-        total_gst_bills_query = db.session.query(func.count(GSTBilling.bill_id)).filter(
-            GSTBilling.client_id == client_id
-        )
-        if not has_view_all:
-            total_gst_bills_query = total_gst_bills_query.filter(GSTBilling.created_by == user_id)
-        total_gst_bills = total_gst_bills_query.scalar() or 0
-
-        total_non_gst_bills_query = db.session.query(func.count(NonGSTBilling.bill_id)).filter(
-            NonGSTBilling.client_id == client_id
-        )
-        if not has_view_all:
-            total_non_gst_bills_query = total_non_gst_bills_query.filter(NonGSTBilling.created_by == user_id)
-        total_non_gst_bills = total_non_gst_bills_query.scalar() or 0
-
-        today_gst_count_query = db.session.query(func.count(GSTBilling.bill_id)).filter(
-            GSTBilling.client_id == client_id,
-            GSTBilling.created_at >= today_start
-        )
-        if not has_view_all:
-            today_gst_count_query = today_gst_count_query.filter(GSTBilling.created_by == user_id)
-        today_gst_count = today_gst_count_query.scalar() or 0
-
-        today_non_gst_count_query = db.session.query(func.count(NonGSTBilling.bill_id)).filter(
-            NonGSTBilling.client_id == client_id,
-            NonGSTBilling.created_at >= today_start
-        )
-        if not has_view_all:
-            today_non_gst_count_query = today_non_gst_count_query.filter(NonGSTBilling.created_by == user_id)
-        today_non_gst_count = today_non_gst_count_query.scalar() or 0
+        revenue_today      = float(ga.today_rev or 0)    + float(na.today_rev or 0)
+        revenue_week       = float(ga.week_rev or 0)     + float(na.week_rev or 0)
+        revenue_month      = float(ga.month_rev or 0)    + float(na.month_rev or 0)
+        revenue_prev_month = float(ga.prev_rev or 0)     + float(na.prev_rev or 0)
+        total_gst_bills    = int(ga.total_count or 0)
+        total_non_gst_bills= int(na.total_count or 0)
+        today_gst_count    = int(ga.today_count or 0)
+        today_non_gst_count= int(na.today_count or 0)
 
         # Calculate growth rate
         growth_rate = 0
@@ -187,23 +121,30 @@ def get_dashboard_analytics():
         total_bills = total_gst_bills + total_non_gst_bills
         avg_bill_value = (revenue_month / total_bills) if total_bills > 0 else 0
 
-        # ==================== LOAD ONLY RECENT BILLS FOR PRODUCT ANALYSIS ====================
-        # Only load bills from start_date for product analysis (not ALL historical bills)
-        gst_bills_query = GSTBilling.query.filter(
+        # ==================== LOAD ONLY RECENT BILLS (PARTIAL COLUMNS) ====================
+        # Select only columns needed for product analysis, payment, peak-hours, customer insights.
+        # Avoids loading bill_id, discount_*, negotiable_amount etc. from every row.
+        _gst_q = db.session.query(
+            GSTBilling.final_amount, GSTBilling.items, GSTBilling.created_at,
+            GSTBilling.customer_name, GSTBilling.payment_type
+        ).filter(
             GSTBilling.client_id == client_id,
-            GSTBilling.created_at >= prev_month_start  # Only last 60 days max for product analysis
+            GSTBilling.created_at >= prev_month_start
         )
         if not has_view_all:
-            gst_bills_query = gst_bills_query.filter(GSTBilling.created_by == user_id)
-        gst_bills = gst_bills_query.all()
+            _gst_q = _gst_q.filter(GSTBilling.created_by == user_id)
+        gst_bills = _gst_q.all()
 
-        non_gst_bills_query = NonGSTBilling.query.filter(
+        _non_q = db.session.query(
+            NonGSTBilling.total_amount, NonGSTBilling.items, NonGSTBilling.created_at,
+            NonGSTBilling.customer_name, NonGSTBilling.payment_type
+        ).filter(
             NonGSTBilling.client_id == client_id,
-            NonGSTBilling.created_at >= prev_month_start  # Only last 60 days max
+            NonGSTBilling.created_at >= prev_month_start
         )
         if not has_view_all:
-            non_gst_bills_query = non_gst_bills_query.filter(NonGSTBilling.created_by == user_id)
-        non_gst_bills = non_gst_bills_query.all()
+            _non_q = _non_q.filter(NonGSTBilling.created_by == user_id)
+        non_gst_bills = _non_q.all()
 
         # Product performance analysis (ALL TIME)
         product_sales = defaultdict(lambda: {'quantity': 0, 'revenue': 0.0, 'category': '', 'recent_sales': 0, 'old_sales': 0})
@@ -211,10 +152,10 @@ def get_dashboard_analytics():
         # Product performance for selected time range
         product_sales_filtered = defaultdict(lambda: {'quantity': 0, 'revenue': 0.0, 'category': ''})
 
-        # Analyze GST bills
+        # Analyze GST bills (partial-column named tuples)
         for bill in gst_bills:
             bill_amount = float(bill.final_amount) if bill.final_amount else 0
-            items = bill.items if isinstance(bill.items, list) else []
+            items = (bill.items if isinstance(bill.items, list) else []) if bill.items else []
 
             for item in items:
                 product_name = item.get('product_name', 'Unknown')
@@ -318,56 +259,54 @@ def get_dashboard_analytics():
             for name, data in sorted_products_filtered[:product_limit] if data['revenue'] > 0
         ]
 
-        # Product performance tiers (for column chart with product names)
-        # Get all products from stock
-        all_stock_products = StockEntry.query.filter_by(client_id=client_id).all()
-        stock_product_names = {item.product_name for item in all_stock_products}
+        # Single stock query — fetches all needed columns (low-stock + cost-price) in one round-trip.
+        # Eliminates the second cost_rows query that was firing lower in the function.
+        all_stock_rows = db.session.query(
+            StockEntry.product_name,
+            StockEntry.quantity,
+            StockEntry.low_stock_alert,
+            StockEntry.rate,
+            StockEntry.cost_price,
+        ).filter_by(client_id=client_id).all()
+
+        stock_product_names = {row.product_name for row in all_stock_rows}
+        low_stock_items = [
+            row for row in all_stock_rows
+            if row.quantity is not None and row.low_stock_alert is not None
+            and row.quantity <= row.low_stock_alert
+        ]
+        inventory_total_value = sum(float(row.rate or 0) * (row.quantity or 0) for row in low_stock_items)
+        # Build cost lookup from the same rows (avoids a second stock query below)
+        all_stock = {
+            row.product_name: float(row.cost_price) if row.cost_price else float(row.rate or 0) * 0.7
+            for row in all_stock_rows
+        }
 
         # Categorize products by performance
         products_sold_set = {name for name, data in product_sales_filtered.items() if data['quantity'] > 0}
 
         # Get top 5 most selling products
         most_selling_products = [
-            {
-                'name': name,
-                'quantity': data['quantity']
-            }
+            {'name': name, 'quantity': data['quantity']}
             for name, data in sorted_products_filtered[:5]
         ]
 
         # Get 5 less selling products (from bottom of sold products)
         less_selling_start = max(5, len(sorted_products_filtered) - 5)
         less_selling_products = [
-            {
-                'name': name,
-                'quantity': data['quantity']
-            }
+            {'name': name, 'quantity': data['quantity']}
             for name, data in sorted_products_filtered[less_selling_start:] if data['quantity'] > 0
         ]
 
         # Get 5 non-selling products (in stock but not sold)
         non_selling_product_names = list(stock_product_names - products_sold_set)[:5]
-        non_selling_products = [
-            {
-                'name': name,
-                'quantity': 0  # Will be shown as negative in chart
-            }
-            for name in non_selling_product_names
-        ]
+        non_selling_products = [{'name': name, 'quantity': 0} for name in non_selling_product_names]
 
         product_performance_tiers = {
             'mostSelling': most_selling_products,
             'lessSelling': less_selling_products,
             'nonSelling': non_selling_products
         }
-
-        # Inventory analysis
-        low_stock_items = StockEntry.query.filter(
-            StockEntry.client_id == client_id,
-            StockEntry.quantity <= StockEntry.low_stock_alert
-        ).all()
-
-        inventory_total_value = sum([float(item.rate) * item.quantity for item in low_stock_items])
 
         # Category performance
         category_performance = defaultdict(lambda: {'revenue': 0.0, 'items_sold': 0})
@@ -484,11 +423,7 @@ def get_dashboard_analytics():
         total_cost = 0
         total_revenue_for_margin = 0
 
-        # Get all stock with cost prices (use cost_price if available, otherwise estimate 70% of selling price)
-        all_stock = {
-            item.product_name: float(item.cost_price) if item.cost_price else float(item.rate) * 0.7
-            for item in StockEntry.query.filter_by(client_id=client_id).all()
-        }
+        # all_stock dict is built from all_stock_rows above — no second stock query needed.
 
         for bill in gst_bills:
             items = bill.items if isinstance(bill.items, list) else []
@@ -540,7 +475,7 @@ def get_dashboard_analytics():
                 'performanceTiers': product_performance_tiers
             },
             'inventory': {
-                'lowStock': [item.to_dict() for item in low_stock_items],
+                'lowStock': [{'product_name': r.product_name, 'quantity': r.quantity, 'low_stock_alert': r.low_stock_alert} for r in low_stock_items],
                 'totalValue': round(inventory_total_value, 2),
                 'criticalCount': len(low_stock_items)
             },

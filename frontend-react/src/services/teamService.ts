@@ -10,6 +10,7 @@ export interface TeamMember {
   department: string
   role: string
   is_active: boolean
+  invite_accepted: boolean
   branch_id: string | null
   branch_name: string | null
   last_login: string | null
@@ -49,14 +50,13 @@ export interface BranchItem {
 
 export interface CreateTeamMemberPayload {
   email: string
-  password: string
   full_name: string
   phone?: string
   department?: string
   role: string
-  is_active?: boolean
   branch_id?: string | null
   permissions?: string[]
+  // password removed — invite flow handles password setup
 }
 
 export interface UpdateTeamMemberPayload {
@@ -76,6 +76,15 @@ export interface PlanInfo {
   can_add_member: boolean
   allowed_billing: string[]
   slots_remaining: number
+}
+
+export interface PermissionPreset {
+  preset_id: string
+  client_id: string
+  role: string
+  permissions: string[]
+  updated_at: string | null
+  updated_by: string | null
 }
 
 // ─── Service ─────────────────────────────────────────────────────────
@@ -116,6 +125,12 @@ const teamService = {
 
   getPlanInfo: () =>
     api.get<{ success: boolean; data: PlanInfo }>('/team/plan-info'),
+
+  getPreset: (role: string) =>
+    api.get<{ success: boolean; data: PermissionPreset | null }>(`/team/presets/${role}`),
+
+  resendInvite: (userId: string) =>
+    api.post<{ success: boolean; message: string }>(`/invite/resend/${userId}`),
 }
 
 export default teamService

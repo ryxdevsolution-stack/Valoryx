@@ -6,12 +6,17 @@ import ProfileTabs, { type ProfileTab } from '@/components/profile/ProfileTabs'
 import AccountTab from '@/components/profile/AccountTab'
 import TeamTab from '@/components/profile/TeamTab'
 import SubscriptionTab from '@/components/profile/SubscriptionTab'
+import SessionsTab from '@/components/profile/SessionsTab'
+import TwoFactorTab from '@/components/profile/TwoFactorTab'
+import WebhooksTab from '@/components/profile/WebhooksTab'
 import {
   Activity,
   AlertCircle,
   CheckCircle,
   Loader2,
   X,
+  Trash2,
+  Download,
 } from 'lucide-react'
 
 interface Transaction {
@@ -44,7 +49,8 @@ export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState<ProfileTab>(() => {
     const params = new URLSearchParams(window.location.search)
     const tab = params.get('tab')
-    return (tab === 'account' || tab === 'team' || tab === 'subscription') ? tab : 'account'
+    const validTabs: ProfileTab[] = ['account', 'team', 'subscription', 'sessions', 'two-factor', 'webhooks']
+    return validTabs.includes(tab as ProfileTab) ? (tab as ProfileTab) : 'account'
   })
 
   // Profile edit state
@@ -86,6 +92,12 @@ export default function ProfilePage() {
   const [telegramChatId, setTelegramChatId] = useState(user?.telegram_chat_id || '')
   const [savingTelegram, setSavingTelegram] = useState(false)
   const [testingTelegram, setTestingTelegram] = useState(false)
+
+  // Danger Zone state
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
+  const [deleteReason, setDeleteReason] = useState('')
+  const [deletingAccount, setDeletingAccount] = useState(false)
+  const [exportingData, setExportingData] = useState(false)
 
   // Activity history state
   const [activity, setActivity] = useState<ActivityItem[]>([])
@@ -282,6 +294,43 @@ export default function ProfilePage() {
     }
   }
 
+  const handleRequestDeletion = async () => {
+    if (!client?.client_id) return
+    try {
+      setDeletingAccount(true)
+      await api.post(`/clients/${client.client_id}/request-deletion`, { reason: deleteReason })
+      setMessage({
+        type: 'success',
+        text: 'Account deletion scheduled. You have 30 days to change your mind — check your email for a reactivation link.',
+      })
+      setShowDeleteConfirm(false)
+      setDeleteReason('')
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.response?.data?.error || 'Failed to schedule deletion' })
+    } finally {
+      setDeletingAccount(false)
+    }
+  }
+
+  const handleExportData = async () => {
+    if (!client?.client_id) return
+    try {
+      setExportingData(true)
+      const res = await api.get(`/clients/${client.client_id}/export-data`)
+      const blob = new Blob([JSON.stringify(res.data.data, null, 2)], { type: 'application/json' })
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `valoryx-data-export-${new Date().toISOString().slice(0, 10)}.json`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.response?.data?.error || 'Failed to export data' })
+    } finally {
+      setExportingData(false)
+    }
+  }
+
   const handleSaveTelegramChatId = async () => {
     try {
       setSavingTelegram(true)
@@ -357,6 +406,7 @@ export default function ProfilePage() {
         onTabChange={handleTabChange}
         showTeamTab={canManageTeam}
         showSubscriptionTab={canManageTeam}
+        showWebhooksTab={user?.role === 'owner' || user?.role === 'admin'}
       />
 
       {/* Message Alert */}
@@ -416,7 +466,87 @@ export default function ProfilePage() {
             />
           )}
 
+          {/* Danger Zone — owner only, shown in account tab */}
+          {activeTab === 'account' && user?.role === 'owner' && (
+            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-red-200 dark:border-red-800/50 p-6">
+              <h3 className="text-base font-semibold text-red-600 dark:text-red-400 mb-1 flex items-center gap-2">
+                <Trash2 className="w-4 h-4" /> Danger Zone
+              </h3>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                Actions here are irreversible. Account deletion has a 30-day grace period during which you can cancel.
+              </p>
+
+              <div className="flex flex-wrap gap-3">
+                {/* Export data */}
+                <button
+                  type="button"
+                  onClick={handleExportData}
+                  disabled={exportingData}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg border border-gray-300 dark:border-gray-600 text-sm font-medium text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors disabled:opacity-50"
+                >
+                  {exportingData
+                    ? <Loader2 className="w-4 h-4 animate-spin" />
+                    : <Download className="w-4 h-4" />}
+                  Export my data
+                </button>
+
+                {/* Delete account */}
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="flex items-center gap-2 px-4 py-2 rounded-lg border border-red-300 dark:border-red-700 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                >
+                  <Trash2 className="w-4 h-4" /> Delete account
+                </button>
+              </div>
+
+              {/* Delete confirm modal */}
+              {showDeleteConfirm && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm">
+                  <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-xl border border-gray-200 dark:border-gray-700 w-full max-w-md p-6">
+                    <h4 className="text-lg font-semibold text-gray-900 dark:text-white mb-2">Delete account?</h4>
+                    <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+                      Your account and all associated data will be permanently deleted after 30 days.
+                      You'll receive an email with a reactivation link to cancel within that window.
+                    </p>
+                    <textarea
+                      value={deleteReason}
+                      onChange={(e) => setDeleteReason(e.target.value)}
+                      placeholder="Reason for leaving (optional)"
+                      rows={3}
+                      className="w-full px-3 py-2 text-sm rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-900 dark:text-white placeholder-gray-400 focus:ring-2 focus:ring-red-500 focus:border-transparent outline-none mb-4 resize-none"
+                    />
+                    <div className="flex gap-3 justify-end">
+                      <button
+                        type="button"
+                        onClick={() => { setShowDeleteConfirm(false); setDeleteReason('') }}
+                        className="px-4 py-2 text-sm font-medium text-gray-700 dark:text-gray-300 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-lg transition-colors"
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleRequestDeletion}
+                        disabled={deletingAccount}
+                        className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
+                      >
+                        {deletingAccount && <Loader2 className="w-4 h-4 animate-spin" />}
+                        Schedule deletion
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
           {activeTab === 'team' && <TeamTab onMessage={setMessage} />}
+
+          {activeTab === 'sessions' && <SessionsTab />}
+
+          {activeTab === 'two-factor' && <TwoFactorTab />}
+
+          {activeTab === 'webhooks' && <WebhooksTab />}
 
           {activeTab === 'subscription' && (
             <SubscriptionTab

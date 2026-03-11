@@ -5,8 +5,8 @@ Optimized Gunicorn configuration for MJ-Billing Backend
 import multiprocessing
 import os
 
-# Bind to all interfaces on port 5000
-bind = "0.0.0.0:5000"
+# Bind to all interfaces on port 5017
+bind = "0.0.0.0:5017"
 
 # Number of worker processes (2-4 x CPU cores)
 workers = min(multiprocessing.cpu_count() * 2 + 1, 8)

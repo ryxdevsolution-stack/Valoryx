@@ -23,10 +23,14 @@ from models.permission_model import (
     get_all_sections_with_permissions,
     get_user_permissions_by_section,
 )
+from models.permission_preset_model import PermissionPreset
 from utils.auth_middleware import authenticate, require_role
-from utils.email_service import _send_async, _base_layout, _info_table, _info_row
+from utils.email_service import _send_async, _base_layout, _info_table, _info_row, send_invite_email
+from routes.invite import INVITE_EXPIRY_HOURS
+from config import Config
+from utils.cache_helper import get_cache_manager
 from sqlalchemy import or_
-from datetime import datetime
+from datetime import datetime, timedelta
 import bcrypt
 import uuid
 import logging
@@ -143,6 +147,14 @@ def list_team_members():
         search = request.args.get('search', '').strip()
         role_filter = request.args.get('role', '').strip()
 
+        # Cache unfiltered first-page requests (most common case)
+        cache = get_cache_manager()
+        if not search and not role_filter and page == 1:
+            cache_key = f"team:list:{client_id}:{per_page}"
+            cached = cache.get(cache_key)
+            if cached is not None:
+                return jsonify(cached), 200
+
         query = User.query.filter(
             User.client_id == client_id,
             User.deleted_at.is_(None),
@@ -195,13 +207,16 @@ def list_team_members():
             d['permissions'] = perm_map.get(str(u.user_id), [])
             result.append(d)
 
-        return jsonify({
+        response = {
             'success': True,
             'data': result,
             'total': total,
             'page': page,
             'per_page': per_page,
-        }), 200
+        }
+        if not search and not role_filter and page == 1:
+            cache.set(f"team:list:{client_id}:{per_page}", response, 60)
+        return jsonify(response), 200
 
     except Exception as exc:
         logger.error("list_team_members error: %s", exc)
@@ -222,19 +237,35 @@ def create_team_member():
             return jsonify({'success': False, 'error': 'Request body is required'}), 400
 
         email = (data.get('email') or '').strip().lower()
-        password = data.get('password', '').strip()
 
         if not email:
             return jsonify({'success': False, 'error': 'Email is required'}), 400
-        if not password:
-            return jsonify({'success': False, 'error': 'Password is required'}), 400
-        if len(password) < 6:
-            return jsonify({'success': False, 'error': 'Password must be at least 6 characters'}), 400
 
-        # Check for duplicate email
+        # Check for duplicate email (global — email must be unique across all tenants)
         existing = User.query.filter_by(email=email).first()
         if existing:
-            return jsonify({'success': False, 'error': 'A user with this email already exists'}), 409
+            return jsonify({
+                'success': False,
+                'error': 'EMAIL_EXISTS',
+                'message': 'A user with this email already exists',
+                'field': 'email',
+            }), 409
+
+        # Check for duplicate full_name within the same client (business-level uniqueness)
+        full_name = (data.get('full_name') or '').strip()
+        if full_name:
+            name_conflict = User.query.filter(
+                User.client_id == g.user['client_id'],
+                User.full_name.ilike(full_name),
+                User.deleted_at.is_(None),
+            ).first()
+            if name_conflict:
+                return jsonify({
+                    'success': False,
+                    'error': 'NAME_EXISTS',
+                    'message': f'A team member named "{full_name}" already exists in your organization',
+                    'field': 'full_name',
+                }), 409
 
         client_id = g.user['client_id']
         actor_role = g.user['role']
@@ -269,21 +300,25 @@ def create_team_member():
                 'message': f'Your {plan_name or "current"} plan allows {max_members} additional team member(s). Please upgrade to add more.',
             }), 403
 
-        # Hash password
-        password_hash = bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+        # Generate invite token — password is set by the user when they accept the invite
+        invite_token = secrets.token_urlsafe(32)
+        invite_expires = datetime.utcnow() + timedelta(hours=INVITE_EXPIRY_HOURS)
 
         new_user = User(
             user_id=str(uuid.uuid4()),
             email=email,
-            password_hash=password_hash,
+            password_hash='',  # No password until invite is accepted
             client_id=client_id,
             role=target_role,
             full_name=(data.get('full_name') or '').strip(),
             phone=(data.get('phone') or '').strip(),
             department=(data.get('department') or '').strip(),
-            is_active=data.get('is_active', True),
+            is_active=False,          # Inactive until invite accepted
             branch_id=data.get('branch_id') or None,
             created_by=g.user['user_id'],
+            invite_token=invite_token,
+            invite_token_expires=invite_expires,
+            invite_accepted=False,
         )
 
         db.session.add(new_user)
@@ -307,6 +342,28 @@ def create_team_member():
 
             bulk_update_permissions(new_user.user_id, permissions_list, g.user['user_id'])
 
+            # Auto-save permission preset for this role (isolated via savepoint)
+            try:
+                nested = db.session.begin_nested()
+                existing_preset = PermissionPreset.query.filter_by(
+                    client_id=client_id, role=target_role,
+                ).first()
+                if existing_preset:
+                    existing_preset.permissions = permissions_list
+                    existing_preset.updated_at = datetime.utcnow()
+                    existing_preset.updated_by = g.user['user_id']
+                else:
+                    db.session.add(PermissionPreset(
+                        client_id=client_id,
+                        role=target_role,
+                        permissions=permissions_list,
+                        updated_by=g.user['user_id'],
+                    ))
+                nested.commit()
+            except Exception as preset_exc:
+                nested.rollback()
+                logger.warning("Failed to save permission preset: %s", preset_exc)
+
         # Audit log
         _log_team_action(
             action_type='team_member_created',
@@ -321,13 +378,30 @@ def create_team_member():
 
         db.session.commit()
 
-        # Send welcome email (fire-and-forget)
-        _send_team_welcome_email(
+        # Fire webhook event — user.created
+        try:
+            from flask import current_app
+            from services.webhook_service import dispatch_event
+            dispatch_event(current_app._get_current_object(), client_id, 'user.created', {
+                'event': 'user.created',
+                'user_id': new_user.user_id,
+                'email': email,
+                'role': target_role,
+                'full_name': new_user.full_name,
+            })
+        except Exception as _wh_err:
+            logger.warning("webhook dispatch failed (user.created): %s", _wh_err)
+
+        # Send invite email (fire-and-forget) — user will set their own password via the link
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+        frontend_url = Config.FRONTEND_URL
+        invite_url = f"{frontend_url}/accept-invite?token={invite_token}"
+        send_invite_email(
             to_email=email,
-            password=password,
-            full_name=new_user.full_name or email.split('@')[0],
+            inviter_name=g.user.get('full_name') or g.user.get('email', ''),
+            business_name=client.client_name if client else '',
             role=target_role,
-            created_by=g.user.get('full_name') or g.user.get('email', ''),
+            invite_url=invite_url,
         )
 
         user_dict = new_user.to_dict()
@@ -337,7 +411,7 @@ def create_team_member():
         return jsonify({
             'success': True,
             'data': user_dict,
-            'message': 'Team member created successfully',
+            'message': f'Invite sent to {email}. They will receive an email to set their password.',
         }), 201
 
     except Exception as exc:
@@ -436,6 +510,18 @@ def update_team_member(user_id):
         )
 
         db.session.commit()
+
+        # Fire webhook event — user.updated
+        try:
+            from flask import current_app
+            from services.webhook_service import dispatch_event
+            dispatch_event(current_app._get_current_object(), g.user['client_id'], 'user.updated', {
+                'event': 'user.updated',
+                'user_id': user_id,
+                'changes': new_data,
+            })
+        except Exception as _wh_err:
+            logger.warning("webhook dispatch failed (user.updated): %s", _wh_err)
 
         user_dict = user.to_dict()
         user_dict.pop('password_hash', None)
@@ -550,6 +636,20 @@ def toggle_team_member_status(user_id):
 
         db.session.commit()
 
+        # Fire webhook event — user.activated / user.deactivated
+        try:
+            from flask import current_app
+            from services.webhook_service import dispatch_event
+            evt = 'user.activated' if user.is_active else 'user.deactivated'
+            dispatch_event(current_app._get_current_object(), g.user['client_id'], evt, {
+                'event': evt,
+                'user_id': user_id,
+                'email': user.email,
+                'is_active': user.is_active,
+            })
+        except Exception as _wh_err:
+            logger.warning("webhook dispatch failed (%s): %s", 'toggle', _wh_err)
+
         status_label = 'activated' if user.is_active else 'deactivated'
         return jsonify({
             'success': True,
@@ -601,6 +701,7 @@ def reset_team_member_password(user_id):
 
         password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         user.password_hash = password_hash
+        user.must_change_password = True  # Force user to change password on next login
         user.updated_at = datetime.utcnow()
         user.updated_by = g.user['user_id']
 
@@ -733,11 +834,16 @@ def update_member_permissions(user_id):
 def get_all_permissions():
     """Get all available permissions organized by section."""
     try:
+        cache = get_cache_manager()
+        cache_key = "team:permissions:all"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return jsonify(cached), 200
+
         sections = get_all_sections_with_permissions()
-        return jsonify({
-            'success': True,
-            'data': sections,
-        }), 200
+        result = {'success': True, 'data': sections}
+        cache.set(cache_key, result, 600)
+        return jsonify(result), 200
 
     except Exception as exc:
         logger.error("get_all_permissions error: %s", exc)
@@ -779,6 +885,13 @@ def get_plan_info():
     """Return plan name, team member limits, and allowed billing types."""
     try:
         client_id = g.user['client_id']
+
+        cache = get_cache_manager()
+        cache_key = f"team:plan-info:{client_id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return jsonify(cached), 200
+
         plan_name, rules, is_trial = _get_plan_rules(client_id)
 
         # Count subordinate team members only (exclude owner + admin)
@@ -793,7 +906,7 @@ def get_plan_info():
         max_members = rules['max_members']
         can_add = current_members < max_members
 
-        return jsonify({
+        result = {
             'success': True,
             'data': {
                 'plan_name': plan_name,
@@ -804,7 +917,9 @@ def get_plan_info():
                 'allowed_billing': rules['allowed_billing'],
                 'slots_remaining': max(0, max_members - current_members),
             },
-        }), 200
+        }
+        cache.set(cache_key, result, 60)
+        return jsonify(result), 200
 
     except Exception as exc:
         logger.error("get_plan_info error: %s", exc)
@@ -812,43 +927,29 @@ def get_plan_info():
 
 
 # ---------------------------------------------------------------------------
-# Welcome email helper
+# 12. GET /api/team/presets/<role> -- Permission preset for a role
 # ---------------------------------------------------------------------------
-def _send_team_welcome_email(to_email: str, password: str, full_name: str, role: str, created_by: str):
-    """Send a welcome email to a newly created team member (fire-and-forget)."""
-    from html import escape
-    from config import Config
+@team_bp.route('/presets/<role>', methods=['GET'])
+@authenticate
+@require_role(['owner', 'admin'])
+def get_permission_preset(role):
+    """Get the saved permission preset for a specific role (per client)."""
+    try:
+        client_id = g.user['client_id']
 
-    login_url = f"{Config.FRONTEND_URL}/login"
-    safe_name = escape(full_name)
-    safe_created_by = escape(created_by)
+        if role not in ROLE_HIERARCHY:
+            return jsonify({'success': False, 'error': 'Invalid role'}), 400
 
-    subject = "You have been added to a VALORYX Billing team"
-    body = f"""
-        <h2 style="margin:0 0 6px 0;font-size:22px;font-weight:700;color:#111111;">Welcome to the team, {safe_name}.</h2>
-        <p style="margin:0 0 20px 0;color:#555555;">An account has been created for you on VALORYX Billing. You can sign in right away using the credentials below.</p>
+        preset = PermissionPreset.query.filter_by(
+            client_id=client_id, role=role,
+        ).first()
 
-        {_info_table(
-            _info_row('Name', safe_name, first=True) +
-            _info_row('Email', escape(to_email)) +
-            _info_row('Password', escape(password)) +
-            _info_row('Role', escape(role.capitalize())) +
-            _info_row('Added by', safe_created_by)
-        )}
+        return jsonify({
+            'success': True,
+            'data': preset.to_dict() if preset else None,
+        }), 200
 
-        <div style="text-align:center;margin:28px 0 24px 0;">
-            <a href="{login_url}" style="display:inline-block;padding:12px 32px;background-color:#111111;color:#ffffff;text-decoration:none;font-size:14px;font-weight:600;border-radius:8px;">
-                Sign In to VALORYX
-            </a>
-        </div>
+    except Exception as exc:
+        logger.error("get_permission_preset error: %s", exc)
+        return jsonify({'success': False, 'error': 'Failed to fetch preset'}), 500
 
-        <p style="color:#555555;font-size:14px;">We recommend changing your password after your first login from <strong>Profile &rarr; Security</strong>.</p>
-
-        <p style="color:#888888;font-size:13px;margin-top:24px;">
-            If you did not expect this invitation, please contact your administrator or reply to this email.
-        </p>
-    """
-    _send_async(to_email, subject, _base_layout(
-        preheader=f"You have been added to a team on VALORYX Billing as {role.capitalize()}.",
-        body_html=body,
-    ))

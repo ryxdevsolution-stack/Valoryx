@@ -46,7 +46,7 @@ interface UsersResponse {
 export default function UserManagement() {
   const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const navigate = useNavigate();
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5017';
 
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);

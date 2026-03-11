@@ -26,6 +26,12 @@ def get_profile():
     try:
         user_id = g.user['user_id']
 
+        cache = get_cache_manager()
+        cache_key = f"profile:{user_id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return jsonify(cached), 200
+
         user = User.query.filter_by(user_id=user_id).first()
         if not user:
             return jsonify({'error': 'User not found'}), 404
@@ -54,6 +60,8 @@ def get_profile():
             'created_at': user.created_at.isoformat() if user.created_at else None,
             'last_login': user.last_login.isoformat() if user.last_login else None,
             'telegram_chat_id': user.telegram_chat_id,
+            'must_change_password': user.must_change_password,
+            'totp_enabled': user.totp_enabled,
             'permissions': permissions,
             'client': {
                 'client_id': client.client_id,
@@ -63,6 +71,7 @@ def get_profile():
             } if client else None
         }
 
+        cache.set(cache_key, profile_data, 30)
         return jsonify(profile_data), 200
 
     except Exception as e:
@@ -153,6 +162,8 @@ def change_password():
         user.password_hash = new_password_hash
         user.updated_at = datetime.utcnow()
         user.updated_by = user_id
+        # Clear force-change flag now that the user has chosen their own password
+        user.must_change_password = False
 
         db.session.commit()
 

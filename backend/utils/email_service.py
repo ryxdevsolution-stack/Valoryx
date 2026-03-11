@@ -249,7 +249,7 @@ def _alert_box(text: str, kind: str = 'warning') -> str:
 
 def send_welcome_email(to_email: str, client_name: str, trial_end_date: str):
     """Sent when a new account is created via signup."""
-    subject = f"Welcome to VALORXY Billing — Your free trial has started"
+    subject = "Welcome to VALORXY Billing — Your free trial has started"
     body = f"""
         <h2 style="margin:0 0 6px 0;font-size:22px;font-weight:700;color:#111111;">Welcome aboard, {client_name}.</h2>
         <p style="margin:0 0 20px 0;color:#555555;">Your VALORXY Billing account has been created successfully.</p>
@@ -528,6 +528,45 @@ def send_subscription_reactivated(to_email: str, client_name: str, plan_name: st
 # Audit report email (PDF attachment)
 # ---------------------------------------------------------------------------
 
+def send_invite_email(to_email: str, inviter_name: str, business_name: str, role: str, invite_url: str):
+    """Send invite link email to new team member."""
+    from html import escape
+    safe_inviter = escape(inviter_name)
+    safe_business = escape(business_name)
+    safe_role = escape(role.capitalize())
+
+    body = f"""
+        <h2 style="margin:0 0 6px 0;font-size:22px;font-weight:700;color:#111111;">You have been invited.</h2>
+        <p style="margin:0 0 20px 0;color:#555555;">
+            <strong>{safe_inviter}</strong> has invited you to join
+            <strong>{safe_business}</strong> as a <strong>{safe_role}</strong>.
+        </p>
+
+        {_info_table(
+            _info_row('Business', safe_business, first=True) +
+            _info_row('Role', safe_role) +
+            _info_row('Invite expires in', '48 hours')
+        )}
+
+        {_primary_button('Accept Invitation &amp; Set Password', invite_url)}
+
+        <p style="font-size:13px;color:#888888;margin-top:24px;">
+            If the button above does not work, copy and paste the following link into your browser:<br/>
+            <span style="color:#555555;word-break:break-all">{invite_url}</span>
+        </p>
+
+        {_alert_box(
+            'If you did not expect this invitation, you can safely ignore this email. '
+            'This link expires in 48 hours.',
+            kind='info'
+        )}
+    """
+    _send_async(to_email, f'You have been invited to join {business_name}', _base_layout(
+        preheader=f"You have been invited to join {business_name} as {role.capitalize()}. Link expires in 48 hours.",
+        body_html=body,
+    ))
+
+
 def send_audit_report_email(
     to_email: str,
     client_name: str,
@@ -598,3 +637,96 @@ def send_audit_report_email(
         attachment_filename=filename,
         attachment_mime='application/pdf',
     )
+
+
+def send_verification_email(to_email: str, business_name: str, verify_link: str):
+    """Send email verification link after signup."""
+    subject = "Verify your Valoryx account"
+    html = _base_layout(
+        preheader="Please verify your email address to activate your account.",
+        body_html=f"""
+        <h2 style="color:#1a1a2e;margin:0 0 16px">Verify your email address</h2>
+        <p style="color:#444;line-height:1.6">
+            Thanks for signing up, <strong>{business_name}</strong>!<br>
+            Please verify your email address to activate your account.
+        </p>
+        <div style="text-align:center;margin:32px 0">
+            <a href="{verify_link}"
+               style="background:#4f46e5;color:#fff;padding:14px 32px;border-radius:8px;
+                      text-decoration:none;font-weight:600;display:inline-block">
+                Verify Email Address
+            </a>
+        </div>
+        <p style="color:#888;font-size:13px">
+            This link expires in 24 hours. If you didn't sign up, ignore this email.
+        </p>
+        <p style="color:#888;font-size:12px;word-break:break-all">
+            Or copy this link: {verify_link}
+        </p>
+    """)
+    _send_async(to_email, subject, html)
+
+
+def send_account_deletion_scheduled_email(to_email: str, business_name: str, deletion_date: str, reactivation_link: str):
+    """Notify client that account deletion has been scheduled."""
+    subject = "Your Valoryx account is scheduled for deletion"
+    html = _base_layout(
+        preheader=f"Your account will be permanently deleted on {deletion_date}.",
+        body_html=f"""
+        <h2 style="color:#dc2626;margin:0 0 16px">Account Deletion Scheduled</h2>
+        <p style="color:#444;line-height:1.6">
+            Your account <strong>{business_name}</strong> has been scheduled for permanent deletion on
+            <strong>{deletion_date}</strong>.
+        </p>
+        <p style="color:#444;line-height:1.6">
+            All your data including bills, stock, customers, and users will be permanently removed.
+        </p>
+        <div style="text-align:center;margin:32px 0">
+            <a href="{reactivation_link}"
+               style="background:#16a34a;color:#fff;padding:14px 32px;border-radius:8px;
+                      text-decoration:none;font-weight:600;display:inline-block">
+                Cancel Deletion — Keep My Account
+            </a>
+        </div>
+        <p style="color:#888;font-size:13px">
+            This cancellation link is valid until {deletion_date}.
+        </p>
+    """)
+    _send_async(to_email, subject, html)
+
+
+def send_deletion_cancelled_email(to_email: str, business_name: str):
+    """Notify client that account deletion was cancelled (30-day grace period reactivation)."""
+    subject = "Your Valoryx account has been reactivated"
+    html = _base_layout(
+        preheader="Your account has been successfully reactivated.",
+        body_html=f"""
+        <h2 style="color:#16a34a;margin:0 0 16px">Account Reactivated</h2>
+        <p style="color:#444;line-height:1.6">
+            Great news! Your account <strong>{business_name}</strong> has been successfully reactivated.
+            All your data is safe. You can log in now.
+        </p>
+    """)
+    _send_async(to_email, subject, html)
+
+
+def send_webhook_disabled_email(to_email: str, business_name: str, webhook_url: str):
+    """Notify client that a webhook was auto-disabled due to repeated failures."""
+    subject = "Valoryx webhook disabled due to repeated failures"
+    html = _base_layout(
+        preheader="A webhook endpoint has been disabled after 3 consecutive failures.",
+        body_html=f"""
+        <h2 style="color:#dc2626;margin:0 0 16px">Webhook Disabled</h2>
+        <p style="color:#444;line-height:1.6">
+            The webhook endpoint for <strong>{business_name}</strong> has been automatically disabled
+            after 3 consecutive delivery failures:
+        </p>
+        <p style="color:#444;font-family:monospace;background:#f5f5f5;padding:8px;border-radius:4px">
+            {webhook_url}
+        </p>
+        <p style="color:#444;line-height:1.6">
+            Please check that your endpoint is reachable and returns a 2xx response,
+            then re-enable it from your Profile → Webhooks settings.
+        </p>
+    """)
+    _send_async(to_email, subject, html)

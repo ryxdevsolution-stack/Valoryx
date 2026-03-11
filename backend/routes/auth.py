@@ -1,6 +1,8 @@
 import jwt
 import bcrypt
 import uuid
+import pyotp
+import secrets as _secrets
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, g
 from extensions import db
@@ -8,6 +10,7 @@ from models.user_model import User
 from models.client_model import ClientEntry
 from models.branch_model import Branch
 from models.permission_model import get_user_permissions
+from models.session_model import UserSession
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager
@@ -16,6 +19,7 @@ from utils.email_service import (
     send_login_notification,
     send_password_reset_email,
     send_password_changed_email,
+    send_verification_email,
 )
 from config import Config
 
@@ -23,6 +27,39 @@ auth_bp = Blueprint('auth', __name__)
 
 # Cache timeout for user session data (24 hours)
 USER_SESSION_CACHE_TIMEOUT = 86400
+
+# TOTP brute-force protection: block after this many failed attempts
+TOTP_MAX_FAILURES = 10
+# Window (seconds) over which failures are counted before auto-expiry
+TOTP_FAIL_WINDOW = 900   # 15 minutes
+# How long (seconds) a used code is remembered to prevent replay
+TOTP_REPLAY_WINDOW = 90  # 90 seconds — covers the ±1 valid_window (3 × 30 s)
+
+# Login brute-force protection (in-memory, per IP)
+import time as _time
+_LOGIN_FAIL_STORE: dict = {}   # { ip: [timestamp, ...] }
+LOGIN_MAX_FAILURES = 10        # block after 10 failed attempts
+LOGIN_FAIL_WINDOW  = 300       # within 5 minutes
+
+
+def _check_login_rate_limit(ip: str):
+    """Return (allowed, retry_after_seconds). Prunes old entries automatically."""
+    now = _time.time()
+    timestamps = [t for t in _LOGIN_FAIL_STORE.get(ip, []) if now - t < LOGIN_FAIL_WINDOW]
+    _LOGIN_FAIL_STORE[ip] = timestamps
+    if len(timestamps) >= LOGIN_MAX_FAILURES:
+        retry_after = int(LOGIN_FAIL_WINDOW - (now - timestamps[0]))
+        return False, retry_after
+    return True, 0
+
+
+def _record_login_failure(ip: str):
+    now = _time.time()
+    _LOGIN_FAIL_STORE.setdefault(ip, []).append(now)
+
+
+def _clear_login_failures(ip: str):
+    _LOGIN_FAIL_STORE.pop(ip, None)
 
 
 @auth_bp.route('/login', methods=['POST', 'OPTIONS'])
@@ -42,6 +79,14 @@ def login():
         if not email or not password:
             return jsonify({'error': 'Email and password required'}), 400
 
+        # Rate-limit by IP — 10 failures per 5 minutes
+        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
+        allowed, retry_after = _check_login_rate_limit(client_ip)
+        if not allowed:
+            return jsonify({
+                'error': f'Too many failed login attempts. Try again in {retry_after} seconds.'
+            }), 429
+
         # OPTIMIZED: Single JOIN query to get User + Client + Branch together
         result = db.session.query(User, ClientEntry, Branch).join(
             ClientEntry, User.client_id == ClientEntry.client_id
@@ -50,13 +95,23 @@ def login():
         ).filter(User.email == email).first()
 
         if not result:
+            _record_login_failure(client_ip)
             return jsonify({'error': 'Email address not found'}), 401
 
         user, client, branch = result
 
+        # Block pending invite users before bcrypt attempt — their password_hash is empty
+        # which would raise ValueError: Invalid salt inside bcrypt.checkpw
+        if hasattr(user, 'invite_accepted') and not user.invite_accepted and not user.password_hash:
+            return jsonify({'error': 'Please accept your invite email before logging in.'}), 401
+
         # Verify password
         if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
+            _record_login_failure(client_ip)
             return jsonify({'error': 'Incorrect password'}), 401
+
+        # Clear failure counter on successful auth
+        _clear_login_failures(client_ip)
 
         # Check if user is active
         if not user.is_active:
@@ -66,8 +121,75 @@ def login():
         if not client.is_active:
             return jsonify({'error': 'Client account is inactive'}), 401
 
+        # Block login if email not verified
+        if not getattr(client, 'email_verified', True):
+            return jsonify({
+                'success': False,
+                'email_unverified': True,
+                'email': user.email,
+                'message': 'Please verify your email address before logging in.'
+            }), 403
+
+        # Block login if account is pending deletion
+        if getattr(client, 'deletion_scheduled_at', None):
+            return jsonify({
+                'success': False,
+                'account_pending_deletion': True,
+                'deletion_date': client.deletion_scheduled_at.isoformat(),
+                'message': 'Your account is scheduled for deletion.'
+            }), 403
+
+        # 2FA check: if user has TOTP enabled, require the 6-digit code
+        if user.totp_enabled:
+            totp_code = (data.get('totp_code') or '').strip()
+            if not totp_code:
+                # Password was valid — signal frontend to show the TOTP step
+                return jsonify({
+                    'success': False,
+                    'requires_totp': True,
+                    'message': 'Enter your 2FA code to continue',
+                }), 200  # 200, not 4xx — this is a flow step, not an error
+
+            # Guard: totp_secret must exist for a TOTP-enabled account
+            if not user.totp_secret:
+                return jsonify({'success': False, 'error': 'Invalid 2FA state'}), 500
+
+            user_id = str(user.user_id)
+            cache = get_cache_manager()
+
+            # --- Brute-force protection ---
+            fail_key = f"totp_fail:{user_id}"
+            fails = cache.get(fail_key) or 0
+            if fails >= TOTP_MAX_FAILURES:
+                return jsonify({
+                    'success': False,
+                    'error': 'Too many failed attempts. Try again in 15 minutes.',
+                }), 429
+
+            # --- Replay protection ---
+            replay_key = f"totp_used:{user_id}:{totp_code}"
+            if cache.get(replay_key):
+                return jsonify({
+                    'success': False,
+                    'error': 'Code already used. Wait for the next code.',
+                }), 400
+
+            totp = pyotp.TOTP(user.totp_secret)
+            # valid_window=1 accepts ±1 time step (90-second window total)
+            if not totp.verify(totp_code, valid_window=1):
+                # Increment failure counter; keep the TTL window alive
+                cache.set(fail_key, fails + 1, TOTP_FAIL_WINDOW)
+                return jsonify({'success': False, 'error': 'Invalid 2FA code. Try again.'}), 401
+
+            # Successful verify: mark this code as consumed and reset failure counter
+            cache.set(replay_key, 1, TOTP_REPLAY_WINDOW)
+            cache.delete(fail_key)
+
         # OPTIMIZED: Get permissions with eager loading
         user_permissions = get_user_permissions(str(user.user_id))
+
+        # Generate a unique session ID for this login
+        session_id = _secrets.token_urlsafe(32)
 
         # Generate JWT token with client_id and permissions (convert UUIDs to strings)
         token_payload = {
@@ -77,6 +199,7 @@ def login():
             'role': user.role,
             'is_super_admin': user.is_super_admin,
             'permissions': user_permissions,
+            'session_id': session_id,
             'exp': datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS)
         }
 
@@ -98,6 +221,8 @@ def login():
             'permissions': user_permissions,
             'branch_id': str(user.branch_id) if user.branch_id else None,
             'branch_name': branch.name if branch else None,
+            'must_change_password': user.must_change_password,
+            'totp_enabled': user.totp_enabled,
         }
 
         # Prepare client data for caching
@@ -134,7 +259,30 @@ def login():
         user.last_login = datetime.utcnow()
         user.last_login_ip = incoming_ip
 
-        # OPTIMIZED: Single commit for last_login update (non-blocking)
+        # Create a tracked session record for this login
+        ua_string = request.headers.get('User-Agent', '')
+        if 'Mobile' in ua_string:
+            device = 'Mobile'
+        elif 'Tablet' in ua_string:
+            device = 'Tablet'
+        else:
+            device = 'Desktop'
+
+        session_expires = datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS)
+        new_session = UserSession(
+            id=str(uuid.uuid4()),
+            session_id=session_id,
+            user_id=str(user.user_id),
+            client_id=str(user.client_id),
+            ip_address=incoming_ip,
+            user_agent=ua_string[:512],
+            device=device,
+            expires_at=session_expires,
+            is_active=True,
+        )
+        db.session.add(new_session)
+
+        # OPTIMIZED: Single commit for last_login update and session record (non-blocking)
         try:
             db.session.commit()
         except Exception:
@@ -170,6 +318,7 @@ def login():
             'plan_id': str(client.plan_id) if client.plan_id else None,
             'user': user_data,
             'trial': trial_info,
+            'must_change_password': user.must_change_password,
         }), 200
 
     except Exception as e:
@@ -230,6 +379,35 @@ def register():
         return jsonify({'error': 'Registration failed', 'message': str(e)}), 500
 
 
+@auth_bp.route('/check-duplicate', methods=['POST'])
+def check_duplicate():
+    """Check if email or business name already exists — used for real-time field validation.
+    Uses EXISTS queries (fastest possible — stops at first match, no full scan).
+    """
+    from sqlalchemy import exists, func
+    data = request.get_json() or {}
+    email = (data.get('email') or '').strip().lower()
+    business_name = (data.get('business_name') or '').strip()
+
+    if email:
+        email_taken = db.session.query(
+            exists().where(User.email == email)
+        ).scalar() or db.session.query(
+            exists().where(ClientEntry.email == email)
+        ).scalar()
+        if email_taken:
+            return jsonify({'error': 'An account with this email already exists', 'field': 'email'}), 409
+
+    if business_name:
+        name_taken = db.session.query(
+            exists().where(func.lower(ClientEntry.client_name) == business_name.lower())
+        ).scalar()
+        if name_taken:
+            return jsonify({'error': 'A business with this name already exists. Please use a different name.', 'field': 'business_name'}), 409
+
+    return jsonify({'success': True}), 200
+
+
 @auth_bp.route('/signup', methods=['POST'])
 def signup():
     """
@@ -250,14 +428,22 @@ def signup():
         if len(password) < 8:
             return jsonify({'error': 'Password must be at least 8 characters'}), 400
 
-        # Check if email already exists
-        existing_user = User.query.filter_by(email=email).first()
-        if existing_user:
-            return jsonify({'error': 'An account with this email already exists'}), 409
+        # Check for duplicate email/business — use EXISTS for fastest short-circuit
+        from sqlalchemy import exists, func as sqlfunc
+        if db.session.query(exists().where(User.email == email)).scalar() or \
+           db.session.query(exists().where(ClientEntry.email == email)).scalar():
+            return jsonify({
+                'error': 'An account with this email already exists',
+                'field': 'email',
+            }), 409
 
-        existing_client = ClientEntry.query.filter_by(email=email).first()
-        if existing_client:
-            return jsonify({'error': 'A business with this email already exists'}), 409
+        if db.session.query(
+            exists().where(sqlfunc.lower(ClientEntry.client_name) == business_name.lower())
+        ).scalar():
+            return jsonify({
+                'error': 'A business with this name already exists. Please use a different name.',
+                'field': 'business_name',
+            }), 409
 
         # Create client with 14-day trial
         now = datetime.utcnow()
@@ -299,6 +485,8 @@ def signup():
         )
 
         db.session.add(new_client)
+        db.session.flush()  # Commit client first so FK constraints are satisfied
+
         db.session.add(new_user)
         db.session.add(main_branch)
         db.session.flush()
@@ -322,77 +510,22 @@ def signup():
                 granted_by=user_id,
             ))
 
+        # Generate email verification token atomically with the rest of signup
+        verification_token = _secrets.token_hex(32)
+        new_client.email_verification_token = verification_token
+        new_client.email_verification_expires = now + timedelta(hours=24)
+
         db.session.commit()
 
-        # Generate JWT token (same as login)
-        user_permissions = get_user_permissions(user_id)
-
-        token_payload = {
-            'user_id': user_id,
-            'email': email,
-            'client_id': client_id,
-            'role': 'admin',
-            'is_super_admin': False,
-            'permissions': user_permissions,
-            'exp': datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS)
-        }
-
-        token = jwt.encode(token_payload, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
-
-        user_data = {
-            'user_id': user_id,
-            'email': email,
-            'full_name': business_name,
-            'phone': phone or None,
-            'department': None,
-            'role': 'admin',
-            'is_super_admin': False,
-            'permissions': user_permissions,
-            'branch_id': None,
-            'branch_name': None,
-        }
-
-        client_data = {
-            'client_id': client_id,
-            'client_name': business_name,
-            'logo_url': None,
-            'address': None,
-            'phone': phone or None,
-            'email': email,
-            'gstin': None,
-            'subscription_status': 'trial',
-            'trial_end_date': trial_end.isoformat(),
-            'trial_days_remaining': 14,
-        }
-
-        # Cache user session
-        cache = get_cache_manager()
-        cache_key = f"user_session:{user_id}"
-        cache.set(cache_key, {
-            'user': user_data,
-            'client': client_data
-        }, USER_SESSION_CACHE_TIMEOUT)
-
-        # Send welcome email (non-blocking background thread)
-        trial_end_str = trial_end.strftime('%d %b %Y')
-        send_welcome_email(email, business_name, trial_end_str)
+        # Send verification email instead of welcome email
+        verify_link = f"{Config.FRONTEND_URL}/verify-email?token={verification_token}"
+        send_verification_email(email, business_name, verify_link)
 
         return jsonify({
             'success': True,
-            'token': token,
-            'client_id': client_id,
-            'client_name': business_name,
-            'client_logo': None,
-            'client_address': None,
-            'client_phone': phone or None,
-            'client_email': email,
-            'client_gstin': None,
-            'user': user_data,
-            'trial': {
-                'status': 'trial',
-                'days_remaining': 14,
-                'end_date': trial_end.isoformat(),
-            }
+            'email_unverified': True,
+            'email': email,
+            'message': 'Account created. Please check your email to verify your account.'
         }), 201
 
     except Exception as e:
@@ -403,9 +536,30 @@ def signup():
 @auth_bp.route('/logout', methods=['POST'])
 @authenticate
 def logout():
-    """User logout - Logs action to audit and clears cache"""
+    """User logout - Revokes session, logs action to audit, and clears cache"""
     try:
         log_action('LOGOUT', 'users', g.user['user_id'])
+
+        # Revoke the session record if session_id is present in the JWT
+        auth_header = request.headers.get('Authorization', '')
+        if auth_header:
+            try:
+                token = auth_header.split(' ')[-1]
+                decoded = jwt.decode(token, Config.JWT_SECRET, algorithms=[Config.JWT_ALGORITHM])
+                session_id_from_token = decoded.get('session_id')
+                if session_id_from_token:
+                    session_record = UserSession.query.filter_by(
+                        session_id=session_id_from_token, is_active=True
+                    ).first()
+                    if session_record:
+                        session_record.is_active = False
+                        session_record.revoked_at = datetime.utcnow()
+                        try:
+                            db.session.commit()
+                        except Exception:
+                            db.session.rollback()
+            except Exception:
+                pass  # Don't fail logout if session revocation fails
 
         # Clear user session from cache
         cache = get_cache_manager()
@@ -524,3 +678,177 @@ def reset_password():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Password reset failed', 'message': str(e)}), 500
+
+
+@auth_bp.route('/verify-email', methods=['GET'])
+def verify_email():
+    """
+    Validate email verification token. Issues JWT on success (auto-login).
+    """
+    token = (request.args.get('token') or '').strip()
+    if not token:
+        return jsonify({'error': 'Verification token is required'}), 400
+
+    client = ClientEntry.query.filter_by(email_verification_token=token).first()
+
+    if not client:
+        return jsonify({'error': 'Invalid or expired verification link'}), 400
+
+    if not client.email_verification_expires or datetime.utcnow() > client.email_verification_expires:
+        client.email_verification_token = None
+        client.email_verification_expires = None
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+        return jsonify({'error': 'Verification link has expired. Please request a new one.'}), 400
+
+    # Mark verified
+    client.email_verified = True
+    client.email_verification_token = None
+    client.email_verification_expires = None
+
+    # Find the owner/admin user for this client
+    owner = User.query.filter_by(client_id=str(client.client_id), role='admin').first()
+    if not owner:
+        db.session.rollback()
+        return jsonify({'error': 'Account setup error — contact support'}), 500
+
+    try:
+        db.session.commit()
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Verification failed', 'message': str(e)}), 500
+
+    # Issue JWT (same as login)
+    user_permissions = get_user_permissions(str(owner.user_id))
+    session_id = _secrets.token_urlsafe(32)
+
+    token_payload = {
+        'user_id': str(owner.user_id),
+        'email': owner.email,
+        'client_id': str(owner.client_id),
+        'role': owner.role,
+        'is_super_admin': owner.is_super_admin,
+        'permissions': user_permissions,
+        'session_id': session_id,
+        'exp': datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS)
+    }
+    jwt_token = jwt.encode(token_payload, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
+
+    user_data = {
+        'user_id': str(owner.user_id),
+        'email': owner.email,
+        'full_name': owner.full_name or client.client_name,
+        'role': owner.role,
+        'is_super_admin': owner.is_super_admin,
+        'permissions': user_permissions,
+        'branch_id': None,
+        'branch_name': None,
+        'must_change_password': owner.must_change_password,
+        'totp_enabled': owner.totp_enabled,
+    }
+
+    client_data = {
+        'client_id': str(client.client_id),
+        'client_name': client.client_name,
+        'logo_url': client.logo_url,
+        'email': client.email,
+        'subscription_status': client.subscription_status,
+        'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
+        'trial_days_remaining': client.trial_days_remaining,
+    }
+
+    # Create a tracked session record (same as login)
+    incoming_ip = (
+        request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
+        or request.remote_addr
+        or 'unknown'
+    )
+    ua_string = request.headers.get('User-Agent', '')
+    if 'Mobile' in ua_string:
+        device = 'Mobile'
+    elif 'Tablet' in ua_string:
+        device = 'Tablet'
+    else:
+        device = 'Desktop'
+
+    session_expires = datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS)
+    new_session = UserSession(
+        id=str(uuid.uuid4()),
+        session_id=session_id,
+        user_id=str(owner.user_id),
+        client_id=str(owner.client_id),
+        ip_address=incoming_ip,
+        user_agent=ua_string[:512],
+        device=device,
+        expires_at=session_expires,
+        is_active=True,
+    )
+    db.session.add(new_session)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()  # Don't fail verification if session record fails
+
+    cache = get_cache_manager()
+    cache.set(f"user_session:{owner.user_id}", {'user': user_data, 'client': client_data}, USER_SESSION_CACHE_TIMEOUT)
+
+    return jsonify({
+        'success': True,
+        'token': jwt_token,
+        'client_id': str(client.client_id),
+        'client_name': client.client_name,
+        'client_logo': client.logo_url,
+        'client_address': client.address,
+        'client_phone': client.phone,
+        'client_email': client.email,
+        'client_gstin': client.gst_number,
+        'user': user_data,
+        'subscription_status': client.subscription_status,
+        'plan_id': str(client.plan_id) if client.plan_id else None,
+        'subscription_end_date': client.subscription_end_date.isoformat() if client.subscription_end_date else None,
+        'trial': {
+            'status': client.subscription_status,
+            'days_remaining': client.trial_days_remaining,
+            'end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
+        }
+    }), 200
+
+
+@auth_bp.route('/resend-verification', methods=['POST'])
+def resend_verification():
+    """Resend email verification link. Rate-limited to 3 per hour."""
+    data = request.get_json() or {}
+    email = (data.get('email') or '').strip().lower()
+    if not email:
+        return jsonify({'error': 'Email is required'}), 400
+
+    # Rate limit: 3 resends per hour — always increment to prevent email enumeration
+    cache = get_cache_manager()
+    rate_key = f"verify_resend:{email}"
+    count = cache.get(rate_key) or 0
+    if count >= 3:
+        return jsonify({'error': 'Too many resend attempts. Please wait before trying again.'}), 429
+
+    # Increment counter before any DB/email work (prevents enumeration via timing)
+    cache.set(rate_key, count + 1, 3600)
+
+    # Find client by email (always return 200 to avoid enumeration)
+    client = ClientEntry.query.filter_by(email=email).first()
+    if not client or client.email_verified:
+        return jsonify({'success': True, 'message': 'If that email is unverified, a new link has been sent.'}), 200
+
+    verification_token = _secrets.token_hex(32)
+    client.email_verification_token = verification_token
+    client.email_verification_expires = datetime.utcnow() + timedelta(hours=24)
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to generate new token'}), 500
+
+    verify_link = f"{Config.FRONTEND_URL}/verify-email?token={verification_token}"
+    send_verification_email(email, client.client_name, verify_link)
+
+    return jsonify({'success': True, 'message': 'Verification email sent.'}), 200

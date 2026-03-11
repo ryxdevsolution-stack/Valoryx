@@ -80,6 +80,9 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
   // Toggle status loading
   const [togglingStatus, setTogglingStatus] = useState<string | null>(null)
 
+  // Resend invite loading
+  const [resendingInvite, setResendingInvite] = useState<string | null>(null)
+
   // Debounce ref
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -195,6 +198,18 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
   const handleModalSaved = () => {
     fetchMembers(page, search, roleFilter)
     fetchPlanInfo()
+  }
+
+  const handleResendInvite = async (userId: string) => {
+    setResendingInvite(userId)
+    try {
+      await teamService.resendInvite(userId)
+      onMessage({ type: 'success', text: 'Invite resent successfully' })
+    } catch (err: any) {
+      onMessage({ type: 'error', text: err.response?.data?.error || 'Failed to resend invite' })
+    } finally {
+      setResendingInvite(null)
+    }
   }
 
   const handleRoleFilterChange = (value: string) => {
@@ -395,12 +410,28 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
                       </td>
                       {/* Status */}
                       <td className="px-6 py-4">
-                        <div className="flex items-center gap-2">
-                          <span className={`w-2 h-2 rounded-full ${member.is_active ? 'bg-green-500' : 'bg-red-500'}`} />
-                          <span className="text-sm text-gray-700 dark:text-gray-300">
-                            {member.is_active ? 'Active' : 'Inactive'}
-                          </span>
-                        </div>
+                        {!member.is_active && member.invite_accepted === false ? (
+                          <div className="flex items-center gap-2">
+                            <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                              Pending Invite
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleResendInvite(member.user_id)}
+                              disabled={resendingInvite === member.user_id}
+                              className="text-xs text-violet-400 hover:text-violet-300 underline disabled:opacity-50"
+                            >
+                              {resendingInvite === member.user_id ? 'Sending...' : 'Resend'}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-2">
+                            <span className={`w-2 h-2 rounded-full ${member.is_active ? 'bg-green-500' : 'bg-red-500'}`} />
+                            <span className="text-sm text-gray-700 dark:text-gray-300">
+                              {member.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                          </div>
+                        )}
                       </td>
                       {/* Last Login */}
                       <td className="px-6 py-4">
@@ -495,12 +526,28 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
                         <span className={`inline-flex px-2 py-0.5 text-xs font-medium rounded-full capitalize ${getRoleBadgeClass(member.role)}`}>
                           {member.role}
                         </span>
-                        <div className="flex items-center gap-1">
-                          <span className={`w-1.5 h-1.5 rounded-full ${member.is_active ? 'bg-green-500' : 'bg-red-500'}`} />
-                          <span className="text-xs text-gray-500 dark:text-gray-400">
-                            {member.is_active ? 'Active' : 'Inactive'}
-                          </span>
-                        </div>
+                        {!member.is_active && member.invite_accepted === false ? (
+                          <div className="flex items-center gap-1.5 flex-wrap">
+                            <span className="inline-flex items-center px-2 py-0.5 text-xs font-medium rounded-full bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+                              Pending Invite
+                            </span>
+                            <button
+                              type="button"
+                              onClick={() => handleResendInvite(member.user_id)}
+                              disabled={resendingInvite === member.user_id}
+                              className="text-xs text-violet-400 hover:text-violet-300 underline disabled:opacity-50"
+                            >
+                              {resendingInvite === member.user_id ? 'Sending...' : 'Resend'}
+                            </button>
+                          </div>
+                        ) : (
+                          <div className="flex items-center gap-1">
+                            <span className={`w-1.5 h-1.5 rounded-full ${member.is_active ? 'bg-green-500' : 'bg-red-500'}`} />
+                            <span className="text-xs text-gray-500 dark:text-gray-400">
+                              {member.is_active ? 'Active' : 'Inactive'}
+                            </span>
+                          </div>
+                        )}
                         {member.branch_name && (
                           <span className="text-xs text-gray-500 dark:text-gray-400">
                             {member.branch_name}

@@ -6,6 +6,7 @@ import { ClientProvider } from '@/contexts/ClientContext'
 import { DataProvider } from '@/contexts/DataContext'
 import { LoadingInitializer } from '@/components/LoadingInitializer'
 import { AppRoutes } from '@/router'
+import ImpersonationBanner from '@/components/ImpersonationBanner'
 
 function LoadingFallback() {
   return (
@@ -27,6 +28,7 @@ export default function App() {
       <LoadingProvider>
         <LoadingInitializer>
           <ClientProvider>
+            <ImpersonationBanner />
             <DataProvider>
               <Suspense fallback={<LoadingFallback />}>
                 <AppRoutes />

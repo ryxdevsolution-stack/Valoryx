@@ -97,13 +97,17 @@ def _activate_subscription(transaction, payment_id=None, signature=None):
 def get_plans():
     """Public endpoint — list active subscription plans"""
     try:
+        cache = get_cache_manager()
+        cached = cache.get("subscription:plans")
+        if cached is not None:
+            return jsonify(cached), 200
+
         plans = SubscriptionPlan.query.filter_by(is_active=True).order_by(
             SubscriptionPlan.display_order
         ).all()
-        return jsonify({
-            'success': True,
-            'plans': [p.to_dict() for p in plans]
-        }), 200
+        result = {'success': True, 'plans': [p.to_dict() for p in plans]}
+        cache.set("subscription:plans", result, 600)
+        return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': 'Failed to fetch plans', 'message': str(e)}), 500
 
@@ -711,14 +715,21 @@ def razorpay_webhook():
 def payment_history():
     """Get payment history for the current client"""
     try:
+        client_id = g.user['client_id']
+
+        cache = get_cache_manager()
+        cache_key = f"subscription:history:{client_id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return jsonify(cached), 200
+
         transactions = PaymentTransaction.query.filter_by(
-            client_id=g.user['client_id']
+            client_id=client_id
         ).order_by(PaymentTransaction.created_at.desc()).all()
 
-        return jsonify({
-            'success': True,
-            'transactions': [t.to_dict() for t in transactions]
-        }), 200
+        result = {'success': True, 'transactions': [t.to_dict() for t in transactions]}
+        cache.set(cache_key, result, 120)
+        return jsonify(result), 200
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch payment history', 'message': str(e)}), 500

@@ -223,7 +223,7 @@ class OptimizedConfig:
             "Then add it to your .env file: JWT_SECRET=<generated-secret>"
         )
     JWT_ALGORITHM = "HS256"
-    JWT_EXPIRATION_HOURS = 24  # Web/online mode
+    JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "2"))  # Web/online mode (default 2h)
     JWT_DESKTOP_EXPIRATION_HOURS = 168  # 7 days for desktop/offline mode (Phase 2)
 
     # -------------------------------
@@ -247,6 +247,12 @@ class OptimizedConfig:
     RAZORPAY_WEBHOOK_SECRET = os.getenv('RAZORPAY_WEBHOOK_SECRET', '')
 
     # -------------------------------
+    # Google OAuth (optional — OAuth login disabled if not set)
+    # -------------------------------
+    GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
+    GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
+
+    # -------------------------------
     # Email (SMTP — optional, emails disabled if not set)
     # -------------------------------
     SMTP_HOST = os.getenv('SMTP_HOST', '')
@@ -255,7 +261,7 @@ class OptimizedConfig:
     SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
     SMTP_FROM_EMAIL = os.getenv('SMTP_FROM_EMAIL', '')
     SMTP_FROM_NAME = os.getenv('SMTP_FROM_NAME', 'RYX Billing')
-    FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3002')
+    FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3002/frontend')
 
     # -------------------------------
     # Telegram Bot (optional — scheduler disabled when token is absent)

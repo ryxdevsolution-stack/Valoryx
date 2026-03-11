@@ -4,6 +4,7 @@ from models.audit_model import AuditLog
 from models.user_model import User
 from models.permission_model import get_user_permissions
 from utils.auth_middleware import authenticate
+from utils.cache_helper import get_cache_manager
 
 audit_bp = Blueprint('audit', __name__)
 
@@ -36,6 +37,13 @@ def get_audit_logs():
         date_to = request.args.get('date_to')
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 50))
+
+        # Cache key includes all filter params to avoid stale results
+        cache = get_cache_manager()
+        cache_key = f"audit:logs:{client_id}:{user_id}:{action}:{date_from}:{date_to}:{page}:{limit}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return jsonify(cached), 200
 
         # Build query - ALWAYS filter by client_id first (mandatory)
         query = AuditLog.query.filter_by(client_id=client_id)
@@ -79,7 +87,15 @@ def get_audit_logs():
         # Paginate
         logs = query.order_by(AuditLog.timestamp.desc()).offset((page - 1) * limit).limit(limit).all()
 
-        # Enrich logs with user emails
+        # Batch-fetch all user emails in one query — avoids N+1 (1 query per log → 1 total)
+        user_ids = list({log.user_id for log in logs if log.user_id})
+        users_map: dict = {}
+        if user_ids:
+            rows = User.query.filter(User.user_id.in_(user_ids)).with_entities(
+                User.user_id, User.email
+            ).all()
+            users_map = {str(r.user_id): r.email for r in rows}
+
         log_list = []
         for log in logs:
             log_dict = {
@@ -92,23 +108,18 @@ def get_audit_logs():
                 'new_data': log.new_data,
                 'ip_address': log.ip_address,
                 'user_agent': log.user_agent,
-                'timestamp': log.timestamp.isoformat() if log.timestamp else None
+                'timestamp': log.timestamp.isoformat() if log.timestamp else None,
+                'user_email': users_map.get(str(log.user_id), 'Unknown') if log.user_id else 'System',
             }
-
-            # Get user email
-            if log.user_id:
-                user = User.query.filter_by(user_id=log.user_id).first()
-                log_dict['user_email'] = user.email if user else 'Unknown'
-            else:
-                log_dict['user_email'] = 'System'
-
             log_list.append(log_dict)
 
-        return jsonify({
+        result = {
             'success': True,
             'logs': log_list,
             'total_pages': (total_records + limit - 1) // limit
-        }), 200
+        }
+        cache.set(cache_key, result, 30)
+        return jsonify(result), 200
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch audit logs', 'message': str(e)}), 500

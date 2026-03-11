@@ -14,30 +14,65 @@ from datetime import datetime, timedelta
 logger = logging.getLogger(__name__)
 
 
+class _SimpleMemoryCache:
+    """In-process memory cache used when Redis is unavailable.
+    Thread-safe for read-heavy workloads (GIL protects dict operations).
+    Evicts expired entries lazily on get()."""
+    import time as _time
+
+    def __init__(self):
+        self._store = {}  # key -> (value, expires_at)
+
+    def get(self, key: str):
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        value, expires_at = entry
+        if _SimpleMemoryCache._time.time() > expires_at:
+            self._store.pop(key, None)
+            return None
+        return value
+
+    def set(self, key: str, value, timeout: int = 300) -> bool:
+        self._store[key] = (value, _SimpleMemoryCache._time.time() + timeout)
+        return True
+
+    def delete(self, key: str) -> bool:
+        return self._store.pop(key, None) is not None
+
+    def delete_pattern(self, pattern: str) -> int:
+        import fnmatch
+        keys = [k for k in list(self._store) if fnmatch.fnmatch(k, pattern)]
+        for k in keys:
+            self._store.pop(k, None)
+        return len(keys)
+
+
 class CacheManager:
-    """Centralized cache management with Redis"""
+    """Centralized cache management with Redis or in-memory fallback"""
 
     def __init__(self, redis_url: str = "redis://localhost:6379/0"):
-        """Initialize Redis connection with fallback"""
+        """Initialize Redis connection with in-memory fallback"""
         self.redis_client = None
-        self.enabled = False
+        self.enabled = True  # Always enabled — falls back to memory if Redis unavailable
+        self._memory_cache = _SimpleMemoryCache()
+        self._use_redis = False
 
-        try:
-            self.redis_client = redis.from_url(
-                redis_url,
-                decode_responses=True,
-                socket_connect_timeout=1,
-                socket_timeout=1,
-                retry_on_timeout=False,
-                health_check_interval=30
-            )
-            # Test connection
-            self.redis_client.ping()
-            self.enabled = True
-            logger.info("Redis cache connected successfully")
-        except Exception as e:
-            logger.warning(f"Redis cache not available: {e}. Running without cache.")
-            self.enabled = False
+        if redis_url:
+            try:
+                self.redis_client = redis.from_url(
+                    redis_url,
+                    decode_responses=True,
+                    socket_connect_timeout=1,
+                    socket_timeout=1,
+                    retry_on_timeout=False,
+                    health_check_interval=30
+                )
+                self.redis_client.ping()
+                self._use_redis = True
+                logger.info("Redis cache connected successfully")
+            except Exception as e:
+                logger.warning(f"Redis unavailable: {e}. Using in-memory cache.")
 
     def _make_cache_key(self, prefix: str, *args, **kwargs) -> str:
         """Generate a unique cache key"""
@@ -61,55 +96,51 @@ class CacheManager:
         return key_string
 
     def get(self, key: str) -> Optional[Any]:
-        """Get value from cache"""
-        if not self.enabled:
-            return None
-
-        try:
-            value = self.redis_client.get(key)
-            if value:
-                return json.loads(value)
-        except Exception as e:
-            logger.error(f"Cache get error: {e}")
-
-        return None
+        """Get value from cache (Redis or memory fallback)"""
+        if self._use_redis:
+            try:
+                value = self.redis_client.get(key)
+                if value:
+                    return json.loads(value)
+                return None
+            except Exception as e:
+                logger.error(f"Cache get error: {e}")
+                return None
+        return self._memory_cache.get(key)
 
     def set(self, key: str, value: Any, timeout: int = 300) -> bool:
         """Set value in cache with timeout in seconds"""
-        if not self.enabled:
-            return False
-
-        try:
-            json_value = json.dumps(value, default=str)
-            return self.redis_client.setex(key, timeout, json_value)
-        except Exception as e:
-            logger.error(f"Cache set error: {e}")
-            return False
+        if self._use_redis:
+            try:
+                json_value = json.dumps(value, default=str)
+                return bool(self.redis_client.setex(key, timeout, json_value))
+            except Exception as e:
+                logger.error(f"Cache set error: {e}")
+                return False
+        return self._memory_cache.set(key, value, timeout)
 
     def delete(self, key: str) -> bool:
         """Delete key from cache"""
-        if not self.enabled:
-            return False
-
-        try:
-            return bool(self.redis_client.delete(key))
-        except Exception as e:
-            logger.error(f"Cache delete error: {e}")
-            return False
+        if self._use_redis:
+            try:
+                return bool(self.redis_client.delete(key))
+            except Exception as e:
+                logger.error(f"Cache delete error: {e}")
+                return False
+        return self._memory_cache.delete(key)
 
     def delete_pattern(self, pattern: str) -> int:
         """Delete all keys matching pattern"""
-        if not self.enabled:
-            return 0
-
-        try:
-            keys = self.redis_client.keys(pattern)
-            if keys:
-                return self.redis_client.delete(*keys)
-            return 0
-        except Exception as e:
-            logger.error(f"Cache delete pattern error: {e}")
-            return 0
+        if self._use_redis:
+            try:
+                keys = self.redis_client.keys(pattern)
+                if keys:
+                    return self.redis_client.delete(*keys)
+                return 0
+            except Exception as e:
+                logger.error(f"Cache delete pattern error: {e}")
+                return 0
+        return self._memory_cache.delete_pattern(pattern)
 
     def invalidate_client_cache(self, client_id: str):
         """Invalidate all cache for a specific client"""
@@ -139,7 +170,7 @@ def get_cache_manager() -> CacheManager:
         if redis_url and getattr(Config, 'REDIS_AVAILABLE', False):
             _cache_manager = CacheManager(redis_url)
         else:
-            # Create disabled cache manager
+            # No Redis — CacheManager uses in-memory fallback automatically
             _cache_manager = CacheManager("")
     return _cache_manager
 

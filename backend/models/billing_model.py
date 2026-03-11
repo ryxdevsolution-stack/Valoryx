@@ -42,8 +42,8 @@ class GSTBilling(db.Model):
     updated_at = db.Column(db.DateTime, default=get_current_time, onupdate=get_current_time)
     synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
 
-    # Relationship to User model
-    creator = relationship('User', foreign_keys=[created_by], lazy='joined')
+    # lazy='select' — prevents silent JOIN on every COUNT/SUM/aggregate query
+    creator = relationship('User', foreign_keys=[created_by], lazy='select')
 
     def to_dict(self):
         return {
@@ -101,8 +101,8 @@ class NonGSTBilling(db.Model):
     updated_at = db.Column(db.DateTime, default=get_current_time, onupdate=get_current_time)
     synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
 
-    # Relationship to User model
-    creator = relationship('User', foreign_keys=[created_by], lazy='joined')
+    # lazy='select' — prevents silent JOIN on every COUNT/SUM/aggregate query
+    creator = relationship('User', foreign_keys=[created_by], lazy='select')
 
     def to_dict(self):
         return {

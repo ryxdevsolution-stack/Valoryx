@@ -26,7 +26,7 @@ interface Branch {
 }
 
 export default function CreateUser() {
-  const { user, isLoading: authLoading } = useClient();
+  const { user, client, isLoading: authLoading } = useClient();
   const isSuperAdminUser = user?.is_super_admin ?? false;
   const navigate = useNavigate();
 
@@ -57,14 +57,14 @@ export default function CreateUser() {
     try {
       const [permsRes, branchesRes] = await Promise.all([
         api.get('/permissions/all'),
-        user?.client_id ? api.get(`/admin/clients/${user.client_id}/branches`) : Promise.resolve({ data: { branches: [] } })
+        client?.client_id ? api.get(`/admin/clients/${client.client_id}/branches`) : Promise.resolve({ data: { branches: [] } })
       ]);
       setAvailablePermissions(permsRes.data.permissions || []);
       setBranches(branchesRes.data.branches || []);
     } catch (error) {
       console.error('Error fetching data:', error);
     }
-  }, [user?.client_id]);
+  }, [client?.client_id]);
 
   useEffect(() => {
     if (authLoading) return;
@@ -235,7 +235,7 @@ export default function CreateUser() {
               <label className={labelCls}>Email <span className="text-red-500">*</span></label>
               <div className="relative">
                 <Mail className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-gray-400" />
-                <input type="email" value={formData.email} required
+                <input type="email" name="create-user-email" autoComplete="off" value={formData.email} required
                   onChange={e => setFormData(p => ({ ...p, email: e.target.value }))}
                   className={`${inputCls} pl-9`} placeholder="user@example.com" />
               </div>
@@ -406,13 +406,13 @@ export default function CreateUser() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
               <label className={labelCls}>Password <span className="text-red-500">*</span></label>
-              <input type="password" value={formData.password} required minLength={6}
+              <input type="password" name="new-user-password" autoComplete="new-password" value={formData.password} required minLength={6}
                 onChange={e => setFormData(p => ({ ...p, password: e.target.value }))}
                 className={inputCls} />
             </div>
             <div>
               <label className={labelCls}>Confirm Password <span className="text-red-500">*</span></label>
-              <input type="password" value={formData.confirmPassword} required minLength={6}
+              <input type="password" name="new-user-confirm-password" autoComplete="new-password" value={formData.confirmPassword} required minLength={6}
                 onChange={e => setFormData(p => ({ ...p, confirmPassword: e.target.value }))}
                 className={inputCls} />
             </div>

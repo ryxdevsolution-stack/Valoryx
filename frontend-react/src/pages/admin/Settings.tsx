@@ -209,7 +209,7 @@ const defaultSettings: SystemSettings = {
 
 export default function SystemSettingsPage() {
   const { user, isSuperAdmin } = useClient();
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5017';
 
   const [activeSection, setActiveSection] = useState('general');
   const [settings, setSettings] = useState<SystemSettings>(defaultSettings);
@@ -224,7 +224,7 @@ export default function SystemSettingsPage() {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const response = await axios.get(`${apiUrl}/admin/settings`, {
+      const response = await axios.get(`${apiUrl}/api/admin/settings`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (response.data) {
@@ -251,7 +251,7 @@ export default function SystemSettingsPage() {
     try {
       setSaving(true);
       const token = localStorage.getItem('token');
-      await axios.put(`${apiUrl}/admin/settings`, settings, {
+      await axios.put(`${apiUrl}/api/admin/settings`, settings, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setOriginalSettings(settings);

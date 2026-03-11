@@ -1,12 +1,19 @@
 import uuid
-from datetime import datetime
+import secrets as _secrets
+from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.client_model import ClientEntry
-from utils.auth_middleware import authenticate, require_role
+from models.user_model import User
+from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_super_admin
 from utils.audit_logger import log_action
-from utils.supabase_storage import upload_logo, delete_logo, replace_logo
+from utils.supabase_storage import delete_logo, replace_logo
+from utils.email_service import (
+    send_account_deletion_scheduled_email,
+    send_deletion_cancelled_email,
+)
+from config import Config
 
 client_bp = Blueprint('client', __name__)
 
@@ -239,3 +246,155 @@ def delete_client_logo(client_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to delete logo', 'message': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Account Deletion / GDPR
+# ---------------------------------------------------------------------------
+
+_DELETION_GRACE_DAYS = 30
+
+
+@client_bp.route('/<client_id>/request-deletion', methods=['POST'])
+@authenticate
+def request_account_deletion(client_id):
+    """
+    Schedule account for deletion 30 days from now.
+    Only the account owner (role=owner) may request this.
+    Generates a reactivation token and emails it so the user can cancel.
+    """
+    try:
+        if client_id != g.user['client_id']:
+            return jsonify({'error': 'Access denied'}), 403
+
+        if g.user.get('role') != 'owner':
+            return jsonify({'error': 'Only the account owner can request deletion'}), 403
+
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+
+        if client.deletion_scheduled_at:
+            return jsonify({
+                'success': True,
+                'message': 'Deletion already scheduled',
+                'deletion_scheduled_at': client.deletion_scheduled_at.isoformat(),
+            }), 200
+
+        data = request.get_json() or {}
+        reason = data.get('reason', '')
+
+        now = datetime.utcnow()
+        deletion_date = now + timedelta(days=_DELETION_GRACE_DAYS)
+        reactivation_token = _secrets.token_hex(32)
+
+        client.deletion_requested_at = now
+        client.deletion_scheduled_at = deletion_date
+        client.deletion_requested_by = g.user['user_id']
+        client.deletion_reactivation_token = reactivation_token
+        db.session.commit()
+
+        log_action('DELETE_REQUESTED', 'client_entry', client_id,
+                   {'reason': reason}, {'deletion_scheduled_at': deletion_date.isoformat()})
+
+        reactivation_link = f"{Config.FRONTEND_URL}/reactivate-account?token={reactivation_token}"
+        send_account_deletion_scheduled_email(
+            client.email,
+            client.client_name,
+            deletion_date.strftime('%B %d, %Y'),
+            reactivation_link,
+        )
+
+        return jsonify({
+            'success': True,
+            'message': f'Account scheduled for deletion on {deletion_date.strftime("%B %d, %Y")}. '
+                       'Check your email for a reactivation link if you change your mind.',
+            'deletion_scheduled_at': deletion_date.isoformat(),
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to schedule deletion', 'message': str(e)}), 500
+
+
+@client_bp.route('/reactivate', methods=['POST'])
+def reactivate_account():
+    """
+    Cancel a pending deletion using the reactivation token from the email.
+    No auth required — the token IS the credential.
+    """
+    try:
+        data = request.get_json() or {}
+        token = (data.get('token') or '').strip()
+        if not token:
+            return jsonify({'error': 'Reactivation token is required'}), 400
+
+        client = ClientEntry.query.filter_by(deletion_reactivation_token=token).first()
+        if not client:
+            return jsonify({'error': 'Invalid or expired reactivation token'}), 400
+
+        if not client.deletion_scheduled_at:
+            return jsonify({'error': 'No pending deletion for this account'}), 400
+
+        client.deletion_requested_at = None
+        client.deletion_scheduled_at = None
+        client.deletion_requested_by = None
+        client.deletion_reactivation_token = None
+        db.session.commit()
+
+        log_action('DELETE_CANCELLED', 'client_entry', client.client_id, {}, {})
+
+        send_deletion_cancelled_email(client.email, client.client_name)
+
+        return jsonify({
+            'success': True,
+            'message': 'Account deletion cancelled. Your account is active again.',
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to reactivate account', 'message': str(e)}), 500
+
+
+@client_bp.route('/<client_id>/export-data', methods=['GET'])
+@authenticate
+def export_account_data(client_id):
+    """
+    Export all client data as JSON (GDPR right-to-access).
+    Only the account owner may call this.
+    """
+    try:
+        if client_id != g.user['client_id']:
+            return jsonify({'error': 'Access denied'}), 403
+
+        if g.user.get('role') != 'owner':
+            return jsonify({'error': 'Only the account owner can export data'}), 403
+
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+
+        users = User.query.filter_by(client_id=client_id).all()
+
+        export = {
+            'exported_at': datetime.utcnow().isoformat(),
+            'client': client.to_dict(),
+            'users': [
+                {
+                    'user_id': u.user_id,
+                    'email': u.email,
+                    'full_name': u.full_name,
+                    'role': u.role,
+                    'is_active': u.is_active,
+                    'created_at': u.created_at.isoformat() if u.created_at else None,
+                }
+                for u in users
+            ],
+        }
+
+        log_action('DATA_EXPORTED', 'client_entry', client_id, {}, {})
+
+        return jsonify({'success': True, 'data': export}), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Failed to export data', 'message': str(e)}), 500

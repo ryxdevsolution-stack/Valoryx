@@ -1222,11 +1222,13 @@ class SyncService:
                     placeholders = ', '.join([f":{c}" for c in columns])
                     update_set = ', '.join([f"{c} = :{c}" for c in columns if c != id_column])
 
+                    # Filter record to only columns being inserted (extra keys break SQLAlchemy binding)
+                    filtered = {c: record.get(c) for c in columns}
                     conn.execute(text(f"""
                         INSERT INTO {table_name} ({col_names})
                         VALUES ({placeholders})
                         ON CONFLICT ({id_column}) DO UPDATE SET {update_set}
-                    """), record)
+                    """), filtered)
                     count += 1
 
                 except Exception as e:

@@ -360,7 +360,8 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
       </div>
 
       {/* Screen preview styling - Optimized for 80mm thermal printers (72mm printable area) */}
-      <style dangerouslySetInnerHTML={{__html: `
+      {/* eslint-disable-next-line react/no-unknown-property */}
+      <style>{`
         .bill-receipt {
           font-family: Arial, Helvetica, sans-serif;
           max-width: 68mm;
@@ -459,7 +460,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
             border: 1px solid #e5e7eb;
           }
         }
-      `}} />
+      `}</style>
     </div>
   )
 }

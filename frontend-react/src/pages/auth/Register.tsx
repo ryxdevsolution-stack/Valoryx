@@ -1,8 +1,7 @@
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { CheckCircle2 } from 'lucide-react'
 import api from '@/lib/api'
-import { useClient } from '@/contexts/ClientContext'
 import LightPillar from '@/components/LightPillar'
 
 export default function RegisterPage() {
@@ -15,12 +14,49 @@ export default function RegisterPage() {
   const [showPassword, setShowPassword] = useState(false)
   const [showConfirm, setShowConfirm] = useState(false)
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<{ email?: string; business_name?: string }>({})
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
-  const { setClientData } = useClient()
+  const emailDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const businessDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setFormData({ ...formData, [e.target.name]: e.target.value })
+    // Clear field-specific error when user edits that field
+    const fieldMap: Record<string, keyof typeof fieldErrors> = {
+      email: 'email',
+      businessName: 'business_name',
+    }
+    const key = fieldMap[e.target.name]
+    if (key && fieldErrors[key]) setFieldErrors((prev) => ({ ...prev, [key]: undefined }))
+  }
+
+  const checkEmailExists = (email: string) => {
+    if (emailDebounceRef.current) clearTimeout(emailDebounceRef.current)
+    if (!email || !email.includes('@')) return
+    emailDebounceRef.current = setTimeout(async () => {
+      try {
+        await api.post('/auth/check-duplicate', { email })
+      } catch (err: any) {
+        if (err.response?.status === 409 && err.response?.data?.field === 'email') {
+          setFieldErrors((prev) => ({ ...prev, email: err.response.data.error }))
+        }
+      }
+    }, 300)
+  }
+
+  const checkBusinessExists = (name: string) => {
+    if (businessDebounceRef.current) clearTimeout(businessDebounceRef.current)
+    if (!name.trim()) return
+    businessDebounceRef.current = setTimeout(async () => {
+      try {
+        await api.post('/auth/check-duplicate', { business_name: name })
+      } catch (err: any) {
+        if (err.response?.status === 409 && err.response?.data?.field === 'business_name') {
+          setFieldErrors((prev) => ({ ...prev, business_name: err.response.data.error }))
+        }
+      }
+    }, 300)
   }
 
   const passwordRules = [
@@ -45,6 +81,7 @@ export default function RegisterPage() {
       return
     }
 
+    setFieldErrors({})
     setLoading(true)
     try {
       const response = await api.post('/auth/signup', {
@@ -53,36 +90,18 @@ export default function RegisterPage() {
         password: formData.password,
       })
 
-      const { token, user, client_id, client_name, client_logo, client_address, client_phone, client_email, client_gstin } = response.data
-
-      const userData = {
-        user_id: user.user_id,
-        email: user.email,
-        role: user.role,
-        is_super_admin: user.is_super_admin,
-        permissions: user.permissions,
-        full_name: user.full_name,
-        phone: user.phone,
-        department: user.department,
-      }
-
-      const clientData = {
-        client_id,
-        client_name,
-        logo_url: client_logo,
-        address: client_address,
-        phone: client_phone,
-        email: client_email,
-        gstin: client_gstin,
-        subscription_status: response.data.trial?.status,
-        trial_end_date: response.data.trial?.end_date,
-        trial_days_remaining: response.data.trial?.days_remaining,
-      }
-
-      setClientData(userData, clientData, token)
-      navigate('/dashboard')
+      // Backend now requires email verification before login.
+      // Redirect to the "check your email" holding page.
+      const registeredEmail = response.data.email ?? formData.email
+      navigate('/verify-email-pending', { state: { email: registeredEmail } })
     } catch (err: any) {
-      setError(err.response?.data?.error || 'Signup failed')
+      const field = err.response?.data?.field
+      const msg = err.response?.data?.error || 'Signup failed'
+      if (field === 'email' || field === 'business_name') {
+        setFieldErrors({ [field]: msg })
+      } else {
+        setError(msg)
+      }
     } finally {
       setLoading(false)
     }
@@ -102,6 +121,21 @@ export default function RegisterPage() {
   )
 
   const inputClass = "w-full px-4 py-3 bg-white/5 border border-white/15 rounded-lg focus:ring-2 focus:ring-[#5227FF] focus:border-transparent outline-none transition-all duration-200 text-white placeholder-slate-500 [&:-webkit-autofill]:[-webkit-box-shadow:0_0_0_1000px_#2d2145_inset] [&:-webkit-autofill]:[-webkit-text-fill-color:#ffffff]"
+
+  const handleGoogleLogin = async () => {
+    try {
+      const res = await api.get('/oauth/google/authorize')
+      const authUrl: string = res.data.auth_url
+      // Validate the URL points to Google before following it
+      if (!authUrl?.startsWith('https://accounts.google.com/')) {
+        setError('Google sign-in is not available right now.')
+        return
+      }
+      window.location.href = authUrl
+    } catch {
+      setError('Google sign-in is not available right now.')
+    }
+  }
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-[#271E37] relative overflow-hidden">
@@ -184,9 +218,13 @@ export default function RegisterPage() {
                 required
                 value={formData.businessName}
                 onChange={handleChange}
-                className={inputClass}
+                onBlur={(e) => checkBusinessExists(e.target.value)}
+                className={`${inputClass} ${fieldErrors.business_name ? 'border-red-500 focus:ring-red-500' : ''}`}
                 placeholder="Your business name"
               />
+              {fieldErrors.business_name && (
+                <p className="text-xs text-red-400 mt-1">{fieldErrors.business_name}</p>
+              )}
             </div>
 
             {/* Email */}
@@ -201,9 +239,13 @@ export default function RegisterPage() {
                 required
                 value={formData.email}
                 onChange={handleChange}
-                className={inputClass}
+                onBlur={(e) => checkEmailExists(e.target.value)}
+                className={`${inputClass} ${fieldErrors.email ? 'border-red-500 focus:ring-red-500' : ''}`}
                 placeholder="you@example.com"
               />
+              {fieldErrors.email && (
+                <p className="text-xs text-red-400 mt-1">{fieldErrors.email}</p>
+              )}
             </div>
 
             {/* Password */}
@@ -323,6 +365,28 @@ export default function RegisterPage() {
               )}
             </button>
           </form>
+
+          <div className="relative my-4">
+            <div className="absolute inset-0 flex items-center">
+              <div className="w-full border-t border-white/10" />
+            </div>
+            <div className="relative flex justify-center text-xs">
+              <span className="px-2 bg-[#0f0a1e] text-slate-500 uppercase tracking-wider">or</span>
+            </div>
+          </div>
+          <button
+            type="button"
+            onClick={handleGoogleLogin}
+            className="w-full flex items-center justify-center gap-3 py-3 bg-white/5 border border-white/15 rounded-lg text-white hover:bg-white/10 transition-colors text-sm font-medium"
+          >
+            <svg viewBox="0 0 24 24" className="w-5 h-5 flex-shrink-0" xmlns="http://www.w3.org/2000/svg">
+              <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
+              <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" fill="#34A853"/>
+              <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
+              <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
+            </svg>
+            Continue with Google
+          </button>
 
           {/* Trust indicators */}
           <div className="mt-5 flex flex-wrap items-center justify-center gap-x-4 gap-y-2 text-xs text-slate-500">

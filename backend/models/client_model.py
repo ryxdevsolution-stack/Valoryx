@@ -8,7 +8,7 @@ class ClientEntry(db.Model):
     __tablename__ = 'client_entry'
 
     client_id = db.Column(FlexibleUUID, primary_key=True, default=lambda: str(uuid.uuid4()))
-    client_name = db.Column(db.String(255), nullable=False)
+    client_name = db.Column(db.String(255), nullable=False, index=True)
     email = db.Column(db.String(255), unique=True, nullable=False, index=True)
     logo_url = db.Column(db.String(500))
     address = db.Column(db.Text)
@@ -25,6 +25,17 @@ class ClientEntry(db.Model):
     subscription_end_date = db.Column(db.DateTime, nullable=True)
     razorpay_subscription_id = db.Column(db.String(100), nullable=True)  # set after first invoice.paid webhook
     telegram_chat_id = db.Column(db.String(50), nullable=True)  # Telegram chat ID for daily summary reports
+
+    # Email verification
+    email_verified = db.Column(db.Boolean, default=False, nullable=False)
+    email_verification_token = db.Column(db.String(64), nullable=True, index=True)
+    email_verification_expires = db.Column(db.DateTime, nullable=True)
+
+    # Account deletion / GDPR
+    deletion_requested_at = db.Column(db.DateTime, nullable=True)
+    deletion_scheduled_at = db.Column(db.DateTime, nullable=True)
+    deletion_requested_by = db.Column(db.String(36), nullable=True)
+    deletion_reactivation_token = db.Column(db.String(64), nullable=True, index=True)
 
     @property
     def is_trial_expired(self):
@@ -66,4 +77,6 @@ class ClientEntry(db.Model):
             'subscription_end_date': self.subscription_end_date.isoformat() if self.subscription_end_date else None,
             'razorpay_subscription_id': self.razorpay_subscription_id,
             'telegram_chat_id': self.telegram_chat_id,
+            'email_verified': self.email_verified,
+            'deletion_scheduled_at': self.deletion_scheduled_at.isoformat() if self.deletion_scheduled_at else None,
         }

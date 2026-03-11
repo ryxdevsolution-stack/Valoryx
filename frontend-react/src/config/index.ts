@@ -33,7 +33,7 @@ function getApiUrl(): string {
 
   // Development default
   if (IS_DEVELOPMENT) {
-    return 'http://localhost:5000';
+    return 'http://localhost:5017';
   }
 
   // Production without env var - this is a configuration error
@@ -45,7 +45,7 @@ function getApiUrl(): string {
     );
   }
 
-  return 'http://localhost:5000';
+  return 'http://localhost:5017';
 }
 
 export const API_URL = getApiUrl();

@@ -6,6 +6,7 @@ from config import Config
 from extensions import db
 from models.user_model import User
 from models.client_model import ClientEntry
+from models.session_model import UserSession
 from utils.cache_helper import get_cache_manager
 
 def get_client_id_from_token(token):
@@ -88,7 +89,10 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                 'department': user_data.get('department', ''),
                 'role': user_data.get('role', 'staff'),
                 'is_super_admin': user_data.get('is_super_admin', False),
-                'permissions': user_data.get('permissions', [])
+                'permissions': user_data.get('permissions', []),
+                'is_readonly': decoded.get('is_readonly', False),
+                'is_impersonation': decoded.get('is_impersonation', False),
+                'impersonating_admin_id': decoded.get('impersonating_admin_id'),
             }
 
             g.client = {
@@ -188,7 +192,10 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                 'department': user.department,
                 'role': user.role,
                 'is_super_admin': decoded.get('is_super_admin', False),
-                'permissions': decoded.get('permissions', [])
+                'permissions': decoded.get('permissions', []),
+                'is_readonly': decoded.get('is_readonly', False),
+                'is_impersonation': decoded.get('is_impersonation', False),
+                'impersonating_admin_id': decoded.get('impersonating_admin_id'),
             }
 
             g.client = {
@@ -210,6 +217,36 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                 'user': g.user,
                 'client': g.client
             }, 86400)
+
+        # Validate that the session has not been revoked.
+        # Old JWTs without session_id (issued before this feature) are still accepted.
+        session_id = decoded.get('session_id')
+        if session_id:
+            # Cache session-valid status for 60s — skips the DB SELECT on every API call.
+            # A page with 10 API calls used to do 10 DB reads + 10 DB writes here.
+            # Now it does at most 1 read + 1 write per 5 minutes.
+            session_cache_key = f"session_valid:{session_id}"
+            if not cache.get(session_cache_key):
+                session_record = UserSession.query.filter_by(
+                    session_id=session_id,
+                    is_active=True
+                ).first()
+                if not session_record:
+                    return jsonify({
+                        'error': 'Session has been revoked. Please login again.',
+                        'code': 'SESSION_REVOKED'
+                    }), 401
+                cache.set(session_cache_key, 1, 60)  # re-validate at most once per 60s
+
+                # Throttle last_seen write — at most once per 5 minutes per session
+                seen_key = f"session_seen:{session_id}"
+                if not cache.get(seen_key):
+                    try:
+                        session_record.last_seen = datetime.utcnow()
+                        db.session.commit()
+                        cache.set(seen_key, 1, 300)
+                    except Exception:
+                        db.session.rollback()
 
         return f(*args, **kwargs)
 
@@ -242,3 +279,29 @@ def require_role(allowed_roles):
             return f(*args, **kwargs)
         return decorated_function
     return decorator
+
+
+def readonly_guard(f):
+    """
+    Blocks mutating operations when the current JWT is a read-only impersonation token.
+    Apply to any POST/PUT/PATCH/DELETE route that should be disabled during impersonation.
+
+    Usage:
+        @client_bp.route('/something', methods=['POST'])
+        @authenticate
+        @readonly_guard
+        def create_something():
+            ...
+    """
+    @wraps(f)
+    def decorated_function(*args, **kwargs):
+        if not hasattr(g, 'user'):
+            return jsonify({'error': 'Unauthorized'}), 401
+        if g.user.get('is_readonly'):
+            return jsonify({
+                'error': 'Read-only session',
+                'message': 'This action is disabled during impersonation — impersonation sessions are read-only.',
+                'code': 'READONLY_SESSION',
+            }), 403
+        return f(*args, **kwargs)
+    return decorated_function

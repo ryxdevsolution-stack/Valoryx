@@ -85,7 +85,7 @@ export default function DashboardPage() {
   const { client } = useClient()
   const [analytics, setAnalytics] = useState<AnalyticsDashboard | null>(null)
   const [loading, setLoading] = useState(true)
-  const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month'>('today')
+  const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month'>('month')
   const [showPredictions, setShowPredictions] = useState(false)
 
   // Track ongoing request to prevent duplicates (for React Strict Mode)

@@ -51,7 +51,7 @@ interface QuickStat {
   bgColor: string;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5017';
 
 // Default stats for when API is not available
 const getDefaultStats = (): DashboardStats => ({
@@ -99,10 +99,10 @@ export default function AdminDashboard() {
       const token = localStorage.getItem('token');
 
       const [statsResponse, activityResponse] = await Promise.all([
-        axios.get(`${API_URL}/admin/stats/overview`, {
+        axios.get(`${API_URL}/api/admin/stats/overview`, {
           headers: { Authorization: `Bearer ${token}` }
         }).catch(() => ({ data: null })),
-        axios.get(`${API_URL}/admin/activity/recent`, {
+        axios.get(`${API_URL}/api/admin/activity/recent`, {
           headers: { Authorization: `Bearer ${token}` }
         }).catch(() => ({ data: { activities: [] } }))
       ]);

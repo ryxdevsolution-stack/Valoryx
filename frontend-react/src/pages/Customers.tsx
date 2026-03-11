@@ -1,6 +1,6 @@
 
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useMemo } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { Link } from 'react-router-dom'
@@ -30,6 +30,12 @@ interface Statistics {
   total_revenue: number
   top_customer: Customer | null
 }
+
+// Module-level formatters — created once, never recreated on re-renders
+const currencyFormatter = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+const dateFormatter = new Intl.DateTimeFormat('en-IN', { year: 'numeric', month: 'short', day: 'numeric' })
+const formatCurrency = (amount: number) => `₹${currencyFormatter.format(amount)}`
+const formatDate = (dateString: string) => dateString ? dateFormatter.format(new Date(dateString)) : 'N/A'
 
 export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([])
@@ -75,28 +81,18 @@ export default function CustomersPage() {
     return request
   }
 
-  const formatCurrency = (amount: number) => {
-    return `₹${amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
-  }
-
-  const formatDate = (dateString: string) => {
-    if (!dateString) return 'N/A'
-    return new Date(dateString).toLocaleDateString('en-IN', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
+  // Hoist formatters outside render — avoids recreating Intl objects on every render cycle
+  const filteredCustomers = useMemo(() => {
+    const q = searchQuery.toLowerCase()
+    return customers.filter((customer) => {
+      const matchesSearch =
+        customer.customer_name.toLowerCase().includes(q) ||
+        customer.customer_phone.includes(searchQuery) ||
+        (customer.customer_code && customer.customer_code.toString().includes(searchQuery))
+      const matchesStatus = filterStatus === 'all' || customer.status === filterStatus
+      return matchesSearch && matchesStatus
     })
-  }
-
-  // Filter customers based on search and status
-  const filteredCustomers = customers.filter((customer) => {
-    const matchesSearch =
-      customer.customer_name.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      customer.customer_phone.includes(searchQuery) ||
-      (customer.customer_code && customer.customer_code.toString().includes(searchQuery))
-    const matchesStatus = filterStatus === 'all' || customer.status === filterStatus
-    return matchesSearch && matchesStatus
-  })
+  }, [customers, searchQuery, filterStatus])
 
   return (
     <DashboardLayout>

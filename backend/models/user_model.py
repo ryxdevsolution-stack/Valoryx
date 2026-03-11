@@ -38,8 +38,24 @@ class User(db.Model):
     reset_token = db.Column(db.String(64), nullable=True, index=True)
     reset_token_expires = db.Column(db.DateTime, nullable=True)
 
+    # Invite flow
+    invite_token = db.Column(db.String(64), nullable=True, index=True)
+    invite_token_expires = db.Column(db.DateTime, nullable=True)
+    invite_accepted = db.Column(db.Boolean, default=False, nullable=False)
+
     # Login IP tracking (for new-location email alert)
     last_login_ip = db.Column(db.String(45), nullable=True)  # 45 chars covers IPv6
+
+    # Force password change (set True when admin resets a user's password)
+    must_change_password = db.Column(db.Boolean, default=False, nullable=False)
+
+    # 2FA / TOTP
+    totp_secret = db.Column(db.String(32), nullable=True)
+    totp_enabled = db.Column(db.Boolean, default=False, nullable=False)
+
+    # OAuth / SSO
+    google_id = db.Column(db.String(128), nullable=True, unique=True, index=True)
+    avatar_url = db.Column(db.String(512), nullable=True)
 
     def to_dict(self):
         return {
@@ -61,4 +77,8 @@ class User(db.Model):
             'synced_at': self.synced_at.isoformat() if self.synced_at else None,
             'telegram_chat_id': self.telegram_chat_id,
             'branch_id': str(self.branch_id) if self.branch_id else None,
+            'invite_accepted': self.invite_accepted,
+            'must_change_password': self.must_change_password,
+            'totp_enabled': self.totp_enabled,
+            'avatar_url': self.avatar_url,
         }

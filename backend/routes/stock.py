@@ -258,13 +258,19 @@ def get_low_stock_alerts():
     try:
         client_id = g.user['client_id']
 
+        cache = get_cache_manager()
+        cache_key = f"stock:alerts:{client_id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return jsonify(cached), 200
+
         # Get products where quantity <= low_stock_alert
         low_stock = StockEntry.query.filter(
             StockEntry.client_id == client_id,
             StockEntry.quantity <= StockEntry.low_stock_alert
         ).order_by(StockEntry.quantity).all()
 
-        return jsonify({
+        result = {
             'success': True,
             'alerts': [
                 {
@@ -278,7 +284,9 @@ def get_low_stock_alerts():
             ],
             'low_stock_products': [item.to_dict() for item in low_stock],
             'alert_count': len(low_stock)
-        }), 200
+        }
+        cache.set(cache_key, result, 60)
+        return jsonify(result), 200
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch alerts', 'message': str(e)}), 500

@@ -4,7 +4,7 @@ This ensures proper Flask application context
 
 WARNING: This script is for DEVELOPMENT ONLY!
 For production, use a WSGI server like Gunicorn or Waitress:
-  gunicorn -w 4 -b 0.0.0.0:5000 app:create_app()
+  gunicorn -w 4 -b 0.0.0.0:5017 app:create_app()
 """
 import os
 import sys
@@ -22,9 +22,9 @@ if __name__ == '__main__':
         print("ERROR: DO NOT RUN run.py IN PRODUCTION!")
         print("=" * 60)
         print("Use a production WSGI server instead:")
-        print("  gunicorn -w 4 -b 0.0.0.0:5000 'app:create_app()'")
+        print("  gunicorn -w 4 -b 0.0.0.0:5017 'app:create_app()'")
         print("  or")
-        print("  waitress-serve --host=0.0.0.0 --port=5000 app:create_app")
+        print("  waitress-serve --host=0.0.0.0 --port=5017 app:create_app")
         print("=" * 60)
         sys.exit(1)
 
@@ -37,8 +37,8 @@ if __name__ == '__main__':
     print("=" * 60)
     print("RYX Billing API Server - DEVELOPMENT MODE")
     print("=" * 60)
-    print(f"Server running at: http://localhost:5000")
-    print(f"API endpoints available at: http://localhost:5000/api/")
+    print(f"Server running at: http://localhost:5017")
+    print(f"API endpoints available at: http://localhost:5017/api/")
     print(f"Debug Mode: {Config.DEBUG}")
     print("=" * 60)
     print("WARNING: This is for development only!")
@@ -46,4 +46,4 @@ if __name__ == '__main__':
     print("=" * 60)
 
     # Use Config.DEBUG from environment variable
-    app.run(host='0.0.0.0', port=5000, debug=Config.DEBUG)
+    app.run(host='0.0.0.0', port=5017, debug=Config.DEBUG)

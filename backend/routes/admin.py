@@ -1762,3 +1762,212 @@ def get_client_branches(client_id):
         }), 200
     except Exception as e:
         return jsonify({'error': f'Failed to fetch client branches: {str(e)}'}), 500
+
+
+# ---------------------------------------------------------------------------
+# Admin Stats Overview — used by AdminDashboard frontend
+# ---------------------------------------------------------------------------
+
+@admin_bp.route('/stats/overview', methods=['GET'])
+@authenticate
+@require_super_admin
+def get_stats_overview():
+    """
+    Aggregate KPI stats for the admin dashboard.
+    Returns the shape expected by the AdminDashboard React page:
+    { clients, users, billing, system }
+    """
+    try:
+        from models.billing_model import GSTBilling, NonGSTBilling
+
+        now = datetime.utcnow()
+        month_start = now - timedelta(days=30)
+        prev_month_start = now - timedelta(days=60)
+        week_ago = now - timedelta(days=7)
+        day_ago = now - timedelta(days=1)
+
+        # --- Client stats ---
+        total_clients = ClientEntry.query.count()
+        active_clients = ClientEntry.query.filter_by(is_active=True).count()
+        new_clients_month = ClientEntry.query.filter(
+            ClientEntry.created_at >= month_start
+        ).count()
+
+        # --- User stats ---
+        total_users = User.query.filter(User.deleted_at.is_(None)).count()
+        active_users = User.query.filter(
+            User.deleted_at.is_(None), User.is_active == True
+        ).count()
+        super_admins = User.query.filter_by(is_super_admin=True).count()
+        new_this_week = User.query.filter(
+            User.deleted_at.is_(None), User.created_at >= week_ago
+        ).count()
+        active_today_count = User.query.filter(
+            User.deleted_at.is_(None), User.last_login >= day_ago
+        ).count()
+
+        # --- Billing stats (all clients combined) ---
+        total_gst = db.session.query(func.count(GSTBilling.bill_id)).scalar() or 0
+        total_non_gst = db.session.query(func.count(NonGSTBilling.bill_id)).scalar() or 0
+        total_bills = total_gst + total_non_gst
+
+        rev_month_gst = float(db.session.query(
+            func.coalesce(func.sum(GSTBilling.final_amount), 0)
+        ).filter(GSTBilling.created_at >= month_start).scalar() or 0)
+
+        rev_month_non = float(db.session.query(
+            func.coalesce(func.sum(NonGSTBilling.total_amount), 0)
+        ).filter(NonGSTBilling.created_at >= month_start).scalar() or 0)
+        revenue_month = rev_month_gst + rev_month_non
+
+        rev_prev_gst = float(db.session.query(
+            func.coalesce(func.sum(GSTBilling.final_amount), 0)
+        ).filter(
+            GSTBilling.created_at >= prev_month_start,
+            GSTBilling.created_at < month_start
+        ).scalar() or 0)
+        rev_prev_non = float(db.session.query(
+            func.coalesce(func.sum(NonGSTBilling.total_amount), 0)
+        ).filter(
+            NonGSTBilling.created_at >= prev_month_start,
+            NonGSTBilling.created_at < month_start
+        ).scalar() or 0)
+        revenue_prev = rev_prev_gst + rev_prev_non
+
+        growth = 0.0
+        if revenue_prev > 0:
+            growth = ((revenue_month - revenue_prev) / revenue_prev) * 100
+
+        avg_bill = revenue_month / total_bills if total_bills > 0 else 0
+
+        return jsonify({
+            'clients': {
+                'total': total_clients,
+                'active': active_clients,
+                'inactive': total_clients - active_clients,
+                'new_this_month': new_clients_month,
+                'growth_percentage': 0
+            },
+            'users': {
+                'total': total_users,
+                'active': active_users,
+                'inactive': total_users - active_users,
+                'super_admins': super_admins,
+                'new_this_week': new_this_week,
+                'active_today': active_today_count
+            },
+            'billing': {
+                'total_bills': total_bills,
+                'bills_today': 0,
+                'bills_this_month': total_bills,
+                'total_revenue': round(revenue_month + revenue_prev, 2),
+                'revenue_this_month': round(revenue_month, 2),
+                'revenue_growth': round(growth, 1),
+                'average_bill_value': round(avg_bill, 2)
+            },
+            'system': {
+                'database_size': 'N/A',
+                'storage_used': 'N/A',
+                'api_requests_today': 0,
+                'uptime_percentage': 99.9,
+                'last_backup': now.isoformat(),
+                'pending_alerts': 0
+            }
+        }), 200
+
+    except Exception as e:
+        return jsonify({'error': f'Failed to fetch stats: {str(e)}'}), 500
+
+
+@admin_bp.route('/activity/recent', methods=['GET'])
+@authenticate
+@require_super_admin
+def get_recent_activity():
+    """Get the 20 most recent audit log entries across all clients."""
+    try:
+        logs = AuditLog.query.order_by(
+            AuditLog.timestamp.desc()
+        ).limit(20).all()
+
+        # Batch-fetch user emails to avoid N+1
+        user_ids = list({log.user_id for log in logs if log.user_id})
+        users = User.query.filter(User.user_id.in_(user_ids)).all() if user_ids else []
+        user_email_map = {u.user_id: u.email for u in users}
+
+        activities = []
+        for log in logs:
+            activities.append({
+                'id': log.log_id,
+                'type': log.action_type.lower() if log.action_type else 'unknown',
+                'description': f"{log.action_type} on {log.table_name}",
+                'user': user_email_map.get(log.user_id, 'Unknown'),
+                'timestamp': log.timestamp.isoformat() if log.timestamp else None,
+            })
+
+        return jsonify({'activities': activities}), 200
+
+    except Exception as e:
+        return jsonify({'activities': [], 'error': str(e)}), 200
+
+
+# ---------------------------------------------------------------------------
+# Admin Settings — persisted as JSON file in ~/.mj-billing/
+# ---------------------------------------------------------------------------
+
+import json as _json
+import os as _os
+
+_SETTINGS_FILE = _os.path.join(_os.path.expanduser('~'), '.mj-billing', 'admin_settings.json')
+
+_DEFAULT_SETTINGS = {
+    'app_name': 'RYX Billing',
+    'maintenance_mode': False,
+    'allow_registration': True,
+    'max_clients': 100,
+    'support_email': 'support@ryx.com',
+    'updated_at': None,
+    'updated_by': None,
+}
+
+
+def _read_settings():
+    try:
+        with open(_SETTINGS_FILE, 'r') as f:
+            return {**_DEFAULT_SETTINGS, **_json.load(f)}
+    except (FileNotFoundError, _json.JSONDecodeError):
+        return dict(_DEFAULT_SETTINGS)
+
+
+def _write_settings(data: dict):
+    _os.makedirs(_os.path.dirname(_SETTINGS_FILE), exist_ok=True)
+    with open(_SETTINGS_FILE, 'w') as f:
+        _json.dump(data, f, indent=2)
+
+
+@admin_bp.route('/settings', methods=['GET'])
+@authenticate
+@require_super_admin
+def get_admin_settings():
+    """Get global admin settings."""
+    return jsonify({'success': True, 'settings': _read_settings()}), 200
+
+
+@admin_bp.route('/settings', methods=['POST', 'PUT'])
+@authenticate
+@require_super_admin
+def update_admin_settings():
+    """Update global admin settings."""
+    try:
+        data = request.get_json() or {}
+        current = _read_settings()
+        allowed = set(_DEFAULT_SETTINGS.keys()) - {'updated_at', 'updated_by'}
+        for key in allowed:
+            if key in data:
+                current[key] = data[key]
+        current['updated_at'] = datetime.utcnow().isoformat()
+        current['updated_by'] = g.user.get('email', g.user['user_id'])
+        _write_settings(current)
+        log_admin_action('UPDATE', 'admin_settings', new_data=current)
+        return jsonify({'success': True, 'settings': current, 'message': 'Settings saved'}), 200
+    except Exception as e:
+        return jsonify({'success': False, 'error': str(e)}), 500

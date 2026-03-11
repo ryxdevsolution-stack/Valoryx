@@ -5,6 +5,7 @@ import teamService, {
   type PermissionSection,
   type BranchItem,
   type PlanInfo,
+  type PermissionPreset,
 } from '@/services/teamService'
 import {
   X,
@@ -16,6 +17,7 @@ import {
   Check,
   Plus,
   Lock,
+  Sparkles,
 } from 'lucide-react'
 
 // ─── Props ──────────────────────────────────────────────────────────
@@ -58,7 +60,6 @@ const API_ERROR_MESSAGES: Record<string, string> = {
 interface FormState {
   full_name: string
   email: string
-  password: string
   phone: string
   department: string
   role: string
@@ -69,7 +70,6 @@ interface FormState {
 const INITIAL_FORM: FormState = {
   full_name: '',
   email: '',
-  password: '',
   phone: '',
   department: '',
   role: 'staff',
@@ -105,9 +105,14 @@ export default function TeamMemberModal({
   const [expandedSections, setExpandedSections] = useState<Set<string>>(new Set())
   const [showPermissions, setShowPermissions] = useState(false)
 
+  // Preset state
+  const [preset, setPreset] = useState<PermissionPreset | null>(null)
+  const [presetApplied, setPresetApplied] = useState(false)
+
   // Password reset state
   const [resettingPassword, setResettingPassword] = useState(false)
   const [showPasswordField, setShowPasswordField] = useState(false)
+  const [customPassword, setCustomPassword] = useState('')
   // Remember last selected branch across modal opens
   const lastBranchIdRef = useRef<string | null>(null)
 
@@ -206,7 +211,6 @@ export default function TeamMemberModal({
         setForm({
           full_name: editingUser.full_name || '',
           email: editingUser.email || '',
-          password: '',
           phone: editingUser.phone || '',
           department: editingUser.department || '',
           role: editingUser.role || 'staff',
@@ -228,13 +232,50 @@ export default function TeamMemberModal({
 
       setErrors({})
       setShowPasswordField(false)
+      setCustomPassword('')
       setShowPermissions(false)
       setExpandedSections(new Set())
       setBranchDropdownOpen(false)
       setBranchQuery('')
+      setPreset(null)
+      setPresetApplied(false)
       loadInitialData()
     }
   }, [isOpen, editingUser, loadInitialData])
+
+  // ─── Fetch preset when role changes (create mode only) ──────
+
+  useEffect(() => {
+    if (!isOpen || isEditMode) return
+
+    let cancelled = false
+    const fetchPreset = async () => {
+      setPreset(null)
+      setPresetApplied(false)
+      try {
+        const res = await teamService.getPreset(form.role)
+        if (!cancelled && res.data.data) {
+          setPreset(res.data.data)
+        }
+      } catch {
+        // Non-critical — silently ignore
+      }
+    }
+    fetchPreset()
+    return () => { cancelled = true }
+  }, [form.role, isOpen, isEditMode])
+
+  // ─── Apply preset handler ───────────────────────────────────
+
+  const applyPreset = useCallback(() => {
+    if (!preset) return
+    const presetPerms = new Set(
+      preset.permissions.filter((p) => !restrictedPermissions.has(p))
+    )
+    setSelectedPermissions(presetPerms)
+    setPresetApplied(true)
+    setShowPermissions(true)
+  }, [preset, restrictedPermissions])
 
   // ─── Branch combobox handlers ─────────────────────────────────
 
@@ -324,9 +365,6 @@ export default function TeamMemberModal({
     if (!form.email.trim() || !form.email.includes('@')) {
       newErrors.email = 'Valid email is required'
     }
-    if (!isEditMode && form.password.length < 6) {
-      newErrors.password = 'Password must be at least 6 characters'
-    }
 
     setErrors(newErrors)
     return Object.keys(newErrors).length === 0
@@ -355,19 +393,20 @@ export default function TeamMemberModal({
         await teamService.updatePermissions(editingUser.user_id, cleanPerms)
         onMessage({ type: 'success', text: `${form.full_name} updated successfully` })
       } else {
-        // Create new member
+        // Create new member — invite email sent, user sets password via link
         await teamService.create({
           email: form.email,
-          password: form.password,
           full_name: form.full_name,
           phone: form.phone || undefined,
           department: form.department || undefined,
           role: form.role,
-          is_active: form.is_active,
           branch_id: form.branch_id || null,
           permissions: [...selectedPermissions].filter((p) => !restrictedPermissions.has(p)),
         })
-        onMessage({ type: 'success', text: `${form.full_name} added to the team` })
+        onMessage({
+          type: 'success',
+          text: `Invite sent to ${form.email}. They will receive an email to set their password.`,
+        })
       }
 
       // Remember the selected branch for subsequent additions
@@ -377,10 +416,19 @@ export default function TeamMemberModal({
       onClose()
     } catch (error: any) {
       const code = error.response?.data?.error
+      const field = error.response?.data?.field
+      const msg = error.response?.data?.message
+
+      // Show inline field error for duplicates
+      if (field === 'email' || field === 'full_name') {
+        setErrors((prev) => ({ ...prev, [field]: msg }))
+        return
+      }
+
       const friendlyMsg = API_ERROR_MESSAGES[code]
       onMessage({
         type: 'error',
-        text: friendlyMsg || error.response?.data?.message || code || `Failed to ${isEditMode ? 'update' : 'create'} team member`,
+        text: friendlyMsg || msg || code || `Failed to ${isEditMode ? 'update' : 'create'} team member`,
       })
     } finally {
       setSaving(false)
@@ -412,16 +460,16 @@ export default function TeamMemberModal({
   }
 
   const handleSendCustomPassword = async () => {
-    if (!editingUser || !form.password || form.password.length < 6) {
-      setErrors({ password: 'Password must be at least 6 characters' })
+    if (!editingUser || customPassword.length < 6) {
+      onMessage({ type: 'error', text: 'Password must be at least 6 characters' })
       return
     }
 
     try {
       setResettingPassword(true)
-      await teamService.resetPassword(editingUser.user_id, form.password)
+      await teamService.resetPassword(editingUser.user_id, customPassword)
       onMessage({ type: 'success', text: `Password updated for ${editingUser.full_name || editingUser.email}` })
-      setForm((prev) => ({ ...prev, password: '' }))
+      setCustomPassword('')
       setShowPasswordField(false)
     } catch (error: any) {
       onMessage({ type: 'error', text: error.response?.data?.error || 'Failed to set password' })
@@ -523,8 +571,11 @@ export default function TeamMemberModal({
             <input
               type="text"
               value={form.full_name}
-              onChange={(e) => setForm((prev) => ({ ...prev, full_name: e.target.value }))}
-              className={INPUT_CLASS}
+              onChange={(e) => {
+                setForm((prev) => ({ ...prev, full_name: e.target.value }))
+                if (errors.full_name) setErrors((prev) => ({ ...prev, full_name: undefined }))
+              }}
+              className={`${INPUT_CLASS} ${errors.full_name ? 'border-red-500 focus:ring-red-500' : ''}`}
               placeholder="Enter full name"
             />
             {errors.full_name && (
@@ -540,9 +591,12 @@ export default function TeamMemberModal({
             <input
               type="email"
               value={form.email}
-              onChange={(e) => setForm((prev) => ({ ...prev, email: e.target.value }))}
+              onChange={(e) => {
+                setForm((prev) => ({ ...prev, email: e.target.value }))
+                if (errors.email) setErrors((prev) => ({ ...prev, email: undefined }))
+              }}
               disabled={isEditMode}
-              className={`${INPUT_CLASS} ${isEditMode ? 'opacity-60 cursor-not-allowed' : ''}`}
+              className={`${INPUT_CLASS} ${isEditMode ? 'opacity-60 cursor-not-allowed' : ''} ${errors.email ? 'border-red-500 focus:ring-red-500' : ''}`}
               placeholder="user@example.com"
             />
             {errors.email && (
@@ -550,22 +604,12 @@ export default function TeamMemberModal({
             )}
           </div>
 
-          {/* Password — create mode: required field; edit mode: reset button */}
+          {/* Password — create mode: invite info banner; edit mode: reset button */}
           {!isEditMode ? (
-            <div>
-              <label className={LABEL_CLASS}>
-                Password <span className="text-red-500">*</span>
-              </label>
-              <input
-                type="text"
-                value={form.password}
-                onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
-                className={INPUT_CLASS}
-                placeholder="Minimum 6 characters"
-              />
-              {errors.password && (
-                <p className="text-xs text-red-500 mt-1">{errors.password}</p>
-              )}
+            <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-4 py-3">
+              <p className="text-xs text-blue-700 dark:text-blue-300">
+                An invite email will be sent to the address above. The team member will set their own password when they accept the invite.
+              </p>
             </div>
           ) : (
             <div>
@@ -598,15 +642,15 @@ export default function TeamMemberModal({
                   <div className="flex gap-2">
                     <input
                       type="text"
-                      value={form.password}
-                      onChange={(e) => setForm((prev) => ({ ...prev, password: e.target.value }))}
+                      value={customPassword}
+                      onChange={(e) => setCustomPassword(e.target.value)}
                       className={`flex-1 ${INPUT_CLASS}`}
                       placeholder="New password (min 6 characters)"
                     />
                     <button
                       type="button"
                       onClick={handleSendCustomPassword}
-                      disabled={resettingPassword || form.password.length < 6}
+                      disabled={resettingPassword || customPassword.length < 6}
                       className="px-3 py-2 text-sm font-medium text-white bg-gray-900 dark:bg-white dark:text-gray-900 hover:bg-gray-800 dark:hover:bg-gray-100 rounded-lg transition-colors disabled:opacity-50"
                     >
                       {resettingPassword ? (
@@ -616,9 +660,6 @@ export default function TeamMemberModal({
                       )}
                     </button>
                   </div>
-                )}
-                {errors.password && (
-                  <p className="text-xs text-red-500">{errors.password}</p>
                 )}
               </div>
             </div>
@@ -843,6 +884,33 @@ export default function TeamMemberModal({
                 <ChevronRight className="w-4 h-4 text-gray-400" />
               )}
             </button>
+
+            {/* Preset recommendation banner — create mode only */}
+            {!isEditMode && preset && !presetApplied && (
+              <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
+                <Sparkles className="w-4 h-4 text-blue-500 flex-shrink-0" />
+                <p className="text-xs text-blue-700 dark:text-blue-300 flex-1">
+                  Recommended permissions available for <strong className="capitalize">{form.role}</strong> role
+                </p>
+                <button
+                  type="button"
+                  onClick={applyPreset}
+                  className="px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-800/50 hover:bg-blue-200 dark:hover:bg-blue-800 rounded-md transition-colors"
+                >
+                  Apply
+                </button>
+              </div>
+            )}
+
+            {/* Preset applied confirmation */}
+            {!isEditMode && presetApplied && (
+              <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
+                <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
+                <p className="text-xs text-green-700 dark:text-green-300 flex-1">
+                  Recommended preset applied. You can still customize below.
+                </p>
+              </div>
+            )}
 
             {showPermissions && (
               <div className="mt-3 space-y-2">

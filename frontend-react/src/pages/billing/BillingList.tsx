@@ -5,7 +5,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { useClient } from '@/contexts/ClientContext'
-import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle, Calendar } from 'lucide-react'
+import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle, Calendar, X, Package, User, Clock, Hash } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 
 interface BillItem {
@@ -58,6 +58,7 @@ export default function AllBillsPage() {
   const [currentPage, setCurrentPage] = useState(1)
   const itemsPerPage = 17
   const [loadingBillDetails, setLoadingBillDetails] = useState(false)
+  const [selectedBill, setSelectedBill] = useState<Bill | null>(null)
 
   // Date filter state
   const [dateFilter, setDateFilter] = useState<'all' | 'today' | 'custom'>('all')
@@ -801,7 +802,8 @@ export default function AllBillsPage() {
 
                     return (
                       <tr key={`${bill.bill_id}-${bill.displayPaymentType}-${index}`}
-                          className={`hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors ${!bill.isFirstPayment && isSplitPayment ? 'border-t-0' : ''}`}>
+                          className={`hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors cursor-pointer ${!bill.isFirstPayment && isSplitPayment ? 'border-t-0' : ''}`}
+                          onClick={() => bill.isFirstPayment && setSelectedBill(bill)}>
                         <td className="px-2 py-1.5 whitespace-nowrap">
                           {bill.isFirstPayment ? (
                             <div className="flex items-center gap-1">
@@ -973,6 +975,148 @@ export default function AllBillsPage() {
         )}
       </div>
 
+      {/* Bill Detail Drawer */}
+      {selectedBill && (
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={() => setSelectedBill(null)}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className="relative w-full max-w-md bg-white dark:bg-gray-900 h-full shadow-2xl overflow-y-auto flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
+              <div>
+                <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+                  Bill #{selectedBill.bill_number}
+                </h2>
+                <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${selectedBill.type === 'gst' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'}`}>
+                  {selectedBill.type === 'gst' ? 'GST' : 'Non-GST'}
+                </span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setSelectedBill(null)}
+                className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Meta info */}
+            <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-gray-200 dark:border-gray-700">
+              <div className="flex items-start gap-2">
+                <User className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-[10px] text-gray-400 uppercase font-medium">Customer</p>
+                  <p className="text-sm text-gray-800 dark:text-gray-200">{selectedBill.customer_name || 'Walk-In'}</p>
+                  {selectedBill.customer_phone && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400">{selectedBill.customer_phone}</p>
+                  )}
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <Clock className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-[10px] text-gray-400 uppercase font-medium">Date</p>
+                  <p className="text-sm text-gray-800 dark:text-gray-200">
+                    {new Date(selectedBill.created_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
+                  </p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400">
+                    {new Date(selectedBill.created_at).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+                  </p>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <Wallet className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-[10px] text-gray-400 uppercase font-medium">Payment</p>
+                  <p className="text-sm text-gray-800 dark:text-gray-200">
+                    {selectedBill.payment_type
+                      ? (() => {
+                          const pt = selectedBill.payment_type
+                          if (typeof pt === 'string' && pt.trim().startsWith('[')) {
+                            try {
+                              const arr = JSON.parse(pt)
+                              return Array.isArray(arr)
+                                ? arr.map((p: { payment_type?: string; PAYMENT_TYPE?: string; amount?: number; AMOUNT?: number }) =>
+                                    `${p.payment_type || p.PAYMENT_TYPE || ''}${p.amount || p.AMOUNT ? ` ₹${p.amount || p.AMOUNT}` : ''}`
+                                  ).join(' + ')
+                                : pt
+                            } catch { return pt }
+                          }
+                          return pt
+                        })()
+                      : '—'}
+                  </p>
+                </div>
+              </div>
+              {selectedBill.status === 'cancelled' && (
+                <div className="flex items-start gap-2">
+                  <XCircle className="w-4 h-4 text-red-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase font-medium">Status</p>
+                    <p className="text-sm text-red-500 font-medium">Cancelled</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Items */}
+            <div className="px-5 py-4 flex-1">
+              <div className="flex items-center gap-2 mb-3">
+                <Package className="w-4 h-4 text-gray-400" />
+                <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Items</h3>
+              </div>
+              {selectedBill.items && selectedBill.items.length > 0 ? (
+                <div className="space-y-2">
+                  {selectedBill.items.map((item, i) => (
+                    <div key={i} className="flex items-center justify-between py-2 border-b border-gray-100 dark:border-gray-800 last:border-0">
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm text-gray-800 dark:text-gray-200 truncate">{item.product_name}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">
+                          {item.quantity} × ₹{(item.rate || 0).toLocaleString('en-IN')}
+                          {item.gst_percentage ? ` + ${item.gst_percentage}% GST` : ''}
+                        </p>
+                      </div>
+                      <p className="text-sm font-medium text-gray-800 dark:text-gray-200 shrink-0 ml-3">
+                        ₹{(item.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <p className="text-sm text-gray-400 italic">No item details available</p>
+              )}
+            </div>
+
+            {/* Totals */}
+            <div className="px-5 py-4 bg-gray-50 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 space-y-2">
+              {selectedBill.type === 'gst' && selectedBill.subtotal !== undefined && (
+                <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
+                  <span>Subtotal</span>
+                  <span>₹{(selectedBill.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                </div>
+              )}
+              {selectedBill.gst_amount !== undefined && selectedBill.gst_amount > 0 && (
+                <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
+                  <span>GST ({selectedBill.gst_percentage || 0}%)</span>
+                  <span>₹{(selectedBill.gst_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                </div>
+              )}
+              {selectedBill.discount_amount !== undefined && selectedBill.discount_amount > 0 && (
+                <div className="flex justify-between text-sm text-red-500">
+                  <span>Discount {selectedBill.discount_percentage ? `(${selectedBill.discount_percentage}%)` : ''}</span>
+                  <span>-₹{(selectedBill.discount_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                </div>
+              )}
+              <div className="flex justify-between text-base font-bold text-gray-900 dark:text-white pt-2 border-t border-gray-200 dark:border-gray-700">
+                <span>Total</span>
+                <span>₹{((selectedBill.final_amount ?? selectedBill.total_amount) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   )
 }

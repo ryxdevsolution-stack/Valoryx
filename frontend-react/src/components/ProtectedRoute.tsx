@@ -1,22 +1,9 @@
-import { useEffect } from 'react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { useLocation, Navigate } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
 
 export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
   const { isAuthenticated, isLoading } = useClient()
-  const navigate = useNavigate()
   const { pathname } = useLocation()
-
-  useEffect(() => {
-    // Only redirect after loading is complete
-    if (!isLoading && !isAuthenticated) {
-      // Store intended destination
-      if (pathname) {
-        sessionStorage.setItem('redirectAfterLogin', pathname)
-      }
-      navigate('/auth/login')
-    }
-  }, [isAuthenticated, isLoading, navigate, pathname])
 
   // Show loading state while checking authentication
   if (isLoading) {
@@ -38,9 +25,18 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
     )
   }
 
-  // Don't render children until authenticated
+  // Don't render children until authenticated — redirect to login, storing intended destination
   if (!isAuthenticated) {
-    return null
+    if (pathname) {
+      sessionStorage.setItem('redirectAfterLogin', pathname)
+    }
+    return <Navigate to="/auth/login" replace />
+  }
+
+  // If user must change password, redirect synchronously with no flash of protected content
+  const mustChange = localStorage.getItem('must_change_password') === 'true'
+  if (mustChange && pathname !== '/change-password') {
+    return <Navigate to="/change-password" replace />
   }
 
   return <>{children}</>

@@ -17,6 +17,9 @@ interface User {
   created_at?: string | null
   last_login?: string | null
   telegram_chat_id?: string
+  must_change_password?: boolean
+  totp_enabled?: boolean
+  avatar_url?: string | null
 }
 
 interface Client {
@@ -121,6 +124,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
                 created_at: profile.created_at ?? null,
                 last_login: profile.last_login ?? null,
                 telegram_chat_id: profile.telegram_chat_id,
+                totp_enabled: profile.totp_enabled ?? false,
               }
               setUser(updatedUser)
               localStorage.setItem('user', JSON.stringify(updatedUser))
@@ -158,6 +162,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         branch_id: user.branch_id ?? null,
         branch_name: user.branch_name ?? null,
         telegram_chat_id: user.telegram_chat_id,
+        must_change_password: user.must_change_password ?? false,
+        totp_enabled: user.totp_enabled ?? false,
       }
 
       const clientData: Client = {
@@ -189,8 +195,15 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       // Set axios default header
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`
 
-      // Redirect to create bill
-      navigate('/billing/create')
+      // Handle forced password change before accessing the app
+      const mustChange = response.data.must_change_password ?? user.must_change_password ?? false
+      if (mustChange) {
+        localStorage.setItem('must_change_password', 'true')
+        navigate('/change-password')
+      } else {
+        localStorage.removeItem('must_change_password')
+        navigate('/billing/create')
+      }
     } catch (error: any) {
       throw new Error(error.response?.data?.error || 'Login failed')
     }
@@ -208,6 +221,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     localStorage.removeItem('user')
     localStorage.removeItem('client')
     localStorage.removeItem('last_refresh')
+    localStorage.removeItem('must_change_password')
 
     // Clear axios header
     delete api.defaults.headers.common['Authorization']
@@ -306,9 +320,15 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           telegram_chat_id: profile.telegram_chat_id,
           created_at: profile.created_at ?? null,
           last_login: profile.last_login ?? null,
+          must_change_password: profile.must_change_password ?? false,
+          totp_enabled: profile.totp_enabled ?? false,
         }
         setUser(updatedUser)
         localStorage.setItem('user', JSON.stringify(updatedUser))
+        // If backend confirms flag is cleared, remove from localStorage too
+        if (!updatedUser.must_change_password) {
+          localStorage.removeItem('must_change_password')
+        }
       }
     } catch (error) {
       console.error('Failed to refresh user data:', error)

@@ -81,7 +81,7 @@ export default function ClientDetailsPage() {
   const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const navigate = useNavigate();
   const { clientId } = useParams();
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5017';
 
   const [client, setClient] = useState<ClientDetails | null>(null);
   const [loading, setLoading] = useState(true);

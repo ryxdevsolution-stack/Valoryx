@@ -1,6 +1,7 @@
 import React, { Suspense } from 'react'
 import { Routes, Route } from 'react-router-dom'
 import AdminLayout from '@/components/AdminLayout'
+import ProtectedRoute from '@/components/ProtectedRoute'
 
 // Lazy load all pages for automatic code splitting
 const Home = React.lazy(() => import('@/pages/Home'))
@@ -9,6 +10,7 @@ const Login = React.lazy(() => import('@/pages/auth/Login'))
 const Register = React.lazy(() => import('@/pages/auth/Register'))
 const ForgotPassword = React.lazy(() => import('@/pages/auth/ForgotPassword'))
 const ResetPassword = React.lazy(() => import('@/pages/auth/ResetPassword'))
+const AcceptInvite = React.lazy(() => import('@/pages/auth/AcceptInvite'))
 const Dashboard = React.lazy(() => import('@/pages/Dashboard'))
 const BillingList = React.lazy(() => import('@/pages/billing/BillingList'))
 const CreateBill = React.lazy(() => import('@/pages/billing/CreateBill'))
@@ -25,6 +27,11 @@ const Pricing = React.lazy(() => import('@/pages/Pricing'))
 
 const StockTransfer = React.lazy(() => import('@/pages/stock-transfer/StockTransfer'))
 const BranchManagement = React.lazy(() => import('@/pages/stock-transfer/BranchManagement'))
+const ForcePasswordChange = React.lazy(() => import('@/pages/auth/ForcePasswordChange'))
+const OAuthCallbackPage = React.lazy(() => import('@/pages/auth/OAuthCallback'))
+const VerifyEmailPending = React.lazy(() => import('@/pages/auth/VerifyEmailPending'))
+const VerifyEmailSuccess = React.lazy(() => import('@/pages/auth/VerifyEmailSuccess'))
+const AccountPendingDeletion = React.lazy(() => import('@/pages/auth/AccountPendingDeletion'))
 
 // Admin pages
 const AdminDashboard = React.lazy(() => import('@/pages/admin/AdminDashboard'))
@@ -37,6 +44,7 @@ const AdminEditClient = React.lazy(() => import('@/pages/admin/EditClient'))
 const AdminAudit = React.lazy(() => import('@/pages/admin/AdminAudit'))
 const AdminSettings = React.lazy(() => import('@/pages/admin/Settings'))
 const AdminSubscriptions = React.lazy(() => import('@/pages/admin/Subscriptions'))
+const AdminImpersonate = React.lazy(() => import('@/pages/admin/ImpersonateClient'))
 
 function SkeletonBlock({ className }: { className: string }) {
   return (
@@ -81,6 +89,17 @@ function PageFallback() {
   )
 }
 
+function AuthFallback() {
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-[#271E37]">
+      <div className="flex flex-col items-center gap-4">
+        <div className="w-10 h-10 border-2 border-[#5227FF] border-t-transparent rounded-full animate-spin" />
+        <span className="text-slate-500 text-sm tracking-wide">Loading…</span>
+      </div>
+    </div>
+  )
+}
+
 export function AppRoutes() {
   return (
     <Suspense fallback={<PageFallback />}>
@@ -89,11 +108,55 @@ export function AppRoutes() {
         <Route path="/" element={<Home />} />
         <Route path="/landing" element={<Landing />} />
 
-        {/* Auth routes */}
-        <Route path="/auth/login" element={<Login />} />
-        <Route path="/auth/register" element={<Register />} />
-        <Route path="/auth/forgot-password" element={<ForgotPassword />} />
-        <Route path="/reset-password" element={<ResetPassword />} />
+        {/* Auth routes — use dark fallback so no white flash on lazy load */}
+        <Route
+          path="/auth/login"
+          element={<Suspense fallback={<AuthFallback />}><Login /></Suspense>}
+        />
+        <Route
+          path="/auth/register"
+          element={<Suspense fallback={<AuthFallback />}><Register /></Suspense>}
+        />
+        <Route
+          path="/auth/forgot-password"
+          element={<Suspense fallback={<AuthFallback />}><ForgotPassword /></Suspense>}
+        />
+        <Route
+          path="/reset-password"
+          element={<Suspense fallback={<AuthFallback />}><ResetPassword /></Suspense>}
+        />
+        <Route
+          path="/accept-invite"
+          element={<Suspense fallback={<AuthFallback />}><AcceptInvite /></Suspense>}
+        />
+        <Route
+          path="/oauth/callback"
+          element={<Suspense fallback={<AuthFallback />}><OAuthCallbackPage /></Suspense>}
+        />
+        <Route
+          path="/verify-email-pending"
+          element={<Suspense fallback={<AuthFallback />}><VerifyEmailPending /></Suspense>}
+        />
+        <Route
+          path="/verify-email"
+          element={<Suspense fallback={<AuthFallback />}><VerifyEmailSuccess /></Suspense>}
+        />
+        <Route
+          path="/account-pending-deletion"
+          element={<Suspense fallback={<AuthFallback />}><AccountPendingDeletion /></Suspense>}
+        />
+        <Route
+          path="/reactivate-account"
+          element={<Suspense fallback={<AuthFallback />}><AccountPendingDeletion /></Suspense>}
+        />
+        <Route
+          path="/change-password"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<AuthFallback />}><ForcePasswordChange /></Suspense>
+            </ProtectedRoute>
+          }
+        />
 
         {/* Upgrade / Trial expired / Pricing */}
         <Route path="/upgrade" element={<TrialExpired />} />
@@ -126,6 +189,7 @@ export function AppRoutes() {
           <Route path="audit" element={<AdminAudit />} />
           <Route path="settings" element={<AdminSettings />} />
           <Route path="subscriptions" element={<AdminSubscriptions />} />
+          <Route path="impersonate" element={<AdminImpersonate />} />
         </Route>
       </Routes>
     </Suspense>

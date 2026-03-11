@@ -123,6 +123,20 @@ def create_gst_bill():
         # Log action
         log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
 
+        # Fire webhook event — bill.created
+        try:
+            from flask import current_app
+            from services.webhook_service import dispatch_event
+            dispatch_event(current_app._get_current_object(), client_id, 'bill.created', {
+                'event': 'bill.created',
+                'bill_type': 'gst',
+                'bill_id': new_bill.bill_id,
+                'bill_number': bill_number,
+                'final_amount': str(final_amount),
+            })
+        except Exception as _wh_err:
+            import logging as _l; _l.getLogger(__name__).warning("webhook dispatch failed (bill.created): %s", _wh_err)
+
         return jsonify({
             'success': True,
             'bill_id': new_bill.bill_id,
@@ -226,6 +240,20 @@ def create_non_gst_bill():
 
         # Log action
         log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
+
+        # Fire webhook event — bill.created
+        try:
+            from flask import current_app
+            from services.webhook_service import dispatch_event
+            dispatch_event(current_app._get_current_object(), client_id, 'bill.created', {
+                'event': 'bill.created',
+                'bill_type': 'non_gst',
+                'bill_id': new_bill.bill_id,
+                'bill_number': bill_number,
+                'total_amount': str(data['total_amount']),
+            })
+        except Exception as _wh_err:
+            import logging as _l; _l.getLogger(__name__).warning("webhook dispatch failed (bill.created): %s", _wh_err)
 
         return jsonify({
             'success': True,
