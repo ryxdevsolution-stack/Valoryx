@@ -58,7 +58,7 @@ interface ClientsResponse {
 export default function ClientManagement() {
   const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const navigate = useNavigate();
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5017';
+  const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5017') + '/api';
   const { showSuccess, showError, showWarning, NotificationContainer } = useNotification();
 
   const [clients, setClients] = useState<Client[]>([]);

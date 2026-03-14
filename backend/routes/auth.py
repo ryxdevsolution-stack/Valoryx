@@ -14,6 +14,7 @@ from models.session_model import UserSession
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager
+from routes.admin import _email_enabled
 from utils.email_service import (
     send_welcome_email,
     send_login_notification,
@@ -122,7 +123,7 @@ def login():
             return jsonify({'error': 'Client account is inactive'}), 401
 
         # Block login if email not verified
-        if not getattr(client, 'email_verified', True):
+        if not getattr(client, 'email_verified', False):
             return jsonify({
                 'success': False,
                 'email_unverified': True,
@@ -139,7 +140,7 @@ def login():
                 'message': 'Your account is scheduled for deletion.'
             }), 403
 
-        # 2FA check: if user has TOTP enabled, require the 6-digit code
+        # 2FA check: if user has TOTP enabled, require the 6-digit code or a backup code
         if user.totp_enabled:
             totp_code = (data.get('totp_code') or '').strip()
             if not totp_code:
@@ -166,24 +167,40 @@ def login():
                     'error': 'Too many failed attempts. Try again in 15 minutes.',
                 }), 429
 
-            # --- Replay protection ---
-            replay_key = f"totp_used:{user_id}:{totp_code}"
-            if cache.get(replay_key):
-                return jsonify({
-                    'success': False,
-                    'error': 'Code already used. Wait for the next code.',
-                }), 400
+            # --- Try backup code first (8 uppercase hex chars) ---
+            import json as _json, hashlib as _hashlib
+            normalized = totp_code.upper().replace('-', '').replace(' ', '')
+            backup_codes = _json.loads(user.totp_backup_codes) if user.totp_backup_codes else []
+            code_hash = _hashlib.sha256(normalized.encode()).hexdigest()
+            if normalized and len(normalized) == 8 and code_hash in backup_codes:
+                # Valid backup code — consume it (one-time use)
+                backup_codes.remove(code_hash)
+                user.totp_backup_codes = _json.dumps(backup_codes)
+                cache.delete(fail_key)
+                try:
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                log_action('2fa_backup_code_used', 'users', user_id,
+                           old_data={}, new_data={'remaining': len(backup_codes)}, auto_commit=True)
+            else:
+                # --- Replay protection (TOTP codes only) ---
+                replay_key = f"totp_used:{user_id}:{totp_code}"
+                if cache.get(replay_key):
+                    return jsonify({
+                        'success': False,
+                        'error': 'Code already used. Wait for the next code.',
+                    }), 400
 
-            totp = pyotp.TOTP(user.totp_secret)
-            # valid_window=1 accepts ±1 time step (90-second window total)
-            if not totp.verify(totp_code, valid_window=1):
-                # Increment failure counter; keep the TTL window alive
-                cache.set(fail_key, fails + 1, TOTP_FAIL_WINDOW)
-                return jsonify({'success': False, 'error': 'Invalid 2FA code. Try again.'}), 401
+                totp = pyotp.TOTP(user.totp_secret)
+                # valid_window=1 accepts ±1 time step (90-second window total)
+                if not totp.verify(totp_code, valid_window=1):
+                    cache.set(fail_key, fails + 1, TOTP_FAIL_WINDOW)
+                    return jsonify({'success': False, 'error': 'Invalid 2FA code. Try again.'}), 401
 
-            # Successful verify: mark this code as consumed and reset failure counter
-            cache.set(replay_key, 1, TOTP_REPLAY_WINDOW)
-            cache.delete(fail_key)
+                # Successful verify: mark this code as consumed and reset failure counter
+                cache.set(replay_key, 1, TOTP_REPLAY_WINDOW)
+                cache.delete(fail_key)
 
         # OPTIMIZED: Get permissions with eager loading
         user_permissions = get_user_permissions(str(user.user_id))
@@ -289,7 +306,7 @@ def login():
             db.session.rollback()  # Don't fail login if last_login update fails
 
         # Send login notification only when IP is new/different
-        if is_new_ip:
+        if is_new_ip and _email_enabled('email_on_login'):
             login_time = datetime.utcnow().strftime('%d %b %Y, %H:%M')
             send_login_notification(user.email, client.client_name, login_time, incoming_ip)
 
@@ -519,7 +536,8 @@ def signup():
 
         # Send verification email instead of welcome email
         verify_link = f"{Config.FRONTEND_URL}/verify-email?token={verification_token}"
-        send_verification_email(email, business_name, verify_link)
+        if _email_enabled('email_on_verification'):
+            send_verification_email(email, business_name, verify_link)
 
         return jsonify({
             'success': True,
@@ -620,7 +638,8 @@ def forgot_password():
         db.session.commit()
 
         reset_link = f"{Config.FRONTEND_URL}/reset-password?token={token}"
-        send_password_reset_email(email, client_name, reset_link)
+        if _email_enabled('email_on_password_changed'):
+            send_password_reset_email(email, client_name, reset_link)
 
         return jsonify({'success': True, 'message': 'If that email exists, a reset link has been sent.'}), 200
 
@@ -671,7 +690,8 @@ def reset_password():
         client = ClientEntry.query.filter_by(client_id=str(user.client_id)).first()
         client_name = client.client_name if client else user.full_name or user.email
         changed_at = datetime.utcnow().strftime('%d %b %Y, %H:%M')
-        send_password_changed_email(user.email, client_name, changed_at)
+        if _email_enabled('email_on_password_changed'):
+            send_password_changed_email(user.email, client_name, changed_at)
 
         return jsonify({'success': True, 'message': 'Password reset successfully. You can now log in.'}), 200
 
@@ -849,6 +869,7 @@ def resend_verification():
         return jsonify({'error': 'Failed to generate new token'}), 500
 
     verify_link = f"{Config.FRONTEND_URL}/verify-email?token={verification_token}"
-    send_verification_email(email, client.client_name, verify_link)
+    if _email_enabled('email_on_verification'):
+        send_verification_email(email, client.client_name, verify_link)
 
     return jsonify({'success': True, 'message': 'Verification email sent.'}), 200

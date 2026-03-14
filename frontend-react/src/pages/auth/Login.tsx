@@ -64,8 +64,8 @@ export default function LoginPage() {
 
     // ── Step 2: TOTP verification ──────────────────────────────
     if (requiresTotp) {
-      if (totpCode.length < 6) {
-        setError('Please enter the 6-digit code from your authenticator app.')
+      if (totpCode.length !== 6 && totpCode.length !== 8) {
+        setError('Please enter your 6-digit app code or 8-character backup code.')
         return
       }
       if (!pendingCredentials.current) {
@@ -252,26 +252,26 @@ export default function LoginPage() {
               <form onSubmit={handleSubmit} className="space-y-5">
                 <div>
                   <label className="block text-sm font-semibold text-slate-300 mb-2">
-                    Authenticator Code
+                    Authenticator Code or Backup Code
                   </label>
                   <input
                     type="text"
                     inputMode="numeric"
                     value={totpCode}
-                    onChange={e => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                    onChange={e => setTotpCode(e.target.value.replace(/\s/g, '').slice(0, 8))}
                     placeholder="000000"
-                    maxLength={6}
+                    maxLength={8}
                     autoFocus
                     className="w-full px-4 py-3 bg-white/5 border border-white/15 rounded-lg focus:ring-2 focus:ring-[#5227FF] focus:border-transparent outline-none transition-all duration-200 text-white placeholder-slate-600 text-center text-2xl tracking-[0.5em] font-mono"
                   />
                   <p className="text-slate-500 text-xs mt-1.5 text-center">
-                    The code refreshes every 30 seconds.
+                    Enter your 6-digit app code, or an 8-character backup code.
                   </p>
                 </div>
 
                 <button
                   type="submit"
-                  disabled={loading || totpCode.length < 6}
+                  disabled={loading || (totpCode.length !== 6 && totpCode.length !== 8)}
                   className="w-full bg-[#5227FF] hover:bg-[#6340ff] text-white font-semibold py-3.5 px-6 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
                 >
                   {loading ? (
@@ -285,13 +285,21 @@ export default function LoginPage() {
                 </button>
               </form>
 
-              <button
-                type="button"
-                onClick={handleBackToLogin}
-                className="w-full mt-4 text-slate-500 hover:text-slate-300 text-sm transition-colors text-center"
-              >
-                Back to login
-              </button>
+              <div className="mt-4 flex flex-col items-center gap-2">
+                <button
+                  type="button"
+                  onClick={handleBackToLogin}
+                  className="text-slate-500 hover:text-slate-300 text-sm transition-colors"
+                >
+                  Back to login
+                </button>
+                <a
+                  href="/frontend/2fa-recover"
+                  className="text-slate-600 hover:text-slate-400 text-xs transition-colors"
+                >
+                  Lost access to your authenticator app?
+                </a>
+              </div>
             </>
           ) : (
             <>

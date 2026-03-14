@@ -52,6 +52,8 @@ class User(db.Model):
     # 2FA / TOTP
     totp_secret = db.Column(db.String(32), nullable=True)
     totp_enabled = db.Column(db.Boolean, default=False, nullable=False)
+    # Backup codes: JSON list of SHA-256 hashed codes. Shown once on setup, stored hashed.
+    totp_backup_codes = db.Column(db.Text, nullable=True)
 
     # OAuth / SSO
     google_id = db.Column(db.String(128), nullable=True, unique=True, index=True)

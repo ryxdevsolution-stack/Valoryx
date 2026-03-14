@@ -84,14 +84,17 @@ interface SystemSettings {
     enable_non_gst_billing: boolean;
   };
   email: {
-    smtp_host: string;
-    smtp_port: number;
-    smtp_user: string;
-    smtp_password: string;
-    smtp_encryption: 'none' | 'tls' | 'ssl';
-    from_email: string;
-    from_name: string;
     email_enabled: boolean;
+    email_on_welcome: boolean;
+    email_on_login: boolean;
+    email_on_password_changed: boolean;
+    email_on_verification: boolean;
+    email_on_deactivated: boolean;
+    email_on_reactivated: boolean;
+    email_on_deleted: boolean;
+    email_on_subscription_activated: boolean;
+    email_on_subscription_cancelled: boolean;
+    email_on_plan_switched: boolean;
   };
   security: {
     password_min_length: number;
@@ -162,14 +165,17 @@ const defaultSettings: SystemSettings = {
     enable_non_gst_billing: true,
   },
   email: {
-    smtp_host: '',
-    smtp_port: 587,
-    smtp_user: '',
-    smtp_password: '',
-    smtp_encryption: 'tls',
-    from_email: '',
-    from_name: 'RYX Billing',
-    email_enabled: false,
+    email_enabled: true,
+    email_on_welcome: true,
+    email_on_login: true,
+    email_on_password_changed: true,
+    email_on_verification: true,
+    email_on_deactivated: true,
+    email_on_reactivated: true,
+    email_on_deleted: true,
+    email_on_subscription_activated: true,
+    email_on_subscription_cancelled: true,
+    email_on_plan_switched: true,
   },
   security: {
     password_min_length: 8,
@@ -209,7 +215,7 @@ const defaultSettings: SystemSettings = {
 
 export default function SystemSettingsPage() {
   const { user, isSuperAdmin } = useClient();
-  const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:5017';
+  const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5017') + '/api';
 
   const [activeSection, setActiveSection] = useState('general');
   const [settings, setSettings] = useState<SystemSettings>(defaultSettings);
@@ -224,7 +230,7 @@ export default function SystemSettingsPage() {
     try {
       setLoading(true);
       const token = localStorage.getItem('token');
-      const response = await axios.get(`${apiUrl}/api/admin/settings`, {
+      const response = await axios.get(`${apiUrl}/admin/settings`, {
         headers: { Authorization: `Bearer ${token}` }
       });
       if (response.data) {
@@ -251,7 +257,7 @@ export default function SystemSettingsPage() {
     try {
       setSaving(true);
       const token = localStorage.getItem('token');
-      await axios.put(`${apiUrl}/api/admin/settings`, settings, {
+      await axios.put(`${apiUrl}/admin/settings`, settings, {
         headers: { Authorization: `Bearer ${token}` }
       });
       setOriginalSettings(settings);
@@ -488,60 +494,82 @@ export default function SystemSettingsPage() {
   );
 
   const renderEmailSettings = () => (
-    <div className="space-y-1">
-      {renderSettingRow(
-        'Email Notifications',
-        'Enable email sending',
-        renderToggle(settings.email.email_enabled, (v) => updateSetting('email', 'email_enabled', v))
-      )}
-      {renderSettingRow(
-        'SMTP Host',
-        'Mail server address',
-        renderInput(settings.email.smtp_host, (v) => updateSetting('email', 'smtp_host', v), 'text', 'smtp.gmail.com')
-      )}
-      {renderSettingRow(
-        'SMTP Port',
-        'Mail server port',
-        renderInput(settings.email.smtp_port, (v) => updateSetting('email', 'smtp_port', parseInt(v) || 587), 'number')
-      )}
-      {renderSettingRow(
-        'SMTP Username',
-        'Authentication username',
-        renderInput(settings.email.smtp_user, (v) => updateSetting('email', 'smtp_user', v))
-      )}
-      {renderSettingRow(
-        'SMTP Password',
-        'Authentication password',
-        <div className="relative">
-          {renderInput(settings.email.smtp_password, (v) => updateSetting('email', 'smtp_password', v), 'password')}
-          <button
-            type="button"
-            onClick={() => setShowPassword(!showPassword)}
-            className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
-          >
-            {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
-          </button>
+    <div className="space-y-4">
+      <div className="space-y-1">
+        {renderSettingRow(
+          'Email Notifications',
+          'Master switch — enable or disable all outgoing emails',
+          renderToggle(settings.email.email_enabled, (v) => updateSetting('email', 'email_enabled', v))
+        )}
+      </div>
+
+      <div className="pt-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 px-1 mb-1">Auth & Account</p>
+        <div className="space-y-1">
+          {renderSettingRow(
+            'Welcome Email',
+            'Send welcome email when a new client registers',
+            renderToggle(settings.email.email_on_welcome, (v) => updateSetting('email', 'email_on_welcome', v))
+          )}
+          {renderSettingRow(
+            'Login Notification',
+            'Alert users when a login is detected from a new IP',
+            renderToggle(settings.email.email_on_login, (v) => updateSetting('email', 'email_on_login', v))
+          )}
+          {renderSettingRow(
+            'Password Changed',
+            'Notify user when their password is changed',
+            renderToggle(settings.email.email_on_password_changed, (v) => updateSetting('email', 'email_on_password_changed', v))
+          )}
+          {renderSettingRow(
+            'Email Verification',
+            'Send verification email on registration',
+            renderToggle(settings.email.email_on_verification, (v) => updateSetting('email', 'email_on_verification', v))
+          )}
         </div>
-      )}
-      {renderSettingRow(
-        'Encryption',
-        'Connection security',
-        renderSelect(settings.email.smtp_encryption, [
-          { value: 'none', label: 'None' },
-          { value: 'tls', label: 'TLS' },
-          { value: 'ssl', label: 'SSL' },
-        ], (v) => updateSetting('email', 'smtp_encryption', v as 'none' | 'tls' | 'ssl'))
-      )}
-      {renderSettingRow(
-        'From Email',
-        'Sender email address',
-        renderInput(settings.email.from_email, (v) => updateSetting('email', 'from_email', v), 'email')
-      )}
-      {renderSettingRow(
-        'From Name',
-        'Sender display name',
-        renderInput(settings.email.from_name, (v) => updateSetting('email', 'from_name', v))
-      )}
+      </div>
+
+      <div className="pt-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 px-1 mb-1">Account Status</p>
+        <div className="space-y-1">
+          {renderSettingRow(
+            'Account Deactivated',
+            'Notify user when their account is deactivated',
+            renderToggle(settings.email.email_on_deactivated, (v) => updateSetting('email', 'email_on_deactivated', v))
+          )}
+          {renderSettingRow(
+            'Account Reactivated',
+            'Notify user when their account is reactivated',
+            renderToggle(settings.email.email_on_reactivated, (v) => updateSetting('email', 'email_on_reactivated', v))
+          )}
+          {renderSettingRow(
+            'Account Deleted',
+            'Notify user when their account is permanently deleted',
+            renderToggle(settings.email.email_on_deleted, (v) => updateSetting('email', 'email_on_deleted', v))
+          )}
+        </div>
+      </div>
+
+      <div className="pt-2">
+        <p className="text-xs font-semibold uppercase tracking-wider text-slate-400 px-1 mb-1">Subscription</p>
+        <div className="space-y-1">
+          {renderSettingRow(
+            'Subscription Activated',
+            'Notify client when a subscription plan is activated',
+            renderToggle(settings.email.email_on_subscription_activated, (v) => updateSetting('email', 'email_on_subscription_activated', v))
+          )}
+          {renderSettingRow(
+            'Subscription Cancelled',
+            'Notify client when a subscription is cancelled',
+            renderToggle(settings.email.email_on_subscription_cancelled, (v) => updateSetting('email', 'email_on_subscription_cancelled', v))
+          )}
+          {renderSettingRow(
+            'Plan Switched',
+            'Notify client when they switch billing plans',
+            renderToggle(settings.email.email_on_plan_switched, (v) => updateSetting('email', 'email_on_plan_switched', v))
+          )}
+        </div>
+      </div>
     </div>
   );
 

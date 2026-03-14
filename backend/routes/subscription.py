@@ -10,6 +10,7 @@ from models.client_model import ClientEntry
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager
+from routes.admin import _email_enabled
 from utils.email_service import (
     send_subscription_activated,
     send_subscription_cancelled,
@@ -72,19 +73,19 @@ def _activate_subscription(transaction, payment_id=None, signature=None):
     old_status = old_data.get('subscription_status')
     old_plan_id = old_data.get('plan_id')
 
-    if old_status in ('cancelled', 'expired'):
+    if old_status in ('cancelled', 'expired') and _email_enabled('email_on_subscription_activated'):
         send_subscription_reactivated(
             user_email, client_entry.client_name, plan_name,
             transaction.billing_cycle, transaction.amount, end_date_str,
         )
-    elif old_plan_id and str(old_plan_id) != str(transaction.plan_id):
+    elif old_plan_id and str(old_plan_id) != str(transaction.plan_id) and _email_enabled('email_on_plan_switched'):
         old_plan = SubscriptionPlan.query.filter_by(plan_id=old_plan_id).first()
         old_plan_name = old_plan.name if old_plan else 'Unknown'
         send_plan_switched(
             user_email, client_entry.client_name, old_plan_name, plan_name,
             transaction.billing_cycle, transaction.amount, end_date_str,
         )
-    else:
+    elif _email_enabled('email_on_subscription_activated'):
         send_subscription_activated(
             user_email, client_entry.client_name, plan_name,
             transaction.billing_cycle, transaction.amount, end_date_str,
@@ -596,19 +597,19 @@ def razorpay_webhook():
             old_status = old_data.get('subscription_status')
             old_plan_id = old_data.get('plan_id')
 
-            if old_status in ('cancelled', 'expired'):
+            if old_status in ('cancelled', 'expired') and _email_enabled('email_on_subscription_activated'):
                 send_subscription_reactivated(
                     client_entry.email, client_entry.client_name, plan_name,
                     billing_cycle, amount_val, end_date_str,
                 )
-            elif old_plan_id and str(old_plan_id) != str(plan_id):
+            elif old_plan_id and str(old_plan_id) != str(plan_id) and _email_enabled('email_on_plan_switched'):
                 old_plan = SubscriptionPlan.query.filter_by(plan_id=old_plan_id).first()
                 old_plan_name = old_plan.name if old_plan else 'Unknown'
                 send_plan_switched(
                     client_entry.email, client_entry.client_name, old_plan_name, plan_name,
                     billing_cycle, amount_val, end_date_str,
                 )
-            else:
+            elif _email_enabled('email_on_subscription_activated'):
                 send_subscription_activated(
                     client_entry.email, client_entry.client_name, plan_name,
                     billing_cycle, amount_val, end_date_str,
@@ -669,7 +670,8 @@ def razorpay_webhook():
             plan_obj = SubscriptionPlan.query.filter_by(plan_id=client_entry.plan_id).first()
             plan_name = plan_obj.name if plan_obj else 'Unknown'
             end_date_str = client_entry.subscription_end_date.strftime('%d %b %Y') if client_entry.subscription_end_date else 'N/A'
-            send_subscription_cancelled(client_entry.email, client_entry.client_name, plan_name, end_date_str)
+            if _email_enabled('email_on_subscription_cancelled'):
+                send_subscription_cancelled(client_entry.email, client_entry.client_name, plan_name, end_date_str)
 
             logger.info(f'[Webhook] Subscription cancelled for client {client_entry.client_id}')
             return jsonify({'status': 'cancelled'}), 200
@@ -782,7 +784,8 @@ def cancel_subscription():
         end_date_str = client_entry.subscription_end_date.strftime('%d %b %Y') if client_entry.subscription_end_date else 'N/A'
         user_email = g.user.get('email', client_entry.email)
 
-        send_subscription_cancelled(user_email, client_entry.client_name, plan_name, end_date_str, reason)
+        if _email_enabled('email_on_subscription_cancelled'):
+            send_subscription_cancelled(user_email, client_entry.client_name, plan_name, end_date_str, reason)
 
         return jsonify({
             'success': True,

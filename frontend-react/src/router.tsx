@@ -32,6 +32,7 @@ const OAuthCallbackPage = React.lazy(() => import('@/pages/auth/OAuthCallback'))
 const VerifyEmailPending = React.lazy(() => import('@/pages/auth/VerifyEmailPending'))
 const VerifyEmailSuccess = React.lazy(() => import('@/pages/auth/VerifyEmailSuccess'))
 const AccountPendingDeletion = React.lazy(() => import('@/pages/auth/AccountPendingDeletion'))
+const TwoFactorRecover = React.lazy(() => import('@/pages/auth/TwoFactorRecover'))
 
 // Admin pages
 const AdminDashboard = React.lazy(() => import('@/pages/admin/AdminDashboard'))
@@ -144,6 +145,10 @@ export function AppRoutes() {
         <Route
           path="/account-pending-deletion"
           element={<Suspense fallback={<AuthFallback />}><AccountPendingDeletion /></Suspense>}
+        />
+        <Route
+          path="/2fa-recover"
+          element={<Suspense fallback={<AuthFallback />}><TwoFactorRecover /></Suspense>}
         />
         <Route
           path="/reactivate-account"

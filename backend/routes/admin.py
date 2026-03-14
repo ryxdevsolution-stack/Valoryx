@@ -15,6 +15,7 @@ from utils.email_service import (
     send_account_deactivated_email,
     send_account_reactivated_email,
     send_account_deleted_email,
+    send_welcome_email,
 )
 import bcrypt
 from datetime import datetime, timedelta
@@ -307,10 +308,10 @@ def create_user():
             }
         )
 
-        # Send welcome email if requested
-        if data.get('send_welcome_email'):
-            # TODO: Implement email sending
-            pass
+        # Send welcome email if requested and enabled
+        if data.get('send_welcome_email') and _email_enabled('email_on_welcome'):
+            trial_end = (datetime.utcnow() + timedelta(days=14)).strftime('%d %b %Y')
+            send_welcome_email(email, data.get('client_name', email), trial_end)
 
         return jsonify({
             'message': 'User created successfully',
@@ -425,7 +426,8 @@ def delete_user(user_id):
         )
 
         # Notify user their account was deleted
-        send_account_deleted_email(user_email, user_name)
+        if _email_enabled('email_on_deleted'):
+            send_account_deleted_email(user_email, user_name)
 
         return jsonify({'message': 'User deleted successfully'}), 200
 
@@ -522,9 +524,9 @@ def toggle_user_status(user_id):
         )
 
         # Notify user of status change
-        if new_status:
+        if new_status and _email_enabled('email_on_reactivated'):
             send_account_reactivated_email(user_email, user_name)
-        else:
+        elif not new_status and _email_enabled('email_on_deactivated'):
             send_account_deactivated_email(user_email, user_name)
 
         return jsonify({
@@ -1499,9 +1501,9 @@ def toggle_client_status(client_id):
                 all_emails.add((u_email, u_name or client_name))
 
         for email, name in all_emails:
-            if new_status:
+            if new_status and _email_enabled('email_on_reactivated'):
                 send_account_reactivated_email(email, name)
-            else:
+            elif not new_status and _email_enabled('email_on_deactivated'):
                 send_account_deactivated_email(email, name)
 
         return jsonify({
@@ -1690,8 +1692,9 @@ def delete_client(client_id):
         db.session.commit()
 
         # Notify all users/client email that account was deleted (after commit)
-        for email, name in notify_emails:
-            send_account_deleted_email(email, name)
+        if _email_enabled('email_on_deleted'):
+            for email, name in notify_emails:
+                send_account_deleted_email(email, name)
 
         return jsonify({
             'message': f"Client '{client_name}' and all associated data deleted successfully",
@@ -1927,7 +1930,25 @@ _DEFAULT_SETTINGS = {
     'support_email': 'support@ryx.com',
     'updated_at': None,
     'updated_by': None,
+    # Email toggles
+    'email_enabled': True,
+    'email_on_welcome': True,
+    'email_on_login': True,
+    'email_on_password_changed': True,
+    'email_on_verification': True,
+    'email_on_deactivated': True,
+    'email_on_reactivated': True,
+    'email_on_deleted': True,
+    'email_on_subscription_activated': True,
+    'email_on_subscription_cancelled': True,
+    'email_on_plan_switched': True,
 }
+
+
+def _email_enabled(flag: str) -> bool:
+    """Return True only if master email switch AND the specific flag are both enabled."""
+    s = _read_settings()
+    return bool(s.get('email_enabled', True)) and bool(s.get(flag, True))
 
 
 def _read_settings():

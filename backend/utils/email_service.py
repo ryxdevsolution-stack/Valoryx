@@ -528,6 +528,34 @@ def send_subscription_reactivated(to_email: str, client_name: str, plan_name: st
 # Audit report email (PDF attachment)
 # ---------------------------------------------------------------------------
 
+def send_2fa_recovery_email(to_email: str, recovery_link: str):
+    """Send 2FA recovery link email when user has lost their authenticator device."""
+    subject = "VALORXY — 2FA Recovery Request"
+    body = f"""
+        <h2 style="margin:0 0 6px 0;font-size:22px;font-weight:700;color:#111111;">Two-factor authentication recovery.</h2>
+        <p style="margin:0 0 20px 0;color:#555555;">We received a request to disable two-factor authentication on your VALORYX Billing account.</p>
+
+        <p>Click the button below to disable 2FA and regain access to your account. This link is valid for <strong>1 hour</strong> and can only be used once.</p>
+
+        {_primary_button('Disable 2FA &amp; Recover Access', recovery_link)}
+
+        <p style="font-size:13px;color:#888888;">
+            If the button above does not work, copy and paste the following link into your browser:<br/>
+            <span style="color:#555555;word-break:break-all">{recovery_link}</span>
+        </p>
+
+        {_alert_box(
+            'If you did not request this, your account is safe — someone may have your password. '
+            'Consider changing your password immediately from <strong>Profile → Security</strong>.',
+            kind='warning'
+        )}
+    """
+    _send_async(to_email, subject, _base_layout(
+        preheader="2FA recovery link for your VALORYX account. Expires in 1 hour.",
+        body_html=body
+    ))
+
+
 def send_invite_email(to_email: str, inviter_name: str, business_name: str, role: str, invite_url: str):
     """Send invite link email to new team member."""
     from html import escape
