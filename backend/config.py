@@ -260,7 +260,7 @@ class OptimizedConfig:
     SMTP_USER = os.getenv('SMTP_USER', '')
     SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
     SMTP_FROM_EMAIL = os.getenv('SMTP_FROM_EMAIL', '')
-    SMTP_FROM_NAME = os.getenv('SMTP_FROM_NAME', 'RYX Billing')
+    SMTP_FROM_NAME = os.getenv('SMTP_FROM_NAME', 'Valoryx')
     FRONTEND_URL = os.getenv('FRONTEND_URL', 'http://localhost:3002/frontend')
 
     # -------------------------------

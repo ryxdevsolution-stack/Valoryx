@@ -1,5 +1,5 @@
 """
-Database extensions and utilities for RYX Billing Backend
+Database extensions and utilities for Valoryx Backend
 Phase 1: Integrated dual database support (PostgreSQL + SQLite)
 """
 from flask_sqlalchemy import SQLAlchemy

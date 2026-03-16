@@ -49,7 +49,7 @@ const docSections = [
     title: '2. Introduction',
     icon: Book,
     subsections: [
-      'What is RYX Billing Software?',
+      'What is Valoryx Software?',
       'Who is it for?',
       'Key Benefits'
     ]
@@ -192,7 +192,7 @@ const docContent: Record<string, React.ReactNode> = {
   'landing': (
     <div className="space-y-8">
       <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
-        The landing page is the first page visitors see when they access RYX Billing. It showcases all the features and benefits of the software.
+        The landing page is the first page visitors see when they access Valoryx. It showcases all the features and benefits of the software.
       </p>
 
       <div className="space-y-6">
@@ -271,9 +271,9 @@ const docContent: Record<string, React.ReactNode> = {
   'introduction': (
     <div className="space-y-8">
       <div className="space-y-4">
-        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">What is RYX Billing Software?</h3>
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">What is Valoryx Software?</h3>
         <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
-          RYX Billing is a comprehensive billing and inventory management software designed for retail businesses in India. It helps you manage your daily billing operations, track inventory, handle GST compliance, and generate business reports.
+          Valoryx is a comprehensive billing and inventory management software designed for retail businesses in India. It helps you manage your daily billing operations, track inventory, handle GST compliance, and generate business reports.
         </p>
       </div>
 
@@ -358,7 +358,7 @@ const docContent: Record<string, React.ReactNode> = {
       <div className="space-y-4">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Logging In</h3>
         <ol className="list-decimal list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
-          <li>Open the RYX Billing application</li>
+          <li>Open the Valoryx application</li>
           <li>Enter your <strong>Email</strong> address</li>
           <li>Enter your <strong>Password</strong></li>
           <li>Click <strong>Login</strong></li>
@@ -407,7 +407,7 @@ const docContent: Record<string, React.ReactNode> = {
   'billing': (
     <div className="space-y-8">
       <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
-        The billing system is the core of RYX Billing. It supports both GST and Non-GST billing.
+        The billing system is the core of Valoryx. It supports both GST and Non-GST billing.
       </p>
 
       <div className="space-y-4">
@@ -722,7 +722,7 @@ const docContent: Record<string, React.ReactNode> = {
     <div className="space-y-8">
       <div className="space-y-4">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Thermal Printer Setup</h3>
-        <p className="text-gray-600 dark:text-gray-300">RYX Billing supports thermal receipt printers.</p>
+        <p className="text-gray-600 dark:text-gray-300">Valoryx supports thermal receipt printers.</p>
 
         <h4 className="font-semibold text-gray-800 dark:text-gray-200">Supported Printers:</h4>
         <ul className="list-disc list-inside space-y-1 text-gray-600 dark:text-gray-300 ml-4">
@@ -786,7 +786,7 @@ const docContent: Record<string, React.ReactNode> = {
   'payments': (
     <div className="space-y-8">
       <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
-        RYX Billing supports multiple payment methods for flexibility.
+        Valoryx supports multiple payment methods for flexibility.
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -821,7 +821,7 @@ const docContent: Record<string, React.ReactNode> = {
   'roles': (
     <div className="space-y-8">
       <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
-        RYX Billing has a role-based access system to control what each user can do.
+        Valoryx has a role-based access system to control what each user can do.
       </p>
 
       <div className="space-y-4">
@@ -1145,10 +1145,10 @@ export default function DocsPage() {
                 </Link>
               </div>
               <h1 className="text-3xl md:text-4xl font-bold text-white mb-4">
-                RYX Billing Documentation
+                Valoryx Documentation
               </h1>
               <p className="text-white/80 text-lg max-w-2xl">
-                Complete user guide for RYX Billing Software. Learn about all features and how to use them effectively.
+                Complete user guide for Valoryx Software. Learn about all features and how to use them effectively.
               </p>
             </div>
           </div>

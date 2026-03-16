@@ -1,0 +1,32 @@
+@font-face {
+  font-family: 'Cormorant Garamond';
+  font-style: normal;
+  font-weight: 300;
+  font-display: swap;
+  src: url('/fonts/cormorant-garamond-300.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Cormorant Garamond';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/cormorant-garamond-400.woff2') format('woff2');
+}
+
+/* Cinzel only supports weights 400-900 — weight 300 maps to 400 (lightest available) */
+@font-face {
+  font-family: 'Cinzel';
+  font-style: normal;
+  font-weight: 300 400;
+  font-display: swap;
+  src: url('/fonts/cinzel-400.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Lavishly Yours';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/lavishly-yours-400.woff2') format('woff2');
+}

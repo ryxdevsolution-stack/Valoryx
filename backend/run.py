@@ -1,5 +1,5 @@
 """
-Run script for RYX Billing Backend
+Run script for Valoryx Backend
 This ensures proper Flask application context
 
 WARNING: This script is for DEVELOPMENT ONLY!
@@ -35,7 +35,7 @@ if __name__ == '__main__':
 
     # Run the app (DEVELOPMENT ONLY)
     print("=" * 60)
-    print("RYX Billing API Server - DEVELOPMENT MODE")
+    print("Valoryx API Server - DEVELOPMENT MODE")
     print("=" * 60)
     print(f"Server running at: http://localhost:5017")
     print(f"API endpoints available at: http://localhost:5017/api/")

@@ -1923,7 +1923,7 @@ import os as _os
 _SETTINGS_FILE = _os.path.join(_os.path.expanduser('~'), '.mj-billing', 'admin_settings.json')
 
 _DEFAULT_SETTINGS = {
-    'app_name': 'RYX Billing',
+    'app_name': 'Valoryx',
     'maintenance_mode': False,
     'allow_registration': True,
     'max_clients': 100,

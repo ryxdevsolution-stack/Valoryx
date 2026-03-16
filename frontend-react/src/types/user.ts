@@ -1,5 +1,5 @@
 /**
- * RYX Billing - User & Auth Types
+ * Valoryx - User & Auth Types
  * Type definitions for authentication and user management
  */
 

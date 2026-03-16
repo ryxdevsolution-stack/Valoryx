@@ -1,5 +1,5 @@
 /**
- * RYX Billing - Types Export
+ * Valoryx - Types Export
  * Central export for all TypeScript type definitions
  */
 

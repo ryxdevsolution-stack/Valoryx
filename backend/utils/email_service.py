@@ -533,7 +533,7 @@ def send_2fa_recovery_email(to_email: str, recovery_link: str):
     subject = "VALORXY — 2FA Recovery Request"
     body = f"""
         <h2 style="margin:0 0 6px 0;font-size:22px;font-weight:700;color:#111111;">Two-factor authentication recovery.</h2>
-        <p style="margin:0 0 20px 0;color:#555555;">We received a request to disable two-factor authentication on your VALORYX Billing account.</p>
+        <p style="margin:0 0 20px 0;color:#555555;">We received a request to disable two-factor authentication on your VALOValoryx account.</p>
 
         <p>Click the button below to disable 2FA and regain access to your account. This link is valid for <strong>1 hour</strong> and can only be used once.</p>
 

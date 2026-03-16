@@ -1,5 +1,5 @@
 /**
- * RYX Billing - Customer Types
+ * Valoryx - Customer Types
  * Type definitions for customer management
  */
 

@@ -346,7 +346,7 @@ def export_pdf():
                 trial_note = ' · TRIAL ACCOUNT' if _is_trial else ''
                 footer_text = (
                     f'Generated on {_generated_at} by {_user_full_name} · '
-                    f'VALORYX Billing{trial_note} · Computer-generated document'
+                    f'VALOValoryx{trial_note} · Computer-generated document'
                 )
                 self.setFont('Helvetica', 6.5)
                 self.setFillColorRGB(0.6, 0.6, 0.6)
@@ -720,7 +720,7 @@ def send_auditor_email():
                 trial_note = ' · TRIAL ACCOUNT' if _is_trial else ''
                 footer_text = (
                     f'Generated on {_generated_at} by {_user_full_name} · '
-                    f'VALORYX Billing{trial_note} · Computer-generated document'
+                    f'VALOValoryx{trial_note} · Computer-generated document'
                 )
                 self.setFont('Helvetica', 6.5)
                 self.setFillColorRGB(0.6, 0.6, 0.6)

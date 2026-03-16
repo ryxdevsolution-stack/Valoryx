@@ -1,5 +1,5 @@
 """
-RYX Billing - Standardized Response Helpers
+Valoryx - Standardized Response Helpers
 Provides consistent API response formatting across all routes
 """
 from flask import jsonify

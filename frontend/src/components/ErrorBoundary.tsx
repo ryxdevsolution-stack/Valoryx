@@ -1,7 +1,7 @@
 'use client';
 
 /**
- * RYX Billing - Error Boundary Component
+ * Valoryx - Error Boundary Component
  * Catches JavaScript errors anywhere in child component tree and displays fallback UI
  */
 

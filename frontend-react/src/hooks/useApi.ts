@@ -1,6 +1,6 @@
 
 /**
- * RYX Billing - Unified API Hook
+ * Valoryx - Unified API Hook
  * Provides authenticated API access with standardized loading/error states
  *
  * Uses the centralized axios instance which handles:

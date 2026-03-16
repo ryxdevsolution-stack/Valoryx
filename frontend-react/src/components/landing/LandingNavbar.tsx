@@ -39,19 +39,14 @@ export default function LandingNavbar() {
         }`}
       >
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-16 lg:h-20">
+          <div className="flex items-center justify-between h-20 lg:h-24">
             {/* Logo */}
-            <Link to={siteConfig.routes.home} className="flex items-center gap-3">
-              <div className="relative w-10 h-10 lg:w-12 lg:h-12">
-                <img
-                  src={siteConfig.logoPath}
-                  alt={siteConfig.name}
-                  className="object-contain w-full h-full"
-                />
-              </div>
-              <span className="font-bold text-xl lg:text-2xl text-gray-900 dark:text-white">
-                {siteConfig.name}
-              </span>
+            <Link to={siteConfig.routes.home} className="flex items-center">
+              <img
+                src={siteConfig.logoPath}
+                alt={siteConfig.name}
+                style={{ height: 72, width: 'auto' }}
+              />
             </Link>
 
             {/* Desktop Navigation */}

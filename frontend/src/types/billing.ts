@@ -1,5 +1,5 @@
 /**
- * RYX Billing - Billing Types
+ * Valoryx - Billing Types
  * Type definitions for billing-related entities
  */
 

@@ -1,6 +1,6 @@
 
 /**
- * RYX Billing - Centralized Frontend Configuration
+ * Valoryx - Centralized Frontend Configuration
  * Single source of truth for all configuration values
  *
  * IMPORTANT: This file should be the ONLY place where environment
@@ -56,7 +56,7 @@ export const API_BASE_URL = `${API_URL}/api`;
 // ============================================================================
 
 export const APP_CONFIG = {
-  name: 'RYX Billing',
+  name: 'Valoryx',
   version: import.meta.env.VITE_APP_VERSION || '1.0.0',
   supportEmail: 'support@ryxbilling.com',
 } as const;

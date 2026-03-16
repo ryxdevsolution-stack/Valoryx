@@ -132,7 +132,7 @@ interface SystemSettings {
 
 const defaultSettings: SystemSettings = {
   general: {
-    system_name: 'RYX Billing',
+    system_name: 'Valoryx',
     tagline: 'Professional Billing Solution',
     support_email: 'support@ryxbilling.com',
     support_phone: '+91 1234567890',
@@ -169,7 +169,7 @@ const defaultSettings: SystemSettings = {
     smtp_password: '',
     smtp_encryption: 'tls',
     from_email: '',
-    from_name: 'RYX Billing',
+    from_name: 'Valoryx',
     email_enabled: false,
   },
   security: {

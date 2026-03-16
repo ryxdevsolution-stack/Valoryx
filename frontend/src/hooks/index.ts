@@ -1,5 +1,5 @@
 /**
- * RYX Billing - Hooks Export
+ * Valoryx - Hooks Export
  * Central export for all custom hooks
  */
 

@@ -170,7 +170,7 @@ class TelegramScheduler:
                         f"Hi {first_name}!\n\n"
                         f"Your Telegram Chat ID is:\n"
                         f"<code>{chat_id}</code>\n\n"
-                        f"Copy that number and paste it in <b>RYX Billing → Profile → Telegram Daily Reports</b> to start receiving your daily business summary."
+                        f"Copy that number and paste it in <b>Valoryx → Profile → Telegram Daily Reports</b> to start receiving your daily business summary."
                     )
 
                     try:

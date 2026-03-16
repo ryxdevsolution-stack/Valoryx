@@ -129,7 +129,7 @@ def generate_daily_summary(client_id: str, report_date: date = None) -> str:
             lines.append("<i>No sales recorded today.</i>")
 
         lines.append("")
-        lines.append("<i>— RYX Billing</i>")
+        lines.append("<i>— Valoryx</i>")
 
         return "\n".join(lines)
 

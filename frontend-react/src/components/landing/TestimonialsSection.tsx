@@ -37,7 +37,7 @@ export default function TestimonialsSection() {
           </h2>
           <p className="text-lg text-gray-600 dark:text-gray-400 leading-relaxed">
             Don&apos;t just take our word for it. Here&apos;s what real business owners
-            have to say about RYX Billing.
+            have to say about Valoryx.
           </p>
         </motion.div>
 

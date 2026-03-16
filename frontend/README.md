@@ -1,4 +1,4 @@
-# RYX Billing Software - Frontend
+# Valoryx Software - Frontend
 
 Next.js 14 frontend with TypeScript, Tailwind CSS, and Framer Motion.
 

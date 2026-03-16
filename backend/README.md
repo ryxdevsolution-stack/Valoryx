@@ -1,4 +1,4 @@
-# RYX Billing Software - Backend API
+# Valoryx Software - Backend API
 
 Flask-based REST API with Supabase PostgreSQL and client_id isolation.
 

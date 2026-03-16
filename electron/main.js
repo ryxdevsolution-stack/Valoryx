@@ -2,94 +2,148 @@ const { app, BrowserWindow, ipcMain, Tray, Menu } = require('electron');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
+const http = require('http');
 
 // Configuration
 const isDev = process.argv.includes('--dev');
-const BACKEND_PORT = 5000;
-const FRONTEND_PORT = 3000; // Only used in dev mode (Vite dev server)
+const BACKEND_PORT = 5017;   // was 5000
+const FRONTEND_PORT = 3002;  // was 3000 — Vite dev server port
+const MAX_RESTART_ATTEMPTS = 3;
+const RESTART_BACKOFF_MS = [1000, 2000, 4000];
+const HEALTH_POLL_INTERVAL_MS = 300;
+const HEALTH_TIMEOUT_MS = 5000;
 
 let mainWindow = null;
 let backendProcess = null;
 let tray = null;
+let backendRestartCount = 0;
+let backendReady = false;
 
 // =======================
-// Backend Management
+// Backend Supervisor
 // =======================
 
-function startBackend() {
-  return new Promise((resolve, reject) => {
-    console.log('[Backend] Starting Flask server...');
+function sendSplashStatus(message, progress) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('startup-status', { message, progress });
+  }
+}
 
-    let pythonPath;
-    let backendPath;
+function spawnFlask() {
+  let pythonPath, backendPath;
+  if (isDev) {
+    pythonPath = 'python';
+    backendPath = path.join(__dirname, '..', 'backend');
+  } else {
+    pythonPath = 'python';
+    backendPath = path.join(process.resourcesPath, 'backend');
+  }
 
-    if (isDev) {
-      // Development: use local Python
-      pythonPath = 'python';
-      backendPath = path.join(__dirname, '..', 'backend');
+  const proc = spawn(pythonPath, ['app.py'], {
+    cwd: backendPath,
+    env: { ...process.env, DB_MODE: 'offline', PYTHONUNBUFFERED: '1' },
+    stdio: ['ignore', 'pipe', 'pipe']
+  });
+
+  proc.stdout.on('data', (data) => console.log(`[Backend] ${data.toString().trim()}`));
+  proc.stderr.on('data', (data) => console.error(`[Backend ERR] ${data.toString().trim()}`));
+  proc.on('error', (err) => console.error('[Backend] Spawn error:', err));
+
+  return proc;
+}
+
+function pollHealth(timeoutMs) {
+  const start = Date.now();
+  return new Promise((resolve) => {
+    const check = () => {
+      if (Date.now() - start > timeoutMs) { resolve(false); return; }
+      const req = http.get(`http://localhost:${BACKEND_PORT}/api/health`, (res) => {
+        if (res.statusCode === 200) { resolve(true); return; }
+        setTimeout(check, HEALTH_POLL_INTERVAL_MS);
+      });
+      req.setTimeout(HEALTH_TIMEOUT_MS);
+      req.on('error', () => setTimeout(check, HEALTH_POLL_INTERVAL_MS));
+      req.on('timeout', () => { req.destroy(); setTimeout(check, HEALTH_POLL_INTERVAL_MS); });
+    };
+    check();
+  });
+}
+
+async function startBackendWithSupervision() {
+  let attempt = 0;
+  while (attempt <= MAX_RESTART_ATTEMPTS) {
+    if (attempt > 0) {
+      const delay = RESTART_BACKOFF_MS[attempt - 1] || 4000;
+      sendSplashStatus(`Reconnecting… (attempt ${attempt + 1}/${MAX_RESTART_ATTEMPTS + 1})`, 30);
+      await new Promise(r => setTimeout(r, delay));
     } else {
-      // Production: use system Python (requires Python installed on client machine)
-      const resourcesPath = process.resourcesPath;
-      pythonPath = 'python'; // Use system Python from PATH
-      backendPath = path.join(resourcesPath, 'backend');
+      sendSplashStatus('Starting backend…', 20);
     }
 
-    // Set environment variables
-    const env = { ...process.env };
-    env.DB_MODE = 'offline'; // Always use offline mode for desktop
-    env.PYTHONUNBUFFERED = '1';
+    backendProcess = spawnFlask();
 
-    // Start Flask
-    backendProcess = spawn(pythonPath, ['app.py'], {
-      cwd: backendPath,
-      env: env,
-      stdio: ['ignore', 'pipe', 'pipe']
-    });
-
-    backendProcess.stdout.on('data', (data) => {
-      console.log(`[Backend] ${data.toString().trim()}`);
-      if (data.toString().includes('Running on')) {
-        resolve();
-      }
-    });
-
-    backendProcess.stderr.on('data', (data) => {
-      console.error(`[Backend Error] ${data.toString().trim()}`);
-    });
-
-    backendProcess.on('error', (error) => {
-      console.error('[Backend] Failed to start:', error);
-      reject(error);
-    });
-
+    // Watch for unexpected crash AFTER successful start
     backendProcess.on('exit', (code) => {
-      console.log(`[Backend] Process exited with code ${code}`);
+      console.log(`[Backend] Exited with code ${code}`);
       backendProcess = null;
+      if (!app.isQuitting && backendReady) {
+        // Crash after successful start — restart from scratch
+        console.log('[Backend] Unexpected crash — restarting supervisor');
+        backendReady = false;
+        backendRestartCount = 0;
+        // Non-awaited intentionally: crash recovery runs independently
+        startBackendWithSupervision().then((ok) => {
+          if (ok) loadFrontend();
+        });
+      }
     });
 
-    // Timeout if backend doesn't start in 30 seconds
-    setTimeout(() => {
-      if (backendProcess && !backendProcess.killed) {
-        resolve(); // Assume it started
-      }
-    }, 30000);
-  });
+    sendSplashStatus('Waiting for backend to be ready…', 40 + attempt * 10);
+    const healthy = await pollHealth(30000);
+
+    if (healthy) {
+      backendReady = true;
+      backendRestartCount = 0;
+      sendSplashStatus('Loading application…', 80);
+      return true;
+    }
+
+    // Health check timed out — kill process and retry
+    if (backendProcess && !backendProcess.killed) {
+      backendProcess.kill('SIGTERM');
+      backendProcess = null;
+    }
+    attempt++;
+  }
+
+  // All attempts exhausted
+  sendSplashStatus('Could not start backend after 3 attempts. Please restart the app.', -1);
+  return false;
 }
 
 function stopBackend() {
   if (backendProcess && !backendProcess.killed) {
-    console.log('[Backend] Stopping Flask server...');
+    console.log('[Backend] Stopping Flask…');
     backendProcess.kill('SIGTERM');
     backendProcess = null;
   }
 }
 
 // =======================
-// Frontend Loading (Static Files - No Server Needed!)
+// Frontend Loading
 // =======================
-// In production, frontend is built as static files by Vite.
-// Electron loads them directly from disk - no localhost:3000 needed.
-// In dev mode, connects to Vite dev server at localhost:3000.
+
+function loadFrontend() {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (isDev) {
+    mainWindow.loadURL(`http://localhost:${FRONTEND_PORT}/#/auth/login`);
+  } else {
+    const frontendPath = path.join(
+      process.resourcesPath, 'frontend-react', 'dist', 'index.html'
+    );
+    mainWindow.loadFile(frontendPath, { hash: '/auth/login' });
+  }
+}
 
 // =======================
 // Window Management
@@ -107,66 +161,16 @@ function createWindow() {
       contextIsolation: true,
       preload: path.join(__dirname, 'preload.js')
     },
-    show: true,
+    show: false,
     backgroundColor: '#0f172a'
   });
 
-  // Show loading splash screen immediately while app loads
-  const loadingHTML = `
-    <html>
-    <head><style>
-      * { margin: 0; padding: 0; box-sizing: border-box; }
-      body {
-        background: linear-gradient(135deg, #0f172a 0%, #1e293b 50%, #0f172a 100%);
-        display: flex; align-items: center; justify-content: center;
-        height: 100vh; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-        color: white; overflow: hidden;
-      }
-      .container { text-align: center; }
-      .logo { font-size: 48px; font-weight: 800; letter-spacing: 2px; margin-bottom: 20px;
-        background: linear-gradient(135deg, #60a5fa, #a78bfa, #60a5fa);
-        -webkit-background-clip: text; -webkit-text-fill-color: transparent;
-        animation: shimmer 2s ease-in-out infinite; }
-      @keyframes shimmer {
-        0%, 100% { opacity: 1; } 50% { opacity: 0.7; }
-      }
-      .spinner { width: 40px; height: 40px; border: 3px solid rgba(255,255,255,0.1);
-        border-top-color: #60a5fa; border-radius: 50%;
-        animation: spin 0.8s linear infinite; margin: 20px auto; }
-      @keyframes spin { to { transform: rotate(360deg); } }
-      .text { color: #94a3b8; font-size: 14px; }
-    </style></head>
-    <body><div class="container">
-      <div class="logo">RYX Billing</div>
-      <div class="spinner"></div>
-      <div class="text">Starting application...</div>
-    </div></body></html>`;
-  mainWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(loadingHTML)}`);
+  mainWindow.once('ready-to-show', () => mainWindow.show());
 
-  // Load the actual frontend once backend is ready
-  const loadFrontend = () => {
-    if (isDev) {
-      // Dev mode: connect to Vite dev server
-      const devURL = `http://localhost:${FRONTEND_PORT}/#/auth/login`;
-      console.log('[App] Loading frontend from dev server:', devURL);
-      mainWindow.loadURL(devURL);
-    } else {
-      // Production: load static files directly from disk (NO server needed!)
-      const frontendPath = path.join(process.resourcesPath, 'frontend-react', 'dist', 'index.html');
-      console.log('[App] Loading frontend from static file:', frontendPath);
-      mainWindow.loadFile(frontendPath, { hash: '/auth/login' });
-    }
-  };
-
-  // Wait a moment for the splash to render, then load the app
-  setTimeout(loadFrontend, 1500);
-
-  // Open DevTools in development
   if (isDev) {
     mainWindow.webContents.openDevTools();
   }
 
-  // Handle window close
   mainWindow.on('close', (event) => {
     if (!app.isQuitting) {
       event.preventDefault();
@@ -206,7 +210,7 @@ function createTray() {
     }
   ]);
 
-  tray.setToolTip('RYX Billing');
+  tray.setToolTip('Valoryx');
   tray.setContextMenu(contextMenu);
 
   tray.on('click', () => {
@@ -304,33 +308,28 @@ ipcMain.handle('set-default-printer', async (event, printerName) => {
 // =======================
 
 app.on('ready', async () => {
-  console.log('[App] Starting RYX Billing Desktop...');
+  console.log('[App] Starting Valoryx Desktop…');
 
-  try {
-    // Start backend (Python Flask on port 5000)
-    await startBackend();
-    console.log('[App] Backend started successfully on http://localhost:5000');
+  // Step 1: Create window and tray immediately
+  createWindow();
+  createTray();
 
-    // Frontend: In production, static files are loaded directly (no server needed)
-    // In dev mode, user should run `npm run dev` in frontend-react/ separately
-    if (isDev) {
-      console.log('[App] Frontend: Connect to Vite dev server at http://localhost:3000');
-      // Small delay for backend to be ready
-      await new Promise(resolve => setTimeout(resolve, 1000));
-    }
+  // Step 2: Load the React bundle from disk NOW — ElectronSplash renders immediately
+  //         This is the key fix: frontend loads BEFORE Flask, not after.
+  loadFrontend();
 
-    // Create window and load login page
-    createWindow();
+  // Step 3: Start Flask in background while user sees the splash
+  const started = await startBackendWithSupervision();
 
-    // Create system tray
-    createTray();
-
-    console.log('[App] RYX Billing Desktop ready!');
-
-  } catch (error) {
-    console.error('[App] Failed to start:', error);
-    app.quit();
+  if (!started) {
+    // Error state is shown by ElectronSplash via the -1 progress IPC event.
+    // Do NOT reload frontend — keep splash on screen showing the error.
+    return;
   }
+
+  // Step 4: Backend ready. IPC event with progress:80 already triggered
+  //         App.tsx to set backendReady=true and unmount ElectronSplash.
+  console.log('[App] Valoryx Desktop ready!');
 });
 
 app.on('window-all-closed', () => {

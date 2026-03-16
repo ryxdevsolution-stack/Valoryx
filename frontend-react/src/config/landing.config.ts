@@ -28,10 +28,10 @@ import {
 // =============================================================================
 
 export const siteConfig = {
-  name: 'RYX Billing',
+  name: 'Valoryx',
   tagline: 'Modern Billing for Modern Businesses',
   description: 'GST-compliant invoicing, real-time inventory, and powerful analytics. Everything you need to run your retail or service business efficiently.',
-  logoPath: `${import.meta.env.BASE_URL}RYX_Logo.png`,
+  logoPath: `${import.meta.env.BASE_URL}valoryx-logo.png`,
   appUrl: 'app.ryxbilling.com',
 
   // Routes
@@ -214,7 +214,7 @@ export const benefits: Benefit[] = [
   {
     icon: TrendingUp,
     title: 'Scale with Your Business',
-    description: 'Whether you have one store or many, RYX Billing grows alongside your success.',
+    description: 'Whether you have one store or many, Valoryx grows alongside your success.',
     points: [
       'Multi-store support',
       'Unlimited users with role management',
@@ -278,7 +278,7 @@ export const testimonials: Testimonial[] = [
     business: 'Kumar Electronics',
     location: 'Delhi',
     rating: 5,
-    quote: 'RYX Billing transformed how we manage our retail store. The GST calculations are automatic and always accurate. We saved hours every week!',
+    quote: 'Valoryx transformed how we manage our retail store. The GST calculations are automatic and always accurate. We saved hours every week!',
   },
   {
     name: 'Priya Sharma',
@@ -328,12 +328,12 @@ export interface FAQ {
 
 export const faqs: FAQ[] = [
   {
-    question: 'Is RYX Billing GST compliant?',
-    answer: 'Yes, RYX Billing is fully GST compliant with support for CGST, SGST, IGST, and CESS calculations. It automatically computes taxes based on your business location and customer location. HSN/SAC codes, GSTIN validation, and GST-ready invoice formats are all built-in.',
+    question: 'Is Valoryx GST compliant?',
+    answer: 'Yes, Valoryx is fully GST compliant with support for CGST, SGST, IGST, and CESS calculations. It automatically computes taxes based on your business location and customer location. HSN/SAC codes, GSTIN validation, and GST-ready invoice formats are all built-in.',
   },
   {
     question: 'Can I use it offline?',
-    answer: 'Yes! RYX Billing works as a Progressive Web App (PWA) that functions offline. You can create bills, manage inventory, and serve customers even without internet. All data automatically syncs when you are back online, ensuring you never lose any transactions.',
+    answer: 'Yes! Valoryx works as a Progressive Web App (PWA) that functions offline. You can create bills, manage inventory, and serve customers even without internet. All data automatically syncs when you are back online, ensuring you never lose any transactions.',
   },
   {
     question: 'How many users can I add?',
@@ -349,7 +349,7 @@ export const faqs: FAQ[] = [
   },
   {
     question: 'What payment methods are supported?',
-    answer: 'RYX Billing supports all major payment methods including Cash, Card (Credit/Debit), UPI, Net Banking, Cheque, and Credit (customer credit). You can even split a single bill across multiple payment methods for maximum flexibility.',
+    answer: 'Valoryx supports all major payment methods including Cash, Card (Credit/Debit), UPI, Net Banking, Cheque, and Credit (customer credit). You can even split a single bill across multiple payment methods for maximum flexibility.',
   },
   {
     question: 'Do you provide customer support?',

@@ -142,7 +142,7 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
       const options = {
         key: razorpay_key_id,
         subscription_id: subscription_id,
-        name: 'RYX Billing',
+        name: 'Valoryx',
         description: `${plan_name} Plan - ${billingCycle === 'yearly' ? 'Yearly' : 'Monthly'}`,
         handler: async function (response: any) {
           try {

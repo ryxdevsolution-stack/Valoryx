@@ -30,15 +30,12 @@ export default function LandingFooter() {
         <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-8 lg:gap-12 mb-12">
           {/* Brand Section */}
           <div className="col-span-2 md:col-span-3 lg:col-span-2">
-            <Link to={siteConfig.routes.home} className="flex items-center gap-3 mb-6">
-              <div className="relative w-10 h-10">
-                <img
-                  src={siteConfig.logoPath}
-                  alt={siteConfig.name}
-                  className="object-contain w-full h-full"
-                />
-              </div>
-              <span className="font-bold text-2xl text-white">{siteConfig.name}</span>
+            <Link to={siteConfig.routes.home} className="flex items-center mb-6">
+              <img
+                src={siteConfig.logoPath}
+                alt={siteConfig.name}
+                className="object-contain h-12 w-auto"
+              />
             </Link>
             <p className="text-gray-400 mb-6 leading-relaxed max-w-sm">
               Modern billing software built for Indian businesses. GST compliant,

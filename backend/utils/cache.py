@@ -1,5 +1,5 @@
 """
-RYX Billing - Simple In-Memory Cache for Reports
+Valoryx - Simple In-Memory Cache for Reports
 Provides fast caching for frequently accessed report data
 """
 from datetime import datetime, timedelta

@@ -10,13 +10,13 @@ import { LoadingInitializer } from '@/components/LoadingInitializer'
 const inter = Inter({ subsets: ['latin'] })
 
 export const metadata: Metadata = {
-  title: 'RYX Billing Software',
+  title: 'Valoryx Software',
   description: 'Multi-tenant billing system with GST support',
   manifest: '/manifest.json',
   appleWebApp: {
     capable: true,
     statusBarStyle: 'default',
-    title: 'RYX Billing',
+    title: 'Valoryx',
   },
   formatDetection: {
     telephone: false,

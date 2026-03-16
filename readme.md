@@ -1,4 +1,4 @@
-# RYX Billing Software - Development Guide
+# Valoryx Software - Development Guide
 
 ## Project Overview
 Multi-tenant billing system with complete client isolation using client_id filtering.
@@ -472,7 +472,7 @@ npm run dev
 
 ---
 **Last Updated**: 2025-10-15
-**Project**: RYX Billing Software v1.0.0
+**Project**: Valoryx Software v1.0.0
 **Backend Status**: ✅ 100% Complete and Ready
 **Frontend Status**: ✅ Core Complete (Auth, Dashboard, Navigation)
 **Database Status**: ✅ Migrations Ready to Run

@@ -1,5 +1,5 @@
 /**
- * RYX Billing - Stock/Product Types
+ * Valoryx - Stock/Product Types
  * Type definitions for inventory and stock management
  */
 

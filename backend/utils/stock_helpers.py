@@ -1,5 +1,5 @@
 """
-RYX Billing - Stock Validation Helpers
+Valoryx - Stock Validation Helpers
 Provides batch product validation to avoid N+1 queries in billing operations
 """
 from typing import List, Dict, Tuple, Optional, Set

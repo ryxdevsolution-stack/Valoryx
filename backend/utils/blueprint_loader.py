@@ -1,5 +1,5 @@
 """
-RYX Billing - Dynamic Blueprint Loader
+Valoryx - Dynamic Blueprint Loader
 Eliminates duplicated blueprint import/registration code
 """
 import logging

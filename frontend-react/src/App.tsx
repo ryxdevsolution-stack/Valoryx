@@ -1,4 +1,4 @@
-import { Suspense } from 'react'
+import { Suspense, useState, useEffect } from 'react'
 import { Routes, Route, Outlet } from 'react-router-dom'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import { LoadingProvider } from '@/contexts/LoadingContext'
@@ -7,6 +7,7 @@ import { DataProvider } from '@/contexts/DataContext'
 import { LoadingInitializer } from '@/components/LoadingInitializer'
 import { AppRoutes } from '@/router'
 import ImpersonationBanner from '@/components/ImpersonationBanner'
+import ElectronSplash from '@/components/ElectronSplash'
 
 function LoadingFallback() {
   return (
@@ -23,6 +24,36 @@ function LoadingFallback() {
 }
 
 export default function App() {
+  const isElectron = !!(window as any).electronAPI?.isElectron
+
+  const [startupStatus, setStartupStatus] = useState({
+    message: 'Initializing…',
+    progress: 5,
+  })
+  // Non-Electron (web): always ready. Electron: wait for backend.
+  const [backendReady, setBackendReady] = useState(!isElectron)
+
+  useEffect(() => {
+    if (!isElectron) return
+    const api = (window as any).electronAPI
+    if (!api?.onStartupStatus) { setBackendReady(true); return }
+
+    api.onStartupStatus((data: { message: string; progress: number }) => {
+      setStartupStatus(data)
+      // Mark ready only on success. On error (progress -1),
+      // keep splash visible so user sees the error message.
+      if (data.progress >= 80) {
+        setBackendReady(true)
+      }
+    })
+
+    return () => {
+      api.removeStartupStatus?.()
+    }
+  }, [isElectron])
+
+  if (!backendReady) return <ElectronSplash status={startupStatus} />
+
   return (
     <ThemeProvider>
       <LoadingProvider>

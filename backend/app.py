@@ -63,87 +63,21 @@ def create_app():
     else:
         logging.info("[INFO] No DB_URL configured - sync scheduler disabled")
 
-    # Telegram: add telegram_chat_id column to users table if missing (runs on every startup)
+    # Run versioned migrations — skips entirely on daily open if schema is up to date
     if db_initialized:
         try:
-            with app.app_context():
-                from sqlalchemy import text, inspect as sa_inspect
-                _inspector = sa_inspect(db.engine)
-                _user_cols = [c['name'] for c in _inspector.get_columns('users')]
-                if 'telegram_chat_id' not in _user_cols:
-                    db.session.execute(text("ALTER TABLE users ADD COLUMN telegram_chat_id VARCHAR(50) NULL"))
-                    db.session.commit()
-                    logging.info("[Migration] telegram_chat_id column added to users table")
+            from migrations.runner import run_migrations_if_needed
+            run_migrations_if_needed(app, db)
         except Exception as _e:
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
-            logging.warning(f"[Migration] users.telegram_chat_id migration skipped: {_e}")
+            logging.warning(f"[Migration] Migration runner failed: {_e}")
 
-    # Email verification columns on client_entry
-    if db_initialized:
+        # Permission sections seed — idempotent (INSERT OR IGNORE), fast (<5ms), always run
         try:
             with app.app_context():
-                from sqlalchemy import text, inspect as sa_inspect
-                _inspector = sa_inspect(db.engine)
-                _client_cols = [c['name'] for c in _inspector.get_columns('client_entry')]
-                changed = False
-                if 'email_verified' not in _client_cols:
-                    db.session.execute(text("ALTER TABLE client_entry ADD COLUMN email_verified BOOLEAN NOT NULL DEFAULT 0"))
-                    changed = True
-                    logging.info("[Migration] email_verified column added to client_entry")
-                if 'email_verification_token' not in _client_cols:
-                    db.session.execute(text("ALTER TABLE client_entry ADD COLUMN email_verification_token VARCHAR(64) NULL"))
-                    db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_client_entry_verify_token ON client_entry (email_verification_token)"))
-                    changed = True
-                    logging.info("[Migration] email_verification_token column added to client_entry")
-                if 'email_verification_expires' not in _client_cols:
-                    db.session.execute(text("ALTER TABLE client_entry ADD COLUMN email_verification_expires DATETIME NULL"))
-                    changed = True
-                    logging.info("[Migration] email_verification_expires column added to client_entry")
-                if changed:
-                    db.session.commit()
+                from migrations.seed_permission_sections import run as _perm_seed
+                _perm_seed(db)
         except Exception as _e:
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
-            logging.warning(f"[Migration] email_verification migration skipped: {_e}")
-
-    # Account deletion / GDPR columns on client_entry
-    if db_initialized:
-        try:
-            with app.app_context():
-                from sqlalchemy import text, inspect as sa_inspect
-                _inspector = sa_inspect(db.engine)
-                _client_cols = [c['name'] for c in _inspector.get_columns('client_entry')]
-                changed = False
-                if 'deletion_requested_at' not in _client_cols:
-                    db.session.execute(text("ALTER TABLE client_entry ADD COLUMN deletion_requested_at DATETIME NULL"))
-                    changed = True
-                    logging.info("[Migration] deletion_requested_at column added to client_entry")
-                if 'deletion_scheduled_at' not in _client_cols:
-                    db.session.execute(text("ALTER TABLE client_entry ADD COLUMN deletion_scheduled_at DATETIME NULL"))
-                    changed = True
-                    logging.info("[Migration] deletion_scheduled_at column added to client_entry")
-                if 'deletion_requested_by' not in _client_cols:
-                    db.session.execute(text("ALTER TABLE client_entry ADD COLUMN deletion_requested_by VARCHAR(36) NULL"))
-                    changed = True
-                    logging.info("[Migration] deletion_requested_by column added to client_entry")
-                if 'deletion_reactivation_token' not in _client_cols:
-                    db.session.execute(text("ALTER TABLE client_entry ADD COLUMN deletion_reactivation_token VARCHAR(64) NULL"))
-                    db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_client_entry_reactivation_token ON client_entry (deletion_reactivation_token)"))
-                    changed = True
-                    logging.info("[Migration] deletion_reactivation_token column added to client_entry")
-                if changed:
-                    db.session.commit()
-        except Exception as _e:
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
-            logging.warning(f"[Migration] account deletion migration skipped: {_e}")
+            logging.warning(f"[Migration] permission sections seed skipped: {_e}")
 
     # Telegram daily report scheduler (runs at TELEGRAM_REPORT_HOUR:TELEGRAM_REPORT_MINUTE IST)
     try:
@@ -156,58 +90,6 @@ def create_app():
             logging.info("[INFO] Telegram scheduler disabled (TELEGRAM_BOT_TOKEN not set)")
     except Exception as e:
         logging.warning(f"[WARNING] Telegram scheduler failed to initialize: {e}")
-
-    # Webhook tables — create if not exist
-    if db_initialized:
-        try:
-            with app.app_context():
-                from sqlalchemy import text, inspect as sa_inspect
-                _inspector = sa_inspect(db.engine)
-                _tables = _inspector.get_table_names()
-                if 'webhook_endpoints' not in _tables:
-                    db.session.execute(text("""
-                        CREATE TABLE IF NOT EXISTS webhook_endpoints (
-                            endpoint_id VARCHAR(36) PRIMARY KEY,
-                            client_id VARCHAR(36) NOT NULL REFERENCES client_entry(client_id) ON DELETE CASCADE,
-                            url VARCHAR(2048) NOT NULL,
-                            secret VARCHAR(64) NOT NULL,
-                            description VARCHAR(255) NULL,
-                            events TEXT NOT NULL DEFAULT '*',
-                            is_active BOOLEAN NOT NULL DEFAULT 1,
-                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP
-                        )
-                    """))
-                    db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_webhook_ep_client ON webhook_endpoints (client_id)"))
-                    logging.info("[Migration] webhook_endpoints table created")
-                if 'webhook_deliveries' not in _tables:
-                    db.session.execute(text("""
-                        CREATE TABLE IF NOT EXISTS webhook_deliveries (
-                            delivery_id VARCHAR(36) PRIMARY KEY,
-                            endpoint_id VARCHAR(36) NOT NULL REFERENCES webhook_endpoints(endpoint_id) ON DELETE CASCADE,
-                            client_id VARCHAR(36) NOT NULL,
-                            event_type VARCHAR(100) NOT NULL,
-                            payload TEXT NOT NULL,
-                            attempt INTEGER NOT NULL DEFAULT 1,
-                            status VARCHAR(20) NOT NULL DEFAULT 'pending',
-                            response_status INTEGER NULL,
-                            response_body TEXT NULL,
-                            error TEXT NULL,
-                            created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-                            delivered_at DATETIME NULL,
-                            next_retry_at DATETIME NULL
-                        )
-                    """))
-                    db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_webhook_del_endpoint ON webhook_deliveries (endpoint_id)"))
-                    db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_webhook_del_client ON webhook_deliveries (client_id)"))
-                    db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_webhook_del_retry ON webhook_deliveries (next_retry_at) WHERE next_retry_at IS NOT NULL"))
-                    logging.info("[Migration] webhook_deliveries table created")
-                db.session.commit()
-        except Exception as _e:
-            try:
-                db.session.rollback()
-            except Exception:
-                pass
-            logging.warning(f"[Migration] webhook tables migration skipped: {_e}")
 
     # Account deletion cleanup — runs once per day in a daemon thread.
     # Permanently deletes ClientEntry rows whose deletion_scheduled_at is in the past.
@@ -250,22 +132,6 @@ def create_app():
         _cleanup_thread = _threading.Thread(target=_deletion_cleanup_loop, daemon=True, name='deletion-cleanup')
         _cleanup_thread.start()
         logging.info("[OK] Account deletion cleanup thread started (runs every 24h)")
-
-    # Run DB migrations for columns added after initial schema creation
-    if db_initialized:
-        try:
-            with app.app_context():
-                from migrations.add_subscription_razorpay_columns import run as _sub_migration
-                _sub_migration(db)
-        except Exception as _e:
-            logging.warning(f"[Migration] subscription razorpay columns skipped: {_e}")
-
-        try:
-            with app.app_context():
-                from migrations.seed_permission_sections import run as _perm_seed
-                _perm_seed(db)
-        except Exception as _e:
-            logging.warning(f"[Migration] permission sections seed skipped: {_e}")
 
     # Register blueprints with error handling
     blueprints_registered = []
@@ -634,7 +500,7 @@ def create_app():
     # Health check endpoint (basic uptime check)
     @app.route('/api/health', methods=['GET'])
     def health_check():
-        return {'status': 'healthy', 'message': 'RYX Billing API is running'}, 200
+        return {'status': 'healthy', 'message': 'Valoryx API is running'}, 200
 
     # Status endpoint (detailed configuration and status)
     @app.route('/api/status', methods=['GET'])
@@ -659,7 +525,7 @@ def create_app():
 
         status = {
             'status': 'running',
-            'message': 'RYX Billing API is running',
+            'message': 'Valoryx API is running',
             'database': {
                 'initialized': db_initialized,
                 'connected': db_connected,

@@ -1,5 +1,5 @@
 """
-Telegram message sender for RYX Billing daily reports.
+Telegram message sender for Valoryx daily reports.
 Uses httpx (already in requirements.txt) — no new dependencies needed.
 """
 import os

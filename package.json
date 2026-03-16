@@ -1,12 +1,12 @@
 {
-  "name": "ryx-billing",
+  "name": "valoryx",
   "version": "1.0.7",
   "description": "Professional Billing and Inventory Management System",
   "author": {
-    "name": "RYX Solutions",
+    "name": "RYX Tech",
     "email": "ryxdevsolution@gmail.com"
   },
-  "homepage": "https://ryx-billing.com",
+  "homepage": "https://valoryx.com",
   "repository": {
     "type": "git",
     "url": "https://github.com/ryxdevsolution-stack/Valoryx.git"
@@ -23,6 +23,7 @@
     "electron:build": "cd frontend-react && npm run build:electron && cd .. && electron-builder",
     "electron:build:win": "cd frontend-react && npm run build:electron && cd .. && electron-builder --win",
     "electron:pack": "electron-builder --dir",
+    "build:icon": "electron-icon-builder --input=./build/icon.png --output=./electron/resources/ && cp ./electron/resources/icons/win/icon.ico ./electron/resources/icon.ico",
     "postinstall": "electron-builder install-app-deps"
   },
   "devDependencies": {
@@ -31,9 +32,9 @@
     "electron-icon-builder": "^2.0.1"
   },
   "build": {
-    "appId": "com.ryx.billing",
-    "productName": "RYX Billing",
-    "copyright": "Copyright © 2024 RYX Solutions",
+    "appId": "com.ryx.valoryx",
+    "productName": "Valoryx",
+    "copyright": "Copyright © 2024 RYX Tech",
     "directories": {
       "output": "dist",
       "buildResources": "build"
@@ -70,8 +71,8 @@
           ]
         }
       ],
-      "icon": "build/icon.ico",
-      "artifactName": "RYX-Billing-Setup-${version}.${ext}",
+      "icon": "electron/resources/icon.ico",
+      "artifactName": "Valoryx-Setup-${version}.${ext}",
       "signAndEditExecutable": false
     },
     "nsis": {
@@ -83,10 +84,10 @@
       "installerHeaderIcon": "electron/resources/icon.ico",
       "createDesktopShortcut": true,
       "createStartMenuShortcut": true,
-      "shortcutName": "RYX Billing"
+      "shortcutName": "Valoryx"
     },
     "portable": {
-      "artifactName": "RYX-Billing-Portable-${version}.${ext}"
+      "artifactName": "Valoryx-Portable-${version}.${ext}"
     }
   }
 }

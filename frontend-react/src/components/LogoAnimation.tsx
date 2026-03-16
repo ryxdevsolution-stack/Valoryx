@@ -52,8 +52,8 @@ export default function LogoAnimation({
         ) : (
           <div className="relative w-full max-w-[600px] aspect-square">
             <img
-              src={`${import.meta.env.BASE_URL}RYX_Logo.png`}
-              alt="RYX"
+              src={`${import.meta.env.BASE_URL}valoryx-logo.png`}
+              alt="Valoryx"
               className="object-contain drop-shadow-2xl w-full h-full"
             />
           </div>

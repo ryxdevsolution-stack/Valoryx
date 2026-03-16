@@ -1,5 +1,5 @@
 """
-RYX Billing - Input Validation Utilities
+Valoryx - Input Validation Utilities
 Provides reusable validation for request data across all routes
 """
 from datetime import datetime, date
