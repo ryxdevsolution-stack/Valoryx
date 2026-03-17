@@ -85,8 +85,8 @@ def accept_invite():
     if not token or not password:
         return jsonify({'success': False, 'error': 'Token and password are required'}), 400
 
-    if len(password) < 6:
-        return jsonify({'success': False, 'error': 'Password must be at least 6 characters'}), 400
+    if len(password) < 8:
+        return jsonify({'success': False, 'error': 'Password must be at least 8 characters'}), 400
 
     user = User.query.filter_by(invite_token=token, invite_accepted=False).first()
 

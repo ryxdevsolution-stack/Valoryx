@@ -2,6 +2,7 @@ import jwt
 import bcrypt
 import uuid
 import pyotp
+import hashlib as _hashlib
 import secrets as _secrets
 from datetime import datetime, timedelta
 from flask import Blueprint, request, jsonify, g
@@ -35,6 +36,9 @@ TOTP_MAX_FAILURES = 10
 TOTP_FAIL_WINDOW = 900   # 15 minutes
 # How long (seconds) a used code is remembered to prevent replay
 TOTP_REPLAY_WINDOW = 90  # 90 seconds — covers the ±1 valid_window (3 × 30 s)
+
+# How long (seconds) a trusted device token is valid (30 days)
+TRUSTED_DEVICE_TTL = 30 * 24 * 3600
 
 # Login brute-force protection (in-memory, per IP)
 import time as _time
@@ -140,67 +144,85 @@ def login():
                 'message': 'Your account is scheduled for deletion.'
             }), 403
 
-        # 2FA check: if user has TOTP enabled, require the 6-digit code or a backup code
-        if user.totp_enabled:
+        # 2FA check: only for self-registered owners (created_by IS NULL) with TOTP enabled.
+        # Admin-created sub-users are never prompted even if totp_enabled=True.
+        new_device_token = None  # Set after successful 2FA if client requests device trust
+        if user.totp_enabled and user.created_by is None:
             totp_code = (data.get('totp_code') or '').strip()
-            if not totp_code:
-                # Password was valid — signal frontend to show the TOTP step
-                return jsonify({
-                    'success': False,
-                    'requires_totp': True,
-                    'message': 'Enter your 2FA code to continue',
-                }), 200  # 200, not 4xx — this is a flow step, not an error
+            device_token_raw = (data.get('device_token') or '').strip()
 
-            # Guard: totp_secret must exist for a TOTP-enabled account
-            if not user.totp_secret:
-                return jsonify({'success': False, 'error': 'Invalid 2FA state'}), 500
+            cache_2fa = get_cache_manager()
+            user_id_str = str(user.user_id)
 
-            user_id = str(user.user_id)
-            cache = get_cache_manager()
+            # --- Trusted device check: skip TOTP if this device was trusted before ---
+            device_trusted = False
+            if device_token_raw:
+                dt_hash = _hashlib.sha256(device_token_raw.encode()).hexdigest()
+                if cache_2fa.get(f"trusted_device:{user_id_str}:{dt_hash}"):
+                    device_trusted = True
 
-            # --- Brute-force protection ---
-            fail_key = f"totp_fail:{user_id}"
-            fails = cache.get(fail_key) or 0
-            if fails >= TOTP_MAX_FAILURES:
-                return jsonify({
-                    'success': False,
-                    'error': 'Too many failed attempts. Try again in 15 minutes.',
-                }), 429
-
-            # --- Try backup code first (8 uppercase hex chars) ---
-            import json as _json, hashlib as _hashlib
-            normalized = totp_code.upper().replace('-', '').replace(' ', '')
-            backup_codes = _json.loads(user.totp_backup_codes) if user.totp_backup_codes else []
-            code_hash = _hashlib.sha256(normalized.encode()).hexdigest()
-            if normalized and len(normalized) == 8 and code_hash in backup_codes:
-                # Valid backup code — consume it (one-time use)
-                backup_codes.remove(code_hash)
-                user.totp_backup_codes = _json.dumps(backup_codes)
-                cache.delete(fail_key)
-                try:
-                    db.session.commit()
-                except Exception:
-                    db.session.rollback()
-                log_action('2fa_backup_code_used', 'users', user_id,
-                           old_data={}, new_data={'remaining': len(backup_codes)}, auto_commit=True)
-            else:
-                # --- Replay protection (TOTP codes only) ---
-                replay_key = f"totp_used:{user_id}:{totp_code}"
-                if cache.get(replay_key):
+            if not device_trusted:
+                if not totp_code:
+                    # Password was valid — signal frontend to show the TOTP step
                     return jsonify({
                         'success': False,
-                        'error': 'Code already used. Wait for the next code.',
-                    }), 400
+                        'requires_totp': True,
+                        'message': 'Enter your 2FA code to continue',
+                    }), 200  # 200, not 4xx — this is a flow step, not an error
 
-                totp = pyotp.TOTP(user.totp_secret)
-                # valid_window=1 accepts ±1 time step (90-second window total)
-                if not totp.verify(totp_code, valid_window=1):
-                    cache.set(fail_key, fails + 1, TOTP_FAIL_WINDOW)
-                    return jsonify({'success': False, 'error': 'Invalid 2FA code. Try again.'}), 401
+                # Guard: totp_secret must exist for a TOTP-enabled account
+                if not user.totp_secret:
+                    return jsonify({'success': False, 'error': 'Invalid 2FA state'}), 500
 
-                # Successful verify: mark this code as consumed and reset failure counter
-                cache.set(replay_key, 1, TOTP_REPLAY_WINDOW)
-                cache.delete(fail_key)
+                # --- Brute-force protection ---
+                fail_key = f"totp_fail:{user_id_str}"
+                fails = cache_2fa.get(fail_key) or 0
+                if fails >= TOTP_MAX_FAILURES:
+                    return jsonify({
+                        'success': False,
+                        'error': 'Too many failed attempts. Try again in 15 minutes.',
+                    }), 429
+
+                # --- Try backup code first (8 uppercase hex chars) ---
+                import json as _json
+                normalized = totp_code.upper().replace('-', '').replace(' ', '')
+                backup_codes = _json.loads(user.totp_backup_codes) if user.totp_backup_codes else []
+                code_hash = _hashlib.sha256(normalized.encode()).hexdigest()
+                if normalized and len(normalized) == 8 and code_hash in backup_codes:
+                    # Valid backup code — consume it (one-time use)
+                    backup_codes.remove(code_hash)
+                    user.totp_backup_codes = _json.dumps(backup_codes)
+                    cache_2fa.delete(fail_key)
+                    try:
+                        db.session.commit()
+                    except Exception:
+                        db.session.rollback()
+                    log_action('2fa_backup_code_used', 'users', user_id_str,
+                               old_data={}, new_data={'remaining': len(backup_codes)}, auto_commit=True)
+                else:
+                    # --- Replay protection (TOTP codes only) ---
+                    replay_key = f"totp_used:{user_id_str}:{totp_code}"
+                    if cache_2fa.get(replay_key):
+                        return jsonify({
+                            'success': False,
+                            'error': 'Code already used. Wait for the next code.',
+                        }), 400
+
+                    totp = pyotp.TOTP(user.totp_secret)
+                    # valid_window=1 accepts ±1 time step (90-second window total)
+                    if not totp.verify(totp_code, valid_window=1):
+                        cache_2fa.set(fail_key, fails + 1, TOTP_FAIL_WINDOW)
+                        return jsonify({'success': False, 'error': 'Invalid 2FA code. Try again.'}), 401
+
+                    # Successful verify: mark this code as consumed and reset failure counter
+                    cache_2fa.set(replay_key, 1, TOTP_REPLAY_WINDOW)
+                    cache_2fa.delete(fail_key)
+
+                # Generate a trusted device token if the client opted in
+                if data.get('trust_device'):
+                    new_device_token = _secrets.token_hex(32)
+                    dt_hash = _hashlib.sha256(new_device_token.encode()).hexdigest()
+                    cache_2fa.set(f"trusted_device:{user_id_str}:{dt_hash}", 1, TRUSTED_DEVICE_TTL)
 
         # OPTIMIZED: Get permissions with eager loading
         user_permissions = get_user_permissions(str(user.user_id))
@@ -320,7 +342,7 @@ def login():
             }
 
         # Return token with client info and permissions (convert all UUIDs to strings)
-        return jsonify({
+        login_response = {
             'success': True,
             'token': token,
             'client_id': str(user.client_id),
@@ -336,7 +358,10 @@ def login():
             'user': user_data,
             'trial': trial_info,
             'must_change_password': user.must_change_password,
-        }), 200
+        }
+        if new_device_token:
+            login_response['device_token'] = new_device_token
+        return jsonify(login_response), 200
 
     except Exception as e:
         db.session.rollback()

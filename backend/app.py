@@ -15,10 +15,12 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
-    # Initialize CORS - use CORS_ORIGINS env var or allow all
-    cors_origins = os.environ.get('CORS_ORIGINS', '*')
-    if cors_origins != '*':
-        cors_origins = [origin.strip() for origin in cors_origins.split(',')]
+    # Initialize CORS - deny all cross-origin by default when env var is unset
+    cors_origins_raw = os.environ.get('CORS_ORIGINS', '')
+    if cors_origins_raw.strip():
+        cors_origins = [o.strip() for o in cors_origins_raw.split(',') if o.strip()]
+    else:
+        cors_origins = []  # deny all cross-origin by default — safe when env var is missing
 
     CORS(app,
      origins=cors_origins,
@@ -746,18 +748,17 @@ def create_app():
         if request.method == 'OPTIONS':
             response = make_response()
             # Use CORS_ORIGINS from environment variable
-            allowed_origins = os.environ.get('CORS_ORIGINS', '*')
+            allowed_origins = os.environ.get('CORS_ORIGINS', '')
             request_origin = request.headers.get('Origin', '')
 
-            if allowed_origins == '*':
-                response.headers['Access-Control-Allow-Origin'] = '*'
-            else:
+            if allowed_origins:
                 # Check if request origin is in allowed list
-                allowed_list = [o.strip() for o in allowed_origins.split(',')]
+                allowed_list = [o.strip() for o in allowed_origins.split(',') if o.strip()]
                 if request_origin in allowed_list:
                     response.headers['Access-Control-Allow-Origin'] = request_origin
                 else:
-                    response.headers['Access-Control-Allow-Origin'] = allowed_list[0] if allowed_list else '*'
+                    response.headers['Access-Control-Allow-Origin'] = allowed_list[0] if allowed_list else ''
+            # else: CORS_ORIGINS is empty — do NOT set Access-Control-Allow-Origin at all (omit header)
 
             response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
             response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
@@ -850,6 +851,16 @@ def create_app():
         if os.path.isfile(file_path):
             return send_from_directory(FRONTEND_DIR, filename)
         return {"error": "Not found"}, 404
+
+    @app.after_request
+    def set_security_headers(response):
+        response.headers['X-Frame-Options'] = 'DENY'
+        response.headers['X-Content-Type-Options'] = 'nosniff'
+        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
+        response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
+        if not app.debug:
+            response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
+        return response
 
     return app
 

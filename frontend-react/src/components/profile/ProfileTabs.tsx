@@ -1,3 +1,4 @@
+import { useEffect, useRef } from 'react'
 import { Users, CreditCard, User, MonitorSmartphone, ShieldCheck, Webhook } from 'lucide-react'
 
 export type ProfileTab = 'account' | 'team' | 'subscription' | 'sessions' | 'two-factor' | 'webhooks'
@@ -27,6 +28,12 @@ export default function ProfileTabs({ activeTab, onTabChange, showTeamTab, showS
     return true
   })
 
+  const activeRef = useRef<HTMLButtonElement>(null)
+
+  useEffect(() => {
+    activeRef.current?.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' })
+  }, [activeTab])
+
   return (
     <div role="tablist" className="flex gap-1 px-4 pb-2 flex-shrink-0 overflow-x-auto" style={{ scrollbarWidth: 'none', msOverflowStyle: 'none' }}>
       {visibleTabs.map(tab => {
@@ -35,6 +42,7 @@ export default function ProfileTabs({ activeTab, onTabChange, showTeamTab, showS
         return (
           <button
             key={tab.id}
+            ref={tab.id === activeTab ? activeRef : undefined}
             role="tab"
             type="button"
             aria-selected={isActive}

@@ -17,8 +17,19 @@ export default function LoginPage() {
   // 2FA two-step state
   const [requiresTotp, setRequiresTotp] = useState(false)
   const [totpCode, setTotpCode] = useState('')
+  const [trustDevice, setTrustDevice] = useState(false)
   // Store credentials between step 1 and step 2
   const pendingCredentials = useRef<{ email: string; password: string } | null>(null)
+
+  // Retrieve stored trusted-device token for the given email (if any)
+  const getStoredDeviceToken = (forEmail: string): string => {
+    return localStorage.getItem(`totp_device_token:${forEmail}`) || ''
+  }
+
+  // Persist a newly-issued device token so future logins skip 2FA on this browser
+  const saveDeviceToken = (forEmail: string, token: string) => {
+    localStorage.setItem(`totp_device_token:${forEmail}`, token)
+  }
 
   const navigate = useNavigate()
   const { setClientData } = useClient()
@@ -80,11 +91,17 @@ export default function LoginPage() {
           email: pendingCredentials.current.email,
           password: pendingCredentials.current.password,
           totp_code: totpCode,
+          trust_device: trustDevice,
         })
 
         if (response.data.requires_totp) {
           setError('Invalid 2FA code. Check your authenticator app and try again.')
           return
+        }
+
+        // Save the trusted-device token so this device skips 2FA next time
+        if (response.data.device_token && pendingCredentials.current) {
+          saveDeviceToken(pendingCredentials.current.email, response.data.device_token)
         }
 
         processLoginResponse(response.data)
@@ -104,7 +121,12 @@ export default function LoginPage() {
 
     setLoading(true)
     try {
-      const response = await api.post('/auth/login', { email, password })
+      // Include any stored device token so trusted devices skip 2FA automatically
+      const response = await api.post('/auth/login', {
+        email,
+        password,
+        device_token: getStoredDeviceToken(email),
+      })
 
       if (response.data.requires_totp) {
         // Password was valid — backend wants a TOTP code next
@@ -225,7 +247,7 @@ export default function LoginPage() {
       </div>
 
       {/* Card Container */}
-      <div className="w-full max-w-md relative z-10">
+      <div className="w-full max-w-md px-4 relative z-10">
         <div className="backdrop-blur-md rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] border border-white/10 p-8 sm:p-10 bg-white/5">
 
           {/* ── TOTP Step ─────────────────────────────────────── */}
@@ -268,6 +290,16 @@ export default function LoginPage() {
                     Enter your 6-digit app code, or an 8-character backup code.
                   </p>
                 </div>
+
+                <label className="flex items-center gap-3 cursor-pointer select-none">
+                  <input
+                    type="checkbox"
+                    checked={trustDevice}
+                    onChange={e => setTrustDevice(e.target.checked)}
+                    className="w-4 h-4 rounded border border-white/20 accent-[#5227FF] cursor-pointer"
+                  />
+                  <span className="text-sm text-slate-400">Trust this device for 30 days</span>
+                </label>
 
                 <button
                   type="submit"

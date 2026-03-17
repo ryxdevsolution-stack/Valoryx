@@ -310,7 +310,7 @@ export default function AuditorReportsPage() {
             </div>
 
             {/* Bills table */}
-            <div className="flex-1 overflow-auto bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md">
+            <div className="hidden md:block flex-1 overflow-auto bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md">
               <table className="w-full">
                 <thead className="bg-gradient-to-r from-slate-700 to-slate-600 dark:from-gray-700 dark:to-gray-600 sticky top-0 z-10">
                   <tr>
@@ -359,6 +359,31 @@ export default function AuditorReportsPage() {
                   ))}
                 </tbody>
               </table>
+            </div>
+
+            {/* Mobile card list */}
+            <div className="md:hidden space-y-3">
+              {gstBills.map((bill, index) => (
+                <div
+                  key={bill.bill_id ?? index}
+                  className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
+                >
+                  <div className="flex items-start justify-between gap-2 mb-2">
+                    <div>
+                      <p className="text-sm font-semibold text-gray-900 dark:text-white">#{bill.bill_number}</p>
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{bill.customer_name || 'Walk-in'}</p>
+                    </div>
+                    <span className="text-sm font-bold text-gray-900 dark:text-white">₹{bill.final_amount?.toLocaleString()}</span>
+                  </div>
+                  <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                    <span>{bill.customer_phone}</span>
+                    <span>GST: ₹{bill.gst_amount?.toLocaleString()}</span>
+                  </div>
+                  <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                    {bill.created_at ? new Date(bill.created_at).toLocaleDateString() : ''}
+                  </p>
+                </div>
+              ))}
             </div>
           </>
         )}

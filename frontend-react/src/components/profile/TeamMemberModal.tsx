@@ -29,6 +29,8 @@ interface TeamMemberModalProps {
   editingUser: TeamMember | null // null = create, set = edit
   onMessage: (msg: { type: 'success' | 'error'; text: string }) => void
   planInfo: PlanInfo | null
+  /** Pre-verified TOTP action token — required when owner has 2FA enabled */
+  totpActionToken?: string | null
 }
 
 // ─── Constants ──────────────────────────────────────────────────────
@@ -86,6 +88,7 @@ export default function TeamMemberModal({
   editingUser,
   onMessage,
   planInfo,
+  totpActionToken,
 }: TeamMemberModalProps) {
   const { user: currentUser } = useClient()
 
@@ -402,6 +405,7 @@ export default function TeamMemberModal({
           role: form.role,
           branch_id: form.branch_id || null,
           permissions: [...selectedPermissions].filter((p) => !restrictedPermissions.has(p)),
+          ...(totpActionToken ? { totp_action_token: totpActionToken } : {}),
         })
         onMessage({
           type: 'success',
@@ -531,7 +535,7 @@ export default function TeamMemberModal({
   // ─── Render ────────────────────────────────────────────────────
 
   return (
-    <div className="fixed inset-0 z-50 flex justify-end">
+    <div className="fixed inset-0 z-50 flex items-end sm:items-stretch sm:justify-end">
       {/* Backdrop */}
       <div
         className="absolute inset-0 bg-black/50"
@@ -543,9 +547,14 @@ export default function TeamMemberModal({
         role="dialog"
         aria-modal="true"
         aria-labelledby="team-modal-title"
-        className="relative w-full sm:max-w-lg bg-white dark:bg-gray-800 h-full flex flex-col shadow-xl"
+        className="relative w-full sm:max-w-lg bg-white dark:bg-gray-800 h-auto sm:h-full max-h-[90vh] sm:max-h-none rounded-t-2xl sm:rounded-none overflow-hidden flex flex-col shadow-xl"
         onKeyDown={(e) => { if (e.key === 'Escape') onClose() }}
       >
+        {/* Mobile drag handle */}
+        <div className="flex justify-center pt-2 pb-1 sm:hidden">
+          <div className="w-10 h-1 rounded-full bg-gray-300 dark:bg-gray-600" />
+        </div>
+
         {/* Header */}
         <div className="flex items-center justify-between px-4 sm:px-6 py-3 sm:py-4 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
           <h2 id="team-modal-title" className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white">

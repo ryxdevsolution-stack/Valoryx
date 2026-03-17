@@ -91,14 +91,15 @@ export default function PaymentTypesPage() {
 
   return (
     <DashboardLayout>
-      <div className="mb-6 flex justify-between items-center">
+      <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-3xl font-bold text-gray-900">Payment Types</h1>
-          <p className="mt-2 text-gray-600">Manage payment methods for your business</p>
+          <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Payment Types</h1>
+          <p className="mt-2 text-gray-600 dark:text-gray-400">Manage payment methods for your business</p>
         </div>
         <button
+          type="button"
           onClick={() => setShowAddForm(!showAddForm)}
-          className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium"
+          className="px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition font-medium shrink-0"
         >
           {showAddForm ? 'Cancel' : '+ Add Payment Type'}
         </button>

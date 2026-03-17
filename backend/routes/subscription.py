@@ -459,8 +459,8 @@ def razorpay_webhook():
     try:
         webhook_secret = Config.RAZORPAY_WEBHOOK_SECRET
         if not webhook_secret:
-            logger.warning('[Webhook] RAZORPAY_WEBHOOK_SECRET not configured — skipping')
-            return jsonify({'status': 'ignored', 'reason': 'webhook secret not configured'}), 200
+            logger.error('[Webhook] RAZORPAY_WEBHOOK_SECRET not configured — rejecting all webhooks')
+            return jsonify({'error': 'Webhook not configured on server'}), 500
 
         # Verify webhook signature
         webhook_signature = request.headers.get('X-Razorpay-Signature', '')

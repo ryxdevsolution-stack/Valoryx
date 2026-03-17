@@ -114,7 +114,7 @@ export default function AnalyticsPage() {
       </div>
 
       {/* Metrics Grid */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
         <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-6">
           <div className="flex items-center justify-between mb-4">
             <div className="p-2.5 rounded-xl bg-emerald-100 dark:bg-emerald-900/30">
@@ -169,17 +169,19 @@ export default function AnalyticsPage() {
           {data.insights.revenueTrend.length === 0 ? (
             <div className="h-48 flex items-center justify-center text-slate-400">No data for this period</div>
           ) : (
-            <div className="h-48 flex items-end justify-between gap-1">
-              {data.insights.revenueTrend.map((d) => {
-                const max = Math.max(...data.insights.revenueTrend.map(x => x.revenue));
-                const pct = max > 0 ? (d.revenue / max) * 100 : 0;
-                return (
-                  <div key={d.date} className="flex-1 flex flex-col items-center gap-1" title={`${d.date}: ${formatCurrency(d.revenue)} (${d.bills} bills)`}>
-                    <div className="w-full bg-violet-500 rounded-t" style={{ height: `${Math.max(pct, 2)}%` }}></div>
-                    <span className="text-xs text-slate-400 hidden lg:block">{d.date.slice(5)}</span>
-                  </div>
-                );
-              })}
+            <div className="overflow-x-auto">
+              <div className="min-w-[500px] h-48 flex items-end justify-between gap-1">
+                {data.insights.revenueTrend.map((d) => {
+                  const max = Math.max(...data.insights.revenueTrend.map(x => x.revenue));
+                  const pct = max > 0 ? (d.revenue / max) * 100 : 0;
+                  return (
+                    <div key={d.date} className="flex-1 flex flex-col items-center gap-1" title={`${d.date}: ${formatCurrency(d.revenue)} (${d.bills} bills)`}>
+                      <div className="w-full bg-violet-500 rounded-t" style={{ height: `${Math.max(pct, 2)}%` }}></div>
+                      <span className="text-xs text-slate-400 hidden lg:block">{d.date.slice(5)}</span>
+                    </div>
+                  );
+                })}
+              </div>
             </div>
           )}
         </div>

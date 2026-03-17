@@ -280,7 +280,7 @@ export default function ClientManagement() {
       </div>
 
       {/* Clients Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -481,6 +481,97 @@ export default function ClientManagement() {
               onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
               disabled={currentPage === totalPages}
               className="px-3 py-1 border border-gray-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile Cards - visible only on small screens */}
+      <div className="md:hidden space-y-3">
+        {clients.map((client) => (
+          <div key={client.client_id} className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-start justify-between mb-3">
+              <div className="flex items-center gap-2">
+                {client.logo_url ? (
+                  <img src={client.logo_url} alt={client.client_name} width={32} height={32} className="h-8 w-8 rounded-full object-cover" />
+                ) : (
+                  <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
+                    <Building2 className="h-4 w-4 text-blue-600" />
+                  </div>
+                )}
+                <div>
+                  <div className="text-sm font-semibold text-gray-900">{client.client_name}</div>
+                  {client.admin_email && <div className="text-xs text-gray-400">Admin: {client.admin_email}</div>}
+                </div>
+              </div>
+              <div className="flex items-center gap-1 ml-2">
+                <button onClick={() => navigate(`/admin/clients/${client.client_id}`)} className="text-blue-600 hover:text-blue-900 p-1" title="View Details">
+                  <Edit className="h-4 w-4" />
+                </button>
+                <button onClick={() => handleViewUsers(client.client_id)} className="text-indigo-600 hover:text-indigo-900 p-1" title="View Users">
+                  <Users className="h-4 w-4" />
+                </button>
+                <button onClick={() => handleToggleStatus(client.client_id)} className={`p-1 ${client.is_active ? 'text-yellow-600 hover:text-yellow-900' : 'text-green-600 hover:text-green-900'}`} title={client.is_active ? 'Deactivate' : 'Activate'}>
+                  {client.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+                </button>
+                <button onClick={() => handleDeleteClick(client)} className="text-red-600 hover:text-red-900 p-1" title="Delete">
+                  <Trash2 className="h-4 w-4" />
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-gray-500 font-medium">Email: </span>
+                <span className="text-gray-900 break-all">{client.email}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 font-medium">Phone: </span>
+                <span className="text-gray-900">{client.phone}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 font-medium">Status: </span>
+                {client.is_active ? (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
+                ) : (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Inactive</span>
+                )}
+              </div>
+              <div>
+                <span className="text-gray-500 font-medium">Users: </span>
+                <span className="text-gray-900">{client.user_count}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 font-medium">Created: </span>
+                <span className="text-gray-900">{new Date(client.created_at).toLocaleDateString()}</span>
+              </div>
+              {client.gst_number && (
+                <div>
+                  <span className="text-gray-500 font-medium">GST: </span>
+                  <span className="text-gray-900">{client.gst_number}</span>
+                </div>
+              )}
+            </div>
+          </div>
+        ))}
+        {/* Mobile Pagination */}
+        <div className="flex items-center justify-between py-3 px-1">
+          <div className="text-xs text-gray-600">
+            Page {currentPage} of {totalPages} ({totalClients} clients)
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 hover:bg-gray-50"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 hover:bg-gray-50"
             >
               <ChevronRight className="h-4 w-4" />
             </button>

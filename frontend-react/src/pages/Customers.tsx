@@ -234,7 +234,7 @@ export default function CustomersPage() {
                   <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
                     {filteredCustomers.map((customer, index) => (
                       <tr
-                        key={customer.is_walkin ? `walkin-${customer.bill_number}-${index}` : customer.customer_phone}
+                        key={customer.is_walkin ? `walkin-${customer.bill_number}-${index}` : (customer.customer_code ?? customer.customer_phone ?? `customer-${index}`)}
                         className="hover:bg-gray-50 dark:hover:bg-gray-700 transition cursor-pointer"
                         onClick={() => setSelectedCustomer(customer)}
                       >
@@ -272,7 +272,7 @@ export default function CustomersPage() {
                         <td className="px-3 py-2.5">
                           <div className="text-xs font-bold text-green-600 dark:text-green-400">{formatCurrency(customer.total_amount)}</div>
                           <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                            Avg: {formatCurrency(customer.total_amount / customer.total_bills)}
+                            Avg: {customer.total_bills > 0 ? formatCurrency(customer.total_amount / customer.total_bills) : '—'}
                           </div>
                         </td>
                         <td className="px-3 py-2.5 text-xs text-gray-900 dark:text-white">{formatDate(customer.last_purchase)}</td>
@@ -296,7 +296,7 @@ export default function CustomersPage() {
             <div className="md:hidden space-y-3">
               {filteredCustomers.map((customer, index) => (
                 <div
-                  key={customer.is_walkin ? `walkin-${customer.bill_number}-${index}` : customer.customer_phone}
+                  key={customer.is_walkin ? `walkin-${customer.bill_number}-${index}` : (customer.customer_code ?? customer.customer_phone ?? `customer-${index}`)}
                   onClick={() => setSelectedCustomer(customer)}
                   className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 hover:shadow-lg transition touch-manipulation border border-gray-200 dark:border-gray-700"
                 >

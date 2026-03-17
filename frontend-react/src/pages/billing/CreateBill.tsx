@@ -2509,8 +2509,23 @@ export default function UnifiedBillingPage() {
             </div>
           </div>
 
+          {/* Mobile summary strip - visible only on mobile */}
+          <div className="md:hidden flex items-center justify-between gap-3 px-4 py-3 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 sticky bottom-16">
+            <div>
+              <p className="text-xs text-gray-500 dark:text-gray-400">Total</p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">₹{getRoundedGrandTotal()?.toLocaleString()}</p>
+            </div>
+            <button
+              type="submit"
+              disabled={loading}
+              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
+            >
+              {loading ? 'Processing...' : 'Print Bill'}
+            </button>
+          </div>
+
           {/* Bottom Section - Totals & Actions */}
-          <div className="bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700">
+          <div className="hidden md:block bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700">
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-2 p-2">
               {/* Summary Cards - Left Side */}
               <div className="lg:col-span-2 grid grid-cols-2 gap-2">

@@ -25,6 +25,7 @@ from models.permission_model import (
 )
 from models.permission_preset_model import PermissionPreset
 from utils.auth_middleware import authenticate, require_role
+from utils.totp_helper import require_totp_action_token
 from utils.email_service import _send_async, _base_layout, _info_table, _info_row, send_invite_email
 from routes.invite import INVITE_EXPIRY_HOURS
 from config import Config
@@ -235,6 +236,13 @@ def create_team_member():
         data = request.get_json()
         if not data:
             return jsonify({'success': False, 'error': 'Request body is required'}), 400
+
+        # TOTP gate: self-registered owners with 2FA must verify before adding users
+        actor = User.query.filter_by(user_id=g.user['user_id']).first()
+        if actor:
+            totp_err = require_totp_action_token(actor, data)
+            if totp_err:
+                return totp_err
 
         email = (data.get('email') or '').strip().lower()
 

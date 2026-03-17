@@ -518,14 +518,14 @@ export default function AllBillsPage() {
       <div className="flex flex-col h-[calc(100vh-6rem)]">
         {/* Header with Date Filter */}
         <div className="flex-shrink-0 mb-2">
-          <div className="flex items-center justify-between gap-4">
+          <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
             <div>
               <h1 className="text-lg font-bold text-gray-900 dark:text-white">All Bills</h1>
               <p className="text-[10px] text-gray-600 dark:text-gray-400">Filter by date and payment method</p>
             </div>
 
             {/* Date Filter - Compact */}
-            <div className="flex items-center gap-1.5">
+            <div className="flex flex-wrap items-center gap-1.5">
               {/* All Dates */}
               <button
                 type="button"
@@ -772,7 +772,7 @@ export default function AllBillsPage() {
             </div>
 
             {/* Scrollable Bills Table - Maximized Space */}
-            <div className="flex-1 min-h-0 overflow-auto bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md">
+            <div className="hidden md:block flex-1 min-h-0 overflow-auto bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md">
               <table className="w-full">
                 <thead className="bg-gradient-to-r from-slate-700 to-slate-600 dark:from-gray-700 dark:to-gray-600 sticky top-0 z-10">
                   <tr>
@@ -898,6 +898,37 @@ export default function AllBillsPage() {
                   })}
                 </tbody>
               </table>
+            </div>
+
+            {/* Mobile card list */}
+            <div className="md:hidden space-y-3">
+              {paginatedBills
+                .filter(bill => bill.isFirstPayment !== false)
+                .map(bill => (
+                  <div
+                    key={`${bill.bill_id}-${bill.displayPaymentType ?? bill.payment_type}`}
+                    onClick={() => setSelectedBill(bill)}
+                    className="cursor-pointer bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm active:bg-gray-50 dark:active:bg-gray-700 transition-colors"
+                  >
+                    <div className="flex items-start justify-between gap-2 mb-2">
+                      <div>
+                        <p className="text-sm font-semibold text-gray-900 dark:text-white">#{bill.bill_number}</p>
+                        <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{bill.customer_name || 'Walk-in'}</p>
+                      </div>
+                      <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
+                        bill.status === 'cancelled'
+                          ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400'
+                          : 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-400'
+                      }`}>
+                        {bill.displayPaymentType ?? bill.payment_type}
+                      </span>
+                    </div>
+                    <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
+                      <span>{bill.created_at ? new Date(bill.created_at).toLocaleDateString() : ''}</span>
+                      <span className="text-sm font-bold text-gray-900 dark:text-white">₹{bill.displayAmount?.toLocaleString()}</span>
+                    </div>
+                  </div>
+                ))}
             </div>
 
             {/* Pagination Controls - Compact */}

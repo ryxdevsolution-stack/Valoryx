@@ -283,7 +283,8 @@ export default function SubscriptionManagementPage() {
             <p>No subscription history found</p>
           </div>
         ) : (
-          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
+          <>
+          <div className="hidden md:block bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 overflow-hidden">
             <div className="overflow-x-auto">
               <table className="w-full">
                 <thead>
@@ -331,6 +332,50 @@ export default function SubscriptionManagementPage() {
               </table>
             </div>
           </div>
+
+          {/* Mobile Cards for history - visible only on small screens */}
+          <div className="md:hidden space-y-3">
+            {history.map((sub) => (
+              <div key={sub.id} className="bg-white dark:bg-slate-800 rounded-2xl shadow-sm border border-slate-200 dark:border-slate-700 p-4">
+                <div className="flex items-start justify-between mb-3">
+                  <div className="flex items-center gap-3">
+                    <div className="w-9 h-9 rounded-xl bg-slate-100 dark:bg-slate-700 flex items-center justify-center">
+                      <Building2 className="w-4 h-4 text-slate-500" />
+                    </div>
+                    <div>
+                      <div className="text-sm font-semibold text-slate-900 dark:text-white">{sub.plan_name}</div>
+                      <span className={`text-xs font-medium px-2 py-0.5 rounded-full capitalize ${getStatusColor(sub.status)}`}>{sub.status}</span>
+                    </div>
+                  </div>
+                  <div className="text-sm font-semibold text-slate-900 dark:text-white">
+                    {sub.amount > 0 ? formatCurrency(sub.amount) : 'Trial'}
+                  </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2 text-xs">
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400 font-medium">Cycle: </span>
+                    <span className="text-slate-700 dark:text-slate-300 capitalize">{sub.billing_cycle || '-'}</span>
+                  </div>
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400 font-medium">Auto-Renew: </span>
+                    {sub.auto_renew ? (
+                      <span className="text-emerald-600">Yes</span>
+                    ) : (
+                      <span className="text-slate-400">No</span>
+                    )}
+                  </div>
+                  <div className="col-span-2">
+                    <span className="text-slate-500 dark:text-slate-400 font-medium">Period: </span>
+                    <span className="text-slate-700 dark:text-slate-300">
+                      {sub.start_date ? new Date(sub.start_date).toLocaleDateString('en-IN') : '-'}
+                      {sub.end_date ? ` – ${new Date(sub.end_date).toLocaleDateString('en-IN')}` : ''}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+          </>
         )
       )}
     </div>

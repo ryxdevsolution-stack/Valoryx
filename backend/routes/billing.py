@@ -1,4 +1,5 @@
 import uuid
+import re
 from datetime import datetime
 import pytz
 from dateutil import parser as date_parser
@@ -55,7 +56,7 @@ def create_gst_bill():
             StockEntry.product_id.in_(product_ids),
             StockEntry.client_id == client_id
         ).all()
-        product_map = {p.product_id: p for p in products}
+        product_map = {str(p.product_id): p for p in products}
 
         # Verify all products and check stock
         for item in data['items']:
@@ -180,7 +181,7 @@ def create_non_gst_bill():
             StockEntry.product_id.in_(product_ids),
             StockEntry.client_id == client_id
         ).all()
-        product_map = {p.product_id: p for p in products}
+        product_map = {str(p.product_id): p for p in products}
 
         # Verify all products and check stock
         for item in data['items']:
@@ -938,7 +939,7 @@ def update_bill(bill_id):
             StockEntry.product_id.in_(list(all_product_ids)),
             StockEntry.client_id == client_id
         ).all()
-        product_map = {p.product_id: p for p in products}
+        product_map = {str(p.product_id): p for p in products}
 
         # Step 1: Reverse stock for old items
         for old_item in old_items:
@@ -1234,7 +1235,7 @@ def cancel_bill(bill_id):
                 StockEntry.product_id.in_(product_ids),
                 StockEntry.client_id == client_id
             ).all()
-            product_map = {p.product_id: p for p in products}
+            product_map = {str(p.product_id): p for p in products}
         else:
             product_map = {}
 
@@ -1309,6 +1310,11 @@ def print_bill():
 
         # Get printer name from request or use default
         printer_name = data.get('printerName', None)
+
+        # Validate printer name to prevent lp argument injection
+        if printer_name is not None:
+            if not re.match(r'^[a-zA-Z0-9_\-\.]{1,64}$', printer_name):
+                return jsonify({'success': False, 'error': 'Invalid printer name'}), 400
 
         # Initialize thermal printer
         printer = ThermalPrinter(printer_name=printer_name)
@@ -1432,6 +1438,11 @@ def print_labels():
 
         # Get printer name from request or use default
         printer_name = data.get('printerName', None)
+
+        # Validate printer name to prevent lp argument injection
+        if printer_name is not None:
+            if not re.match(r'^[a-zA-Z0-9_\-\.]{1,64}$', printer_name):
+                return jsonify({'success': False, 'error': 'Invalid printer name'}), 400
 
         # Calculate total labels
         total_labels = sum(int(item.get('quantity', 1)) for item in items)

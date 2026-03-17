@@ -436,7 +436,7 @@ export default function ReportsPage() {
     <DashboardLayout>
       <div className="max-w-7xl mx-auto">
         {/* Header */}
-        <div className="mb-6 flex flex-col md:flex-row md:items-center md:justify-between gap-4">
+        <div className="mb-6 flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-2xl font-bold text-gray-900 dark:text-white">Reports</h1>
             {dateRange.start_date && dateRange.end_date && (
@@ -447,7 +447,7 @@ export default function ReportsPage() {
           </div>
 
           {/* Period Selector, Expenses and Notes Buttons */}
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-2">
             <button
               type="button"
               onClick={() => setShowExpensesPanel(true)}
@@ -523,7 +523,7 @@ export default function ReportsPage() {
         </div>
 
         {/* Statistics Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
+        <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-4">
           {/* Total Bills */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}

@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback, useRef } from 'react'
 import { useClient } from '@/contexts/ClientContext'
 import teamService, { type TeamMember, type PlanInfo } from '@/services/teamService'
 import TeamMemberModal from '@/components/profile/TeamMemberModal'
+import TotpActionModal from '@/components/TotpActionModal'
 import {
   Search,
   Plus,
@@ -72,6 +73,10 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
   // Modal state
   const [showModal, setShowModal] = useState(false)
   const [editingUser, setEditingUser] = useState<TeamMember | null>(null)
+
+  // TOTP verification before adding a new user
+  const [showTotpForAdd, setShowTotpForAdd] = useState(false)
+  const pendingTotpToken = useRef<string | null>(null)
 
   // Delete confirmation state
   const [confirmDelete, setConfirmDelete] = useState<string | null>(null)
@@ -191,6 +196,18 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
   }
 
   const handleAddNew = () => {
+    if (user?.totp_enabled) {
+      // Self-registered owner with 2FA: verify before opening the add-user form
+      setShowTotpForAdd(true)
+    } else {
+      setEditingUser(null)
+      setShowModal(true)
+    }
+  }
+
+  const handleTotpVerifiedForAdd = (token: string) => {
+    pendingTotpToken.current = token
+    setShowTotpForAdd(false)
     setEditingUser(null)
     setShowModal(true)
   }
@@ -651,14 +668,26 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
         )}
       </div>
 
-      {/* Modal */}
+      {/* TOTP verification modal — shown before adding a new user when 2FA is enabled */}
+      <TotpActionModal
+        isOpen={showTotpForAdd}
+        actionLabel="add a team member"
+        onVerified={handleTotpVerifiedForAdd}
+        onClose={() => setShowTotpForAdd(false)}
+      />
+
+      {/* Add / Edit user modal */}
       <TeamMemberModal
         isOpen={showModal}
-        onClose={() => setShowModal(false)}
+        onClose={() => {
+          setShowModal(false)
+          pendingTotpToken.current = null
+        }}
         onSaved={handleModalSaved}
         editingUser={editingUser}
         onMessage={onMessage}
         planInfo={planInfo}
+        totpActionToken={editingUser ? null : pendingTotpToken.current}
       />
     </>
   )

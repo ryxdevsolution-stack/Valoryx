@@ -177,7 +177,7 @@ export default function DashboardPage() {
     <DashboardLayout>
       {/* Header Section - Compact */}
       <div className="mb-3">
-        <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-3">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
           <div>
             <h1 className="text-lg font-semibold text-gray-900 dark:text-white">Analytics</h1>
             <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
@@ -185,7 +185,7 @@ export default function DashboardPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
             {/* Time Range Selector - Compact */}
             <div className="inline-flex items-center bg-gray-100 dark:bg-gray-800 rounded p-0.5">
               {(['today', 'week', 'month'] as const).map((range) => (
@@ -224,7 +224,7 @@ export default function DashboardPage() {
       </div>
 
       {/* Key Metrics - Compact Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
         {/* Revenue Card */}
         <motion.div
           initial={{ opacity: 0, y: 20 }}
@@ -318,7 +318,11 @@ export default function DashboardPage() {
           transition={{ duration: 0.4 }}
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"
         >
-          <RevenueAreaChart data={analytics.insights.revenueTrend} />
+          <div className="overflow-x-auto">
+            <div className="min-w-[500px]">
+              <RevenueAreaChart data={analytics.insights.revenueTrend} />
+            </div>
+          </div>
         </motion.div>
 
         {/* Peak Hours Chart */}
@@ -328,7 +332,11 @@ export default function DashboardPage() {
           transition={{ duration: 0.4, delay: 0.1 }}
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"
         >
-          <PeakHoursChart data={analytics.insights.peakHours} />
+          <div className="overflow-x-auto">
+            <div className="min-w-[500px]">
+              <PeakHoursChart data={analytics.insights.peakHours} />
+            </div>
+          </div>
         </motion.div>
 
         {/* Top Products Pie Chart - Filtered by Time Range */}
@@ -338,10 +346,14 @@ export default function DashboardPage() {
           transition={{ duration: 0.4, delay: 0.2 }}
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"
         >
-          <TopProductsPieChart
-            data={analytics.products.topProductsFiltered}
-            timeRange={timeRange}
-          />
+          <div className="overflow-x-auto">
+            <div className="min-w-[500px]">
+              <TopProductsPieChart
+                data={analytics.products.topProductsFiltered}
+                timeRange={timeRange}
+              />
+            </div>
+          </div>
         </motion.div>
 
         {/* Product Performance Tiers Chart */}
@@ -351,11 +363,15 @@ export default function DashboardPage() {
           transition={{ duration: 0.4, delay: 0.3 }}
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"
         >
-          <ProductPerformanceChart
-            mostSelling={analytics.products.performanceTiers.mostSelling}
-            lessSelling={analytics.products.performanceTiers.lessSelling}
-            nonSelling={analytics.products.performanceTiers.nonSelling}
-          />
+          <div className="overflow-x-auto">
+            <div className="min-w-[500px]">
+              <ProductPerformanceChart
+                mostSelling={analytics.products.performanceTiers.mostSelling}
+                lessSelling={analytics.products.performanceTiers.lessSelling}
+                nonSelling={analytics.products.performanceTiers.nonSelling}
+              />
+            </div>
+          </div>
         </motion.div>
       </div>
 

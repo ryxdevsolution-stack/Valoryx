@@ -1309,7 +1309,8 @@ export default function StockManagementPage() {
           </button>
         </div>
       ) : (
-        <div className="bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900 overflow-hidden">
+        <>
+        <div className="hidden md:block bg-white dark:bg-gray-800 rounded-lg shadow dark:shadow-gray-900 overflow-hidden">
           <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
             <thead className="bg-gray-50 dark:bg-gray-900">
               <tr>
@@ -1426,6 +1427,45 @@ export default function StockManagementPage() {
             </tbody>
           </table>
         </div>
+        {/* Mobile card list */}
+        <div className="md:hidden space-y-3">
+          {filteredStocks.map(stock => (
+            <div
+              key={stock.product_id}
+              className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
+            >
+              <div className="flex items-start justify-between gap-2 mb-2">
+                <div>
+                  <p className="text-sm font-semibold text-gray-900 dark:text-white">{stock.product_name}</p>
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{stock.category || stock.unit}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => handleEdit(stock)}
+                  className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                >
+                  Edit
+                </button>
+              </div>
+              <div className="flex items-center justify-between">
+                <span className={`text-sm font-bold ${
+                  isLowStock(stock)
+                    ? 'text-red-600 dark:text-red-400'
+                    : 'text-gray-900 dark:text-white'
+                }`}>
+                  {stock.quantity} {stock.unit}
+                </span>
+                <span className="text-xs text-gray-500 dark:text-gray-400">₹{Number(stock.rate).toLocaleString()}</span>
+              </div>
+              {isLowStock(stock) && (
+                <span className="mt-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+                  Low stock
+                </span>
+              )}
+            </div>
+          ))}
+        </div>
+        </>
       )}
 
       {/* Bulk Stock Order Modals */}

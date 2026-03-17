@@ -350,7 +350,7 @@ export default function UserManagement() {
       </div>
 
       {/* Users Table */}
-      <div className="bg-white rounded-lg shadow overflow-hidden">
+      <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden">
         <div className="overflow-x-auto">
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
@@ -511,6 +511,82 @@ export default function UserManagement() {
               onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
               disabled={currentPage === totalPages}
               className="px-3 py-1 border border-gray-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white"
+            >
+              <ChevronRight className="h-4 w-4" />
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Mobile Cards - visible only on small screens */}
+      <div className="md:hidden space-y-3">
+        {users.map((user) => (
+          <div key={user.user_id} className="bg-white rounded-lg shadow p-4">
+            <div className="flex items-start justify-between mb-3">
+              <div>
+                <div className="text-sm font-semibold text-gray-900">{user.full_name || user.email}</div>
+                <div className="text-xs text-gray-500">{user.email}</div>
+                {user.phone && <div className="text-xs text-gray-400">{user.phone}</div>}
+              </div>
+              <div className="flex items-center gap-2 ml-2">
+                <button
+                  onClick={() => navigate(`/admin/users/${user.user_id}`)}
+                  className="text-blue-600 hover:text-blue-900 p-1"
+                  title="View/Edit"
+                >
+                  <Edit className="h-4 w-4" />
+                </button>
+                <button
+                  onClick={() => handleToggleStatus(user.user_id)}
+                  className={`p-1 ${user.is_active ? 'text-yellow-600 hover:text-yellow-900' : 'text-green-600 hover:text-green-900'}`}
+                  title={user.is_active ? 'Deactivate' : 'Activate'}
+                >
+                  {user.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+                </button>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 gap-2 text-xs">
+              <div>
+                <span className="text-gray-500 font-medium">Role: </span>
+                <span className="text-gray-900 capitalize">{user.role}</span>
+                {user.is_super_admin && <Shield className="inline h-3 w-3 text-purple-600 ml-1" />}
+              </div>
+              <div>
+                <span className="text-gray-500 font-medium">Dept: </span>
+                <span className="text-gray-900">{user.department || '-'}</span>
+              </div>
+              <div>
+                <span className="text-gray-500 font-medium">Status: </span>
+                {user.is_active ? (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
+                ) : (
+                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Inactive</span>
+                )}
+              </div>
+              <div>
+                <span className="text-gray-500 font-medium">Last Login: </span>
+                <span className="text-gray-900">{user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+        {/* Mobile Pagination */}
+        <div className="flex items-center justify-between py-3 px-1">
+          <div className="text-xs text-gray-600">
+            Page {currentPage} of {totalPages} ({totalUsers} users)
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+              disabled={currentPage === 1}
+              className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 hover:bg-gray-50 text-sm"
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </button>
+            <button
+              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+              disabled={currentPage === totalPages}
+              className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 hover:bg-gray-50 text-sm"
             >
               <ChevronRight className="h-4 w-4" />
             </button>

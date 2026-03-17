@@ -14,6 +14,7 @@ from utils.email_service import (
     send_deletion_cancelled_email,
 )
 from config import Config
+from utils.totp_helper import require_totp_action_token
 
 client_bp = Blueprint('client', __name__)
 
@@ -282,6 +283,14 @@ def request_account_deletion(client_id):
             }), 200
 
         data = request.get_json() or {}
+
+        # TOTP gate: self-registered owners with 2FA must verify before deletion
+        owner = User.query.filter_by(user_id=g.user['user_id']).first()
+        if owner:
+            totp_err = require_totp_action_token(owner, data)
+            if totp_err:
+                return totp_err
+
         reason = data.get('reason', '')
 
         now = datetime.utcnow()

@@ -9,6 +9,7 @@ import SubscriptionTab from '@/components/profile/SubscriptionTab'
 import SessionsTab from '@/components/profile/SessionsTab'
 import TwoFactorTab from '@/components/profile/TwoFactorTab'
 import WebhooksTab from '@/components/profile/WebhooksTab'
+import TotpActionModal from '@/components/TotpActionModal'
 import {
   Activity,
   AlertCircle,
@@ -97,6 +98,7 @@ export default function ProfilePage() {
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
   const [deleteReason, setDeleteReason] = useState('')
   const [deletingAccount, setDeletingAccount] = useState(false)
+  const [showTotpForDelete, setShowTotpForDelete] = useState(false)
   const [exportingData, setExportingData] = useState(false)
 
   // Activity history state
@@ -104,6 +106,7 @@ export default function ProfilePage() {
   const [activityPage, setActivityPage] = useState(1)
   const [activityTotal, setActivityTotal] = useState(0)
   const [loadingActivity, setLoadingActivity] = useState(false)
+  const [activityOpen, setActivityOpen] = useState(false)
 
   // Fetch activity on mount (always visible in right column on desktop)
   useEffect(() => {
@@ -294,16 +297,25 @@ export default function ProfilePage() {
     }
   }
 
-  const handleRequestDeletion = async () => {
+  const handleRequestDeletion = async (totpActionToken?: string) => {
     if (!client?.client_id) return
+    // If user has 2FA and no token yet, show the TOTP modal first
+    if (user?.totp_enabled && !totpActionToken) {
+      setShowTotpForDelete(true)
+      return
+    }
     try {
       setDeletingAccount(true)
-      await api.post(`/clients/${client.client_id}/request-deletion`, { reason: deleteReason })
+      await api.post(`/clients/${client.client_id}/request-deletion`, {
+        reason: deleteReason,
+        ...(totpActionToken ? { totp_action_token: totpActionToken } : {}),
+      })
       setMessage({
         type: 'success',
         text: 'Account deletion scheduled. You have 30 days to change your mind — check your email for a reactivation link.',
       })
       setShowDeleteConfirm(false)
+      setShowTotpForDelete(false)
       setDeleteReason('')
     } catch (error: any) {
       setMessage({ type: 'error', text: error.response?.data?.error || 'Failed to schedule deletion' })
@@ -394,7 +406,7 @@ export default function ProfilePage() {
 
   return (
     <DashboardLayout>
-    <div className="h-[calc(100vh-80px)] md:h-screen flex flex-col overflow-hidden">
+    <div className="h-[calc(100dvh-4rem)] md:h-screen flex flex-col overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 sm:py-4 flex-shrink-0">
         <h1 className="text-xl sm:text-2xl font-bold text-gray-900 dark:text-white">My Profile</h1>
@@ -526,7 +538,7 @@ export default function ProfilePage() {
                       </button>
                       <button
                         type="button"
-                        onClick={handleRequestDeletion}
+                        onClick={() => handleRequestDeletion()}
                         disabled={deletingAccount}
                         className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-white bg-red-600 hover:bg-red-700 rounded-lg transition-colors disabled:opacity-50"
                       >
@@ -566,9 +578,92 @@ export default function ProfilePage() {
               getUpgradeUrl={getUpgradeUrl}
             />
           )}
+
+          {/* Recent Activity — mobile/tablet accordion */}
+          <div className="lg:hidden mt-4">
+            <button
+              type="button"
+              onClick={() => setActivityOpen(v => !v)}
+              className="w-full flex items-center justify-between px-4 py-3 rounded-xl bg-gray-100 dark:bg-gray-800 text-sm font-semibold text-gray-700 dark:text-gray-300"
+            >
+              <span>Recent Activity</span>
+              <svg
+                className={`w-4 h-4 transition-transform ${activityOpen ? 'rotate-180' : ''}`}
+                fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {activityOpen && (
+              <div className="mt-2 rounded-xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+                <div className="bg-white dark:bg-gray-800 p-4">
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">Last 7 days</p>
+                  {loadingActivity ? (
+                    <div className="flex items-center justify-center py-8">
+                      <Loader2 className="w-6 h-6 animate-spin text-gray-400" />
+                    </div>
+                  ) : activity.length === 0 ? (
+                    <p className="text-gray-500 dark:text-gray-400 text-center py-8">No activity in the last 7 days</p>
+                  ) : (
+                    <>
+                      <div className="space-y-3">
+                        {activity.map((item) => (
+                          <div
+                            key={item.log_id}
+                            className="flex items-start gap-3 p-3 bg-gray-50 dark:bg-gray-700/50 rounded-xl"
+                          >
+                            <span className="text-lg flex-shrink-0">{getActionIcon(item.action_type)}</span>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-gray-900 dark:text-white">
+                                {item.action_type}
+                              </p>
+                              <p className="text-xs text-gray-500 dark:text-gray-400">
+                                on {item.table_name}
+                              </p>
+                              <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
+                                {formatDate(item.timestamp)}
+                              </p>
+                              {item.ip_address && (
+                                <p className="text-xs text-gray-400 dark:text-gray-500">
+                                  {item.ip_address}
+                                </p>
+                              )}
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                      {activityTotal > 10 && (
+                        <div className="flex items-center justify-between pt-4 border-t border-gray-200 dark:border-gray-700 mt-3">
+                          <button
+                            type="button"
+                            onClick={() => fetchActivity(activityPage - 1)}
+                            disabled={activityPage <= 1}
+                            className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Prev
+                          </button>
+                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                            {activityPage} / {Math.ceil(activityTotal / 10)}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => fetchActivity(activityPage + 1)}
+                            disabled={activityPage >= Math.ceil(activityTotal / 10)}
+                            className="px-3 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      )}
+                    </>
+                  )}
+                </div>
+              </div>
+            )}
+          </div>
         </div>
 
-        {/* Right Column - Recent Activity (hidden on mobile/tablet) */}
+        {/* Recent Activity — desktop side panel */}
         <div className="hidden lg:flex lg:col-span-1 flex-col min-h-0">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 flex flex-col flex-1 min-h-0 overflow-hidden">
             <div className="p-6 pb-2 flex-shrink-0">
@@ -650,6 +745,17 @@ export default function ProfilePage() {
         }
       `}</style>
     </div>
+
+    {/* TOTP verification modal — shown before delete account when 2FA is enabled */}
+    <TotpActionModal
+      isOpen={showTotpForDelete}
+      actionLabel="delete your account"
+      onVerified={(token) => {
+        setShowTotpForDelete(false)
+        handleRequestDeletion(token)
+      }}
+      onClose={() => setShowTotpForDelete(false)}
+    />
     </DashboardLayout>
   )
 }

@@ -57,6 +57,8 @@ export interface CreateTeamMemberPayload {
   branch_id?: string | null
   permissions?: string[]
   // password removed — invite flow handles password setup
+  /** Pre-verified TOTP action token (required when owner has 2FA enabled) */
+  totp_action_token?: string
 }
 
 export interface UpdateTeamMemberPayload {

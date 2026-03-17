@@ -325,6 +325,73 @@ def regenerate_backup_codes():
     }), 200
 
 
+@totp_bp.route('/verify-action', methods=['POST'])
+@authenticate
+def verify_action():
+    """
+    Verify a TOTP code for a sensitive in-app action (not login).
+    Returns a short-lived one-time action token (60s) that the caller passes
+    with the real action request (delete account, add user, etc.).
+
+    POST /api/totp/verify-action
+    Body: { "code": "123456" }
+    Returns: { success: true, action_token: "..." }
+    """
+    import json as _json, hashlib as _hashlib
+
+    data = request.get_json() or {}
+    code = (data.get('code') or '').strip()
+
+    if not code:
+        return jsonify({'success': False, 'error': 'Code is required'}), 400
+
+    user = User.query.filter_by(user_id=g.user['user_id']).first()
+    if not user or not user.totp_enabled:
+        return jsonify({'success': False, 'error': '2FA is not enabled'}), 400
+
+    if not user.totp_secret:
+        return jsonify({'success': False, 'error': 'Invalid 2FA state'}), 500
+
+    user_id = str(user.user_id)
+    cache = get_cache_manager()
+
+    bf = _check_brute_force(cache, user_id)
+    if bf:
+        return bf
+
+    # Try backup code first (8 uppercase hex chars)
+    normalized = code.upper().replace('-', '').replace(' ', '')
+    backup_codes = _json.loads(user.totp_backup_codes) if user.totp_backup_codes else []
+    code_hash = _hashlib.sha256(normalized.encode()).hexdigest()
+
+    if normalized and len(normalized) == 8 and code_hash in backup_codes:
+        backup_codes.remove(code_hash)
+        user.totp_backup_codes = _json.dumps(backup_codes)
+        cache.delete(f"totp_fail:{user_id}")
+        try:
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    else:
+        rp = _check_replay(cache, user_id, code)
+        if rp:
+            return rp
+
+        totp = pyotp.TOTP(user.totp_secret)
+        if not totp.verify(code, valid_window=1):
+            _record_failure(cache, user_id)
+            return jsonify({'success': False, 'error': 'Invalid code. Try again.'}), 401
+
+        _clear_failure_and_mark_replay(cache, user_id, code)
+
+    # Issue a short-lived single-use action token (60 seconds)
+    import secrets as _sec
+    action_token = _sec.token_hex(16)
+    cache.set(f"totp_action:{user_id}:{action_token}", 1, 60)
+
+    return jsonify({'success': True, 'action_token': action_token}), 200
+
+
 @totp_bp.route('/recover', methods=['POST'])
 def request_2fa_recovery():
     """
