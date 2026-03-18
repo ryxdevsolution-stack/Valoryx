@@ -78,7 +78,7 @@ export default function ImageLightboxModal({
               </div>
               <div className="flex-1 flex justify-center">
                 <div className="px-4 py-1 rounded-lg bg-white dark:bg-gray-700 text-xs text-gray-500 dark:text-gray-400 font-mono border border-gray-200 dark:border-gray-600 max-w-xs truncate">
-                  app.mjbilling.in / {current.label.toLowerCase().replace(/\s/g, '-')}
+                  app.valoryx.in / {current.label.toLowerCase().replace(/\s/g, '-')}
                 </div>
               </div>
               {/* Counter */}

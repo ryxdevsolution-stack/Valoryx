@@ -63,7 +63,7 @@ export default function DemoVideoModal({ onClose, videoSrc }: DemoVideoModalProp
               <div className="flex-1 flex justify-center">
                 <span className="text-xs text-gray-400 font-medium flex items-center gap-1.5">
                   <Play className="w-3 h-3" />
-                  MJ Billing — Product Demo
+                  Valoryx — Product Demo
                 </span>
               </div>
             </div>
@@ -77,7 +77,7 @@ export default function DemoVideoModal({ onClose, videoSrc }: DemoVideoModalProp
                     className="w-full h-full"
                     allow="autoplay; fullscreen"
                     allowFullScreen
-                    title="MJ Billing Demo"
+                    title="Valoryx Demo"
                   />
                 ) : (
                   <video

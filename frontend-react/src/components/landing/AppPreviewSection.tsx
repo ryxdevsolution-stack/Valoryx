@@ -241,7 +241,7 @@ export default function AppPreviewSection() {
               </div>
               <div className="flex-1 flex justify-center">
                 <div className="px-4 py-1 rounded-lg bg-white dark:bg-gray-700 text-xs text-gray-500 dark:text-gray-400 font-mono border border-gray-200 dark:border-gray-600 max-w-xs">
-                  app.mjbilling.in / {currentTab.id}
+                  app.valoryx.in / {currentTab.id}
                 </div>
               </div>
               {/* Expand hint */}
