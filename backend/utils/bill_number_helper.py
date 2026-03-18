@@ -44,10 +44,12 @@ def get_next_bill_number(client_id, bill_type='gst'):
         column_name = f'current_{bill_type}_bill_number'
 
         # PostgreSQL: Atomic increment using INSERT ... ON CONFLICT
-        # Note: Cast client_id to UUID for PostgreSQL compatibility
+        # Use CAST(:client_id AS UUID) — the ::UUID shorthand confuses
+        # SQLAlchemy's text() parameter parser because :: immediately
+        # follows the bind-parameter colon.
         sql = text(f"""
             INSERT INTO bill_number_counters (client_id, {column_name})
-            VALUES (:client_id::UUID, 1)
+            VALUES (CAST(:client_id AS UUID), 1)
             ON CONFLICT (client_id)
             DO UPDATE SET
                 {column_name} = bill_number_counters.{column_name} + 1,
@@ -92,7 +94,7 @@ def get_current_bill_number(client_id, bill_type='gst'):
         sql = text(f"""
             SELECT {column_name}
             FROM bill_number_counters
-            WHERE client_id = :client_id::UUID
+            WHERE client_id = CAST(:client_id AS UUID)
         """)
 
         result = db.session.execute(sql, {"client_id": client_id})
@@ -132,7 +134,7 @@ def reset_bill_number(client_id, bill_type='gst', new_value=0):
 
         sql = text(f"""
             INSERT INTO bill_number_counters (client_id, {column_name})
-            VALUES (:client_id::UUID, :new_value)
+            VALUES (CAST(:client_id AS UUID), :new_value)
             ON CONFLICT (client_id)
             DO UPDATE SET
                 {column_name} = :new_value,

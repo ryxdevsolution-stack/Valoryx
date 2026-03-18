@@ -9,6 +9,7 @@ Section B (11-15): @authenticate middleware — header absence, bad/expired
 """
 
 import json
+import os
 import time
 import uuid
 import jwt as _jwt
@@ -17,7 +18,8 @@ from datetime import datetime, timedelta
 from extensions import db
 from conftest import make_token, auth_hdr, _bcrypt
 
-_JWT_SECRET = "valoryx-test-secret-2026"
+# Read from environment — matches whichever app mode (offline or online) is active.
+_JWT_SECRET = os.environ["JWT_SECRET"]
 _CORRECT_PASSWORD = "TestPass123!"
 
 # ── Clear in-memory rate-limit state between every test ──────────────────────
