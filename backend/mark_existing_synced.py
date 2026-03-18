@@ -133,7 +133,7 @@ def mark_existing_as_synced():
     print("- Only NEW records will be synced from now on")
     print("- You can now safely run sync without duplicate errors")
     print("\nNext step: Run sync to upload any NEW records:")
-    print("  curl -X POST http://localhost:5000/api/sync/trigger")
+    print("  curl -X POST http://localhost:5017/api/sync/trigger")
     print()
 
     return True

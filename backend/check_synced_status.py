@@ -102,7 +102,7 @@ def check_sync_status():
     if total_unsynced > 0:
         print(f"\n[INFO] Total unsynced: {total_unsynced} records")
         print("[ACTION] Run sync to upload these to Supabase:")
-        print("         curl -X POST http://localhost:5000/api/sync/trigger")
+        print("         curl -X POST http://localhost:5017/api/sync/trigger")
     else:
         print("\n[OK] All records are synced!")
 

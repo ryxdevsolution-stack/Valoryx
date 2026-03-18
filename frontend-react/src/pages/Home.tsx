@@ -13,7 +13,7 @@ export default function Home() {
       if (isAuthenticated) {
         navigate('/dashboard', { replace: true })
       } else {
-        navigate('/auth/login', { replace: true })
+        navigate('/landing', { replace: true })
       }
     }
   }, [isLoading, isAuthenticated, navigate])
@@ -22,7 +22,7 @@ export default function Home() {
     if (isAuthenticated) {
       navigate('/dashboard', { replace: true })
     } else {
-      navigate('/auth/login', { replace: true })
+      navigate('/landing', { replace: true })
     }
   }
 

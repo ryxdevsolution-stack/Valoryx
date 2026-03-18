@@ -51,19 +51,8 @@ def create_app():
     else:
         logging.info("[OK] Database initialized successfully")
 
-    # Phase 1: Initialize background sync scheduler (2-hour interval)
-    # Always enable sync if DB_URL is available (for both online and offline modes)
-    db_url = os.environ.get('DB_URL') or os.environ.get('DATABASE_URL')
-    if db_url:
-        try:
-            from services.sync_scheduler import init_sync_scheduler
-            sync_scheduler = init_sync_scheduler(app)
-            app.config['SYNC_SCHEDULER'] = sync_scheduler
-            logging.info("[OK] Background sync scheduler initialized")
-        except Exception as e:
-            logging.warning(f"[WARNING] Background sync scheduler failed to initialize: {e}")
-    else:
-        logging.info("[INFO] No DB_URL configured - sync scheduler disabled")
+    # Phase 1: Background sync scheduler (disabled)
+    logging.info("[INFO] Background sync scheduler disabled")
 
     # Run versioned migrations — skips entirely on daily open if schema is up to date
     if db_initialized:
@@ -821,13 +810,13 @@ def create_app():
             'import_errors': app.config.get('IMPORT_ERRORS', [])
         }, 200
     
-    @app.route('/', methods=['GET'])
-    def root():
-        return {"status": "ok", "message": "MJ Billing backend running"}, 200
-
     # ==================== SERVE REACT FRONTEND ====================
     # Serve the React production build from backend/static/frontend/
     FRONTEND_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'static', 'frontend')
+
+    @app.route('/', methods=['GET'])
+    def root():
+        return send_from_directory(FRONTEND_DIR, 'index.html')
 
     @app.route('/frontend/')
     @app.route('/frontend')
@@ -850,6 +839,9 @@ def create_app():
         file_path = os.path.join(FRONTEND_DIR, filename)
         if os.path.isfile(file_path):
             return send_from_directory(FRONTEND_DIR, filename)
+        # For SPA routes (not API, not files), serve index.html
+        if not filename.startswith('api/'):
+            return send_from_directory(FRONTEND_DIR, 'index.html')
         return {"error": "Not found"}, 404
 
     @app.after_request

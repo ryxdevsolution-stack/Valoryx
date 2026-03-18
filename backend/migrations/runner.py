@@ -28,7 +28,7 @@ def _ensure_version_table(db):
     db.session.execute(text("""
         CREATE TABLE IF NOT EXISTS _schema_version (
             version    INTEGER NOT NULL,
-            applied_at DATETIME DEFAULT CURRENT_TIMESTAMP
+            applied_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
     """))
     db.session.commit()
@@ -118,7 +118,7 @@ def _m001_core_columns(db):
                 description VARCHAR(255) NULL,
                 events      TEXT NOT NULL DEFAULT '*',
                 is_active   BOOLEAN NOT NULL DEFAULT 1,
-                created_at  DATETIME DEFAULT CURRENT_TIMESTAMP
+                created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
         db.session.execute(text(
@@ -141,7 +141,7 @@ def _m001_core_columns(db):
                 response_status INTEGER NULL,
                 response_body   TEXT NULL,
                 error           TEXT NULL,
-                created_at      DATETIME DEFAULT CURRENT_TIMESTAMP,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 delivered_at    DATETIME NULL,
                 next_retry_at   DATETIME NULL
             )
@@ -166,7 +166,7 @@ def _m001_core_columns(db):
             CREATE TABLE IF NOT EXISTS sync_metadata (
                 key        VARCHAR(100) PRIMARY KEY,
                 value      TEXT,
-                updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
         logging.info("[Migration] sync_metadata table created")
@@ -177,7 +177,7 @@ def _m001_core_columns(db):
                 id          INTEGER PRIMARY KEY AUTOINCREMENT,
                 table_name  VARCHAR(100),
                 rows_synced INTEGER DEFAULT 0,
-                synced_at   DATETIME DEFAULT CURRENT_TIMESTAMP
+                synced_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """))
         logging.info("[Migration] sync_log table created")

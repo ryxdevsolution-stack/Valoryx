@@ -318,7 +318,7 @@ JWT_SECRET=your-secret-key
 ```bash
 NEXT_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=your-anon-key
-NEXT_PUBLIC_API_URL=http://localhost:5000/api
+NEXT_PUBLIC_API_URL=http://localhost:5017/api
 ```
 
 ## Implementation Status
@@ -388,7 +388,7 @@ NEXT_PUBLIC_API_URL=http://localhost:5000/api
 cd backend
 pip install -r requirements.txt
 python run.py
-# API runs at http://localhost:5000
+# API runs at http://localhost:5017
 ```
 
 **Important**: Always use `python run.py` instead of `python app.py` to avoid circular import issues.
@@ -405,17 +405,17 @@ Connect to Supabase PostgreSQL and run migrations in order:
 ### Test API
 ```bash
 # 1. Create client
-curl -X POST http://localhost:5000/api/client \
+curl -X POST http://localhost:5017/api/client \
   -H "Content-Type: application/json" \
   -d '{"client_name":"Test Company","email":"test@company.com","phone":"1234567890"}'
 
 # 2. Register user (use client_id from step 1)
-curl -X POST http://localhost:5000/api/auth/register \
+curl -X POST http://localhost:5017/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"email":"user@test.com","password":"password123","client_id":"<client_id>"}'
 
 # 3. Login (get JWT token)
-curl -X POST http://localhost:5000/api/auth/login \
+curl -X POST http://localhost:5017/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"user@test.com","password":"password123"}'
 ```

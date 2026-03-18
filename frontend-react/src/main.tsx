@@ -12,7 +12,7 @@ ReactDOM.createRoot(document.getElementById('root')!).render(
       <App />
     </HashRouter>
   ) : (
-    <BrowserRouter basename="/frontend">
+    <BrowserRouter basename="/">
       <App />
     </BrowserRouter>
   ),

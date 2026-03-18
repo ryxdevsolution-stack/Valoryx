@@ -43,7 +43,7 @@ Alternatively, use Supabase Dashboard SQL Editor to run each file.
 python app.py
 ```
 
-The API will be available at `http://localhost:5000`
+The API will be available at `http://localhost:5017`
 
 ## API Endpoints
 
@@ -157,28 +157,28 @@ All CREATE, UPDATE, DELETE operations logged automatically:
 
 ### 1. Create a Client
 ```bash
-curl -X POST http://localhost:5000/api/client \
+curl -X POST http://localhost:5017/api/client \
   -H "Content-Type: application/json" \
   -d '{"client_name":"Test Company","email":"test@company.com","phone":"1234567890"}'
 ```
 
 ### 2. Register a User
 ```bash
-curl -X POST http://localhost:5000/api/auth/register \
+curl -X POST http://localhost:5017/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{"email":"user@test.com","password":"password123","client_id":"<client_id_from_step_1>"}'
 ```
 
 ### 3. Login
 ```bash
-curl -X POST http://localhost:5000/api/auth/login \
+curl -X POST http://localhost:5017/api/auth/login \
   -H "Content-Type: application/json" \
   -d '{"email":"user@test.com","password":"password123"}'
 ```
 
 ### 4. Add Stock (with token)
 ```bash
-curl -X POST http://localhost:5000/api/stock \
+curl -X POST http://localhost:5017/api/stock \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{"product_name":"Pen","quantity":100,"rate":10,"category":"Stationery"}'
@@ -186,7 +186,7 @@ curl -X POST http://localhost:5000/api/stock \
 
 ### 5. Create GST Bill
 ```bash
-curl -X POST http://localhost:5000/api/billing/gst \
+curl -X POST http://localhost:5017/api/billing/gst \
   -H "Content-Type: application/json" \
   -H "Authorization: Bearer <token>" \
   -d '{
