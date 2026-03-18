@@ -15,7 +15,7 @@ import MouseParticles from './effects/MouseParticles'
 import { Floating3DCard, FloatingCards, GeometricShapes } from './effects/FloatingElements'
 import { MeshGradientBackground } from './effects/GradientBackground'
 
-export default function HeroSection() {
+export default function HeroSection({ onWatchDemo }: { onWatchDemo?: () => void }) {
   return (
     <section className="relative min-h-screen flex items-center overflow-hidden pt-20 lg:pt-0">
       {/* Dark Mode: Mesh Gradient Background */}
@@ -123,7 +123,7 @@ export default function HeroSection() {
                 Start Free Trial
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </Link>
-              <button className="group inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-primary-500 dark:hover:border-primary-500 text-gray-700 dark:text-gray-300 font-semibold transition-all duration-300 hover:bg-primary-50 dark:hover:bg-primary-950/30 backdrop-blur-sm">
+              <button onClick={onWatchDemo} className="group inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl border-2 border-gray-200 dark:border-gray-700 hover:border-primary-500 dark:hover:border-primary-500 text-gray-700 dark:text-gray-300 font-semibold transition-all duration-300 hover:bg-primary-50 dark:hover:bg-primary-950/30 backdrop-blur-sm">
                 <Play className="w-5 h-5 group-hover:scale-110 transition-transform" />
                 Watch Demo
               </button>

@@ -1,5 +1,6 @@
 
 
+import { useState } from 'react'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import LandingNavbar from '@/components/landing/LandingNavbar'
 import HeroSection from '@/components/landing/HeroSection'
@@ -12,8 +13,14 @@ import FAQSection from '@/components/landing/FAQSection'
 import CTASection from '@/components/landing/CTASection'
 import PricingSection from '@/components/landing/PricingSection'
 import LandingFooter from '@/components/landing/LandingFooter'
+import AppPreviewSection from '@/components/landing/AppPreviewSection'
+import DemoVideoModal from '@/components/landing/DemoVideoModal'
+
+const DEMO_VIDEO = 'https://www.youtube.com/embed/wz8e0IfWaNM?autoplay=1'
 
 export default function LandingPage() {
+  const [videoOpen, setVideoOpen] = useState(false)
+
   return (
     <ThemeProvider>
       <div className="min-h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-white overflow-x-hidden">
@@ -23,7 +30,10 @@ export default function LandingPage() {
         {/* Main Content */}
         <main>
           {/* Hero Section */}
-          <HeroSection />
+          <HeroSection onWatchDemo={() => setVideoOpen(true)} />
+
+          {/* App Preview Section */}
+          <AppPreviewSection />
 
           {/* Trusted By Section */}
           <TrustedBySection />
@@ -53,6 +63,13 @@ export default function LandingPage() {
         {/* Footer */}
         <LandingFooter />
       </div>
+
+      {videoOpen && (
+        <DemoVideoModal
+          onClose={() => setVideoOpen(false)}
+          videoSrc={DEMO_VIDEO}
+        />
+      )}
     </ThemeProvider>
   )
 }
