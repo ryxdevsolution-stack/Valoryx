@@ -533,17 +533,9 @@ def signup():
         db.session.add(main_branch)
         db.session.flush()
 
-        # Assign all admin-level permissions to trial owner
+        # Grant trial owner every permission in the system — full access for 14 days
         from models.permission_model import Permission, UserPermission
-        admin_permissions = [
-            'view_dashboard', 'gst_billing', 'non_gst_billing',
-            'view_all_bills', 'view_own_bills', 'view_customers',
-            'manage_customers', 'view_stock', 'manage_stock',
-            'view_sales_reports', 'view_audit_logs', 'manage_payment_types',
-        ]
-        all_perms = Permission.query.filter(
-            Permission.permission_name.in_(admin_permissions)
-        ).all()
+        all_perms = Permission.query.all()
         for perm in all_perms:
             db.session.add(UserPermission(
                 id=str(uuid.uuid4()),

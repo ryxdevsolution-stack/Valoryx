@@ -30,7 +30,7 @@ interface Stock {
 }
 
 export default function StockManagementPage() {
-  const { fetchProducts } = useData()
+  const { fetchProducts, invalidateCache } = useData()
   const [stocks, setStocks] = useState<Stock[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
@@ -170,6 +170,7 @@ export default function StockManagementPage() {
           updatedStock.is_low_stock = updatedStock.quantity <= (updatedStock.low_stock_alert || 10)
         }
 
+        invalidateCache('products')
         setStocks(prev => prev.map(stock =>
           stock.product_id === editingId ? updatedStock : stock
         ))
@@ -377,6 +378,7 @@ export default function StockManagementPage() {
           headers: {
             'Content-Type': 'multipart/form-data',
           },
+          timeout: 300000, // 5 minutes for large bulk imports
           onUploadProgress: (progressEvent) => {
             const percentCompleted = progressEvent.total
               ? Math.round((progressEvent.loaded * 40) / progressEvent.total) + 30

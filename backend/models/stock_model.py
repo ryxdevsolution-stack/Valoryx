@@ -10,6 +10,7 @@ class StockEntry(db.Model):
     __table_args__ = (
         db.Index('idx_stock_client_product', 'client_id', 'product_name'),  # For duplicate checking
         db.Index('idx_stock_client_itemcode', 'client_id', 'item_code'),    # For item code lookups
+        db.UniqueConstraint('client_id', 'barcode', name='uq_stock_client_barcode'),  # Barcode unique per client
     )
 
     product_id = db.Column(FlexibleUUID, primary_key=True)
@@ -24,7 +25,7 @@ class StockEntry(db.Model):
     unit = db.Column(db.String(20), default='pcs')
     low_stock_alert = db.Column(db.Integer, default=10)
     item_code = db.Column(db.String(50), nullable=True, index=True)  # Added index
-    barcode = db.Column(db.String(100), unique=True, nullable=True, index=True)
+    barcode = db.Column(db.String(100), nullable=True, index=True)
     gst_percentage = db.Column(FlexibleNumeric, default=0)
     hsn_code = db.Column(db.String(20))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)

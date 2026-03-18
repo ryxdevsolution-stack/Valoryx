@@ -53,8 +53,8 @@ export default function VerifyEmailSuccessPage() {
           email: client_email,
           gstin: client_gstin,
           subscription_status: data.subscription_status,
-          trial_end_date: data.trial_end_date,
-          trial_days_remaining: data.trial_days_remaining,
+          trial_end_date: data.trial?.end_date,
+          trial_days_remaining: data.trial?.days_remaining,
           plan_id: data.plan_id,
           subscription_end_date: data.subscription_end_date,
         }

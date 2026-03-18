@@ -14,8 +14,8 @@ notes_bp = Blueprint('notes', __name__)
 def get_notes():
     """Get all notes for the current user"""
     try:
-        # Clean up expired notes first
-        Note.clean_expired_notes()
+        # Auto-delete expired notes — temporarily disabled
+        # Note.clean_expired_notes()
 
         # Get user's notes
         notes = Note.query.filter_by(user_id=g.user['user_id']).order_by(Note.updated_at.desc()).all()

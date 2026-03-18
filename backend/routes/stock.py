@@ -455,9 +455,11 @@ def bulk_import_stock():
         errors = []
 
         for index, row in df.iterrows():
+            savepoint = db.session.begin_nested()
             try:
                 # Skip rows with missing required fields
                 if pd.isna(row['product_name']) or pd.isna(row['quantity']) or pd.isna(row['rate']):
+                    savepoint.rollback()
                     error_count += 1
                     errors.append(f"Row {index + 2}: Missing required fields")
                     continue
@@ -491,15 +493,31 @@ def bulk_import_stock():
 
                 # Validate quantity and rate
                 if quantity < 0 or rate < 0:
+                    savepoint.rollback()
                     error_count += 1
                     errors.append(f"Row {index + 2}: Quantity and rate must be positive")
                     continue
 
-                # Check if product already exists
-                existing_product = StockEntry.query.filter_by(
-                    client_id=client_id,
-                    product_name=product_name
-                ).first()
+                # All DB lookups wrapped in no_autoflush to prevent autoflush from
+                # poisoning the session before the savepoint can catch the error.
+                with db.session.no_autoflush:
+                    existing_product = StockEntry.query.filter_by(
+                        client_id=client_id,
+                        product_name=product_name
+                    ).first()
+
+                    # Resolve barcode conflicts before any insert/update
+                    if barcode:
+                        # Check globally — matches the current DB unique constraint on barcode.
+                        # After migration v2 runs this becomes per-client, but checking globally
+                        # is always safe (just more conservative).
+                        barcode_taken = StockEntry.query.filter(
+                            StockEntry.barcode == barcode,
+                            StockEntry.product_id != (existing_product.product_id if existing_product else None)
+                        ).first()
+                        if barcode_taken:
+                            errors.append(f"Row {index + 2}: Barcode '{barcode}' already in use — imported '{product_name}' without barcode")
+                            barcode = None
 
                 if existing_product:
                     # Update existing product (auto-sum quantity)
@@ -514,22 +532,17 @@ def bulk_import_stock():
                     existing_product.gst_percentage = gst_percentage
                     existing_product.hsn_code = hsn_code
 
-                    # Auto-generate item_code if existing product doesn't have one
                     if not existing_product.item_code:
                         existing_product.item_code = item_code
 
-                    # Update barcode if provided and existing doesn't have one
-                    if barcode and not existing_product.barcode:
+                    if barcode:
                         existing_product.barcode = barcode
 
                     existing_product.updated_at = datetime.utcnow()
 
-                    # Log action
                     log_action('UPDATE', 'stock_entry', existing_product.product_id, old_data, existing_product.to_dict())
-
                     updated_count += 1
                 else:
-                    # Create new product
                     new_product = StockEntry(
                         product_id=str(uuid.uuid4()),
                         client_id=client_id,
@@ -547,17 +560,15 @@ def bulk_import_stock():
                         hsn_code=hsn_code,
                         created_at=datetime.utcnow()
                     )
-
                     db.session.add(new_product)
-
-                    # Log action
                     log_action('CREATE', 'stock_entry', new_product.product_id, None, new_product.to_dict())
-
                     created_count += 1
 
+                savepoint.commit()
                 success_count += 1
 
             except Exception as e:
+                savepoint.rollback()
                 error_count += 1
                 errors.append(f"Row {index + 2}: {str(e)}")
 

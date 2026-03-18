@@ -51,6 +51,14 @@ def create_app():
     else:
         logging.info("[OK] Database initialized successfully")
 
+    # Register all models in dependency order and force mapper configuration
+    # so all relationship string-references (e.g. 'User' in UserPermission)
+    # are resolved before the first request is served.
+    with app.app_context():
+        import models  # noqa: F401 — triggers models/__init__.py imports
+        from sqlalchemy.orm import configure_mappers
+        configure_mappers()
+
     # Phase 1: Background sync scheduler (disabled)
     logging.info("[INFO] Background sync scheduler disabled")
 
@@ -69,6 +77,61 @@ def create_app():
                 _perm_seed(db)
         except Exception as _e:
             logging.warning(f"[Migration] permission sections seed skipped: {_e}")
+
+        # Default permissions seed — runs at every startup, inserts only missing entries
+        try:
+            with app.app_context():
+                import uuid as _uuid
+                from models.permission_model import Permission
+                default_perms = [
+                    # Dashboard
+                    ('view_dashboard', 'View dashboard page'),
+                    # Billing
+                    ('gst_billing', 'Create GST bills'),
+                    ('non_gst_billing', 'Create Non-GST bills'),
+                    ('view_all_bills', 'View all bills'),
+                    ('view_own_bills', 'View own created bills'),
+                    ('edit_bill_details', 'Edit existing bills'),
+                    ('print_bills', 'Print bills'),
+                    # Stock
+                    ('view_stock', 'View stock/inventory'),
+                    ('add_product', 'Add new products to stock'),
+                    ('edit_product_details', 'Edit product details'),
+                    ('delete_product', 'Delete products from stock'),
+                    # Customers
+                    ('view_customers', 'View customers'),
+                    ('manage_customers', 'Create/edit/delete customers'),
+                    # Reports
+                    ('view_sales_reports', 'View sales reports'),
+                    ('export_reports', 'Export reports'),
+                    # Audit
+                    ('view_audit_logs', 'View audit logs'),
+                    # Settings
+                    ('manage_payment_types', 'Manage payment types'),
+                    ('manage_settings', 'Manage account settings'),
+                    # Users / Permissions
+                    ('manage_users', 'Create/edit/delete users'),
+                    ('manage_permissions', 'Manage user permissions'),
+                ]
+                existing_names = {
+                    r[0] for r in db.session.query(Permission.permission_name).all()
+                }
+                added = 0
+                for perm_name, desc in default_perms:
+                    if perm_name not in existing_names:
+                        db.session.add(Permission(
+                            permission_id=str(_uuid.uuid4()),
+                            permission_name=perm_name,
+                            description=desc,
+                        ))
+                        added += 1
+                if added:
+                    db.session.commit()
+                    logging.info(f"[Seed] {added} missing permission(s) added")
+        except Exception as _e:
+            with app.app_context():
+                db.session.rollback()
+            logging.warning(f"[Seed] Permission seeding skipped: {_e}")
 
     # Telegram daily report scheduler (runs at TELEGRAM_REPORT_HOUR:TELEGRAM_REPORT_MINUTE IST)
     try:
@@ -1038,49 +1101,47 @@ if __name__ == '__main__':
             db.session.rollback()
             print(f"[Migration] Subscription migration/seed skipped: {e}")
 
-        # Phase 1.7: Seed default permissions if table is empty
+        # Phase 1.7: Seed default permissions (inserts only missing entries)
         try:
             from models.permission_model import Permission
             import uuid as _uuid
-            has_view_dashboard = db.session.query(Permission).filter_by(permission_name='view_dashboard').first()
-            if not has_view_dashboard:
-                print("[Seed] Inserting default permissions...")
-                default_perms = [
-                    # Dashboard
-                    ('view_dashboard', 'View dashboard page'),
-                    # Billing
-                    ('gst_billing', 'Create GST bills'),
-                    ('non_gst_billing', 'Create Non-GST bills'),
-                    ('view_all_bills', 'View all bills'),
-                    ('view_own_bills', 'View own created bills'),
-                    ('edit_bills', 'Edit existing bills'),
-                    ('delete_bills', 'Delete bills'),
-                    ('print_bills', 'Print bills'),
-                    # Customers
-                    ('view_customers', 'View customers'),
-                    ('manage_customers', 'Create/edit/delete customers'),
-                    # Stock
-                    ('view_stock', 'View stock/inventory'),
-                    ('manage_stock', 'Create/edit/delete stock items'),
-                    # Reports
-                    ('view_sales_reports', 'View sales reports'),
-                    ('export_reports', 'Export reports'),
-                    # Audit
-                    ('view_audit_logs', 'View audit logs'),
-                    # Payment Types
-                    ('manage_payment_types', 'Manage payment types'),
-                    # Users (admin)
-                    ('manage_users', 'Create/edit/delete users'),
-                    ('manage_permissions', 'Manage user permissions'),
-                ]
-                for perm_name, desc in default_perms:
+            default_perms = [
+                ('view_dashboard', 'View dashboard page'),
+                ('gst_billing', 'Create GST bills'),
+                ('non_gst_billing', 'Create Non-GST bills'),
+                ('view_all_bills', 'View all bills'),
+                ('view_own_bills', 'View own created bills'),
+                ('edit_bill_details', 'Edit existing bills'),
+                ('print_bills', 'Print bills'),
+                ('view_stock', 'View stock/inventory'),
+                ('add_product', 'Add new products to stock'),
+                ('edit_product_details', 'Edit product details'),
+                ('delete_product', 'Delete products from stock'),
+                ('view_customers', 'View customers'),
+                ('manage_customers', 'Create/edit/delete customers'),
+                ('view_sales_reports', 'View sales reports'),
+                ('export_reports', 'Export reports'),
+                ('view_audit_logs', 'View audit logs'),
+                ('manage_payment_types', 'Manage payment types'),
+                ('manage_settings', 'Manage account settings'),
+                ('manage_users', 'Create/edit/delete users'),
+                ('manage_permissions', 'Manage user permissions'),
+            ]
+            existing_names = {
+                r[0] for r in db.session.query(Permission.permission_name).all()
+            }
+            added = 0
+            for perm_name, desc in default_perms:
+                if perm_name not in existing_names:
                     db.session.add(Permission(
                         permission_id=str(_uuid.uuid4()),
                         permission_name=perm_name,
                         description=desc,
                     ))
+                    added += 1
+            if added:
                 db.session.commit()
-                print(f"[Seed] {len(default_perms)} default permissions created")
+                print(f"[Seed] {added} missing permission(s) added")
         except Exception as e:
             db.session.rollback()
             print(f"[Seed] Permission seeding skipped: {e}")

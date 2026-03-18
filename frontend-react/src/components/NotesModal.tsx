@@ -267,6 +267,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                             <h3 className="font-semibold text-gray-900 dark:text-white text-sm leading-tight flex-1 truncate">
                               {note.title || 'Untitled Note'}
                             </h3>
+                            {/* Auto-delete badge — temporarily disabled
                             <span className={`px-2 py-0.5 rounded-full text-[10px] font-bold whitespace-nowrap ${
                               note.days_remaining <= 1
                                 ? 'bg-red-100 text-red-700 dark:bg-red-900/40 dark:text-red-300'
@@ -276,6 +277,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                             }`}>
                               {note.days_remaining}d
                             </span>
+                            */}
                           </div>
                           <p className="text-xs text-gray-600 dark:text-gray-400 line-clamp-2 mb-3 leading-relaxed">
                             {note.content}
@@ -339,6 +341,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                         />
                       </div>
 
+                      {/* Auto-delete after — temporarily disabled
                       {isCreating && (
                         <div className="flex items-center gap-3 p-4 bg-gray-50 dark:bg-gray-800/50 rounded-xl border border-gray-200 dark:border-gray-700">
                           <svg className="w-5 h-5 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -359,6 +362,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                           </select>
                         </div>
                       )}
+                      */}
 
                       <div className="flex gap-3 pt-2">
                         <button
@@ -414,6 +418,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                               </svg>
                               <span>{formatDate(selectedNote.updated_at)}</span>
                             </div>
+                            {/* Auto-delete countdown — temporarily disabled
                             <span className="text-gray-300 dark:text-gray-600">•</span>
                             <div className={`flex items-center gap-1.5 font-semibold ${
                               selectedNote.days_remaining <= 1
@@ -427,6 +432,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                               </svg>
                               <span>{selectedNote.days_remaining} days left</span>
                             </div>
+                            */}
                           </div>
                         </div>
                         <div className="flex gap-2 ml-4">

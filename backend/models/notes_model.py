@@ -19,14 +19,16 @@ class Note(db.Model):
     # Relationship to user
     user = db.relationship('User', backref='notes')
 
-    def __init__(self, user_id, content, title=None, days_to_keep=5):
+    def __init__(self, user_id, content, title=None, days_to_keep=None):
         self.note_id = uuid.uuid4()
         self.user_id = user_id
         self.title = title
         self.content = content
         self.created_at = datetime.utcnow()
         self.updated_at = datetime.utcnow()
-        self.expires_at = datetime.utcnow() + timedelta(days=days_to_keep)
+        # Auto-delete after X days — temporarily disabled; set far future expiry
+        # self.expires_at = datetime.utcnow() + timedelta(days=days_to_keep or 5)
+        self.expires_at = datetime.utcnow() + timedelta(days=36500)  # ~100 years
         self.synced_at = None
 
     def to_dict(self):
@@ -39,7 +41,9 @@ class Note(db.Model):
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'expires_at': self.expires_at.isoformat() if self.expires_at else None,
             'synced_at': self.synced_at.isoformat() if self.synced_at else None,
-            'days_remaining': (self.expires_at - datetime.utcnow()).days if self.expires_at else 0
+            # Auto-delete days_remaining — temporarily disabled
+            # 'days_remaining': (self.expires_at - datetime.utcnow()).days if self.expires_at else 0
+            'days_remaining': None
         }
 
     @staticmethod

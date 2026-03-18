@@ -165,7 +165,8 @@
       "Bash(/home/development1/Desktop/Valoryx/backend/models/stock_transfer_model.py:*)",
       "Bash(git add:*)",
       "Bash(fuser -k:*)",
-      "Bash(fuser:*)"
+      "Bash(fuser:*)",
+      "WebFetch(domain:valoryx.ryxtech.in)"
     ],
     "deny": [],
     "ask": [],

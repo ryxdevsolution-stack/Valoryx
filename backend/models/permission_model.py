@@ -4,6 +4,10 @@ from sqlalchemy.orm import joinedload
 from datetime import datetime
 import uuid
 
+# Imported here so SQLAlchemy can resolve the 'User' class reference in
+# UserPermission relationships without relying on string-based lazy lookup.
+from models.user_model import User  # noqa: F401
+
 class PermissionSection(db.Model):
     """Permission section model for organizing permissions"""
     __tablename__ = 'permission_sections'
@@ -70,9 +74,9 @@ class UserPermission(db.Model):
     synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
 
     # Relationships
-    user = db.relationship('User', foreign_keys=[user_id], backref='user_permissions')
+    user = db.relationship(User, foreign_keys=[user_id], backref='user_permissions')
     permission = db.relationship('Permission', back_populates='user_permissions')
-    grantor = db.relationship('User', foreign_keys=[granted_by])
+    grantor = db.relationship(User, foreign_keys=[granted_by])
 
     # Unique constraint to prevent duplicate permissions for a user
     __table_args__ = (
