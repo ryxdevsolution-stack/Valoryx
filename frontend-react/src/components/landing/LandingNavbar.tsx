@@ -2,16 +2,15 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Menu, X, Sun, Moon } from 'lucide-react'
+import { Menu, X } from 'lucide-react'
 import { Link } from 'react-router-dom'
-import { useTheme } from '@/contexts/ThemeContext'
+import { AnimatedThemeToggler } from '@/components/AnimatedThemeToggler'
 import { siteConfig, navLinks } from '@/config/landing.config'
 import { scrollToSection } from '@/lib/landing/animations'
 
 export default function LandingNavbar() {
   const [isScrolled, setIsScrolled] = useState(false)
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
-  const { isDarkMode, toggleTheme } = useTheme()
 
   useEffect(() => {
     const handleScroll = () => {
@@ -64,21 +63,13 @@ export default function LandingNavbar() {
 
             {/* Desktop Actions */}
             <div className="hidden lg:flex items-center gap-4">
-              <button
-                onClick={toggleTheme}
+              <AnimatedThemeToggler
                 className={`p-2 rounded-lg transition-colors ${
                   isScrolled
                     ? 'hover:bg-gray-100 dark:hover:bg-gray-800'
                     : 'hover:bg-white/20 dark:hover:bg-gray-800/50'
-                }`}
-                aria-label="Toggle dark mode"
-              >
-                {isDarkMode ? (
-                  <Sun className="w-5 h-5 text-yellow-500" />
-                ) : (
-                  <Moon className="w-5 h-5 text-gray-600" />
-                )}
-              </button>
+                } text-gray-600 dark:text-yellow-500`}
+              />
 
               <Link
                 to={siteConfig.routes.login}
@@ -97,17 +88,9 @@ export default function LandingNavbar() {
 
             {/* Mobile Menu Button */}
             <div className="flex items-center gap-2 lg:hidden">
-              <button
-                onClick={toggleTheme}
-                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-                aria-label="Toggle dark mode"
-              >
-                {isDarkMode ? (
-                  <Sun className="w-5 h-5 text-yellow-500" />
-                ) : (
-                  <Moon className="w-5 h-5 text-gray-600" />
-                )}
-              </button>
+              <AnimatedThemeToggler
+                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-yellow-500"
+              />
 
               <button
                 onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}

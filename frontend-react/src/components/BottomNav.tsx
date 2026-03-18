@@ -1,7 +1,7 @@
 import { useState, useEffect } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
-import { useTheme } from '@/contexts/ThemeContext'
+import { AnimatedThemeToggler } from '@/components/AnimatedThemeToggler'
 import { usePermissions } from '@/hooks/usePermissions'
 import {
   LayoutDashboard,
@@ -16,8 +16,6 @@ import {
   Building2,
   User,
   LogOut,
-  Sun,
-  Moon,
   X,
   CreditCard,
 } from 'lucide-react'
@@ -25,7 +23,6 @@ import {
 export default function BottomNav() {
   const { pathname } = useLocation()
   const { user, logout } = useClient()
-  const { isDarkMode, toggleTheme } = useTheme()
   const { hasPermission, isSuperAdmin } = usePermissions()
   const [showMore, setShowMore] = useState(false)
 
@@ -198,17 +195,12 @@ export default function BottomNav() {
 
         {/* Theme + Logout */}
         <div className="px-3 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800 mt-1 space-y-1">
-          <button
-            type="button"
-            onClick={toggleTheme}
+          <AnimatedThemeToggler
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          >
-            {isDarkMode
-              ? <Sun className="w-5 h-5 flex-shrink-0" strokeWidth={2} />
-              : <Moon className="w-5 h-5 flex-shrink-0" strokeWidth={2} />
-            }
-            <span className="text-sm font-medium">{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>
-          </button>
+            iconSize={20}
+            iconStrokeWidth={2}
+            showLabel
+          />
 
           <button
             type="button"

@@ -1,7 +1,7 @@
 import { useMemo } from 'react'
 import { Link, useLocation } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
-import { useTheme } from '@/contexts/ThemeContext'
+import { AnimatedThemeToggler } from '@/components/AnimatedThemeToggler'
 import { usePermissions } from '@/hooks/usePermissions'
 import {
   LayoutDashboard,
@@ -12,8 +12,6 @@ import {
   TrendingUp,
   Search,
   LogOut,
-  Sun,
-  Moon,
   Building2,
   User,
   ArrowLeftRight
@@ -39,7 +37,6 @@ const adminNavigation = [
 export default function Sidebar() {
   const { pathname } = useLocation()
   const { client, user, logout } = useClient()
-  const { isDarkMode, toggleTheme } = useTheme()
   const { hasPermission, isSuperAdmin } = usePermissions()
 
   // Filter navigation items based on permissions
@@ -79,17 +76,12 @@ export default function Sidebar() {
           {/* Theme Toggle */}
           <div className="pb-2 border-b border-gray-200/60 dark:border-gray-700/60">
             <div className="relative group">
-              <button
-                type="button"
-                onClick={toggleTheme}
+              <AnimatedThemeToggler
                 className="w-11 h-11 rounded-full transition-all duration-300 flex items-center justify-center shadow-sm hover:shadow-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
-                aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
-              >
-                {isDarkMode ? <Sun className="w-5 h-5" strokeWidth={2.5} /> : <Moon className="w-5 h-5" strokeWidth={2.5} />}
-              </button>
+              />
               <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-50">
                 <div className="bg-gray-900 dark:bg-gray-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shadow-lg">
-                  {isDarkMode ? 'Light Mode' : 'Dark Mode'}
+                  Toggle Theme
                 </div>
               </div>
             </div>

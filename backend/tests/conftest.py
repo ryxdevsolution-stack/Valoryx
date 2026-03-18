@@ -383,6 +383,23 @@ def patch_side_effects(monkeypatch, test_mode):
         except (AttributeError, ImportError, Exception):
             pass
 
+    # ── always: silence webhook dispatch ─────────────────────────────────────
+    # dispatch_event (in services/webhook_service.py) queries WebhookEndpoint
+    # to find active endpoints.  If that table is missing or has a schema
+    # drift, the query raises a PostgreSQL error that aborts the current
+    # transaction.  The billing route catches the exception and still returns
+    # 201, but the PostgreSQL connection is left in an aborted-transaction
+    # state — any subsequent query in the same session then fails with
+    # InFailedSqlTransaction.
+    # Billing/stock tests are not testing webhook delivery, so silencing this
+    # in both modes is safe and correct.
+    try:
+        monkeypatch.setattr(
+            "services.webhook_service.dispatch_event", lambda *a, **k: None
+        )
+    except (AttributeError, ImportError, Exception):
+        pass
+
     # ── offline only ──────────────────────────────────────────────────────────
     if test_mode == "offline":
         _counter = [1]

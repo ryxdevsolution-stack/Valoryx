@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
-import { useTheme } from '@/contexts/ThemeContext';
+import { AnimatedThemeToggler } from '@/components/AnimatedThemeToggler';
 import {
   LayoutDashboard,
   Building2,
@@ -11,8 +11,6 @@ import {
   Shield,
   Home,
   LogOut,
-  Sun,
-  Moon,
 } from 'lucide-react';
 
 const navigationGroups = [
@@ -43,7 +41,7 @@ const allItems = navigationGroups.flatMap(g => g.items);
 export default function AdminSidebar() {
   const { pathname } = useLocation();
   const { user, logout } = useClient();
-  const { isDarkMode, toggleTheme } = useTheme();
+;
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const closeTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
@@ -224,16 +222,12 @@ export default function AdminSidebar() {
 
           {/* Footer */}
           <div className="flex-shrink-0 border-t border-slate-200/50 dark:border-gray-700/50 p-4 bg-white/60 dark:bg-gray-800/60 backdrop-blur-xl space-y-1">
-            <button
-              type="button"
-              onClick={toggleTheme}
+            <AnimatedThemeToggler
               className="w-full flex items-center gap-3 px-3 py-2.5 rounded-xl text-slate-600 dark:text-gray-300 hover:bg-white/60 dark:hover:bg-gray-700/60 hover:text-slate-800 dark:hover:text-white transition-all duration-200 text-sm font-semibold"
-            >
-              <div className="w-8 h-8 rounded-lg bg-slate-200/50 dark:bg-gray-700/50 flex items-center justify-center" aria-hidden="true">
-                {isDarkMode ? <Sun className="w-4 h-4 text-amber-500" /> : <Moon className="w-4 h-4" />}
-              </div>
-              <span>{isDarkMode ? 'Light Mode' : 'Dark Mode'}</span>
-            </button>
+              iconSize={16}
+              iconStrokeWidth={2}
+              showLabel
+            />
             <button
               type="button"
               onClick={() => { logout(); closeMobileMenu(); }}
@@ -291,17 +285,12 @@ export default function AdminSidebar() {
           {/* Theme Toggle */}
           <div className="pb-2 border-b border-gray-200/60 dark:border-gray-700/60">
             <div className="relative group">
-              <button
-                type="button"
-                onClick={toggleTheme}
+              <AnimatedThemeToggler
                 className="w-11 h-11 rounded-full transition-all duration-300 flex items-center justify-center shadow-sm hover:shadow-md bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
-                aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
-              >
-                {isDarkMode ? <Sun className="w-5 h-5 text-amber-500" strokeWidth={2.5} aria-hidden="true" /> : <Moon className="w-5 h-5" strokeWidth={2.5} aria-hidden="true" />}
-              </button>
+              />
               <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-50" aria-hidden="true">
                 <div className="bg-gray-900 dark:bg-gray-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shadow-lg">
-                  {isDarkMode ? 'Light Mode' : 'Dark Mode'}
+                  Toggle Theme
                 </div>
               </div>
             </div>

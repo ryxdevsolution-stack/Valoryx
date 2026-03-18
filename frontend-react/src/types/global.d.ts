@@ -57,6 +57,14 @@ declare global {
   interface Window {
     electronAPI?: ElectronAPI;
   }
+
+  interface Document {
+    startViewTransition?: (callback: () => void) => {
+      ready: Promise<void>;
+      finished: Promise<void>;
+      updateCallbackDone: Promise<void>;
+    };
+  }
 }
 
 export {};

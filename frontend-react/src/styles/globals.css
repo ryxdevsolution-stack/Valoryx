@@ -18,6 +18,13 @@
 
 /* Auth pages set their own dark background via className */
 
+/* View Transition API — needed for AnimatedThemeToggler circular reveal */
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation: none;
+  mix-blend-mode: normal;
+}
+
 body {
   color: rgb(var(--foreground-rgb));
   font-size: clamp(0.75rem, 0.5vw + 0.5rem, 1rem);
