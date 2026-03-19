@@ -14,8 +14,11 @@ import {
   LogOut,
   Building2,
   User,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Store,
+  Download,
 } from 'lucide-react'
+import { usePWA } from '@/hooks/usePWA'
 
 // Define navigation items with new permission names
 const allNavigation = [
@@ -38,6 +41,7 @@ export default function Sidebar() {
   const { pathname } = useLocation()
   const { client, user, logout } = useClient()
   const { hasPermission, isSuperAdmin } = usePermissions()
+  const { canInstall, install } = usePWA()
 
   // Filter navigation items based on permissions
   const navigation = useMemo(() => {
@@ -159,8 +163,46 @@ export default function Sidebar() {
             </>
           )}
 
-          {/* Profile & Logout at Bottom */}
+          {/* Profile, Shop Settings, Install & Logout at Bottom */}
           <div className="pt-2 border-t border-gray-200/60 dark:border-gray-700/60 flex flex-col items-center gap-2">
+            {/* Install App */}
+            {canInstall && (
+              <div className="relative group">
+                <button
+                  type="button"
+                  onClick={install}
+                  className="w-11 h-11 rounded-full transition-all duration-300 flex items-center justify-center shadow-sm hover:shadow-md bg-purple-100 dark:bg-purple-900/30 text-purple-600 dark:text-purple-400 hover:bg-purple-200 dark:hover:bg-purple-800/50 hover:scale-105 animate-pulse hover:animate-none"
+                  aria-label="Install App"
+                >
+                  <Download className="w-5 h-5" strokeWidth={2.5} />
+                </button>
+                <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-50">
+                  <div className="bg-purple-600 dark:bg-purple-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shadow-lg">
+                    Install App
+                  </div>
+                </div>
+              </div>
+            )}
+            {/* Shop Settings */}
+            <div className="relative group">
+              <Link
+                to="/shop-settings"
+                className={`w-11 h-11 rounded-full transition-all duration-300 flex items-center justify-center shadow-sm hover:shadow-md hover:scale-105 ${
+                  pathname === '/shop-settings'
+                    ? 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 scale-105'
+                    : 'bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700'
+                }`}
+                aria-label="Shop Settings"
+              >
+                <Store className="w-5 h-5" strokeWidth={2.5} />
+              </Link>
+              <div className="absolute left-full ml-3 top-1/2 -translate-y-1/2 opacity-0 group-hover:opacity-100 pointer-events-none transition-all duration-200 z-50">
+                <div className="bg-gray-900 dark:bg-gray-700 text-white px-3 py-1.5 rounded-lg text-xs font-medium whitespace-nowrap shadow-lg">
+                  Shop Settings
+                </div>
+              </div>
+            </div>
+
             {/* My Profile */}
             <div className="relative group">
               <Link

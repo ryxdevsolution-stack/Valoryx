@@ -353,6 +353,13 @@ def create_app():
         import_errors.append(f"webhooks: {str(e)}")
         logging.error(f"Failed to import webhooks blueprint: {e}")
 
+    shop_settings_bp = None
+    try:
+        from routes.shop_settings import shop_settings_bp
+    except Exception as e:
+        import_errors.append(f"shop_settings: {str(e)}")
+        logging.error(f"Failed to import shop_settings blueprint: {e}")
+
     # Store import errors for debugging
     app.config['IMPORT_ERRORS'] = import_errors
     if import_errors:
@@ -533,6 +540,13 @@ def create_app():
             blueprints_registered.append('webhooks')
         except Exception as e:
             print(f"Warning: Could not register webhooks blueprint: {e}")
+
+    if shop_settings_bp:
+        try:
+            app.register_blueprint(shop_settings_bp, url_prefix='/api/shop-settings')
+            blueprints_registered.append('shop_settings')
+        except Exception as e:
+            print(f"Warning: Could not register shop_settings blueprint: {e}")
 
     # Store blueprint registration status
     app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered

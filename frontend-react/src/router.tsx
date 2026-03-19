@@ -27,6 +27,7 @@ const Pricing = React.lazy(() => import('@/pages/Pricing'))
 
 const StockTransfer = React.lazy(() => import('@/pages/stock-transfer/StockTransfer'))
 const BranchManagement = React.lazy(() => import('@/pages/stock-transfer/BranchManagement'))
+const ShopSettings = React.lazy(() => import('@/pages/ShopSettings'))
 const ForcePasswordChange = React.lazy(() => import('@/pages/auth/ForcePasswordChange'))
 const OAuthCallbackPage = React.lazy(() => import('@/pages/auth/OAuthCallback'))
 const VerifyEmailPending = React.lazy(() => import('@/pages/auth/VerifyEmailPending'))
@@ -179,6 +180,7 @@ export function AppRoutes() {
         <Route path="/reports" element={<Reports />} />
         <Route path="/audit" element={<Audit />} />
         <Route path="/profile" element={<Profile />} />
+        <Route path="/shop-settings" element={<ShopSettings />} />
         <Route path="/payment-types" element={<PaymentTypes />} />
         <Route path="/docs" element={<Docs />} />
 

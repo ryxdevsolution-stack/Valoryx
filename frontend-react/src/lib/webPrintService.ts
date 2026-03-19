@@ -53,10 +53,13 @@ export interface BillData {
 export interface ClientInfo {
   client_name: string;
   address?: string;
+  address2?: string;
   phone?: string;
   email?: string;
   gstin?: string;
   logo_url?: string;
+  upi_id?: string;
+  receipt_footer?: string;
 }
 
 export interface PrintResult {
@@ -287,6 +290,7 @@ export function generateReceiptHtml(
   <!-- Header -->
   <div class="center bold" style="font-size: ${FONT_SIZE_XLARGE}; margin-bottom: 1mm;">${escapeHtml(clientInfo.client_name || 'Business Name')}</div>
   ${clientInfo.address ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL};">${escapeHtml(clientInfo.address).replace(/\n/g, '<br>')}</div>` : ''}
+  ${clientInfo.address2 ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL};">${escapeHtml(clientInfo.address2)}</div>` : ''}
   ${clientInfo.phone ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL};">${escapeHtml(clientInfo.phone)}</div>` : ''}
   ${clientInfo.gstin ? `<div class="center bold" style="font-size: ${FONT_SIZE_SMALL};">GST NO : ${escapeHtml(clientInfo.gstin)}</div>` : ''}
   <div class="dashed"></div>
@@ -334,7 +338,7 @@ export function generateReceiptHtml(
   </div>` : ''}
 
   <!-- Footer -->
-  <div class="center bold" style="font-size: ${FONT_SIZE}; margin-top: 2mm;">Sorry, No Exchange / No Refund</div>
+  <div class="center bold" style="font-size: ${FONT_SIZE}; margin-top: 2mm;">${escapeHtml(clientInfo.receipt_footer || 'Sorry, No Exchange / No Refund')}</div>
 </body>
 </html>`;
 }

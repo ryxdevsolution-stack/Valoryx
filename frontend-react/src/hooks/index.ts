@@ -14,3 +14,6 @@ export {
   type UseApiOptions,
   type PaginationState,
 } from './useApi';
+
+// Device detection hooks
+export { useMobileDetect } from './useMobileDetect';

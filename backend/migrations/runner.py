@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 1
+CURRENT_SCHEMA_VERSION = 3
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -224,11 +224,41 @@ def _m002_barcode_per_client_unique(db):
     logging.info("[Migration] v2: barcode uniqueness changed to per-client")
 
 
+def _m003_shop_receipt_settings(db):
+    """
+    Add shop receipt / UPI settings columns to client_entry:
+    - address2: secondary address line
+    - upi_id: UPI virtual payment address for QR code
+    - receipt_footer: custom footer text printed on receipts
+    """
+    inspector = sa_inspect(db.engine)
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    _add_col('client_entry', 'address2',        'TEXT NULL')
+    _add_col('client_entry', 'upi_id',          'VARCHAR(100) NULL')
+    _add_col('client_entry', 'receipt_footer',   'TEXT NULL')
+
+    db.session.commit()
+    logging.info("[Migration] v3: shop receipt settings columns added")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
     (1, _m001_core_columns),
     (2, _m002_barcode_per_client_unique),
+    (3, _m003_shop_receipt_settings),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

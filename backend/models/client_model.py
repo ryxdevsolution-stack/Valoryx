@@ -26,6 +26,11 @@ class ClientEntry(db.Model):
     razorpay_subscription_id = db.Column(db.String(100), nullable=True)  # set after first invoice.paid webhook
     telegram_chat_id = db.Column(db.String(50), nullable=True)  # Telegram chat ID for daily summary reports
 
+    # Shop / Receipt settings
+    address2 = db.Column(db.Text, nullable=True)           # secondary address line
+    upi_id = db.Column(db.String(100), nullable=True)      # e.g. shop@upi
+    receipt_footer = db.Column(db.Text, nullable=True)      # custom footer text on receipts
+
     # Email verification
     email_verified = db.Column(db.Boolean, default=False, nullable=False)
     email_verification_token = db.Column(db.String(64), nullable=True, index=True)
@@ -77,6 +82,9 @@ class ClientEntry(db.Model):
             'subscription_end_date': self.subscription_end_date.isoformat() if self.subscription_end_date else None,
             'razorpay_subscription_id': self.razorpay_subscription_id,
             'telegram_chat_id': self.telegram_chat_id,
+            'address2': self.address2,
+            'upi_id': self.upi_id,
+            'receipt_footer': self.receipt_footer,
             'email_verified': self.email_verified,
             'deletion_scheduled_at': self.deletion_scheduled_at.isoformat() if self.deletion_scheduled_at else None,
         }

@@ -10,6 +10,12 @@ import { SystemNotification } from '@/utils/notifications'
 import ProductCardGrid from '@/components/billing/ProductCardGrid'
 import ProfitSummaryBar from '@/components/billing/ProfitSummaryBar'
 import MobileCartList from '@/components/billing/MobileCartList'
+import { useMobileDetect } from '@/hooks/useMobileDetect'
+import BarcodeScannerModal from '@/components/billing/BarcodeScannerModal'
+import UpiQrCode from '@/components/billing/UpiQrCode'
+import bluetoothPrinterService from '@/services/bluetoothPrinterService'
+import { getShopSettings } from '@/services/shopSettingsService'
+import type { ShopSettings } from '@/services/shopSettingsService'
 
 interface Product {
   product_id: string
@@ -204,6 +210,11 @@ export default function UnifiedBillingPage() {
   const [availableStock, setAvailableStock] = useState<number>(0)
   const [stockWarning, setStockWarning] = useState<string>('')
 
+  // Mobile detection
+  const { isMobile, isTouchDevice, supportsWebBluetooth, supportsCamera } = useMobileDetect()
+  const [isScannerOpen, setIsScannerOpen] = useState(false)
+  const [shopSettings, setShopSettings] = useState<ShopSettings | null>(null)
+
   // Modal states
   const [showDraftRestored, setShowDraftRestored] = useState(false)
 
@@ -231,6 +242,13 @@ export default function UnifiedBillingPage() {
         // ignore
       }
     }
+  }, [])
+
+  // Fetch shop settings for Bluetooth printing and UPI QR
+  useEffect(() => {
+    getShopSettings().then(settings => {
+      setShopSettings(settings)
+    }).catch(() => {})
   }, [])
 
   // Get current active tab
@@ -1273,21 +1291,27 @@ export default function UnifiedBillingPage() {
       // Use bill data directly from create response (no need for additional fetch)
       const billData = response.data.bill
 
-      // Prepare client info for printing
+      // Prepare client info for printing (merge with shop settings if available)
       const clientInfo = client ? {
-        client_name: client.client_name,
-        address: client.address,
-        phone: client.phone,
+        client_name: shopSettings?.shop_name || client.client_name,
+        address: shopSettings?.address1 || client.address,
+        address2: shopSettings?.address2 || '',
+        phone: shopSettings?.phone || client.phone,
         email: client.email,
-        gstin: client.gstin,
-        logo_url: client.logo_url
+        gstin: shopSettings?.gst_number || client.gstin,
+        logo_url: client.logo_url,
+        upi_id: shopSettings?.upi_id || '',
+        receipt_footer: shopSettings?.receipt_footer || '',
       } : {
-        client_name: 'Business Name',
-        address: '',
-        phone: '',
+        client_name: shopSettings?.shop_name || 'Business Name',
+        address: shopSettings?.address1 || '',
+        address2: shopSettings?.address2 || '',
+        phone: shopSettings?.phone || '',
         email: '',
-        gstin: '',
-        logo_url: ''
+        gstin: shopSettings?.gst_number || '',
+        logo_url: '',
+        upi_id: shopSettings?.upi_id || '',
+        receipt_footer: shopSettings?.receipt_footer || '',
       }
 
       // Check if running in Electron desktop app
@@ -1810,6 +1834,18 @@ export default function UnifiedBillingPage() {
                     </div>
                   )}
                 </div>
+                {isMobile && supportsCamera && (
+                  <button
+                    type="button"
+                    onClick={() => setIsScannerOpen(true)}
+                    className="p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 flex-shrink-0 self-end mb-0.5"
+                    title="Scan Barcode"
+                  >
+                    <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M4 5a2 2 0 00-2 2v8a2 2 0 002 2h12a2 2 0 002-2V7a2 2 0 00-2-2h-1.586a1 1 0 01-.707-.293l-1.121-1.121A2 2 0 0011.172 3H8.828a2 2 0 00-1.414.586L6.293 4.707A1 1 0 015.586 5H4zm6 9a3 3 0 100-6 3 3 0 000 6z" clipRule="evenodd" />
+                    </svg>
+                  </button>
+                )}
                 <div className="w-24">
                   <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
                     Quantity
@@ -2506,6 +2542,20 @@ export default function UnifiedBillingPage() {
                   )}
                 </div>
               )}
+
+              {/* UPI QR Code - shown when a UPI payment type is selected and shop has UPI ID */}
+              {shopSettings?.upi_id && activeTab.payment_splits.some(p =>
+                p.payment_type?.toLowerCase().includes('upi')
+              ) && (
+                <div className="mt-3 flex justify-center">
+                  <UpiQrCode
+                    upiId={shopSettings.upi_id}
+                    shopName={shopSettings.shop_name || client?.client_name || ''}
+                    amount={getRoundedGrandTotal()}
+                    size={160}
+                  />
+                </div>
+              )}
             </div>
           </div>
 
@@ -2651,6 +2701,58 @@ export default function UnifiedBillingPage() {
                 >
                   {loading ? 'Processing...' : 'Print Bill'}
                 </button>
+                {isMobile && supportsWebBluetooth && (
+                  <button
+                    type="button"
+                    onClick={async () => {
+                      if (!bluetoothPrinterService.isConnected) {
+                        // Prompt user to pair a printer
+                        try {
+                          const device = await bluetoothPrinterService.requestDevice()
+                          if (!device) return
+                          const connected = await bluetoothPrinterService.connect(device)
+                          if (!connected) {
+                            alert('Failed to connect to printer. Please try again.')
+                            return
+                          }
+                        } catch (err) {
+                          alert('Bluetooth pairing failed: ' + (err as Error).message)
+                          return
+                        }
+                      }
+                      const receiptData = {
+                        shopName: shopSettings?.shop_name || client?.client_name || '',
+                        address1: shopSettings?.address1 || client?.address || '',
+                        address2: shopSettings?.address2 || '',
+                        phone: shopSettings?.phone || client?.phone || '',
+                        gstNumber: shopSettings?.gst_number || client?.gstin || '',
+                        billNumber: String(nextBillNumber || ''),
+                        date: new Date().toLocaleDateString('en-IN'),
+                        time: new Date().toLocaleTimeString('en-IN', { hour12: true }),
+                        paymentMethod: activeTab.payment_splits[0]?.payment_type || 'Cash',
+                        items: activeTab.items.map(item => ({
+                          name: item.product_name,
+                          quantity: item.quantity,
+                          rate: item.rate,
+                          amount: item.amount,
+                        })),
+                        subtotal: calculateSubtotal(),
+                        gstAmount: calculateTotalGST(),
+                        discount: activeTab.useNegotiablePrice ? activeTab.negotiableAmount : getDiscountAmount(),
+                        grandTotal: getRoundedGrandTotal(),
+                        footerText: shopSettings?.receipt_footer || '',
+                      }
+                      try {
+                        await bluetoothPrinterService.printReceipt(receiptData)
+                      } catch (err) {
+                        alert('Print failed: ' + (err as Error).message)
+                      }
+                    }}
+                    className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition font-semibold text-sm flex items-center justify-center gap-2"
+                  >
+                    <span>BT Print</span>
+                  </button>
+                )}
                 <button
                   type="button"
                   onClick={() => {
@@ -2692,6 +2794,23 @@ export default function UnifiedBillingPage() {
             </div>
           </div>
         </form>
+
+        {/* Barcode Scanner Modal (mobile camera) */}
+        <BarcodeScannerModal
+          isOpen={isScannerOpen}
+          onClose={() => setIsScannerOpen(false)}
+          onScan={async (barcode) => {
+            setIsScannerOpen(false)
+            try {
+              const cleanedBarcode = barcode.trim().replace(/\s+/g, '')
+              const response = await api.get(`/stock/lookup/${encodeURIComponent(cleanedBarcode)}`)
+              const product = response.data.product
+              addProductToItems(product)
+            } catch (error: any) {
+              alert(error.response?.data?.error || 'Product not found for scanned barcode')
+            }
+          }}
+        />
 
       </div>
     </DashboardLayout>

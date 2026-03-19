@@ -18,12 +18,16 @@ import {
   LogOut,
   X,
   CreditCard,
+  Store,
+  Download,
 } from 'lucide-react'
+import { usePWA } from '@/hooks/usePWA'
 
 export default function BottomNav() {
   const { pathname } = useLocation()
   const { user, logout } = useClient()
   const { hasPermission, isSuperAdmin } = usePermissions()
+  const { canInstall, install } = usePWA()
   const [showMore, setShowMore] = useState(false)
 
   useEffect(() => {
@@ -87,6 +91,9 @@ export default function BottomNav() {
     },
     isSuperAdmin() && {
       name: 'Admin', href: '/admin/clients', icon: Building2,
+    },
+    {
+      name: 'Shop Settings', href: '/shop-settings', icon: Store,
     },
     {
       name: 'My Profile', href: '/profile', icon: User,
@@ -193,8 +200,18 @@ export default function BottomNav() {
           })}
         </div>
 
-        {/* Theme + Logout */}
+        {/* Install + Theme + Logout */}
         <div className="px-3 pb-4 pt-1 border-t border-gray-100 dark:border-gray-800 mt-1 space-y-1">
+          {canInstall && (
+            <button
+              type="button"
+              onClick={() => { install(); setShowMore(false) }}
+              className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-purple-600 dark:text-purple-400 hover:bg-purple-50 dark:hover:bg-purple-900/20 transition-colors"
+            >
+              <Download className="w-5 h-5 flex-shrink-0" strokeWidth={2} />
+              <span className="text-sm font-medium">Install App</span>
+            </button>
+          )}
           <AnimatedThemeToggler
             className="w-full flex items-center gap-3 px-4 py-3 rounded-xl text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
             iconSize={20}
