@@ -119,6 +119,18 @@ CREATE INDEX IF NOT EXISTS idx_nongst_items_gin
 ON non_gst_billing USING gin (items);
 
 -- ============================================
+-- CUSTOMER TABLE INDEXES
+-- ============================================
+
+-- Index for customer phone lookups (used in /customer/phone/<phone>, /customer/search, create duplicate check)
+CREATE INDEX IF NOT EXISTS idx_customer_client_phone
+ON customer(client_id, customer_phone);
+
+-- Index for active/inactive customer filtering
+CREATE INDEX IF NOT EXISTS idx_customer_client_status
+ON customer(client_id, status);
+
+-- ============================================
 -- AUDIT_LOG TABLE INDEXES (if exists)
 -- ============================================
 
@@ -160,6 +172,7 @@ ON user_permissions(permission_id);
 ANALYZE stock_entry;
 ANALYZE gst_billing;
 ANALYZE non_gst_billing;
+ANALYZE customer;
 ANALYZE users;
 
 -- ============================================
@@ -236,6 +249,9 @@ DROP INDEX IF EXISTS idx_nongst_payment_type;
 DROP INDEX IF EXISTS idx_nongst_status;
 DROP INDEX IF EXISTS idx_nongst_recent_bills;
 DROP INDEX IF EXISTS idx_nongst_items_gin;
+
+DROP INDEX IF EXISTS idx_customer_client_phone;
+DROP INDEX IF EXISTS idx_customer_client_status;
 
 DROP INDEX IF EXISTS idx_audit_table_record;
 DROP INDEX IF EXISTS idx_audit_user_action;

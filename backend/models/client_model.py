@@ -30,6 +30,7 @@ class ClientEntry(db.Model):
     address2 = db.Column(db.Text, nullable=True)           # secondary address line
     upi_id = db.Column(db.String(100), nullable=True)      # e.g. shop@upi
     receipt_footer = db.Column(db.Text, nullable=True)      # custom footer text on receipts
+    points_per_100 = db.Column(db.Integer, nullable=True, default=0)  # loyalty points earned per ₹100 spent
 
     # Email verification
     email_verified = db.Column(db.Boolean, default=False, nullable=False)
@@ -85,6 +86,7 @@ class ClientEntry(db.Model):
             'address2': self.address2,
             'upi_id': self.upi_id,
             'receipt_footer': self.receipt_footer,
+            'points_per_100': self.points_per_100 or 0,
             'email_verified': self.email_verified,
             'deletion_scheduled_at': self.deletion_scheduled_at.isoformat() if self.deletion_scheduled_at else None,
         }

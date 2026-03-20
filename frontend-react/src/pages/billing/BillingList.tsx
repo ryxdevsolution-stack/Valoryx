@@ -6,7 +6,7 @@ import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { useClient } from '@/contexts/ClientContext'
 import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle, Calendar, X, Package, User, Clock, Hash } from 'lucide-react'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useLocation } from 'react-router-dom'
 
 interface BillItem {
   product_name: string
@@ -50,6 +50,7 @@ interface PaymentType {
 
 export default function AllBillsPage() {
   const navigate = useNavigate()
+  const location = useLocation()
   const { client } = useClient()
   const [bills, setBills] = useState<Bill[]>([])
   const [paymentTypes, setPaymentTypes] = useState<PaymentType[]>([])
@@ -65,6 +66,9 @@ export default function AllBillsPage() {
   const [fromDate, setFromDate] = useState<string>('')
   const [toDate, setToDate] = useState<string>('')
 
+  // Cancel confirmation modal state
+  const [cancelConfirm, setCancelConfirm] = useState<{ billId: string; billNumber: number } | null>(null)
+
   // Track ongoing request to prevent duplicates (for React Strict Mode)
   const ongoingRequest = useRef<Promise<void> | null>(null)
   const hasInitialized = useRef(false)
@@ -77,6 +81,19 @@ export default function AllBillsPage() {
     fetchData()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
+
+  // Force-refresh when coming back from exchange (or cancel that updated data)
+  useEffect(() => {
+    const state = location.state as { refreshAfterExchange?: boolean } | null
+    if (state?.refreshAfterExchange) {
+      // Clear the state so refresh doesn't repeat on re-renders
+      navigate(location.pathname, { replace: true, state: {} })
+      // Force fresh fetch by clearing the guard and ongoing request
+      ongoingRequest.current = null
+      fetchData()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.state])
 
   // Helper function to parse payment types from bill
   const parsePaymentTypes = (bill: Bill): string[] => {
@@ -402,14 +419,18 @@ export default function AllBillsPage() {
         phone: client.phone,
         email: client.email,
         gstin: client.gstin,
-        logo_url: client.logo_url
+        logo_url: client.logo_url,
+        upi_id: (client as any).upi_id || '',
+        receipt_footer: (client as any).receipt_footer || ''
       } : {
         client_name: 'Business Name',
         address: '',
         phone: '',
         email: '',
         gstin: '',
-        logo_url: ''
+        logo_url: '',
+        upi_id: '',
+        receipt_footer: ''
       }
 
       // Check if running in Electron desktop app
@@ -420,8 +441,9 @@ export default function AllBillsPage() {
         // Use Electron's silent print for desktop app
         console.log('[BILLING] Electron detected - using Electron print API...')
         try {
-          const { generateReceiptHtml } = await import('@/lib/webPrintService')
-          const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo, true)
+          const { generateReceiptHtml, generateUpiQrDataUrl } = await import('@/lib/webPrintService')
+          const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '') : undefined
+          const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo, true, qrDataUrl)
           const printResult = await electronAPI.silentPrint(receiptHtml, null)
 
           if (printResult.success) {
@@ -437,7 +459,7 @@ export default function AllBillsPage() {
         // Use browser print dialog for web deployment
         console.log('[BILLING] Web mode - using browser print dialog...')
         const { printBill } = await import('@/lib/webPrintService')
-        const printResult = printBill(billForPrint as any, clientInfo, true)
+        const printResult = await printBill(billForPrint as any, clientInfo, true)
 
         if (printResult.success) {
           console.log('Print dialog opened successfully!')
@@ -453,14 +475,37 @@ export default function AllBillsPage() {
     }
   }
 
+  const handleViewBill = async (bill: Bill) => {
+    // Show drawer immediately with list data, then fetch fresh details
+    setSelectedBill(bill)
+    try {
+      const response = await api.get(`/billing/${bill.bill_id}`)
+      const freshBill = response.data.bill
+      // Merge fresh data into selected bill (keep display fields from list)
+      setSelectedBill(prev => prev && prev.bill_id === bill.bill_id ? { ...prev, ...freshBill } : prev)
+      // Also update the bill in the list so it stays fresh
+      setBills(prevBills =>
+        prevBills.map(b => b.bill_id === bill.bill_id ? { ...b, ...freshBill } : b)
+      )
+    } catch (error) {
+      console.error('Failed to fetch fresh bill details:', error)
+      // Keep showing the list data — better than nothing
+    }
+  }
+
   const handleExchangeBill = (billId: string) => {
     navigate(`/billing/exchange/${billId}`)
   }
 
   const handleCancelBill = async (billId: string, billNumber: number) => {
-    if (!confirm(`Are you sure you want to cancel Bill #${billNumber}? This will restore all item quantities to stock.`)) {
-      return
-    }
+    // Show custom confirmation modal instead of browser confirm()
+    setCancelConfirm({ billId, billNumber })
+  }
+
+  const confirmCancelBill = async () => {
+    if (!cancelConfirm) return
+    const { billId, billNumber } = cancelConfirm
+    setCancelConfirm(null)
 
     try {
       const response = await api.post(`/billing/${billId}/cancel`)
@@ -803,7 +848,7 @@ export default function AllBillsPage() {
                     return (
                       <tr key={`${bill.bill_id}-${bill.displayPaymentType}-${index}`}
                           className={`hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors cursor-pointer ${!bill.isFirstPayment && isSplitPayment ? 'border-t-0' : ''}`}
-                          onClick={() => bill.isFirstPayment && setSelectedBill(bill)}>
+                          onClick={() => bill.isFirstPayment && handleViewBill(bill)}>
                         <td className="px-2 py-1.5 whitespace-nowrap">
                           {bill.isFirstPayment ? (
                             <div className="flex items-center gap-1">
@@ -861,7 +906,7 @@ export default function AllBillsPage() {
                             <div className="flex items-center justify-center gap-1">
                               <button
                                 type="button"
-                                onClick={() => handleExchangeBill(bill.bill_id)}
+                                onClick={(e) => { e.stopPropagation(); handleExchangeBill(bill.bill_id) }}
                                 className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-all"
                                 title="Exchange Bill"
                               >
@@ -870,7 +915,7 @@ export default function AllBillsPage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handlePrintBill(bill.bill_id)}
+                                onClick={(e) => { e.stopPropagation(); handlePrintBill(bill.bill_id) }}
                                 disabled={loadingBillDetails}
                                 className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                 title="Print Bill"
@@ -882,7 +927,7 @@ export default function AllBillsPage() {
                               </button>
                               <button
                                 type="button"
-                                onClick={() => handleCancelBill(bill.bill_id, bill.bill_number)}
+                                onClick={(e) => { e.stopPropagation(); handleCancelBill(bill.bill_id, bill.bill_number) }}
                                 className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 hover:bg-red-100 dark:hover:bg-red-900/40 rounded transition-all"
                                 title="Cancel Bill"
                               >
@@ -907,7 +952,7 @@ export default function AllBillsPage() {
                 .map(bill => (
                   <div
                     key={`${bill.bill_id}-${bill.displayPaymentType ?? bill.payment_type}`}
-                    onClick={() => setSelectedBill(bill)}
+                    onClick={() => handleViewBill(bill)}
                     className="cursor-pointer bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm active:bg-gray-50 dark:active:bg-gray-700 transition-colors"
                   >
                     <div className="flex items-start justify-between gap-2 mb-2">
@@ -1144,6 +1189,43 @@ export default function AllBillsPage() {
                 <span>Total</span>
                 <span>₹{((selectedBill.final_amount ?? selectedBill.total_amount) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Cancel Confirmation Modal */}
+      {cancelConfirm && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={() => setCancelConfirm(null)}>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div
+            className="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4 border border-gray-200 dark:border-gray-700"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-red-100 dark:bg-red-900/30 flex items-center justify-center flex-shrink-0">
+                <XCircle className="w-5 h-5 text-red-600 dark:text-red-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Cancel Bill #{cancelConfirm.billNumber}?</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">This will restore all item quantities to stock.</p>
+              </div>
+            </div>
+            <div className="flex gap-2 mt-5">
+              <button
+                type="button"
+                onClick={() => setCancelConfirm(null)}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition"
+              >
+                No, Keep Bill
+              </button>
+              <button
+                type="button"
+                onClick={confirmCancelBill}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 transition"
+              >
+                Yes, Cancel Bill
+              </button>
             </div>
           </div>
         </div>

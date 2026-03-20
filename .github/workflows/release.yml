@@ -26,12 +26,12 @@ jobs:
         with:
           python-version: '3.11'
 
-      - name: Install dependencies
+      - name: Install root dependencies
         run: npm install
 
       - name: Install frontend dependencies
         run: |
-          cd frontend
+          cd frontend-react
           npm install
 
       - name: Install backend dependencies

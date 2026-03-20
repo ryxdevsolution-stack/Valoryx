@@ -143,7 +143,10 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }
 
     initializeAuth()
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  // navigate is stable from useNavigate; api is a module-level singleton.
+  // This effect must run exactly once on mount — not on state changes.
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   const login = async (email: string, password: string) => {
     try {

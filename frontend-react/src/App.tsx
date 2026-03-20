@@ -8,6 +8,7 @@ import { LoadingInitializer } from '@/components/LoadingInitializer'
 import { AppRoutes } from '@/router'
 import ImpersonationBanner from '@/components/ImpersonationBanner'
 import ElectronSplash from '@/components/ElectronSplash'
+import UpdateNotification from '@/components/UpdateNotification'
 import { InstallBanner } from '@/components/pwa/InstallBanner'
 
 function LoadingFallback() {
@@ -61,6 +62,7 @@ export default function App() {
         <LoadingInitializer>
           <ClientProvider>
             <ImpersonationBanner />
+            {isElectron && <UpdateNotification />}
             {!isElectron && <InstallBanner />}
             <DataProvider>
               <Suspense fallback={<LoadingFallback />}>

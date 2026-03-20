@@ -6,8 +6,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getPrinters: () => ipcRenderer.invoke('get-printers'),
   setDefaultPrinter: (printerName) => ipcRenderer.invoke('set-default-printer', printerName),
 
-  // App info (unchanged)
-  getAppVersion: () => process.env.npm_package_version || '1.0.0',
+  // App info
   isElectron: true,
 
   // Startup progress IPC
@@ -17,6 +16,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('startup-status', (_event, data) => callback(data)),
   removeStartupStatus: () =>
     ipcRenderer.removeAllListeners('startup-status'),
+
+  // Auto-update IPC
+  onUpdateStatus: (callback) =>
+    ipcRenderer.on('update-status', (_event, data) => callback(data)),
+  removeUpdateStatus: () =>
+    ipcRenderer.removeAllListeners('update-status'),
+  installUpdate: () => ipcRenderer.invoke('install-update'),
+  checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
+  getAppVersion: () => ipcRenderer.invoke('get-app-version'),
 });
 
 console.log('[Preload] Context bridge initialized');

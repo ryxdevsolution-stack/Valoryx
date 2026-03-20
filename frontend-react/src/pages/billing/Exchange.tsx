@@ -240,12 +240,17 @@ export default function ExchangeBillPage() {
       return
     }
 
-    // Check stock availability
+    // Check stock availability (account for items being returned in this exchange)
     const alreadyAddedQty = newItems
       .filter(item => item.product_id === currentItem.product_id)
       .reduce((sum, item) => sum + item.quantity, 0)
 
-    const availableStock = productExists.quantity - alreadyAddedQty
+    // Credit: returned items of the same product will be added back to stock
+    const returnedQty = returnItems
+      .filter(item => item.selected && item.product_id === currentItem.product_id)
+      .reduce((sum, item) => sum + item.return_quantity, 0)
+
+    const availableStock = productExists.quantity + returnedQty - alreadyAddedQty
     if (currentItem.quantity > availableStock) {
       alert(`Insufficient stock for ${currentItem.product_name}. Available: ${availableStock}`)
       return
@@ -450,14 +455,18 @@ export default function ExchangeBillPage() {
         phone: client.phone,
         email: client.email,
         gstin: client.gstin,
-        logo_url: client.logo_url
+        logo_url: client.logo_url,
+        upi_id: (client as any).upi_id || '',
+        receipt_footer: (client as any).receipt_footer || ''
       } : {
         client_name: 'Business Name',
         address: '',
         phone: '',
         email: '',
         gstin: '',
-        logo_url: ''
+        logo_url: '',
+        upi_id: '',
+        receipt_footer: ''
       }
 
       // Check if running in Electron desktop app
@@ -466,16 +475,17 @@ export default function ExchangeBillPage() {
 
       if (hasElectronPrint) {
         // Use Electron's silent print for desktop app
-        const { generateReceiptHtml } = await import('@/lib/webPrintService')
-        const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo, false)
+        const { generateReceiptHtml, generateUpiQrDataUrl } = await import('@/lib/webPrintService')
+        const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '') : undefined
+        const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo, false, qrDataUrl)
         await electronAPI.silentPrint(receiptHtml, null)
       } else {
         // Use browser print dialog for web deployment
         const { printBill } = await import('@/lib/webPrintService')
-        printBill(billForPrint as any, clientInfo, false)
+        await printBill(billForPrint as any, clientInfo, false)
       }
 
-      navigate('/billing')
+      navigate('/billing', { state: { refreshAfterExchange: true } })
     } catch (error: any) {
       console.error('Failed to process exchange:', error)
       console.error('Error response:', error.response?.data)
@@ -777,6 +787,7 @@ export default function ExchangeBillPage() {
                     </div>
                     <div className="col-span-2 sm:col-span-1 flex items-end">
                       <button
+                        type="button"
                         onClick={handleAddNewItem}
                         className="w-full px-3 py-2 bg-gray-700 dark:bg-gray-600 text-white rounded hover:bg-gray-800 dark:hover:bg-gray-500 transition text-sm font-medium"
                       >

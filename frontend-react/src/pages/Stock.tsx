@@ -1470,16 +1470,11 @@ export default function StockManagementPage() {
         </>
       )}
 
-      {/* Bulk Stock Order Modals */}
+      {/* Bulk Stock Order Modal (includes View Orders tab) */}
       <BulkStockOrderModal
-        isOpen={showBulkOrderModal}
-        onClose={() => setShowBulkOrderModal(false)}
+        isOpen={showBulkOrderModal || showBulkOrderList}
+        onClose={() => { setShowBulkOrderModal(false); setShowBulkOrderList(false) }}
         onSuccess={handleOrderSuccess}
-      />
-
-      <BulkStockOrderList
-        isOpen={showBulkOrderList}
-        onClose={() => setShowBulkOrderList(false)}
         onReceive={handleReceiveOrder}
       />
 

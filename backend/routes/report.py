@@ -44,55 +44,67 @@ def generate_report():
         date_from = datetime.fromisoformat(data['start_date']).date()
         date_to = datetime.fromisoformat(data['end_date']).date()
 
-        # Query GST billing data with permission-based filtering
-        gst_query = GSTBilling.query.filter(
-            GSTBilling.client_id == client_id,
-            func.date(GSTBilling.created_at) >= date_from,
-            func.date(GSTBilling.created_at) <= date_to,
-            GSTBilling.status == 'final'
-        )
+        # OPTIMIZED: Use SQL aggregation for totals instead of loading all ORM objects
+        def _apply_date_user_filter(query, model, amount_col):
+            """Apply common date range + user permission filters."""
+            query = query.filter(
+                model.client_id == client_id,
+                func.date(model.created_at) >= date_from,
+                func.date(model.created_at) <= date_to,
+                model.status == 'final'
+            )
+            if not has_view_all:
+                query = query.filter(model.created_by == user_id)
+            return query
 
-        # Apply user-level filtering for view_own_bills permission
-        if not has_view_all:
-            gst_query = gst_query.filter(GSTBilling.created_by == user_id)
+        # Aggregate totals in SQL — no full row loading
+        gst_agg = _apply_date_user_filter(
+            db.session.query(
+                func.count(GSTBilling.bill_id).label('cnt'),
+                func.coalesce(func.sum(GSTBilling.final_amount), 0).label('total')
+            ), GSTBilling, GSTBilling.final_amount
+        ).first()
 
-        gst_bills = gst_query.all()
+        nongst_agg = _apply_date_user_filter(
+            db.session.query(
+                func.count(NonGSTBilling.bill_id).label('cnt'),
+                func.coalesce(func.sum(NonGSTBilling.total_amount), 0).label('total')
+            ), NonGSTBilling, NonGSTBilling.total_amount
+        ).first()
 
-        # Query Non-GST billing data with permission-based filtering
-        non_gst_query = NonGSTBilling.query.filter(
-            NonGSTBilling.client_id == client_id,
-            func.date(NonGSTBilling.created_at) >= date_from,
-            func.date(NonGSTBilling.created_at) <= date_to,
-            NonGSTBilling.status == 'final'
-        )
-
-        # Apply user-level filtering for view_own_bills permission
-        if not has_view_all:
-            non_gst_query = non_gst_query.filter(NonGSTBilling.created_by == user_id)
-
-        non_gst_bills = non_gst_query.all()
-
-        # Calculate totals
-        total_gst_bills = len(gst_bills)
-        total_non_gst_bills = len(non_gst_bills)
-        total_gst_amount = sum(float(bill.final_amount) for bill in gst_bills)
-        total_non_gst_amount = sum(float(bill.total_amount) for bill in non_gst_bills)
+        total_gst_bills = gst_agg.cnt
+        total_non_gst_bills = nongst_agg.cnt
+        total_gst_amount = float(gst_agg.total)
+        total_non_gst_amount = float(nongst_agg.total)
         total_revenue = total_gst_amount + total_non_gst_amount
 
-        # Calculate payment breakdown
+        # OPTIMIZED: Payment breakdown via SQL GROUP BY instead of loading all bills
+        from utils.query_cache import get_payment_type_map
+        payment_map = get_payment_type_map(client_id)
+
         payment_breakdown = {}
 
-        # Get payment type names
-        payment_types = PaymentType.query.filter_by(client_id=client_id).all()
-        payment_map = {pt.payment_type_id: pt.payment_name for pt in payment_types}
+        gst_pay_query = _apply_date_user_filter(
+            db.session.query(
+                GSTBilling.payment_type,
+                func.sum(GSTBilling.final_amount).label('total')
+            ), GSTBilling, GSTBilling.final_amount
+        ).group_by(GSTBilling.payment_type)
 
-        for bill in gst_bills:
-            payment_name = payment_map.get(bill.payment_type, 'Unknown')
-            payment_breakdown[payment_name] = payment_breakdown.get(payment_name, 0) + float(bill.final_amount)
+        for row in gst_pay_query.all():
+            name = payment_map.get(str(row.payment_type) if row.payment_type else '', 'Unknown')
+            payment_breakdown[name] = payment_breakdown.get(name, 0) + float(row.total or 0)
 
-        for bill in non_gst_bills:
-            payment_name = payment_map.get(bill.payment_type, 'Unknown')
-            payment_breakdown[payment_name] = payment_breakdown.get(payment_name, 0) + float(bill.total_amount)
+        nongst_pay_query = _apply_date_user_filter(
+            db.session.query(
+                NonGSTBilling.payment_type,
+                func.sum(NonGSTBilling.total_amount).label('total')
+            ), NonGSTBilling, NonGSTBilling.total_amount
+        ).group_by(NonGSTBilling.payment_type)
+
+        for row in nongst_pay_query.all():
+            name = payment_map.get(str(row.payment_type) if row.payment_type else '', 'Unknown')
+            payment_breakdown[name] = payment_breakdown.get(name, 0) + float(row.total or 0)
 
         # Create report entry
         new_report = Report(

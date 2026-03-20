@@ -132,15 +132,16 @@ def export_audit_logs():
     try:
         client_id = g.user['client_id']
 
-        # Get all logs for this client
-        logs = AuditLog.query.filter_by(client_id=client_id).order_by(AuditLog.timestamp.desc()).all()
+        # OPTIMIZED: Use COUNT aggregate instead of loading all rows just to count them
+        from sqlalchemy import func
+        total_logs = db.session.query(func.count(AuditLog.log_id)).filter_by(client_id=client_id).scalar() or 0
 
-        # TODO: Generate CSV/PDF export file
+        # TODO: Generate CSV/PDF export file with streaming/pagination
 
         return jsonify({
             'success': True,
             'message': 'Audit export functionality coming soon',
-            'total_logs': len(logs)
+            'total_logs': total_logs
         }), 200
 
     except Exception as e:

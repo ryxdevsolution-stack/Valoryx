@@ -18,6 +18,9 @@ class GSTBilling(db.Model):
     __table_args__ = (
         db.Index('idx_gst_client_created', 'client_id', 'created_at'),  # For date range queries
         db.Index('idx_gst_client_billnum', 'client_id', 'bill_number'),  # For bill number lookups
+        db.Index('idx_gst_client_createdby', 'client_id', 'created_by'),  # For permission-based filtering
+        db.Index('idx_gst_client_phone', 'client_id', 'customer_phone'),  # For customer detail lookups
+        db.Index('idx_gst_client_payment', 'client_id', 'payment_type'),  # For payment breakdown queries
     )
 
     bill_id = db.Column(FlexibleUUID, primary_key=True)
@@ -80,6 +83,9 @@ class NonGSTBilling(db.Model):
     __table_args__ = (
         db.Index('idx_nongst_client_created', 'client_id', 'created_at'),  # For date range queries
         db.Index('idx_nongst_client_billnum', 'client_id', 'bill_number'),  # For bill number lookups
+        db.Index('idx_nongst_client_createdby', 'client_id', 'created_by'),  # For permission-based filtering
+        db.Index('idx_nongst_client_phone', 'client_id', 'customer_phone'),  # For customer detail lookups
+        db.Index('idx_nongst_client_payment', 'client_id', 'payment_type'),  # For payment breakdown queries
     )
 
     bill_id = db.Column(FlexibleUUID, primary_key=True)

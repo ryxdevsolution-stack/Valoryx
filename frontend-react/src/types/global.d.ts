@@ -47,6 +47,13 @@ interface ElectronAPI {
   maximizeWindow?: () => void;
   closeWindow?: () => void;
 
+  // Auto-update
+  onUpdateStatus?: (callback: (data: UpdateStatusEvent) => void) => void;
+  removeUpdateStatus?: () => void;
+  installUpdate?: () => Promise<void>;
+  checkForUpdates?: () => Promise<{ success: boolean; version?: string; error?: string }>;
+  getAppVersion?: () => Promise<string>;
+
   // Platform info (not functions, static values)
   platform?: string;
   nodeVersion?: string;
@@ -54,6 +61,21 @@ interface ElectronAPI {
 }
 
 declare global {
+  type UpdateEventStatus = 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
+
+  interface UpdateStatusEvent {
+    status: UpdateEventStatus;
+    data: {
+      version?: string;
+      releaseDate?: string;
+      releaseNotes?: string;
+      percent?: number;
+      transferred?: number;
+      total?: number;
+      message?: string;
+    } | null;
+  }
+
   interface Window {
     electronAPI?: ElectronAPI;
   }

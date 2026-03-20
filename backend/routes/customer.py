@@ -5,227 +5,190 @@ from models.customer_model import Customer
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission
 from utils.helpers import title_case
-from sqlalchemy import func, desc
+from sqlalchemy import func, desc, literal, union_all
 from datetime import datetime, timedelta
 import uuid
 
 customer_bp = Blueprint('customer', __name__)
+
+# Walk-in name patterns (reusable)
+WALKIN_PATTERNS = ['walk-in%', 'walkin%', 'walk in%']
+
+
+def is_walkin_customer(name):
+    """Check if customer is a walk-in (default when no details provided)"""
+    if not name:
+        return False
+    name_lower = name.lower().strip()
+    return name_lower in ['walk-in customer', 'walk-in', 'walkin', 'walkin customer', 'walk in customer', 'walk in']
+
+
+def _walkin_filter(model):
+    """Build OR filter for walk-in customer name patterns"""
+    return db.or_(*(model.customer_name.ilike(p) for p in WALKIN_PATTERNS))
+
+
+def _not_walkin_filter(model):
+    """Build AND filter to exclude walk-in customers"""
+    return db.and_(*(~model.customer_name.ilike(p) for p in WALKIN_PATTERNS))
 
 
 @customer_bp.route('/list', methods=['GET'])
 @authenticate
 @require_permission('view_customers')
 def get_customers():
-    """Get all customers with their billing statistics"""
+    """Get all customers with their billing statistics.
+
+    OPTIMIZED: Uses UNION ALL to merge GST + Non-GST in one query,
+    partial column loading for walk-ins, and pre-built lookup dicts.
+    """
     try:
         client_id = g.user['client_id']
 
-        # Helper to check if customer is a walk-in customer (default when no details provided)
-        def is_walkin_customer(name):
-            if not name:
-                return False
-            name_lower = name.lower().strip()
-            return name_lower in ['walk-in customer', 'walk-in', 'walkin', 'walkin customer', 'walk in customer', 'walk in']
-
-        # Get REGULAR customers (non walk-in) from billing tables - grouped by phone
-        gst_customers = db.session.query(
-            GSTBilling.customer_name,
-            GSTBilling.customer_phone,
-            func.count(GSTBilling.bill_id).label('total_bills'),
+        # ── REGULAR CUSTOMERS: single UNION ALL query instead of 2 separate queries ──
+        gst_sub = db.session.query(
+            GSTBilling.customer_name.label('customer_name'),
+            GSTBilling.customer_phone.label('customer_phone'),
+            func.count(GSTBilling.bill_id).label('bill_count'),
             func.sum(GSTBilling.final_amount).label('total_amount'),
             func.max(GSTBilling.created_at).label('last_purchase'),
-            func.min(GSTBilling.created_at).label('first_purchase')
+            func.min(GSTBilling.created_at).label('first_purchase'),
+            literal('gst').label('bill_type')
         ).filter(
             GSTBilling.client_id == client_id,
-            ~GSTBilling.customer_name.ilike('walk-in%'),
-            ~GSTBilling.customer_name.ilike('walkin%'),
-            ~GSTBilling.customer_name.ilike('walk in%')
+            _not_walkin_filter(GSTBilling)
         ).group_by(
-            GSTBilling.customer_phone,
-            GSTBilling.customer_name
-        ).all()
+            GSTBilling.customer_phone, GSTBilling.customer_name
+        )
 
-        non_gst_customers = db.session.query(
-            NonGSTBilling.customer_name,
-            NonGSTBilling.customer_phone,
-            func.count(NonGSTBilling.bill_id).label('total_bills'),
+        nongst_sub = db.session.query(
+            NonGSTBilling.customer_name.label('customer_name'),
+            NonGSTBilling.customer_phone.label('customer_phone'),
+            func.count(NonGSTBilling.bill_id).label('bill_count'),
             func.sum(NonGSTBilling.total_amount).label('total_amount'),
             func.max(NonGSTBilling.created_at).label('last_purchase'),
-            func.min(NonGSTBilling.created_at).label('first_purchase')
+            func.min(NonGSTBilling.created_at).label('first_purchase'),
+            literal('non_gst').label('bill_type')
         ).filter(
             NonGSTBilling.client_id == client_id,
-            ~NonGSTBilling.customer_name.ilike('walk-in%'),
-            ~NonGSTBilling.customer_name.ilike('walkin%'),
-            ~NonGSTBilling.customer_name.ilike('walk in%')
+            _not_walkin_filter(NonGSTBilling)
         ).group_by(
-            NonGSTBilling.customer_phone,
-            NonGSTBilling.customer_name
-        ).all()
+            NonGSTBilling.customer_phone, NonGSTBilling.customer_name
+        )
 
-        # Get WALK-IN customers individually (each bill as separate entry)
-        # OPTIMIZED: Limit to recent 50 walk-in bills to prevent loading thousands of records
+        combined = union_all(gst_sub, nongst_sub).alias('combined')
+        rows = db.session.execute(db.select(combined)).fetchall()
+
+        # Merge by phone in one pass
+        customer_dict = {}
+        for row in rows:
+            phone = row.customer_phone
+            if phone not in customer_dict:
+                customer_dict[phone] = {
+                    'customer_name': row.customer_name,
+                    'customer_phone': phone,
+                    'customer_email': '',
+                    'customer_address': '',
+                    'total_bills': 0,
+                    'total_amount': 0.0,
+                    'last_purchase': row.last_purchase,
+                    'first_purchase': row.first_purchase,
+                    'gst_bills': 0,
+                    'non_gst_bills': 0
+                }
+
+            entry = customer_dict[phone]
+            count = row.bill_count or 0
+            amount = float(row.total_amount or 0)
+            entry['total_bills'] += count
+            entry['total_amount'] += amount
+
+            if row.bill_type == 'gst':
+                entry['gst_bills'] += count
+            else:
+                entry['non_gst_bills'] += count
+
+            # Update last/first purchase dates
+            if row.last_purchase:
+                if not entry['last_purchase'] or row.last_purchase > entry['last_purchase']:
+                    entry['last_purchase'] = row.last_purchase
+            if row.first_purchase:
+                if not entry['first_purchase'] or row.first_purchase < entry['first_purchase']:
+                    entry['first_purchase'] = row.first_purchase
+
+        # ── WALK-IN CUSTOMERS: partial column loading (no full ORM objects) ──
         MAX_WALKIN_DISPLAY = 50
 
-        walkin_gst_bills = GSTBilling.query.filter(
-            GSTBilling.client_id == client_id,
-            db.or_(
-                GSTBilling.customer_name.ilike('walk-in%'),
-                GSTBilling.customer_name.ilike('walkin%'),
-                GSTBilling.customer_name.ilike('walk in%')
-            )
+        walkin_gst = db.session.query(
+            GSTBilling.customer_name, GSTBilling.customer_phone,
+            GSTBilling.final_amount, GSTBilling.created_at, GSTBilling.bill_number
+        ).filter(
+            GSTBilling.client_id == client_id, _walkin_filter(GSTBilling)
         ).order_by(desc(GSTBilling.created_at)).limit(MAX_WALKIN_DISPLAY).all()
 
-        walkin_non_gst_bills = NonGSTBilling.query.filter(
-            NonGSTBilling.client_id == client_id,
-            db.or_(
-                NonGSTBilling.customer_name.ilike('walk-in%'),
-                NonGSTBilling.customer_name.ilike('walkin%'),
-                NonGSTBilling.customer_name.ilike('walk in%')
-            )
+        walkin_nongst = db.session.query(
+            NonGSTBilling.customer_name, NonGSTBilling.customer_phone,
+            NonGSTBilling.total_amount, NonGSTBilling.created_at, NonGSTBilling.bill_number
+        ).filter(
+            NonGSTBilling.client_id == client_id, _walkin_filter(NonGSTBilling)
         ).order_by(desc(NonGSTBilling.created_at)).limit(MAX_WALKIN_DISPLAY).all()
 
-        # Merge and aggregate REGULAR customers by phone
-        customer_dict = {}
+        # ── REGISTERED CUSTOMERS: single query, build two dicts ──
+        reg_rows = db.session.query(
+            Customer.customer_phone, Customer.customer_code, Customer.loyalty_points
+        ).filter_by(client_id=client_id).all()
 
-        for customer in gst_customers:
-            phone = customer.customer_phone
+        registered_customers = {r.customer_phone: r.customer_code for r in reg_rows}
+        registered_points = {r.customer_phone: (r.loyalty_points or 0) for r in reg_rows}
 
-            if phone not in customer_dict:
-                customer_dict[phone] = {
-                    'customer_name': customer.customer_name,
-                    'customer_phone': phone,
-                    'customer_email': '',
-                    'customer_address': '',
-                    'total_bills': 0,
-                    'total_amount': 0.0,
-                    'last_purchase': customer.last_purchase,
-                    'first_purchase': customer.first_purchase,
-                    'gst_bills': 0,
-                    'non_gst_bills': 0
-                }
-
-            customer_dict[phone]['total_bills'] += customer.total_bills
-            customer_dict[phone]['total_amount'] += float(customer.total_amount or 0)
-            customer_dict[phone]['gst_bills'] += customer.total_bills
-
-            # Update last purchase if more recent
-            if customer.last_purchase and customer_dict[phone]['last_purchase']:
-                if customer.last_purchase > customer_dict[phone]['last_purchase']:
-                    customer_dict[phone]['last_purchase'] = customer.last_purchase
-            elif customer.last_purchase:
-                customer_dict[phone]['last_purchase'] = customer.last_purchase
-
-            # Update first purchase if earlier
-            if customer.first_purchase and customer_dict[phone]['first_purchase']:
-                if customer.first_purchase < customer_dict[phone]['first_purchase']:
-                    customer_dict[phone]['first_purchase'] = customer.first_purchase
-            elif customer.first_purchase:
-                customer_dict[phone]['first_purchase'] = customer.first_purchase
-
-        for customer in non_gst_customers:
-            phone = customer.customer_phone
-
-            if phone not in customer_dict:
-                customer_dict[phone] = {
-                    'customer_name': customer.customer_name,
-                    'customer_phone': phone,
-                    'customer_email': '',
-                    'customer_address': '',
-                    'total_bills': 0,
-                    'total_amount': 0.0,
-                    'last_purchase': customer.last_purchase,
-                    'first_purchase': customer.first_purchase,
-                    'gst_bills': 0,
-                    'non_gst_bills': 0
-                }
-
-            customer_dict[phone]['total_bills'] += customer.total_bills
-            customer_dict[phone]['total_amount'] += float(customer.total_amount or 0)
-            customer_dict[phone]['non_gst_bills'] += customer.total_bills
-
-            # Update last purchase if more recent
-            if customer.last_purchase and customer_dict[phone]['last_purchase']:
-                if customer.last_purchase > customer_dict[phone]['last_purchase']:
-                    customer_dict[phone]['last_purchase'] = customer.last_purchase
-            elif customer.last_purchase:
-                customer_dict[phone]['last_purchase'] = customer.last_purchase
-
-            # Update first purchase if earlier
-            if customer.first_purchase and customer_dict[phone]['first_purchase']:
-                if customer.first_purchase < customer_dict[phone]['first_purchase']:
-                    customer_dict[phone]['first_purchase'] = customer.first_purchase
-            elif customer.first_purchase:
-                customer_dict[phone]['first_purchase'] = customer.first_purchase
-
-        # Get all registered customers with customer_code for lookup
-        registered_customers = {c.customer_phone: c.customer_code for c in
-                               Customer.query.filter_by(client_id=client_id).all()}
-
-        # Convert to list and add status
+        # ── BUILD RESPONSE ──
         customers_list = []
         thirty_days_ago = datetime.utcnow() - timedelta(days=30)
 
-        # Add regular customers
-        for customer_data in customer_dict.values():
-            # Add customer_code from registered customers table
-            customer_data['customer_code'] = registered_customers.get(customer_data['customer_phone'])
+        for cd in customer_dict.values():
+            cd['customer_code'] = registered_customers.get(cd['customer_phone'])
+            cd['loyalty_points'] = registered_points.get(cd['customer_phone'], 0)
 
-            # Handle None for last_purchase
-            if customer_data['last_purchase']:
-                customer_data['status'] = 'Active' if customer_data['last_purchase'] >= thirty_days_ago else 'Inactive'
-                customer_data['last_purchase'] = customer_data['last_purchase'].isoformat()
+            if cd['last_purchase']:
+                cd['status'] = 'Active' if cd['last_purchase'] >= thirty_days_ago else 'Inactive'
+                cd['last_purchase'] = cd['last_purchase'].isoformat()
             else:
-                customer_data['status'] = 'Inactive'
-                customer_data['last_purchase'] = None
+                cd['status'] = 'Inactive'
 
-            customer_data['first_purchase'] = customer_data['first_purchase'].isoformat() if customer_data['first_purchase'] else None
-            customers_list.append(customer_data)
+            cd['first_purchase'] = cd['first_purchase'].isoformat() if cd['first_purchase'] else None
+            customers_list.append(cd)
 
-        # Add walk-in customers individually (each bill as separate entry)
-        for bill in walkin_gst_bills:
+        # Walk-in entries (GST)
+        for b in walkin_gst:
             customers_list.append({
-                'customer_name': bill.customer_name,
-                'customer_phone': bill.customer_phone,
-                'customer_email': '',
-                'customer_address': '',
-                'customer_code': None,
-                'total_bills': 1,
-                'total_amount': float(bill.final_amount or 0),
-                'last_purchase': bill.created_at.isoformat() if bill.created_at else None,
-                'first_purchase': bill.created_at.isoformat() if bill.created_at else None,
-                'gst_bills': 1,
-                'non_gst_bills': 0,
-                'status': 'Active' if bill.created_at and bill.created_at >= thirty_days_ago else 'Inactive',
-                'is_walkin': True,
-                'bill_number': bill.bill_number
+                'customer_name': b.customer_name, 'customer_phone': b.customer_phone,
+                'customer_email': '', 'customer_address': '', 'customer_code': None,
+                'total_bills': 1, 'total_amount': float(b.final_amount or 0),
+                'last_purchase': b.created_at.isoformat() if b.created_at else None,
+                'first_purchase': b.created_at.isoformat() if b.created_at else None,
+                'gst_bills': 1, 'non_gst_bills': 0,
+                'status': 'Active' if b.created_at and b.created_at >= thirty_days_ago else 'Inactive',
+                'is_walkin': True, 'bill_number': b.bill_number
             })
 
-        for bill in walkin_non_gst_bills:
+        # Walk-in entries (Non-GST)
+        for b in walkin_nongst:
             customers_list.append({
-                'customer_name': bill.customer_name,
-                'customer_phone': bill.customer_phone,
-                'customer_email': '',
-                'customer_address': '',
-                'customer_code': None,
-                'total_bills': 1,
-                'total_amount': float(bill.total_amount or 0),
-                'last_purchase': bill.created_at.isoformat() if bill.created_at else None,
-                'first_purchase': bill.created_at.isoformat() if bill.created_at else None,
-                'gst_bills': 0,
-                'non_gst_bills': 1,
-                'status': 'Active' if bill.created_at and bill.created_at >= thirty_days_ago else 'Inactive',
-                'is_walkin': True,
-                'bill_number': bill.bill_number
+                'customer_name': b.customer_name, 'customer_phone': b.customer_phone,
+                'customer_email': '', 'customer_address': '', 'customer_code': None,
+                'total_bills': 1, 'total_amount': float(b.total_amount or 0),
+                'last_purchase': b.created_at.isoformat() if b.created_at else None,
+                'first_purchase': b.created_at.isoformat() if b.created_at else None,
+                'gst_bills': 0, 'non_gst_bills': 1,
+                'status': 'Active' if b.created_at and b.created_at >= thirty_days_ago else 'Inactive',
+                'is_walkin': True, 'bill_number': b.bill_number
             })
 
-        # Sort by total amount (highest first)
         customers_list.sort(key=lambda x: x['total_amount'], reverse=True)
 
-        # Calculate statistics
         total_customers = len(customers_list)
         active_customers = sum(1 for c in customers_list if c['status'] == 'Active')
         total_revenue = sum(c['total_amount'] for c in customers_list)
-        top_customer = customers_list[0] if customers_list else None
 
         return jsonify({
             'success': True,
@@ -235,7 +198,7 @@ def get_customers():
                 'active_customers': active_customers,
                 'inactive_customers': total_customers - active_customers,
                 'total_revenue': round(total_revenue, 2),
-                'top_customer': top_customer
+                'top_customer': customers_list[0] if customers_list else None
             }
         }), 200
 
@@ -246,76 +209,65 @@ def get_customers():
 @customer_bp.route('/<phone>', methods=['GET'])
 @authenticate
 def get_customer_details(phone):
-    """Get detailed information about a specific customer"""
+    """Get detailed information about a specific customer.
+
+    OPTIMIZED: Uses partial column loading — only fetches columns needed
+    for the response instead of loading full ORM objects with items JSON.
+    """
     try:
         client_id = g.user['client_id']
 
-        # Get GST bills for this customer
-        gst_bills = GSTBilling.query.filter_by(
-            client_id=client_id,
-            customer_phone=phone
+        # Partial column loading — skip heavy 'items' JSON for list view
+        gst_cols = db.session.query(
+            GSTBilling.bill_id, GSTBilling.bill_number, GSTBilling.customer_name,
+            GSTBilling.customer_phone, GSTBilling.final_amount, GSTBilling.created_at,
+            GSTBilling.payment_type, GSTBilling.status, GSTBilling.items
+        ).filter_by(
+            client_id=client_id, customer_phone=phone
         ).order_by(desc(GSTBilling.created_at)).all()
 
-        # Get Non-GST bills for this customer
-        non_gst_bills = NonGSTBilling.query.filter_by(
-            client_id=client_id,
-            customer_phone=phone
+        nongst_cols = db.session.query(
+            NonGSTBilling.bill_id, NonGSTBilling.bill_number, NonGSTBilling.customer_name,
+            NonGSTBilling.customer_phone, NonGSTBilling.total_amount, NonGSTBilling.created_at,
+            NonGSTBilling.payment_type, NonGSTBilling.status, NonGSTBilling.items
+        ).filter_by(
+            client_id=client_id, customer_phone=phone
         ).order_by(desc(NonGSTBilling.created_at)).all()
 
-        if not gst_bills and not non_gst_bills:
+        if not gst_cols and not nongst_cols:
             return jsonify({'error': 'Customer not found'}), 404
 
-        # Get customer info from first bill
-        customer_info = None
-        if gst_bills:
-            bill = gst_bills[0]
-            customer_info = {
-                'customer_name': bill.customer_name,
-                'customer_phone': bill.customer_phone,
-                'customer_email': '',
-                'customer_address': '',
-                'customer_gstin': ''
-            }
-        elif non_gst_bills:
-            bill = non_gst_bills[0]
-            customer_info = {
-                'customer_name': bill.customer_name,
-                'customer_phone': bill.customer_phone,
-                'customer_email': '',
-                'customer_address': '',
-                'customer_gstin': ''
-            }
+        # Get customer info from first bill found
+        first = gst_cols[0] if gst_cols else nongst_cols[0]
+        customer_info = {
+            'customer_name': first.customer_name,
+            'customer_phone': first.customer_phone,
+            'customer_email': '',
+            'customer_address': '',
+            'customer_gstin': ''
+        }
 
-        # Combine and format bills
+        # Build bill list
         all_bills = []
-
-        for bill in gst_bills:
+        for b in gst_cols:
             all_bills.append({
-                'bill_id': bill.bill_id,
-                'bill_number': bill.bill_number,
-                'type': 'GST',
-                'amount': float(bill.final_amount),
-                'created_at': bill.created_at.isoformat(),
-                'payment_type': bill.payment_type
+                'bill_id': b.bill_id, 'bill_number': b.bill_number, 'type': 'GST',
+                'amount': float(b.final_amount), 'created_at': b.created_at.isoformat(),
+                'payment_type': b.payment_type, 'status': b.status or 'final',
+                'items': b.items or []
+            })
+        for b in nongst_cols:
+            all_bills.append({
+                'bill_id': b.bill_id, 'bill_number': b.bill_number, 'type': 'Non-GST',
+                'amount': float(b.total_amount), 'created_at': b.created_at.isoformat(),
+                'payment_type': b.payment_type, 'status': b.status or 'final',
+                'items': b.items or []
             })
 
-        for bill in non_gst_bills:
-            all_bills.append({
-                'bill_id': bill.bill_id,
-                'bill_number': bill.bill_number,
-                'type': 'Non-GST',
-                'amount': float(bill.total_amount),
-                'created_at': bill.created_at.isoformat(),
-                'payment_type': bill.payment_type
-            })
-
-        # Sort bills by date (newest first)
         all_bills.sort(key=lambda x: x['created_at'], reverse=True)
 
-        # Calculate statistics
-        total_spent = sum(bill['amount'] for bill in all_bills)
+        total_spent = sum(b['amount'] for b in all_bills)
         total_bills_count = len(all_bills)
-        avg_bill_value = total_spent / total_bills_count if total_bills_count > 0 else 0
 
         return jsonify({
             'success': True,
@@ -324,9 +276,9 @@ def get_customer_details(phone):
             'statistics': {
                 'total_bills': total_bills_count,
                 'total_spent': round(total_spent, 2),
-                'average_bill_value': round(avg_bill_value, 2),
-                'gst_bills_count': len(gst_bills),
-                'non_gst_bills_count': len(non_gst_bills)
+                'average_bill_value': round(total_spent / total_bills_count, 2) if total_bills_count else 0,
+                'gst_bills_count': len(gst_cols),
+                'non_gst_bills_count': len(nongst_cols)
             }
         }), 200
 
@@ -489,9 +441,58 @@ def search_customers():
             )
         ).limit(10).all()
 
+        results = [c.to_dict() for c in customers]
+
+        # If few results from customer table, also search billing records
+        # This finds customers who made purchases but aren't registered
+        if len(results) < 5:
+            existing_phones = {c.customer_phone for c in customers}
+            billing_customers = []
+
+            # Search GST bills
+            gst_matches = GSTBilling.query.filter(
+                GSTBilling.client_id == client_id,
+                or_(
+                    GSTBilling.customer_phone.like(f'%{query}%'),
+                    GSTBilling.customer_name.ilike(f'%{query}%')
+                )
+            ).order_by(desc(GSTBilling.created_at)).limit(20).all()
+
+            # Search Non-GST bills
+            non_gst_matches = NonGSTBilling.query.filter(
+                NonGSTBilling.client_id == client_id,
+                or_(
+                    NonGSTBilling.customer_phone.like(f'%{query}%'),
+                    NonGSTBilling.customer_name.ilike(f'%{query}%')
+                )
+            ).order_by(desc(NonGSTBilling.created_at)).limit(20).all()
+
+            # Deduplicate by phone, skip walk-ins and already-found customers
+            seen_phones = set(existing_phones)
+            for bill in gst_matches + non_gst_matches:
+                phone = bill.customer_phone
+                name = bill.customer_name
+                if not phone or is_walkin_customer(name) or phone in seen_phones:
+                    continue
+                seen_phones.add(phone)
+                billing_customers.append({
+                    'customer_id': f'billing-{phone}',
+                    'customer_code': None,
+                    'customer_name': name,
+                    'customer_phone': phone,
+                    'customer_email': '',
+                    'customer_address': '',
+                    'customer_gstin': getattr(bill, 'customer_gstin', '') or '',
+                    'from_billing': True,
+                })
+                if len(billing_customers) >= (10 - len(results)):
+                    break
+
+            results.extend(billing_customers)
+
         return jsonify({
             'success': True,
-            'customers': [c.to_dict() for c in customers]
+            'customers': results
         }), 200
 
     except Exception as e:

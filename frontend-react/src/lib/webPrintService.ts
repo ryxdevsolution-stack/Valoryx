@@ -5,6 +5,8 @@
  * Configuration matches backend/utils/thermal_printer.py for consistency
  */
 
+import QRCode from 'qrcode'
+
 // ============================================================================
 // CONFIGURATION - Keep in sync with thermal_printer.py
 // ============================================================================
@@ -139,10 +141,21 @@ function escapeHtml(text: string): string {
 // ============================================================================
 // RECEIPT HTML GENERATOR - UNIFIED FORMAT
 // ============================================================================
+export async function generateUpiQrDataUrl(upiId: string, shopName: string): Promise<string> {
+  if (!upiId) return ''
+  try {
+    const upiUrl = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(shopName || 'Shop')}`
+    return await QRCode.toDataURL(upiUrl, { width: 150, margin: 1, errorCorrectionLevel: 'M' })
+  } catch {
+    return ''
+  }
+}
+
 export function generateReceiptHtml(
   bill: BillData,
   clientInfo: ClientInfo,
-  showNoExchange: boolean = true
+  showNoExchange: boolean = true,
+  qrDataUrl?: string
 ): string {
   const { PAPER_WIDTH, FONT_SIZE, FONT_SIZE_LARGE, FONT_SIZE_XLARGE, FONT_SIZE_SMALL, ITEM_NAME_MAX } = RECEIPT_CONFIG;
 
@@ -337,6 +350,15 @@ export function generateReceiptHtml(
     <div style="font-size: ${FONT_SIZE_SMALL};">You saved compared to MRP!</div>
   </div>` : ''}
 
+  <!-- UPI QR Code -->
+  ${qrDataUrl ? `
+  <div style="text-align: center; margin: 2mm 0;">
+    <div style="font-size: ${FONT_SIZE_SMALL}; font-weight: bold; margin-bottom: 1mm;">Scan to Pay</div>
+    <img src="${qrDataUrl}" style="width: 25mm; height: 25mm;" />
+    <div style="font-size: ${FONT_SIZE_SMALL}; margin-top: 1mm;">UPI: ${escapeHtml(clientInfo.upi_id || '')}</div>
+  </div>
+  ` : (clientInfo.upi_id ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL}; margin-top: 1mm;">UPI: ${escapeHtml(clientInfo.upi_id)}</div>` : '')}
+
   <!-- Footer -->
   <div class="center bold" style="font-size: ${FONT_SIZE}; margin-top: 2mm;">${escapeHtml(clientInfo.receipt_footer || 'Sorry, No Exchange / No Refund')}</div>
 </body>
@@ -350,13 +372,15 @@ export function generateReceiptHtml(
 /**
  * Print bill using browser's print dialog (iframe-based, no popup needed)
  */
-export function printBill(
+export async function printBill(
   bill: BillData,
   clientInfo: ClientInfo,
   showNoExchange: boolean = true
-): PrintResult {
+): Promise<PrintResult> {
   try {
-    const html = generateReceiptHtml(bill, clientInfo, showNoExchange);
+    // Generate UPI QR code data URL if UPI ID is set
+    const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '') : undefined
+    const html = generateReceiptHtml(bill, clientInfo, showNoExchange, qrDataUrl);
 
     // Remove any existing print iframe
     const existingFrame = document.getElementById('print-iframe');

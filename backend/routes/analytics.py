@@ -337,8 +337,9 @@ def get_dashboard_analytics():
             payment_stats[payment_id]['count'] += 1
             payment_stats[payment_id]['amount'] += float(bill.total_amount)
 
-        # Get payment type names
-        payment_types = {str(pt.payment_type_id): pt.payment_name for pt in PaymentType.query.filter_by(client_id=client_id).all()}
+        # Get payment type names (request-cached)
+        from utils.query_cache import get_payment_type_map
+        payment_types = get_payment_type_map(client_id)
 
         payment_preferences = [
             {

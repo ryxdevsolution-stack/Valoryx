@@ -75,6 +75,14 @@
       "artifactName": "Valoryx-Setup-${version}.${ext}",
       "signAndEditExecutable": false
     },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "ryxdevsolution-stack",
+        "repo": "Valoryx",
+        "releaseType": "release"
+      }
+    ],
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
@@ -89,5 +97,8 @@
     "portable": {
       "artifactName": "Valoryx-Portable-${version}.${ext}"
     }
+  },
+  "dependencies": {
+    "electron-updater": "^6.8.3"
   }
 }

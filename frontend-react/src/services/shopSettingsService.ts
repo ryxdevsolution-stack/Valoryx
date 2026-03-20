@@ -11,6 +11,7 @@ export interface ShopSettings {
   gst_number: string
   receipt_footer: string
   logo_url: string
+  points_per_100: number
 }
 
 export interface ShopSettingsResponse {
@@ -26,6 +27,7 @@ export interface ShopSettingsUpdatePayload {
   upi_id?: string
   gst_number?: string
   receipt_footer?: string
+  points_per_100?: number
 }
 
 export interface ShopSettingsUpdateResponse {

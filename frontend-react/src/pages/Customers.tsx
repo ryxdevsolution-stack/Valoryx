@@ -5,6 +5,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { Link } from 'react-router-dom'
 import { CustomerCardSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
+import { X, User, Phone, Mail, MapPin, ShoppingBag, TrendingUp, Clock, ChevronDown, ChevronUp, Package } from 'lucide-react'
 
 interface Customer {
   customer_code: number | null
@@ -19,6 +20,7 @@ interface Customer {
   status: 'Active' | 'Inactive'
   gst_bills: number
   non_gst_bills: number
+  loyalty_points?: number
   is_walkin?: boolean
   bill_number?: number
 }
@@ -44,6 +46,10 @@ export default function CustomersPage() {
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'Active' | 'Inactive'>('all')
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
+  const [customerBills, setCustomerBills] = useState<any[]>([])
+  const [customerStats, setCustomerStats] = useState<any>(null)
+  const [loadingHistory, setLoadingHistory] = useState(false)
+  const [expandedBillId, setExpandedBillId] = useState<string | null>(null)
 
   // Track ongoing request to prevent duplicates (for React Strict Mode)
   const ongoingRequest = useRef<Promise<void> | null>(null)
@@ -79,6 +85,48 @@ export default function CustomersPage() {
 
     ongoingRequest.current = request
     return request
+  }
+
+  const handleViewCustomer = async (customer: Customer) => {
+    setSelectedCustomer(customer)
+    setCustomerBills([])
+    setCustomerStats(null)
+    setExpandedBillId(null)
+
+    // Walk-in customers without a phone — can't look up history by phone
+    if (!customer.customer_phone || customer.is_walkin) return
+
+    try {
+      setLoadingHistory(true)
+      const response = await api.get(`/customer/${encodeURIComponent(customer.customer_phone)}`)
+      console.log('[CUSTOMER] API response:', JSON.stringify(response.data, null, 2))
+      if (response.data.success) {
+        const bills = response.data.bills || []
+        // Parse items if they're JSON strings (SQLite stores JSON as text)
+        const parsedBills = bills.map((bill: any) => ({
+          ...bill,
+          items: typeof bill.items === 'string' ? (() => { try { return JSON.parse(bill.items) } catch { return [] } })() : (bill.items || [])
+        }))
+        console.log('[CUSTOMER] Parsed bills with items:', parsedBills.map((b: any) => ({ bill_number: b.bill_number, items_count: b.items?.length })))
+        setCustomerBills(parsedBills)
+        setCustomerStats(response.data.statistics || null)
+        // Auto-expand the first bill so user immediately sees products
+        if (parsedBills.length > 0) {
+          setExpandedBillId(parsedBills[0].bill_id)
+        }
+      }
+    } catch (error) {
+      console.error('Failed to fetch customer history:', error)
+    } finally {
+      setLoadingHistory(false)
+    }
+  }
+
+  const closeDrawer = () => {
+    setSelectedCustomer(null)
+    setCustomerBills([])
+    setCustomerStats(null)
+    setExpandedBillId(null)
   }
 
   // Hoist formatters outside render — avoids recreating Intl objects on every render cycle
@@ -236,7 +284,7 @@ export default function CustomersPage() {
                       <tr
                         key={customer.is_walkin ? `walkin-${customer.bill_number}-${index}` : (customer.customer_code ?? customer.customer_phone ?? `customer-${index}`)}
                         className="hover:bg-gray-50 dark:hover:bg-gray-700 transition cursor-pointer"
-                        onClick={() => setSelectedCustomer(customer)}
+                        onClick={() => handleViewCustomer(customer)}
                       >
                         <td className="px-3 py-2.5">
                           {customer.customer_code ? (
@@ -297,7 +345,7 @@ export default function CustomersPage() {
               {filteredCustomers.map((customer, index) => (
                 <div
                   key={customer.is_walkin ? `walkin-${customer.bill_number}-${index}` : (customer.customer_code ?? customer.customer_phone ?? `customer-${index}`)}
-                  onClick={() => setSelectedCustomer(customer)}
+                  onClick={() => handleViewCustomer(customer)}
                   className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 hover:shadow-lg transition touch-manipulation border border-gray-200 dark:border-gray-700"
                 >
                   <div className="flex items-start gap-3 mb-3">
@@ -345,6 +393,224 @@ export default function CustomersPage() {
           </>
         )}
       </div>
+
+      {/* Customer Billing History Drawer */}
+      {selectedCustomer && (
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={closeDrawer}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className="relative w-full max-w-md bg-white dark:bg-gray-900 h-full shadow-2xl overflow-y-auto flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex-shrink-0">
+              <div className="flex items-center gap-3">
+                <div className="w-10 h-10 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg flex-shrink-0">
+                  {selectedCustomer.customer_name.charAt(0).toUpperCase()}
+                </div>
+                <div>
+                  <h2 className="text-base font-semibold text-gray-900 dark:text-white">
+                    {selectedCustomer.customer_name}
+                  </h2>
+                  {selectedCustomer.customer_code && (
+                    <span className="text-xs text-blue-600 dark:text-blue-400 font-medium">#{selectedCustomer.customer_code}</span>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeDrawer}
+                className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            {/* Customer Info */}
+            <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+              <div className="flex items-start gap-2">
+                <Phone className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-[10px] text-gray-400 uppercase font-medium">Phone</p>
+                  <p className="text-sm text-gray-800 dark:text-gray-200">{selectedCustomer.customer_phone || '—'}</p>
+                </div>
+              </div>
+              {selectedCustomer.customer_email && (
+                <div className="flex items-start gap-2">
+                  <Mail className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase font-medium">Email</p>
+                    <p className="text-sm text-gray-800 dark:text-gray-200 truncate">{selectedCustomer.customer_email}</p>
+                  </div>
+                </div>
+              )}
+              <div className="flex items-start gap-2">
+                <ShoppingBag className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-[10px] text-gray-400 uppercase font-medium">Total Bills</p>
+                  <p className="text-sm text-gray-800 dark:text-gray-200">{selectedCustomer.total_bills}</p>
+                </div>
+              </div>
+              <div className="flex items-start gap-2">
+                <TrendingUp className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                <div>
+                  <p className="text-[10px] text-gray-400 uppercase font-medium">Total Spent</p>
+                  <p className="text-sm font-semibold text-green-600 dark:text-green-400">{formatCurrency(selectedCustomer.total_amount)}</p>
+                </div>
+              </div>
+              {!selectedCustomer.is_walkin && (selectedCustomer.loyalty_points ?? 0) > 0 && (
+                <div className="flex items-start gap-2">
+                  <svg className="w-4 h-4 text-amber-400 mt-0.5 shrink-0" fill="currentColor" viewBox="0 0 24 24"><path d="M12 2l3.09 6.26L22 9.27l-5 4.87 1.18 6.88L12 17.77l-6.18 3.25L7 14.14 2 9.27l6.91-1.01L12 2z"/></svg>
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase font-medium">Loyalty Points</p>
+                    <p className="text-sm font-semibold text-amber-600 dark:text-amber-400">{selectedCustomer.loyalty_points} pts</p>
+                  </div>
+                </div>
+              )}
+              {customerStats && (
+                <div className="flex items-start gap-2 col-span-2">
+                  <TrendingUp className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
+                  <div>
+                    <p className="text-[10px] text-gray-400 uppercase font-medium">Average Bill Value</p>
+                    <p className="text-sm text-gray-800 dark:text-gray-200">{formatCurrency(customerStats.average_bill_value)}</p>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Billing History */}
+            <div className="px-5 py-4 flex-1 overflow-y-auto">
+              <div className="flex items-center justify-between mb-3">
+                <div className="flex items-center gap-2">
+                  <Clock className="w-4 h-4 text-gray-400" />
+                  <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase">Billing History</h3>
+                </div>
+                {customerBills.length > 0 && (
+                  <span className="text-[10px] text-gray-400 dark:text-gray-500">Tap bill to see items</span>
+                )}
+              </div>
+
+              {loadingHistory ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-600 dark:border-gray-400"></div>
+                  <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">Loading history...</span>
+                </div>
+              ) : selectedCustomer.is_walkin ? (
+                <div className="text-center py-6 text-gray-400 dark:text-gray-500">
+                  <User className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">Walk-in customer</p>
+                  <p className="text-xs mt-1">No purchase history available</p>
+                </div>
+              ) : customerBills.length === 0 ? (
+                <div className="text-center py-6 text-gray-400 dark:text-gray-500">
+                  <ShoppingBag className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No billing history found</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {customerBills.map((bill) => {
+                    const isCancelled = bill.status === 'cancelled'
+                    const billItems = Array.isArray(bill.items) ? bill.items : []
+                    const isExpanded = expandedBillId === bill.bill_id
+
+                    return (
+                      <div
+                        key={bill.bill_id}
+                        className={`rounded-lg border transition-all ${
+                          isCancelled
+                            ? 'border-red-200 dark:border-red-900/50 bg-red-50/50 dark:bg-red-900/10'
+                            : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'
+                        }`}
+                      >
+                        {/* Bill Header — clickable to expand/collapse */}
+                        <button
+                          type="button"
+                          onClick={() => setExpandedBillId(isExpanded ? null : bill.bill_id)}
+                          className="w-full px-3 py-2.5 flex items-center justify-between text-left hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors rounded-t-lg"
+                        >
+                          <div className="flex-1 min-w-0">
+                            <div className="flex items-center gap-2">
+                              <span className={`text-xs font-semibold ${isCancelled ? 'text-gray-400 line-through' : 'text-gray-700 dark:text-gray-300'}`}>
+                                Bill #{bill.bill_number}
+                              </span>
+                              <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${
+                                bill.type === 'GST'
+                                  ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+                                  : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'
+                              }`}>
+                                {bill.type}
+                              </span>
+                              {isCancelled && (
+                                <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
+                                  Cancelled
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
+                              {formatDate(bill.created_at)}
+                            </p>
+                          </div>
+                          <div className="flex items-center gap-2 flex-shrink-0">
+                            <span className={`text-sm font-bold ${isCancelled ? 'text-gray-400 line-through' : 'text-gray-900 dark:text-white'}`}>
+                              {formatCurrency(bill.amount)}
+                            </span>
+                            {isExpanded
+                              ? <ChevronUp className="w-4 h-4 text-blue-500" />
+                              : <ChevronDown className="w-4 h-4 text-blue-500" />
+                            }
+                          </div>
+                        </button>
+
+                        {/* Expanded Items — always show products */}
+                        {isExpanded && (
+                          <div className="px-3 pb-3 border-t border-gray-100 dark:border-gray-700">
+                            {billItems.length > 0 ? (
+                              <>
+                                <div className="flex items-center gap-1.5 mt-2 mb-1.5">
+                                  <Package className="w-3 h-3 text-gray-400" />
+                                  <span className="text-[10px] font-medium text-gray-400 uppercase">Products ({billItems.length})</span>
+                                </div>
+                                <div className="space-y-1">
+                                  {billItems.map((item: any, i: number) => (
+                                    <div key={i} className="flex items-center justify-between py-1.5 border-b border-gray-50 dark:border-gray-700/50 last:border-0">
+                                      <div className="flex-1 min-w-0">
+                                        <p className="text-xs text-gray-800 dark:text-gray-200 truncate">{item.product_name}</p>
+                                        <p className="text-[10px] text-gray-500 dark:text-gray-400">
+                                          {item.quantity} × ₹{(item.rate || 0).toLocaleString('en-IN')}
+                                          {item.gst_percentage ? ` + ${item.gst_percentage}% GST` : ''}
+                                        </p>
+                                      </div>
+                                      <p className="text-xs font-medium text-gray-800 dark:text-gray-200 shrink-0 ml-3">
+                                        ₹{(item.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                      </p>
+                                    </div>
+                                  ))}
+                                </div>
+                              </>
+                            ) : (
+                              <p className="text-xs text-gray-400 dark:text-gray-500 italic py-2">Item details not available</p>
+                            )}
+                          </div>
+                        )}
+                      </div>
+                    )
+                  })}
+                </div>
+              )}
+            </div>
+
+            {/* Footer Summary */}
+            {customerStats && customerBills.length > 0 && (
+              <div className="px-5 py-3 bg-gray-50 dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 flex-shrink-0">
+                <div className="flex justify-between text-sm">
+                  <span className="text-gray-500 dark:text-gray-400">{customerStats.total_bills} bills total</span>
+                  <span className="font-bold text-gray-900 dark:text-white">{formatCurrency(customerStats.total_spent)}</span>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </DashboardLayout>
   )
 }

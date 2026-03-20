@@ -1,6 +1,6 @@
 
 
-import { useState, useEffect, useRef, useCallback } from 'react'
+import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { useNavigate } from 'react-router-dom'
@@ -127,8 +127,8 @@ export default function UnifiedBillingPage() {
   const searchInputBuffer = useRef<string>('')
   const searchBarcodeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // Hardcoded payment types
-  const paymentTypes = ['Cash', 'Card', 'UPI']
+  // Payment types fetched from API (with fallback)
+  const [paymentTypes, setPaymentTypes] = useState<string[]>(['Cash', 'Card', 'UPI'])
 
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(false)
@@ -258,12 +258,17 @@ export default function UnifiedBillingPage() {
     try {
       setProductsLoading(true)
       // Single parallel load — no retries, no recursive loops
-      const [productsData, billNumberResponse] = await Promise.all([
+      const [productsData, billNumberResponse, paymentResponse] = await Promise.all([
         fetchProducts(false),
         api.get('/billing/next-number'),
+        api.get('/payment/list').catch(() => null),
       ])
       setProducts(productsData)
       setNextBillNumber(billNumberResponse.data.next_bill_number || 1)
+      // Use API payment types if available, keep fallback otherwise
+      if (paymentResponse?.data?.payment_types?.length) {
+        setPaymentTypes(paymentResponse.data.payment_types.map((pt: any) => pt.payment_name))
+      }
     } catch (error) {
       console.error('Failed to load initial data:', error)
       setNextBillNumber(1)
@@ -716,7 +721,7 @@ export default function UnifiedBillingPage() {
     }
   }
 
-  const handleProductSelect = (product: Product) => {
+  const handleProductSelect = useCallback((product: Product) => {
     setIsNewProduct(false)
     setAvailableStock(product.quantity || 0)
     setStockWarning('')
@@ -748,9 +753,9 @@ export default function UnifiedBillingPage() {
       quantityInputRef.current?.focus()
       quantityInputRef.current?.select()
     }, 100)
-  }
+  }, [nonGstOnly])
 
-  const handleCreateNewProduct = () => {
+  const handleCreateNewProduct = useCallback(() => {
     if (!newProductName.trim()) return
 
     setIsNewProduct(true)
@@ -774,19 +779,19 @@ export default function UnifiedBillingPage() {
       rateInputRef.current?.focus()
       rateInputRef.current?.select()
     }, 100)
-  }
+  }, [newProductName, newProductBarcode, productSearch])
 
-  const filteredProducts = products.filter((product) => {
+  const filteredProducts = useMemo(() => {
+    if (!productSearch) return products
     const searchLower = productSearch.toLowerCase()
     const searchNoSpaces = productSearch.replace(/\s+/g, '').toLowerCase()
-    return (
+    return products.filter((product) =>
       product.product_name.toLowerCase().includes(searchLower) ||
       (product.item_code && product.item_code.toLowerCase().includes(searchLower)) ||
       (product.barcode && product.barcode.toLowerCase().includes(searchLower)) ||
-      // Also check barcode without spaces in case database has spaces
       (product.barcode && product.barcode.replace(/\s+/g, '').toLowerCase().includes(searchNoSpaces))
     )
-  })
+  }, [products, productSearch])
 
   const addProductToItems = (product: any) => {
     const qty = 1
@@ -1333,8 +1338,9 @@ export default function UnifiedBillingPage() {
 
         try {
           // Import and generate receipt HTML
-          const { generateReceiptHtml } = await import('@/lib/webPrintService')
-          const receiptHtml = generateReceiptHtml(billData, clientInfo, true)
+          const { generateReceiptHtml, generateUpiQrDataUrl } = await import('@/lib/webPrintService')
+          const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '') : undefined
+          const receiptHtml = generateReceiptHtml(billData, clientInfo, true, qrDataUrl)
 
           console.log('[BILLING] Sending to Electron printer...')
           const printResult = await electronAPI.silentPrint(receiptHtml, null)
@@ -1354,7 +1360,7 @@ export default function UnifiedBillingPage() {
         console.log('[BILLING] Web mode - using browser print dialog...')
         try {
           const { printBill } = await import('@/lib/webPrintService')
-          const printResult = printBill(billData, clientInfo, true)
+          const printResult = await printBill(billData, clientInfo, true)
 
           if (printResult.success) {
             console.log('[BILLING] Browser print dialog opened successfully!')

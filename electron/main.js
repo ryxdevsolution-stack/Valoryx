@@ -3,6 +3,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const http = require('http');
+const { autoUpdater } = require('electron-updater');
 
 // Configuration
 const isDev = process.argv.includes('--dev');
@@ -304,6 +305,110 @@ ipcMain.handle('set-default-printer', async (event, printerName) => {
 });
 
 // =======================
+// Auto-Update
+// =======================
+
+function setupAutoUpdater() {
+  // Don't check for updates in dev mode
+  if (isDev) return;
+
+  // Configure: don't auto-download, let user decide when to restart
+  autoUpdater.autoDownload = true;
+  autoUpdater.autoInstallOnAppQuit = true;
+
+  // Log all events for debugging
+  autoUpdater.logger = {
+    info: (msg) => console.log('[Updater]', msg),
+    warn: (msg) => console.warn('[Updater]', msg),
+    error: (msg) => console.error('[Updater]', msg),
+    debug: (msg) => console.log('[Updater DEBUG]', msg),
+  };
+
+  // Forward update events to renderer via IPC
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[Updater] Checking for updates…');
+    sendUpdateStatus('checking', null);
+  });
+
+  autoUpdater.on('update-available', (info) => {
+    console.log(`[Updater] Update available: v${info.version}`);
+    sendUpdateStatus('available', {
+      version: info.version,
+      releaseDate: info.releaseDate,
+      releaseNotes: info.releaseNotes || '',
+    });
+  });
+
+  autoUpdater.on('update-not-available', () => {
+    console.log('[Updater] App is up to date');
+    sendUpdateStatus('not-available', null);
+  });
+
+  autoUpdater.on('download-progress', (progress) => {
+    sendUpdateStatus('downloading', {
+      percent: Math.round(progress.percent),
+      transferred: progress.transferred,
+      total: progress.total,
+    });
+  });
+
+  autoUpdater.on('update-downloaded', (info) => {
+    console.log(`[Updater] Update downloaded: v${info.version}`);
+    sendUpdateStatus('downloaded', {
+      version: info.version,
+      releaseDate: info.releaseDate,
+    });
+  });
+
+  autoUpdater.on('error', (err) => {
+    console.error('[Updater] Error:', err.message);
+    sendUpdateStatus('error', { message: err.message });
+  });
+
+  // Check for updates 5 seconds after app is ready
+  setTimeout(() => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.error('[Updater] Check failed:', err.message);
+    });
+  }, 5000);
+
+  // Then check every 4 hours
+  setInterval(() => {
+    autoUpdater.checkForUpdates().catch((err) => {
+      console.error('[Updater] Periodic check failed:', err.message);
+    });
+  }, 4 * 60 * 60 * 1000);
+}
+
+function sendUpdateStatus(status, data) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send('update-status', { status, data });
+  }
+}
+
+// IPC: User clicked "Restart & Update"
+ipcMain.handle('install-update', () => {
+  console.log('[Updater] User requested install — quitting and installing…');
+  app.isQuitting = true;
+  autoUpdater.quitAndInstall(false, true);
+});
+
+// IPC: Manual check for updates
+ipcMain.handle('check-for-updates', async () => {
+  try {
+    const result = await autoUpdater.checkForUpdates();
+    return { success: true, version: result?.updateInfo?.version || null };
+  } catch (err) {
+    return { success: false, error: err.message };
+  }
+});
+
+// IPC: Get current app version
+ipcMain.handle('get-app-version', () => {
+  return app.getVersion();
+});
+
+// =======================
 // App Lifecycle
 // =======================
 
@@ -330,6 +435,9 @@ app.on('ready', async () => {
   // Step 4: Backend ready. IPC event with progress:80 already triggered
   //         App.tsx to set backendReady=true and unmount ElectronSplash.
   console.log('[App] Valoryx Desktop ready!');
+
+  // Step 5: Start auto-updater (checks GitHub Releases for new version)
+  setupAutoUpdater();
 });
 
 app.on('window-all-closed', () => {

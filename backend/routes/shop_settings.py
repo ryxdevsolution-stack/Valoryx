@@ -20,6 +20,7 @@ _SETTINGS_FIELDS = {
     'gst_number': 'gst_number',
     'receipt_footer': 'receipt_footer',
     'logo_url': 'logo_url',
+    'points_per_100': 'points_per_100',
 }
 
 # Fields that are read-only (returned in GET but cannot be set via PUT)
@@ -64,8 +65,8 @@ def update_shop_settings():
         client_id = g.user['client_id']
         role = g.user.get('role', '')
 
-        if role not in ('owner', 'manager'):
-            return jsonify({'success': False, 'error': 'Only owner or manager can update shop settings'}), 403
+        if role not in ('owner', 'manager', 'admin', 'super admin'):
+            return jsonify({'success': False, 'error': 'Only owner, manager or admin can update shop settings'}), 403
 
         client = ClientEntry.query.filter_by(client_id=client_id).first()
         if not client:

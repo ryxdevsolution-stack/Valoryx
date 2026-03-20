@@ -4,9 +4,12 @@ from datetime import datetime
 import pytz
 from dateutil import parser as date_parser
 from flask import Blueprint, request, jsonify, g
+from sqlalchemy import func
 from extensions import db
 from models.billing_model import GSTBilling, NonGSTBilling
 from models.stock_model import StockEntry
+from models.customer_model import Customer
+from models.client_model import ClientEntry
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission, require_any_permission
 from utils.audit_logger import log_action
@@ -24,6 +27,36 @@ def get_current_time():
     aware_dt = datetime.now(kolkata_tz)
     # Return naive datetime (without timezone info) representing IST time
     return aware_dt.replace(tzinfo=None)
+
+
+def _update_loyalty_points(client_id, customer_phone, bill_amount, subtract=False):
+    """Add or subtract loyalty points for a customer after bill creation/cancellation.
+    Points = floor(bill_amount / 100) * points_per_100"""
+    if not customer_phone:
+        return 0
+    try:
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+        points_per_100 = getattr(client, 'points_per_100', 0) or 0
+        if points_per_100 <= 0:
+            return 0
+
+        customer = Customer.query.filter_by(client_id=client_id, customer_phone=customer_phone).first()
+        if not customer:
+            return 0
+
+        points = int(bill_amount // 100) * points_per_100
+        if points <= 0:
+            return 0
+
+        if subtract:
+            customer.loyalty_points = max(0, (customer.loyalty_points or 0) - points)
+        else:
+            customer.loyalty_points = (customer.loyalty_points or 0) + points
+        db.session.commit()
+        return points
+    except Exception as e:
+        print(f"Warning: Loyalty points update failed: {e}")
+        return 0
 
 
 @billing_bp.route('/gst', methods=['POST'])
@@ -714,9 +747,9 @@ def create_unified_bill():
         should_create_gst_bill = gst_only or (not non_gst_only and has_gst_items)
 
         if should_create_gst_bill:
-            # Create GST Bill
-            last_bill = GSTBilling.query.filter_by(client_id=client_id).order_by(GSTBilling.bill_number.desc()).first()
-            bill_number = (last_bill.bill_number + 1) if last_bill else 1
+            # Create GST Bill — use MAX() aggregate instead of loading full row
+            max_num = db.session.query(func.max(GSTBilling.bill_number)).filter_by(client_id=client_id).scalar()
+            bill_number = (max_num + 1) if max_num else 1
 
             # Calculate discount amount or negotiable amount BEFORE creating bill object
             discount_amount = 0
@@ -761,6 +794,9 @@ def create_unified_bill():
             log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
             db.session.commit()
 
+            # Award loyalty points
+            points_earned = _update_loyalty_points(client_id, data.get('customer_phone'), final_amount)
+
             # Invalidate caches after bill creation - including analytics for real-time dashboard updates
             invalidate_cache(f"billing:{client_id}")
             invalidate_cache(f"stock:{client_id}")
@@ -800,14 +836,15 @@ def create_unified_bill():
                     'cgst': cgst,
                     'sgst': sgst,
                     'igst': 0,
-                    'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0]  # Use full name if available
+                    'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0],  # Use full name if available
+                    'points_earned': points_earned
                 }
             }), 201
 
         else:
-            # Create Non-GST Bill
-            last_bill = NonGSTBilling.query.filter_by(client_id=client_id).order_by(NonGSTBilling.bill_number.desc()).first()
-            bill_number = (last_bill.bill_number + 1) if last_bill else 1
+            # Create Non-GST Bill — use MAX() aggregate instead of loading full row
+            max_num = db.session.query(func.max(NonGSTBilling.bill_number)).filter_by(client_id=client_id).scalar()
+            bill_number = (max_num + 1) if max_num else 1
 
             # Calculate discount amount or negotiable amount for non-GST bills
             discount_amount = 0
@@ -847,6 +884,9 @@ def create_unified_bill():
             log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
             db.session.commit()
 
+            # Award loyalty points
+            points_earned = _update_loyalty_points(client_id, data.get('customer_phone'), total_amount)
+
             # Invalidate caches after bill creation - including analytics for real-time dashboard updates
             invalidate_cache(f"billing:{client_id}")
             invalidate_cache(f"stock:{client_id}")
@@ -880,7 +920,8 @@ def create_unified_bill():
                     'cgst': 0,
                     'sgst': 0,
                     'igst': 0,
-                    'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0]  # Use full name if available
+                    'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0],  # Use full name if available
+                    'points_earned': points_earned
                 }
             }), 201
 
@@ -1255,6 +1296,10 @@ def cancel_bill(bill_id):
         bill.updated_at = get_current_time()
 
         db.session.commit()
+
+        # Reverse loyalty points (non-critical)
+        bill_amount = float(bill.final_amount if is_gst else bill.total_amount)
+        _update_loyalty_points(client_id, bill.customer_phone, bill_amount, subtract=True)
 
         # These operations are non-critical - don't fail the cancellation if they error
         try:

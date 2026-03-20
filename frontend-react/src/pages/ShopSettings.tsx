@@ -14,6 +14,7 @@ import { getShopSettings, updateShopSettings } from '@/services/shopSettingsServ
 import type { ShopSettings } from '@/services/shopSettingsService'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
 import bluetoothPrinterService from '@/services/bluetoothPrinterService'
+import { QRCodeSVG } from 'qrcode.react'
 
 const RECEIPT_FOOTER_MAX = 60
 
@@ -25,6 +26,7 @@ interface FormState {
   gst_number: string
   upi_id: string
   receipt_footer: string
+  points_per_100: string
 }
 
 const EMPTY_FORM: FormState = {
@@ -35,6 +37,7 @@ const EMPTY_FORM: FormState = {
   gst_number: '',
   upi_id: '',
   receipt_footer: '',
+  points_per_100: '0',
 }
 
 function settingsToForm(s: ShopSettings): FormState {
@@ -46,6 +49,7 @@ function settingsToForm(s: ShopSettings): FormState {
     gst_number: s.gst_number || '',
     upi_id: s.upi_id || '',
     receipt_footer: s.receipt_footer || '',
+    points_per_100: String(s.points_per_100 || 0),
   }
 }
 
@@ -140,13 +144,21 @@ function ReceiptPreview({ form }: { form: FormState }) {
           <span>400.00</span>
         </div>
 
-        {/* UPI */}
+        {/* UPI QR Code */}
         {form.upi_id && (
           <>
             <p className="text-center my-1.5 text-gray-400 select-none" aria-hidden="true">
               {'- '.repeat(14)}
             </p>
-            <p className="text-center text-[10px]">
+            <p className="text-center text-[10px] font-bold mb-1">Scan to Pay</p>
+            <div className="flex justify-center my-1">
+              <QRCodeSVG
+                value={`upi://pay?pa=${form.upi_id}&pn=${encodeURIComponent(form.shop_name || 'Shop')}`}
+                size={80}
+                level="M"
+              />
+            </div>
+            <p className="text-center text-[9px] text-gray-500">
               UPI: {form.upi_id}
             </p>
           </>
@@ -187,7 +199,7 @@ export default function ShopSettingsPage() {
   const [btLoading, setBtLoading] = useState<'idle' | 'searching' | 'connecting' | 'printing'>('idle')
   const [btError, setBtError] = useState<string | null>(null)
 
-  const canEdit = user?.role === 'owner' || user?.role === 'manager'
+  const canEdit = user?.role === 'owner' || user?.role === 'manager' || user?.role === 'admin' || user?.role === 'super admin'
 
   // ─── Fetch settings on mount ────────────────────────────────────
 
@@ -253,6 +265,7 @@ export default function ShopSettingsPage() {
         gst_number: form.gst_number.trim(),
         upi_id: form.upi_id.trim(),
         receipt_footer: form.receipt_footer.trim(),
+        points_per_100: parseInt(form.points_per_100) || 0,
       })
       setForm(settingsToForm(updated))
       setMessage({ type: 'success', text: 'Shop settings saved successfully' })
@@ -489,6 +502,34 @@ export default function ShopSettingsPage() {
                   <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 text-right">
                     {form.receipt_footer.length}/{RECEIPT_FOOTER_MAX}
                   </p>
+                </div>
+              </div>
+
+              {/* Loyalty Points */}
+              <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+                <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-3">Loyalty Points</h3>
+                <div>
+                  <label htmlFor="points_per_100" className={labelClasses}>
+                    Points per ₹100 spent
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <input
+                      id="points_per_100"
+                      type="number"
+                      min="0"
+                      max="100"
+                      value={form.points_per_100}
+                      onChange={handleChange('points_per_100')}
+                      disabled={!canEdit}
+                      placeholder="0"
+                      className={`${inputClasses} w-32`}
+                    />
+                    <p className="text-xs text-gray-500 dark:text-gray-400">
+                      {parseInt(form.points_per_100) > 0
+                        ? `Customer earns ${form.points_per_100} point${parseInt(form.points_per_100) !== 1 ? 's' : ''} for every ₹100 spent`
+                        : 'Set to 0 to disable loyalty points'}
+                    </p>
+                  </div>
                 </div>
               </div>
 
