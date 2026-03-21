@@ -1,14 +1,13 @@
 from extensions import db
 from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
 from datetime import datetime, timedelta
-from sqlalchemy.dialects.postgresql import UUID
 import uuid
 
 class Note(db.Model):
     __tablename__ = 'notes'
 
-    note_id = db.Column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
-    user_id = db.Column(UUID(as_uuid=True), db.ForeignKey('users.user_id'), nullable=False)
+    note_id = db.Column(FlexibleUUID, primary_key=True, default=uuid.uuid4)
+    user_id = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'), nullable=False)
     title = db.Column(db.String(255))
     content = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.DateTime, default=datetime.utcnow, nullable=False)

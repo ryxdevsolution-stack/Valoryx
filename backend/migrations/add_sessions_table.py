@@ -17,7 +17,7 @@ def table_exists(engine, table_name):
 
 
 def run_sqlite(sqlite_path=None):
-    sqlite_path = sqlite_path or os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.mj-billing/local.db'))
+    sqlite_path = sqlite_path or os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
     if not os.path.exists(sqlite_path):
         logger.error('SQLite DB not found: %s', sqlite_path)
         return False

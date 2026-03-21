@@ -166,7 +166,10 @@
       "Bash(git add:*)",
       "Bash(fuser -k:*)",
       "Bash(fuser:*)",
-      "WebFetch(domain:valoryx.ryxtech.in)"
+      "WebFetch(domain:valoryx.ryxtech.in)",
+      "Bash(while read:*)",
+      "Bash(do sed:*)",
+      "Bash(sqlite3 \"C:/Users/loges/.valoryx/local.db\" \"SELECT product_id, product_name, client_id FROM stock_entry WHERE client_id = ''6f33313e-544b-4b25-9812-1340e60a8e2e'';\")"
     ],
     "deny": [],
     "ask": [],

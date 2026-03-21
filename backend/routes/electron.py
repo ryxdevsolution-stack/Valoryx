@@ -1,99 +1,24 @@
 """
 Electron desktop app endpoints.
 
-Two modes:
-  1. Live server  — GET  /api/electron/data-export
-     Authenticated endpoint that exports all client data as JSON for
-     the Electron app to download on first launch.
-
-  2. Local Flask  — POST /api/electron/setup
-                  — GET  /api/electron/needs-setup
-     Called by the Electron frontend during first-time setup.
-     Hits the live server, pulls the data export, stores in local SQLite.
+All endpoints run on the local Flask server (SQLite mode).
+Setup connects directly to Supabase using DB_URL from .env —
+no live server dependency needed.
 """
 
 import os
-import json
 import logging
-import httpx
+import bcrypt
 from datetime import datetime
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify
 from extensions import db
-from utils.auth_middleware import authenticate
+from sqlalchemy import create_engine, text as sa_text
 
 electron_bp = Blueprint('electron', __name__)
 
-LIVE_API_URL = os.environ.get('LIVE_API_URL', 'https://valoryx.ryxtech.in')
 
 # ─────────────────────────────────────────────────────────────────────────────
-# 1. LIVE SERVER — data export endpoint
-# ─────────────────────────────────────────────────────────────────────────────
-
-@electron_bp.route('/api/electron/data-export', methods=['GET'])
-@authenticate
-def data_export():
-    """
-    Returns all data for the authenticated client as JSON.
-    Called by the Electron app during first-time setup.
-    Only works in online mode (Supabase).
-    """
-    client_id = g.user['client_id']
-
-    try:
-        from models.user_model import User
-        from models.client_model import ClientEntry
-        from models.billing_model import GSTBilling
-        from models.non_gst_billing_model import NonGSTBilling
-        from models.stock_model import StockEntry
-        from models.customer_model import Customer
-        from models.payment_type_model import PaymentType
-        from models.expense_model import Expense
-        from models.permission_model import UserPermission, Permission
-        from models.branch_model import Branch
-        from models.branch_inventory_model import BranchInventory
-
-        def rows(query):
-            return [r.to_dict() if hasattr(r, 'to_dict') else _model_to_dict(r)
-                    for r in query]
-
-        def _model_to_dict(obj):
-            result = {}
-            for col in obj.__table__.columns:
-                val = getattr(obj, col.name)
-                if isinstance(val, datetime):
-                    val = val.isoformat()
-                result[col.name] = val
-            return result
-
-        data = {
-            'client_id': client_id,
-            'exported_at': datetime.utcnow().isoformat(),
-            'users': rows(User.query.filter_by(client_id=client_id, deleted_at=None).all()),
-            'gst_billing': rows(GSTBilling.query.filter_by(client_id=client_id).all()),
-            'non_gst_billing': rows(NonGSTBilling.query.filter_by(client_id=client_id).all()),
-            'stock_entry': rows(StockEntry.query.filter_by(client_id=client_id).all()),
-            'customer': rows(Customer.query.filter_by(client_id=client_id).all()),
-            'payment_type': rows(PaymentType.query.filter_by(client_id=client_id).all()),
-            'expense': rows(Expense.query.filter_by(client_id=client_id).all()),
-            'branches': rows(Branch.query.filter_by(client_id=client_id).all()),
-            'branch_inventory': rows(BranchInventory.query.filter_by(client_id=client_id).all()),
-            'user_permissions': rows(
-                db.session.query(UserPermission)
-                .join(User, UserPermission.user_id == User.user_id)
-                .filter(User.client_id == client_id)
-                .all()
-            ),
-        }
-
-        return jsonify({'success': True, 'data': data}), 200
-
-    except Exception as e:
-        logging.error(f'[Electron] data-export failed: {e}')
-        return jsonify({'error': str(e)}), 500
-
-
-# ─────────────────────────────────────────────────────────────────────────────
-# 2. LOCAL FLASK (Electron offline) — setup endpoints
+# GET /api/electron/needs-setup
 # ─────────────────────────────────────────────────────────────────────────────
 
 @electron_bp.route('/api/electron/needs-setup', methods=['GET'])
@@ -107,69 +32,59 @@ def needs_setup():
         return jsonify({'needs_setup': True}), 200
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# POST /api/electron/setup
+# ─────────────────────────────────────────────────────────────────────────────
+
 @electron_bp.route('/api/electron/setup', methods=['POST'])
 def setup():
     """
     First-time setup for Electron app.
-    1. Authenticates against the live server.
-    2. Downloads all client data via /api/electron/data-export.
-    3. Inserts everything into local SQLite.
+    1. Connects directly to Supabase using DB_URL.
+    2. Verifies email + password against Supabase users table.
+    3. Fetches all client data from Supabase.
+    4. Inserts everything into local SQLite.
     """
     body = request.get_json() or {}
     email = body.get('email', '').strip()
     password = body.get('password', '').strip()
-    server_url = body.get('server_url', LIVE_API_URL).rstrip('/')
 
     if not email or not password:
         return jsonify({'error': 'Email and password are required'}), 400
 
-    # Step 1 — authenticate against live server
+    db_url = os.environ.get('DB_URL')
+    if not db_url:
+        return jsonify({'error': 'DB_URL not configured in .env'}), 500
+
+    # Step 1 — connect to Supabase and authenticate
     try:
-        login_resp = httpx.post(
-            f'{server_url}/api/auth/login',
-            json={'email': email, 'password': password},
-            timeout=15,
+        engine = create_engine(
+            db_url,
+            pool_pre_ping=True,
+            connect_args={'connect_timeout': 30}
         )
+        client_id, user_row = _authenticate_supabase(engine, email, password)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 401
     except Exception as e:
-        return jsonify({'error': f'Cannot reach server: {e}'}), 503
+        logging.error(f'[Electron] Supabase auth failed: {e}')
+        return jsonify({'error': f'Cannot connect to Supabase: {e}'}), 503
 
-    if login_resp.status_code != 200:
-        try:
-            msg = login_resp.json().get('error', 'Invalid credentials')
-        except Exception:
-            msg = 'Invalid credentials'
-        return jsonify({'error': msg}), 401
-
-    login_data = login_resp.json()
-    token = login_data.get('token')
-    if not token:
-        return jsonify({'error': 'No token returned from server'}), 500
-
-    # Step 2 — download all client data
+    # Step 2 — fetch all client data from Supabase
     try:
-        export_resp = httpx.get(
-            f'{server_url}/api/electron/data-export',
-            headers={'Authorization': f'Bearer {token}'},
-            timeout=60,
-        )
+        export = _fetch_from_supabase(engine, client_id)
     except Exception as e:
-        return jsonify({'error': f'Failed to download data: {e}'}), 503
-
-    if export_resp.status_code != 200:
-        try:
-            detail = export_resp.json()
-        except Exception:
-            detail = export_resp.text[:200]
-        logging.error(f'[Electron] data-export returned {export_resp.status_code}: {detail}')
-        return jsonify({'error': f'Failed to export data from server (status {export_resp.status_code})', 'detail': str(detail)}), 500
-
-    export = export_resp.json().get('data', {})
+        logging.error(f'[Electron] Supabase fetch failed: {e}')
+        engine.dispose()
+        return jsonify({'error': f'Failed to fetch data: {e}'}), 500
+    finally:
+        engine.dispose()
 
     # Step 3 — insert into local SQLite
     try:
         _import_data(export)
     except Exception as e:
-        logging.error(f'[Electron] setup import failed: {e}')
+        logging.error(f'[Electron] import failed: {e}')
         db.session.rollback()
         return jsonify({'error': f'Failed to import data: {e}'}), 500
 
@@ -179,30 +94,130 @@ def setup():
     }), 200
 
 
-def _import_data(data: dict):
-    """Insert exported data into local SQLite using upsert logic."""
-    from sqlalchemy import text
+# ─────────────────────────────────────────────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────────────────────────────────────────────
 
-    tables = {
-        'users':            ('users',            'user_id'),
-        'gst_billing':      ('gst_billing',      'bill_id'),
-        'non_gst_billing':  ('non_gst_billing',  'bill_id'),
-        'stock_entry':      ('stock_entry',       'product_id'),
-        'customer':         ('customer',          'customer_id'),
-        'payment_type':     ('payment_type',      'payment_type_id'),
-        'expense':          ('expense',           'expense_id'),
-        'branches':         ('branches',          'branch_id'),
-        'branch_inventory': ('branch_inventory',  'id'),
-        'user_permissions': ('user_permissions',  'id'),
+def _authenticate_supabase(engine, email: str, password: str):
+    """
+    Verify credentials directly against Supabase users table.
+    Returns (client_id, user_row) or raises ValueError on bad credentials.
+    """
+    with engine.connect() as conn:
+        row = conn.execute(
+            sa_text("""
+                SELECT user_id, client_id, password_hash, is_active, deleted_at
+                FROM users
+                WHERE email = :email
+                LIMIT 1
+            """),
+            {'email': email}
+        ).mappings().first()
+
+    if not row:
+        raise ValueError('Email address not found')
+
+    if row['deleted_at'] is not None:
+        raise ValueError('Account has been deleted')
+
+    if not row['is_active']:
+        raise ValueError('Account is inactive')
+
+    if not bcrypt.checkpw(password.encode('utf-8'), row['password_hash'].encode('utf-8')):
+        raise ValueError('Incorrect password')
+
+    return str(row['client_id']), dict(row)
+
+
+def _serialize_row(row: dict) -> dict:
+    result = {}
+    for k, v in row.items():
+        if v is None:
+            result[k] = v
+        elif isinstance(v, datetime):
+            result[k] = v.isoformat()
+        elif isinstance(v, (str, int, float, bool)):
+            result[k] = v
+        else:
+            result[k] = str(v)  # handles UUID, Decimal, and any other pg types
+    return result
+
+
+def _fetch_from_supabase(engine, client_id: str) -> dict:
+    """Fetch all client data from Supabase."""
+
+    def fetch_table(table, extra_filter=''):
+        sql = f"SELECT * FROM {table} WHERE client_id = :cid {extra_filter}"
+        with engine.connect() as conn:
+            rows = conn.execute(sa_text(sql), {'cid': client_id}).mappings().all()
+            return [_serialize_row(dict(r)) for r in rows]
+
+    with engine.connect() as conn:
+        user_permissions = [
+            _serialize_row(dict(r)) for r in conn.execute(sa_text("""
+                SELECT up.* FROM user_permissions up
+                JOIN users u ON up.user_id = u.user_id
+                WHERE u.client_id = :cid
+            """), {'cid': client_id}).mappings().all()
+        ]
+
+    # client_entry uses client_id as its PK, not FK
+    with engine.connect() as conn:
+        ce_rows = conn.execute(sa_text(
+            "SELECT * FROM client_entry WHERE client_id = :cid"
+        ), {'cid': client_id}).mappings().all()
+        client_entry = [_serialize_row(dict(r)) for r in ce_rows]
+
+    # global tables — fetch all rows (no client_id filter)
+    def fetch_global(table):
+        with engine.connect() as conn:
+            rows = conn.execute(sa_text(f"SELECT * FROM {table}")).mappings().all()
+            return [_serialize_row(dict(r)) for r in rows]
+
+    data = {
+        'client_entry':         client_entry,
+        'permission_sections':  fetch_global('permission_sections'),
+        'permissions':          fetch_global('permissions'),
+        'users':                fetch_table('users', extra_filter='AND deleted_at IS NULL'),
+        'gst_billing':          fetch_table('gst_billing'),
+        'non_gst_billing':      fetch_table('non_gst_billing'),
+        'stock_entry':          fetch_table('stock_entry'),
+        'customer':             fetch_table('customer'),
+        'payment_type':         fetch_table('payment_type'),
+        'expense':              fetch_table('expense'),
+        'branches':             fetch_table('branches'),
+        'branch_inventory':     fetch_table('branch_inventory'),
+        'user_permissions':     user_permissions,
     }
 
-    for key, (table, pk) in tables.items():
+    logging.info(f'[Electron] Fetched Supabase data for client {client_id}')
+    return data
+
+
+def _import_data(data: dict):
+    """Upsert all rows into local SQLite."""
+    tables = {
+        'client_entry':         'client_id',
+        'permission_sections':  'section_id',
+        'permissions':          'permission_id',
+        'users':                'user_id',
+        'gst_billing':      'bill_id',
+        'non_gst_billing':  'bill_id',
+        'stock_entry':      'product_id',
+        'customer':         'customer_id',
+        'payment_type':     'payment_type_id',
+        'expense':          'expense_id',
+        'branches':         'branch_id',
+        'branch_inventory': 'id',
+        'user_permissions': 'id',
+    }
+
+    for key, pk in tables.items():
         rows = data.get(key, [])
         if not rows:
             continue
 
         for row in rows:
-            # Remove keys with None pk
             if not row.get(pk):
                 continue
 
@@ -210,12 +225,10 @@ def _import_data(data: dict):
             if not cols:
                 continue
 
-            placeholders = ', '.join(f':{c}' for c in cols)
             col_names = ', '.join(cols)
-
-            # SQLite upsert: INSERT OR REPLACE
-            sql = f'INSERT OR REPLACE INTO {table} ({col_names}) VALUES ({placeholders})'
-            db.session.execute(text(sql), {c: row[c] for c in cols})
+            placeholders = ', '.join(f':{c}' for c in cols)
+            sql = f'INSERT OR REPLACE INTO {key} ({col_names}) VALUES ({placeholders})'
+            db.session.execute(sa_text(sql), {c: row[c] for c in cols})
 
     db.session.commit()
     logging.info('[Electron] Data import complete')

@@ -68,7 +68,7 @@ class DatabaseManager:
             return os.getenv('DB_URL')
         else:
             # SQLite database path
-            db_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.mj-billing/local.db'))
+            db_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
 
             # Ensure directory exists
             os.makedirs(os.path.dirname(db_path), exist_ok=True)

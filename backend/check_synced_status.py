@@ -10,7 +10,7 @@ load_dotenv()
 
 def check_sync_status():
     """Check sync status of recent records"""
-    db_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.mj-billing/local.db'))
+    db_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
 
     if not os.path.exists(db_path):
         print(f"[X] Database not found: {db_path}")

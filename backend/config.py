@@ -44,7 +44,7 @@ def get_database_uri():
         return os.getenv("DB_URL", "sqlite:///app.db")
     else:
         # SQLite for offline mode
-        sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.mj-billing/local.db'))
+        sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
         # Ensure directory exists
         os.makedirs(os.path.dirname(sqlite_path), exist_ok=True)
         return f'sqlite:///{sqlite_path}'

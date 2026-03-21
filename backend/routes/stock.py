@@ -207,17 +207,6 @@ def get_stock():
         search = request.args.get('search')
         limit = request.args.get('limit', type=int)  # Optional limit
 
-        # Try cache for full list requests (no search/category filter)
-        cache = get_cache_manager()
-        if not category and not search and not limit:
-            cache_key = f"stock:list:{client_id}"
-            cached_data = cache.get(cache_key)
-            if cached_data is not None:
-                return jsonify({
-                    'success': True,
-                    'stock': cached_data
-                }), 200
-
         # Build query
         query = StockEntry.query.filter_by(client_id=client_id)
 
@@ -227,25 +216,18 @@ def get_stock():
         if search:
             query = query.filter(StockEntry.product_name.ilike(f'%{search}%'))
 
-        # Apply ordering
-        query = query.order_by(StockEntry.product_name)
-
-        # Apply limit if provided (for better performance)
         if limit:
             query = query.limit(limit)
 
-        # Get results
+        query = query.order_by(StockEntry.product_name)
+
         stock_entries = query.all()
         stock_data = [entry.to_dict() for entry in stock_entries]
 
-        # Cache full list for future requests
-        if not category and not search and not limit:
-            cache.set(f"stock:list:{client_id}", stock_data, STOCK_CACHE_TIMEOUT)
-
-        return jsonify({
-            'success': True,
-            'stock': stock_data
-        }), 200
+        resp = jsonify({'success': True, 'stock': stock_data})
+        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
+        resp.headers['Pragma'] = 'no-cache'
+        return resp, 200
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch stock', 'message': str(e)}), 500

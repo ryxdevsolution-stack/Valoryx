@@ -428,6 +428,7 @@ export default function LoginPage() {
                   <span className="px-2 bg-[#0f0a1e] text-slate-500 uppercase tracking-wider">or</span>
                 </div>
               </div>
+              {!import.meta.env.VITE_ELECTRON && (
               <button
                 type="button"
                 onClick={handleGoogleLogin}
@@ -441,6 +442,7 @@ export default function LoginPage() {
                 </svg>
                 Continue with Google
               </button>
+              )}
 
               <p className="text-center mt-6 text-sm text-slate-400">
                 Don't have an account?{' '}

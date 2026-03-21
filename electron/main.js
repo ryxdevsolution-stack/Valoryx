@@ -1,4 +1,7 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, session } = require('electron');
+
+// Disable HTTP cache so API responses are always fresh
+app.commandLine.appendSwitch('disable-http-cache');
 const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
@@ -19,16 +22,21 @@ let backendProcess = null;
 let tray = null;
 let backendRestartCount = 0;
 let backendReady = false;
+let lastStartupStatus = { message: 'Initializing…', progress: 5 };
 
 // =======================
 // Backend Supervisor
 // =======================
 
 function sendSplashStatus(message, progress) {
+  lastStartupStatus = { message, progress };
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('startup-status', { message, progress });
   }
 }
+
+// Renderer can pull current status on mount (avoids missing the push event)
+ipcMain.handle('get-startup-status', () => lastStartupStatus);
 
 function spawnFlask() {
   let pythonPath, backendPath;
@@ -37,12 +45,14 @@ function spawnFlask() {
     backendPath = path.join(__dirname, '..', 'backend');
   } else {
     pythonPath = 'python';
-    backendPath = path.join(process.resourcesPath, 'backend');
+    backendPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'backend')
+      : path.join(__dirname, '..', 'backend');
   }
 
   const proc = spawn(pythonPath, ['app.py'], {
     cwd: backendPath,
-    env: { ...process.env, DB_MODE: 'offline', PYTHONUNBUFFERED: '1' },
+    env: { ...process.env, DB_MODE: 'offline', PYTHONUNBUFFERED: '1', TELEGRAM_BOT_TOKEN: '', PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
     stdio: ['ignore', 'pipe', 'pipe']
   });
 
@@ -58,7 +68,7 @@ function pollHealth(timeoutMs) {
   return new Promise((resolve) => {
     const check = () => {
       if (Date.now() - start > timeoutMs) { resolve(false); return; }
-      const req = http.get(`http://localhost:${BACKEND_PORT}/api/health`, (res) => {
+      const req = http.get(`http://127.0.0.1:${BACKEND_PORT}/api/health`, (res) => {
         if (res.statusCode === 200) { resolve(true); return; }
         setTimeout(check, HEALTH_POLL_INTERVAL_MS);
       });
@@ -139,9 +149,9 @@ function loadFrontend() {
   if (isDev) {
     mainWindow.loadURL(`http://localhost:${FRONTEND_PORT}/#/auth/login`);
   } else {
-    const frontendPath = path.join(
-      process.resourcesPath, 'frontend-react', 'dist', 'index.html'
-    );
+    const frontendPath = app.isPackaged
+      ? path.join(process.resourcesPath, 'backend', 'static', 'frontend', 'index.html')
+      : path.join(__dirname, '..', 'backend', 'static', 'frontend', 'index.html');
     mainWindow.loadFile(frontendPath, { hash: '/auth/login' });
   }
 }
@@ -414,6 +424,9 @@ ipcMain.handle('get-app-version', () => {
 
 app.on('ready', async () => {
   console.log('[App] Starting Valoryx Desktop…');
+
+  // Clear HTTP cache on every startup so API responses are always fresh
+  session.defaultSession.clearCache();
 
   // Step 1: Create window and tray immediately
   createWindow();

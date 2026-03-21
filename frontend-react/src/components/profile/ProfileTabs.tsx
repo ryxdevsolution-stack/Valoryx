@@ -9,6 +9,7 @@ interface ProfileTabsProps {
   showTeamTab: boolean
   showSubscriptionTab: boolean
   showWebhooksTab?: boolean
+  showTwoFactorTab?: boolean
 }
 
 const TABS: { id: ProfileTab; label: string; icon: typeof User }[] = [
@@ -20,11 +21,12 @@ const TABS: { id: ProfileTab; label: string; icon: typeof User }[] = [
   { id: 'webhooks', label: 'Webhooks', icon: Webhook },
 ]
 
-export default function ProfileTabs({ activeTab, onTabChange, showTeamTab, showSubscriptionTab, showWebhooksTab }: ProfileTabsProps) {
+export default function ProfileTabs({ activeTab, onTabChange, showTeamTab, showSubscriptionTab, showWebhooksTab, showTwoFactorTab }: ProfileTabsProps) {
   const visibleTabs = TABS.filter(tab => {
     if (tab.id === 'team') return showTeamTab
     if (tab.id === 'subscription') return showSubscriptionTab
     if (tab.id === 'webhooks') return showWebhooksTab ?? false
+    if (tab.id === 'two-factor') return showTwoFactorTab ?? true
     return true
   })
 

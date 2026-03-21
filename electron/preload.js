@@ -16,6 +16,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.on('startup-status', (_event, data) => callback(data)),
   removeStartupStatus: () =>
     ipcRenderer.removeAllListeners('startup-status'),
+  getStartupStatus: () => ipcRenderer.invoke('get-startup-status'),
 
   // Auto-update IPC
   onUpdateStatus: (callback) =>

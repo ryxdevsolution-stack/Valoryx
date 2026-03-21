@@ -6,8 +6,8 @@ import './styles/globals.css'
 // HashRouter for Electron (file:// protocol), BrowserRouter for web
 const isElectron = !!(window as any).electronAPI?.isElectron
 
-// Register service worker for PWA (web only)
-if (!isElectron && 'serviceWorker' in navigator) {
+// Register service worker for PWA (web only, not Electron build)
+if (import.meta.env.VITE_ELECTRON !== 'true' && !isElectron && 'serviceWorker' in navigator) {
   import('virtual:pwa-register').then(({ registerSW }) => {
     registerSW({
       immediate: true,

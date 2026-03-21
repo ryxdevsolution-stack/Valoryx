@@ -61,7 +61,7 @@ class SyncService:
         """Initialize database connections for sync"""
         try:
             # SQLite connection (local database)
-            sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.mj-billing/local.db'))
+            sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
             self.sqlite_engine = create_engine(f'sqlite:///{sqlite_path}')
 
             # PostgreSQL connection (Supabase)

@@ -12,7 +12,7 @@ load_dotenv()
 
 def add_synced_at_column():
     """Add synced_at column to customer table if it doesn't exist"""
-    sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.mj-billing/local.db'))
+    sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
 
     if not os.path.exists(sqlite_path):
         print(f"[X] SQLite database not found at: {sqlite_path}")

@@ -23,7 +23,6 @@ const requestCache = new Map<string, CacheEntry>()
 // Cache TTLs in milliseconds - OPTIMIZED: aligned with backend cache durations
 // Frontend cache should be slightly shorter than backend to avoid stale data
 const CACHE_TTLS: Record<string, number> = {
-  '/stock': 240000,          // 4 min (backend: 5 min) - stock list
   '/stock/lookup': 120000,   // 2 min - product lookups
   '/customer/search': 60000, // 1 min - customer search results
   '/payment': 300000,        // 5 min - payment types rarely change

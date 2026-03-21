@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 3
+CURRENT_SCHEMA_VERSION = 4
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -253,12 +253,53 @@ def _m003_shop_receipt_settings(db):
     logging.info("[Migration] v3: shop receipt settings columns added")
 
 
+def _m004_users_and_client_missing_cols(db):
+    """
+    Add columns that exist in the model but were missing from older SQLite DBs:
+    - users: reset_token, reset_token_expires, invite_token, invite_token_expires,
+             invite_accepted, must_change_password, totp_secret, totp_enabled,
+             totp_backup_codes, google_id, avatar_url
+    - client_entry: points_per_100
+    """
+    inspector = sa_inspect(db.engine)
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    _add_col('users', 'reset_token',          'VARCHAR(100) NULL')
+    _add_col('users', 'reset_token_expires',   'DATETIME NULL')
+    _add_col('users', 'invite_token',          'VARCHAR(100) NULL')
+    _add_col('users', 'invite_token_expires',  'DATETIME NULL')
+    _add_col('users', 'invite_accepted',       'BOOLEAN NOT NULL DEFAULT 0')
+    _add_col('users', 'must_change_password',  'BOOLEAN NOT NULL DEFAULT 0')
+    _add_col('users', 'totp_secret',           'VARCHAR(64) NULL')
+    _add_col('users', 'totp_enabled',          'BOOLEAN NOT NULL DEFAULT 0')
+    _add_col('users', 'totp_backup_codes',     'TEXT NULL')
+    _add_col('users', 'google_id',             'VARCHAR(128) NULL')
+    _add_col('users', 'avatar_url',            'VARCHAR(512) NULL')
+
+    _add_col('client_entry', 'points_per_100', 'INTEGER NULL DEFAULT 0')
+
+    db.session.commit()
+    logging.info("[Migration] v4: missing users and client_entry columns added")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
     (1, _m001_core_columns),
     (2, _m002_barcode_per_client_unique),
     (3, _m003_shop_receipt_settings),
+    (4, _m004_users_and_client_missing_cols),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────
@@ -278,6 +319,19 @@ def run_migrations_if_needed(app, db):
         if stored >= CURRENT_SCHEMA_VERSION:
             logging.info(
                 f"[Migration] Schema up to date (v{stored}). Skipping all migration checks."
+            )
+            return
+
+        # Fresh install — tables don't exist yet (db.create_all() runs after this).
+        # Stamp current version so migrations are skipped; db.create_all() creates
+        # the full schema with all columns.
+        inspector = sa_inspect(db.engine)
+        existing_tables = inspector.get_table_names()
+        if 'users' not in existing_tables:
+            _set_stored_version(db, CURRENT_SCHEMA_VERSION)
+            logging.info(
+                f"[Migration] Fresh install detected — stamped v{CURRENT_SCHEMA_VERSION}. "
+                "db.create_all() will create full schema."
             )
             return
 

@@ -264,7 +264,9 @@ def cache_route(timeout: int = 60):
 def invalidate_stock_cache(client_id: str):
     """Invalidate all stock-related cache for a client"""
     cache = get_cache_manager()
-    cache.delete_pattern(f"*stock*:{client_id}:*")
+    cache.delete(f"stock:list:{client_id}")
+    cache.delete(f"stock:alerts:{client_id}")
+    cache.delete_pattern(f"*stock*{client_id}*")
     cache.delete_pattern(f"route:{client_id}:/api/stock*")
     logger.info(f"Invalidated stock cache for client {client_id}")
 

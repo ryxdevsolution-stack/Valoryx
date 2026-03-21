@@ -5,7 +5,7 @@ Run once: python -m database.apply_perf_indexes
 import sqlite3
 import os
 
-DB_PATH = os.path.expanduser('~/.mj-billing/local.db')
+DB_PATH = os.path.expanduser('~/.valoryx/local.db')
 
 INDEXES = [
     # GSTBilling indexes

@@ -14,14 +14,14 @@
   "license": "Proprietary",
   "main": "electron/main.js",
   "scripts": {
-    "dev:backend": "cd backend && python app.py",
+    "dev:backend": "cd backend && set DB_MODE=offline && python app.py",
     "dev:frontend": "cd frontend-react && npm run dev",
     "build:frontend": "cd frontend-react && npm run build",
     "build": "npm run build:frontend",
     "electron:dev": "electron . --dev",
     "electron:start": "npm run build:frontend && electron .",
     "electron:build": "cd frontend-react && npm run build:electron && cd .. && electron-builder",
-    "electron:build:win": "cd frontend-react && npm run build:electron && cd .. && electron-builder --win",
+    "electron:build:win": "electron-builder --win",
     "electron:pack": "electron-builder --dir",
     "build:icon": "electron-icon-builder --input=./build/icon.png --output=./electron/resources/ && cp ./electron/resources/icons/win/icon.ico ./electron/resources/icon.ico",
     "postinstall": "electron-builder install-app-deps"
@@ -52,13 +52,6 @@
           "!__pycache__/**",
           "!*.pyc",
           "!venv/**"
-        ]
-      },
-      {
-        "from": "frontend-react/dist",
-        "to": "frontend-react/dist",
-        "filter": [
-          "**/*"
         ]
       }
     ],

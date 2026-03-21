@@ -1914,13 +1914,13 @@ def get_recent_activity():
 
 
 # ---------------------------------------------------------------------------
-# Admin Settings — persisted as JSON file in ~/.mj-billing/
+# Admin Settings — persisted as JSON file in ~/.valoryx/
 # ---------------------------------------------------------------------------
 
 import json as _json
 import os as _os
 
-_SETTINGS_FILE = _os.path.join(_os.path.expanduser('~'), '.mj-billing', 'admin_settings.json')
+_SETTINGS_FILE = _os.path.join(_os.path.expanduser('~'), '.valoryx', 'admin_settings.json')
 
 _DEFAULT_SETTINGS = {
     'app_name': 'Valoryx',

@@ -8,6 +8,7 @@ import { LoadingInitializer } from '@/components/LoadingInitializer'
 import { AppRoutes } from '@/router'
 import ImpersonationBanner from '@/components/ImpersonationBanner'
 import ElectronSplash from '@/components/ElectronSplash'
+import ElectronSetup from '@/pages/ElectronSetup'
 import UpdateNotification from '@/components/UpdateNotification'
 import { InstallBanner } from '@/components/pwa/InstallBanner'
 
@@ -34,16 +35,22 @@ export default function App() {
   })
   // Non-Electron (web): always ready. Electron: wait for backend.
   const [backendReady, setBackendReady] = useState(!isElectron)
+  const [needsSetup, setNeedsSetup] = useState(false)
 
   useEffect(() => {
     if (!isElectron) return
     const api = (window as any).electronAPI
     if (!api?.onStartupStatus) { setBackendReady(true); return }
 
+    // Pull current status immediately — the push event may have fired before we mounted
+    api.getStartupStatus?.().then((data: { message: string; progress: number }) => {
+      if (!data) return
+      setStartupStatus(data)
+      if (data.progress >= 80) setBackendReady(true)
+    })
+
     api.onStartupStatus((data: { message: string; progress: number }) => {
       setStartupStatus(data)
-      // Mark ready only on success. On error (progress -1),
-      // keep splash visible so user sees the error message.
       if (data.progress >= 80) {
         setBackendReady(true)
       }
@@ -54,7 +61,17 @@ export default function App() {
     }
   }, [isElectron])
 
+  // After backend is ready, check if first-time setup is needed
+  useEffect(() => {
+    if (!isElectron || !backendReady) return
+    fetch('http://127.0.0.1:5017/api/electron/needs-setup')
+      .then(r => r.json())
+      .then(d => { if (d.needs_setup) setNeedsSetup(true) })
+      .catch(() => {})
+  }, [isElectron, backendReady])
+
   if (!backendReady) return <ElectronSplash status={startupStatus} />
+  if (isElectron && needsSetup) return <ElectronSetup onComplete={() => setNeedsSetup(false)} />
 
   return (
     <ThemeProvider>

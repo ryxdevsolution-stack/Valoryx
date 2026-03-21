@@ -43,8 +43,8 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
   }
 
   // Handle print via browser
-  const handlePrint = () => {
-    const result = printBill(bill as BillData, safeClientInfo as ClientInfo, false)
+  const handlePrint = async () => {
+    const result = await printBill(bill as BillData, safeClientInfo as ClientInfo, false)
     if (result.success) {
       setPrintError(null)
       onClose()

@@ -27,7 +27,7 @@ print("="*70)
 
 # Database connections
 POSTGRES_URL = os.getenv('DB_URL')
-SQLITE_PATH = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.mj-billing/local.db'))
+SQLITE_PATH = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
 SQLITE_URL = f'sqlite:///{SQLITE_PATH}'
 
 if not POSTGRES_URL:

@@ -27,7 +27,7 @@ def table_exists(engine, table_name):
 def run_sqlite_migrations(sqlite_path=None):
     """Run migrations on SQLite database"""
     if sqlite_path is None:
-        sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.mj-billing/local.db'))
+        sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
 
     logger.info(f"Running SQLite migrations on: {sqlite_path}")
 

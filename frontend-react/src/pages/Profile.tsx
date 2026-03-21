@@ -417,8 +417,9 @@ export default function ProfilePage() {
         activeTab={activeTab}
         onTabChange={handleTabChange}
         showTeamTab={canManageTeam}
-        showSubscriptionTab={canManageTeam}
-        showWebhooksTab={user?.role === 'owner' || user?.role === 'admin'}
+        showSubscriptionTab={canManageTeam && !import.meta.env.VITE_ELECTRON}
+        showWebhooksTab={(user?.role === 'owner' || user?.role === 'admin') && !import.meta.env.VITE_ELECTRON}
+        showTwoFactorTab={!import.meta.env.VITE_ELECTRON}
       />
 
       {/* Message Alert */}

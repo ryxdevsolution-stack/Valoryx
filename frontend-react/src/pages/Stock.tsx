@@ -1,10 +1,9 @@
 
 
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton } from '@/components/SkeletonLoader'
-import { useData } from '@/contexts/DataContext'
 import BulkStockOrderModal from '@/components/BulkStockOrderModal'
 import BulkStockOrderList from '@/components/BulkStockOrderList'
 import ReceiveStockModal from '@/components/ReceiveStockModal'
@@ -30,7 +29,6 @@ interface Stock {
 }
 
 export default function StockManagementPage() {
-  const { fetchProducts, invalidateCache } = useData()
   const [stocks, setStocks] = useState<Stock[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
@@ -97,25 +95,18 @@ export default function StockManagementPage() {
     )
   }, [stocks, formData.barcode, editingId])
 
-  // Track initialization to prevent duplicate calls in React Strict Mode
-  const hasInitialized = useRef(false)
-
   useEffect(() => {
-    // Prevent duplicate initialization in React Strict Mode
-    if (hasInitialized.current) return
-    hasInitialized.current = true
-
     fetchStocks()
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Use DataContext to fetch stocks (cached, prevents duplicate API calls)
   const fetchStocks = async () => {
     try {
       setLoading(true)
-      const stockData = await fetchProducts()
+      const response = await api.get('/stock')
+      const stockData = response.data.stock || []
 
-      // Transform Product[] to Stock[] with required fields
+      // Transform API response to Stock[] with required fields
       const transformedStocks: Stock[] = stockData.map((product: any): Stock => ({
         product_id: product.product_id || '',
         product_name: product.product_name || '',
@@ -170,25 +161,14 @@ export default function StockManagementPage() {
           updatedStock.is_low_stock = updatedStock.quantity <= (updatedStock.low_stock_alert || 10)
         }
 
-        invalidateCache('products')
         setStocks(prev => prev.map(stock =>
           stock.product_id === editingId ? updatedStock : stock
         ))
       } else {
         // Add new stock
-        const response = await api.post('/stock', formData)
+        await api.post('/stock', formData)
         showToast('Stock added successfully!', 'success')
-        // Keep form open for continuous adding - just clear the form
-
-        // Optimistic update - add new stock to list without refetching
-        const newStock = response.data.product
-
-        // Ensure is_low_stock is set
-        if (!newStock.hasOwnProperty('is_low_stock')) {
-          newStock.is_low_stock = newStock.quantity <= (newStock.low_stock_alert || 10)
-        }
-
-        setStocks(prev => [newStock, ...prev])
+        fetchStocks()
 
         // Clear form for next entry (but keep form open)
         setFormData({

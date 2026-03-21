@@ -5,7 +5,7 @@ import { useClient } from '@/contexts/ClientContext'
 export default function TrialBanner() {
   const { client } = useClient()
 
-  if (!client || client.subscription_status !== 'trial') return null
+  if (!client || client.subscription_status !== 'trial' || import.meta.env.VITE_ELECTRON) return null
 
   const daysLeft = client.trial_days_remaining ?? 0
   const isUrgent = daysLeft <= 3

@@ -21,7 +21,7 @@ def column_exists(engine, table_name, column_name):
 
 def run_sqlite(sqlite_path=None):
     if sqlite_path is None:
-        sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.mj-billing/local.db'))
+        sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
 
     logger.info('Running SQLite migration on: %s', sqlite_path)
     if not os.path.exists(sqlite_path):
