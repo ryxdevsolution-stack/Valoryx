@@ -353,6 +353,12 @@ def create_app():
         import_errors.append(f"webhooks: {str(e)}")
         logging.error(f"Failed to import webhooks blueprint: {e}")
 
+    try:
+        from routes.electron import electron_bp
+    except Exception as e:
+        import_errors.append(f"electron: {str(e)}")
+        logging.error(f"Failed to import electron blueprint: {e}")
+
     shop_settings_bp = None
     try:
         from routes.shop_settings import shop_settings_bp
@@ -540,6 +546,12 @@ def create_app():
             blueprints_registered.append('webhooks')
         except Exception as e:
             print(f"Warning: Could not register webhooks blueprint: {e}")
+
+    try:
+        app.register_blueprint(electron_bp)
+        blueprints_registered.append('electron')
+    except Exception as e:
+        print(f"Warning: Could not register electron blueprint: {e}")
 
     if shop_settings_bp:
         try:
