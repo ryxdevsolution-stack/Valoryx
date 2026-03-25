@@ -43,12 +43,12 @@ export default function ProductPerformanceChart({ mostSelling, lessSelling, nonS
     nonSellingData.push(0)
   })
 
-  // Add non-selling products (as negative values)
+  // Add non-selling products (small negative value to make bar visible)
   nonSelling.forEach(p => {
     categories.push(p.name)
     mostSellingData.push(0)
     lessSellingData.push(0)
-    nonSellingData.push(-1) // Show as -1 to indicate non-selling
+    nonSellingData.push(-0.5) // Small bar to indicate non-selling visually
   })
 
   const options: Highcharts.Options = {
@@ -151,8 +151,10 @@ export default function ProductPerformanceChart({ mostSelling, lessSelling, nonS
         dataLabels: {
           enabled: true,
           formatter: function() {
-            const val = Math.abs(this.y as number)
-            return val > 0 ? val.toString() : 'None'
+            const val = this.y as number
+            if (val === 0) return null  // Hide label for zero-value segments
+            if (val < 0) return '0'     // Non-selling products: show "0"
+            return val.toString()
           },
           style: {
             fontSize: '10px',

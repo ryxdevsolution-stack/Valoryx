@@ -1,5 +1,5 @@
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react'
+import { createContext, useContext, useState, useEffect, useCallback, useMemo, ReactNode } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api, { setLogoutHandler } from '@/lib/api'
 
@@ -148,7 +148,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const login = async (email: string, password: string) => {
+  const login = useCallback(async (email: string, password: string) => {
     try {
       const response = await api.post('/auth/login', { email, password })
       const { token, user, client_id, client_name, client_logo, client_address, client_phone, client_email, client_gstin } = response.data
@@ -194,6 +194,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       localStorage.setItem('token', token)
       localStorage.setItem('user', JSON.stringify(userData))
       localStorage.setItem('client', JSON.stringify(clientData))
+      // Mark data as fresh so the background refresh in initializeAuth skips for 5 minutes
+      localStorage.setItem('last_refresh', String(Date.now()))
 
       // Set axios default header
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`
@@ -210,7 +212,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     } catch (error: any) {
       throw new Error(error.response?.data?.error || 'Login failed')
     }
-  }
+  }, [navigate]) // navigate is stable; api and localStorage are module-level singletons
 
   const logout = useCallback(() => {
     // Clear state
@@ -238,7 +240,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     setLogoutHandler(logout)
   }, [logout])
 
-  const setClientData = (userData: User, clientData: Client, tokenData: string) => {
+  const setClientData = useCallback((userData: User, clientData: Client, tokenData: string) => {
     setUser(userData)
     setClient(clientData)
     setToken(tokenData)
@@ -247,19 +249,27 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     localStorage.setItem('token', tokenData)
     localStorage.setItem('user', JSON.stringify(userData))
     localStorage.setItem('client', JSON.stringify(clientData))
+    localStorage.setItem('last_refresh', String(Date.now()))
+
+    // Sync the must_change_password flag so stale values from previous sessions don't linger
+    if (userData.must_change_password) {
+      localStorage.setItem('must_change_password', 'true')
+    } else {
+      localStorage.removeItem('must_change_password')
+    }
 
     api.defaults.headers.common['Authorization'] = `Bearer ${tokenData}`
-  }
+  }, []) // all setters from useState are stable references
 
-  const hasPermission = (permission: string): boolean => {
+  const hasPermission = useCallback((permission: string): boolean => {
     if (!user) return false
     if (user.is_super_admin) return true
     return user.permissions?.includes(permission) || false
-  }
+  }, [user])
 
-  const isSuperAdmin = (): boolean => {
+  const isSuperAdmin = useCallback((): boolean => {
     return user?.is_super_admin || false
-  }
+  }, [user])
 
   // Refresh client data from API (can be called manually if needed)
   const refreshClientData = useCallback(async () => {
@@ -338,24 +348,28 @@ export function ClientProvider({ children }: { children: ReactNode }) {
     }
   }, [token])
 
+  const contextValue = useMemo(() => ({
+    user,
+    client,
+    token,
+    isAuthenticated,
+    isLoading,
+    login,
+    logout,
+    setClientData,
+    hasPermission,
+    isSuperAdmin,
+    refreshClientData,
+    refreshUserData,
+    updateSubscriptionStatus,
+  }), [
+    user, client, token, isAuthenticated, isLoading,
+    login, logout, setClientData, hasPermission, isSuperAdmin,
+    refreshClientData, refreshUserData, updateSubscriptionStatus,
+  ])
+
   return (
-    <ClientContext.Provider
-      value={{
-        user,
-        client,
-        token,
-        isAuthenticated,
-        isLoading,
-        login,
-        logout,
-        setClientData,
-        hasPermission,
-        isSuperAdmin,
-        refreshClientData,
-        refreshUserData,
-        updateSubscriptionStatus,
-      }}
-    >
+    <ClientContext.Provider value={contextValue}>
       {children}
     </ClientContext.Provider>
   )

@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react'
-import { Routes, Route } from 'react-router-dom'
+import { Routes, Route, Navigate } from 'react-router-dom'
 import AdminLayout from '@/components/AdminLayout'
 import ProtectedRoute from '@/components/ProtectedRoute'
 
@@ -28,6 +28,7 @@ const Pricing = React.lazy(() => import('@/pages/Pricing'))
 const StockTransfer = React.lazy(() => import('@/pages/stock-transfer/StockTransfer'))
 const BranchManagement = React.lazy(() => import('@/pages/stock-transfer/BranchManagement'))
 const ShopSettings = React.lazy(() => import('@/pages/ShopSettings'))
+const Suppliers = React.lazy(() => import('@/pages/Suppliers'))
 const ForcePasswordChange = React.lazy(() => import('@/pages/auth/ForcePasswordChange'))
 const OAuthCallbackPage = React.lazy(() => import('@/pages/auth/OAuthCallback'))
 const VerifyEmailPending = React.lazy(() => import('@/pages/auth/VerifyEmailPending'))
@@ -108,6 +109,7 @@ export function AppRoutes() {
       <Routes>
         {/* Public routes */}
         <Route path="/" element={<Home />} />
+        <Route path="/login" element={<Navigate to="/auth/login" replace />} />
         <Route path="/landing" element={<Landing />} />
 
         {/* Auth routes — use dark fallback so no white flash on lazy load */}
@@ -168,21 +170,22 @@ export function AppRoutes() {
         <Route path="/upgrade" element={<TrialExpired />} />
         <Route path="/pricing" element={<Pricing />} />
 
-        {/* Main app routes */}
-        <Route path="/dashboard" element={<Dashboard />} />
-        <Route path="/billing" element={<BillingList />} />
-        <Route path="/billing/create" element={<CreateBill />} />
-        <Route path="/billing/exchange/:billId" element={<Exchange />} />
-        <Route path="/stock" element={<Stock />} />
-        <Route path="/stock-transfer" element={<StockTransfer />} />
-        <Route path="/stock-transfer/branches" element={<BranchManagement />} />
-        <Route path="/customers" element={<Customers />} />
-        <Route path="/reports" element={<Reports />} />
-        <Route path="/audit" element={<Audit />} />
-        <Route path="/profile" element={<Profile />} />
-        <Route path="/shop-settings" element={<ShopSettings />} />
-        <Route path="/payment-types" element={<PaymentTypes />} />
-        <Route path="/docs" element={<Docs />} />
+        {/* Main app routes — all require authentication */}
+        <Route path="/dashboard" element={<ProtectedRoute permission="view_dashboard"><Dashboard /></ProtectedRoute>} />
+        <Route path="/billing" element={<ProtectedRoute><BillingList /></ProtectedRoute>} />
+        <Route path="/billing/create" element={<ProtectedRoute><CreateBill /></ProtectedRoute>} />
+        <Route path="/billing/exchange/:billId" element={<ProtectedRoute><Exchange /></ProtectedRoute>} />
+        <Route path="/stock" element={<ProtectedRoute><Stock /></ProtectedRoute>} />
+        <Route path="/suppliers" element={<ProtectedRoute><Suppliers /></ProtectedRoute>} />
+        <Route path="/stock-transfer" element={<ProtectedRoute><StockTransfer /></ProtectedRoute>} />
+        <Route path="/stock-transfer/branches" element={<ProtectedRoute><BranchManagement /></ProtectedRoute>} />
+        <Route path="/customers" element={<ProtectedRoute><Customers /></ProtectedRoute>} />
+        <Route path="/reports" element={<ProtectedRoute><Reports /></ProtectedRoute>} />
+        <Route path="/audit" element={<ProtectedRoute><Audit /></ProtectedRoute>} />
+        <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
+        <Route path="/shop-settings" element={<ProtectedRoute><ShopSettings /></ProtectedRoute>} />
+        <Route path="/payment-types" element={<ProtectedRoute><PaymentTypes /></ProtectedRoute>} />
+        <Route path="/docs" element={<ProtectedRoute><Docs /></ProtectedRoute>} />
 
         {/* Admin routes - wrapped in AdminLayout */}
         <Route path="/admin" element={<AdminLayout />}>

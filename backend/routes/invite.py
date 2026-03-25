@@ -10,7 +10,7 @@ Endpoints:
 """
 import secrets
 import uuid as _uuid
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 from flask import Blueprint, jsonify, request, g
 from extensions import db
@@ -23,6 +23,15 @@ from config import Config
 invite_bp = Blueprint('invite', __name__)
 
 INVITE_EXPIRY_HOURS = 48
+
+
+def _is_expired(expires_at: datetime) -> bool:
+    """Compare expiry datetime safely regardless of whether it is timezone-aware or naive."""
+    now = datetime.now(timezone.utc)
+    if expires_at.tzinfo is None:
+        # Stored as naive UTC — make it aware for comparison
+        expires_at = expires_at.replace(tzinfo=timezone.utc)
+    return now > expires_at
 
 
 # ---------------------------------------------------------------------------
@@ -46,7 +55,7 @@ def validate_invite():
     if not user:
         return jsonify({'success': False, 'error': 'Invalid or already used invite link'}), 404
 
-    if not user.invite_token_expires or datetime.utcnow() > user.invite_token_expires:
+    if not user.invite_token_expires or _is_expired(user.invite_token_expires):
         return jsonify({'success': False, 'error': 'This invite link has expired. Ask your admin to resend.'}), 410
 
     from models.client_model import ClientEntry
@@ -93,7 +102,7 @@ def accept_invite():
     if not user:
         return jsonify({'success': False, 'error': 'Invalid or already used invite link'}), 404
 
-    if not user.invite_token_expires or datetime.utcnow() > user.invite_token_expires:
+    if not user.invite_token_expires or _is_expired(user.invite_token_expires):
         return jsonify({'success': False, 'error': 'This invite link has expired. Ask your admin to resend.'}), 410
 
     # Set password, mark invite accepted, clear token, activate account
@@ -102,6 +111,7 @@ def accept_invite():
     user.invite_token = None
     user.invite_token_expires = None
     user.is_active = True
+    user.must_change_password = False  # User just set their own password — no forced change needed
     user.updated_at = datetime.utcnow()
 
     # Write audit log inline (no g.user available in unauthenticated context)
@@ -235,7 +245,7 @@ def resend_invite(user_id):
 
     from models.client_model import ClientEntry
     client = ClientEntry.query.filter_by(client_id=g.user['client_id']).first()
-    frontend_url = Config.FRONTEND_URL
+    frontend_url = Config.get_frontend_url()
     invite_url = f"{frontend_url}/accept-invite?token={new_token}"
 
     send_invite_email(

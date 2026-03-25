@@ -2,8 +2,7 @@
 // Shared hooks for admin module
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { buildQueryParams } from './utils';
-
-const API_BASE_URL = import.meta.env.VITE_API_URL || 'http://localhost:5017';
+import api from '@/lib/api';
 
 // ============================================
 // GENERIC FETCH HOOK
@@ -31,30 +30,28 @@ export function useFetch<T>(
   const [loading, setLoading] = useState(autoFetch);
   const [error, setError] = useState<Error | null>(null);
 
+  // Store callbacks in refs so fetchData never needs them in its dep array.
+  // This prevents re-fetching when callers define callbacks as inline functions.
+  const onSuccessRef = useRef(onSuccess);
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onSuccessRef.current = onSuccess; }, [onSuccess]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
+
   const fetchData = useCallback(async () => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}${url}`, {
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-      });
-      if (!response.ok) {
-        throw new Error(`HTTP error! status: ${response.status}`);
-      }
-      const result = await response.json();
-      setData(result);
-      onSuccess?.(result);
+      const response = await api.get(url);
+      setData(response.data);
+      onSuccessRef.current?.(response.data);
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Unknown error');
       setError(error);
-      onError?.(error);
+      onErrorRef.current?.(error);
     } finally {
       setLoading(false);
     }
-  }, [url, onSuccess, onError]);
+  }, [url]); // only url is a real dep — callbacks accessed via stable refs
 
   useEffect(() => {
     if (autoFetch) {
@@ -145,34 +142,31 @@ export function useMutation<TData = unknown, TResponse = unknown>(
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<Error | null>(null);
 
+  // Store callbacks in refs so mutate's identity stays stable when callers
+  // pass inline functions — same pattern as useFetch above.
+  const onSuccessRef = useRef(onSuccess);
+  const onErrorRef = useRef(onError);
+  useEffect(() => { onSuccessRef.current = onSuccess; }, [onSuccess]);
+  useEffect(() => { onErrorRef.current = onError; }, [onError]);
+
   const mutate = useCallback(async (data?: TData): Promise<TResponse | undefined> => {
     setLoading(true);
     setError(null);
     try {
-      const response = await fetch(`${API_BASE_URL}${url}`, {
-        method,
-        credentials: 'include',
-        headers: {
-          'Content-Type': 'application/json',
-        },
-        body: data ? JSON.stringify(data) : undefined,
-      });
-      if (!response.ok) {
-        const errorData = await response.json().catch(() => ({}));
-        throw new Error(errorData.message || `HTTP error! status: ${response.status}`);
-      }
-      const result = await response.json();
-      onSuccess?.(result);
-      return result;
+      const methodLower = method.toLowerCase();
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const response = await (api as any)[methodLower](url, data);
+      onSuccessRef.current?.(response.data);
+      return response.data;
     } catch (err) {
       const error = err instanceof Error ? err : new Error('Unknown error');
       setError(error);
-      onError?.(error);
+      onErrorRef.current?.(error);
       return undefined;
     } finally {
       setLoading(false);
     }
-  }, [url, method, onSuccess, onError]);
+  }, [url, method]); // callbacks removed from deps — accessed via stable refs
 
   const reset = useCallback(() => {
     setError(null);
@@ -197,11 +191,9 @@ export function useAutoRefresh(
   const [isRunning, setIsRunning] = useState(enabled);
   const intervalRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-  const start = useCallback(() => {
-    if (intervalRef.current) return;
-    setIsRunning(true);
-    intervalRef.current = setInterval(callback, interval);
-  }, [callback, interval]);
+  // Keep a stable ref to the latest callback so setInterval never calls a stale closure
+  const callbackRef = useRef(callback);
+  useEffect(() => { callbackRef.current = callback; }, [callback]);
 
   const stop = useCallback(() => {
     if (intervalRef.current) {
@@ -210,6 +202,13 @@ export function useAutoRefresh(
     }
     setIsRunning(false);
   }, []);
+
+  const start = useCallback(() => {
+    if (intervalRef.current) return;
+    setIsRunning(true);
+    // Always calls the latest callback via ref — no stale closure
+    intervalRef.current = setInterval(() => callbackRef.current(), interval);
+  }, [interval]); // callback removed from deps — accessed via stable ref
 
   useEffect(() => {
     if (enabled) {
@@ -351,15 +350,14 @@ export function useForm<T extends Record<string, unknown>>(
   const handleChange = useCallback((field: keyof T, value: T[keyof T]) => {
     setValues((prev) => ({ ...prev, [field]: value }));
     setIsDirty(true);
-    // Clear error when field changes
-    if (errors[field]) {
-      setErrors((prev) => {
-        const newErrors = { ...prev };
-        delete newErrors[field];
-        return newErrors;
-      });
-    }
-  }, [errors]);
+    // Use functional updater to read current errors — avoids stale closure on [errors] dep.
+    setErrors((prev) => {
+      if (!prev[field]) return prev;
+      const next = { ...prev };
+      delete next[field];
+      return next;
+    });
+  }, []); // no deps needed — only calls stable setters with functional updaters
 
   const handleBlur = useCallback((field: keyof T) => {
     setTouched((prev) => ({ ...prev, [field]: true }));

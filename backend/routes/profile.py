@@ -100,7 +100,10 @@ def update_profile():
         if 'department' in data:
             user.department = data['department']
         if 'telegram_chat_id' in data:
-            user.telegram_chat_id = data['telegram_chat_id'] or None
+            raw_id = str(data['telegram_chat_id']).strip() if data['telegram_chat_id'] else ''
+            if raw_id and not raw_id.lstrip('-').isdigit():
+                return jsonify({'error': 'telegram_chat_id must be a numeric Telegram chat ID'}), 400
+            user.telegram_chat_id = raw_id or None
 
         user.updated_at = datetime.utcnow()
         user.updated_by = user_id
@@ -110,6 +113,7 @@ def update_profile():
         # Invalidate cache
         cache = get_cache_manager()
         cache.delete(f"user_session:{user_id}")
+        cache.delete(f"profile:{user_id}")
 
         # Log action
         log_action('UPDATE', 'users', user_id, old_data, user.to_dict())

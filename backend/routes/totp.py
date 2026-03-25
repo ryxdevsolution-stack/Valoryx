@@ -434,7 +434,7 @@ def request_2fa_recovery():
         db.session.rollback()
         return generic_ok
 
-    recovery_link = f"{Config.FRONTEND_URL}/2fa-recover?token={token}"
+    recovery_link = f"{Config.get_frontend_url()}/2fa-recover?token={token}"
     from utils.email_service import send_2fa_recovery_email
     send_2fa_recovery_email(user.email, recovery_link)
 

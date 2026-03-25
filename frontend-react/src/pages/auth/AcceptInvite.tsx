@@ -59,7 +59,7 @@ export default function AcceptInvitePage() {
       const res = await api.post('/invite/accept', { token, password })
       const { token: jwt, user, client_id, client_name } = res.data
       setClientData(user, { client_id, client_name }, jwt)
-      navigate('/dashboard')
+      navigate('/billing/create')
     } catch (err: any) {
       setError(err.response?.data?.error || 'Failed to activate account. Please try again.')
     } finally {

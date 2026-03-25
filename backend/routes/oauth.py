@@ -84,8 +84,9 @@ def _assign_default_permissions(user_id: str) -> None:
     default_perms = [
         'view_dashboard', 'gst_billing', 'non_gst_billing',
         'view_all_bills', 'view_own_bills', 'view_customers',
-        'manage_customers', 'view_stock', 'manage_stock',
-        'view_sales_reports', 'view_audit_logs', 'manage_payment_types',
+        'view_stock', 'add_product', 'edit_product_details',
+        'view_sales_reports', 'export_reports', 'view_audit_logs',
+        'edit_bill_details', 'print_bills',
     ]
     perms = Permission.query.filter(Permission.permission_name.in_(default_perms)).all()
     if len(perms) < len(default_perms):

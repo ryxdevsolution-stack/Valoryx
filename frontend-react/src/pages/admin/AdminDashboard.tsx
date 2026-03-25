@@ -1,7 +1,7 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, memo, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
-import axios from 'axios';
+import api from '@/lib/api';
 import {
   Users,
   Building2,
@@ -51,8 +51,6 @@ interface QuickStat {
   bgColor: string;
 }
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5017';
-
 // Default stats for when API is not available
 const getDefaultStats = (): DashboardStats => ({
   clients: { total: 12, active: 10, inactive: 2, new_this_month: 3, growth_percentage: 15 },
@@ -76,6 +74,25 @@ const getDefaultStats = (): DashboardStats => ({
   }
 });
 
+// Isolated clock component — only this tiny component re-renders every second
+const LiveClock = memo(function LiveClock() {
+  const [now, setNow] = useState(new Date());
+  useEffect(() => {
+    const timer = setInterval(() => setNow(new Date()), 1000);
+    return () => clearInterval(timer);
+  }, []);
+  return (
+    <>
+      <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
+        {now.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
+      </span>
+      <span className="text-xs text-slate-400">
+        {now.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
+      </span>
+    </>
+  );
+});
+
 export default function AdminDashboard() {
   const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const navigate = useNavigate();
@@ -84,27 +101,15 @@ export default function AdminDashboard() {
   const [recentActivity, setRecentActivity] = useState<RecentActivity[]>([]);
   const [loading, setLoading] = useState(true);
   const [refreshing, setRefreshing] = useState(false);
-  const [currentTime, setCurrentTime] = useState(new Date());
-
-  useEffect(() => {
-    const timer = setInterval(() => setCurrentTime(new Date()), 1000);
-    return () => clearInterval(timer);
-  }, []);
 
   const fetchDashboardData = useCallback(async (isRefresh = false) => {
     try {
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
 
-      const token = localStorage.getItem('token');
-
       const [statsResponse, activityResponse] = await Promise.all([
-        axios.get(`${API_URL}/api/admin/stats/overview`, {
-          headers: { Authorization: `Bearer ${token}` }
-        }).catch(() => ({ data: null })),
-        axios.get(`${API_URL}/api/admin/activity/recent`, {
-          headers: { Authorization: `Bearer ${token}` }
-        }).catch(() => ({ data: { activities: [] } }))
+        api.get('/admin/stats/overview').catch(() => ({ data: null })),
+        api.get('/admin/activity/recent').catch(() => ({ data: { activities: [] } }))
       ]);
 
       setStats(statsResponse.data || getDefaultStats());
@@ -134,7 +139,7 @@ export default function AdminDashboard() {
     }
   }, [user, authLoading, isSuperAdmin, navigate, fetchDashboardData]);
 
-  const quickStats: QuickStat[] = stats ? [
+  const quickStats: QuickStat[] = useMemo(() => stats ? [
     {
       label: 'Total Clients',
       value: stats.clients.total,
@@ -185,7 +190,9 @@ export default function AdminDashboard() {
       color: stats.system.pending_alerts > 0 ? 'text-red-600' : 'text-green-600',
       bgColor: stats.system.pending_alerts > 0 ? 'bg-red-100 dark:bg-red-900/30' : 'bg-green-100 dark:bg-green-900/30'
     }
-  ] : [];
+  ] : [], [stats]);
+
+  const recentActivitySlice = useMemo(() => recentActivity.slice(0, 5), [recentActivity]);
 
   if (authLoading || loading) {
     return (
@@ -210,12 +217,7 @@ export default function AdminDashboard() {
         <div className="flex items-center gap-4">
           <div className="hidden lg:flex items-center gap-2 px-4 py-2 bg-white dark:bg-slate-800 rounded-xl shadow-sm border border-slate-200 dark:border-slate-700">
             <Clock className="w-4 h-4 text-slate-400" />
-            <span className="text-sm font-medium text-slate-600 dark:text-slate-300">
-              {currentTime.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit' })}
-            </span>
-            <span className="text-xs text-slate-400">
-              {currentTime.toLocaleDateString('en-IN', { weekday: 'short', day: 'numeric', month: 'short' })}
-            </span>
+            <LiveClock />
           </div>
           <Button
             onClick={() => fetchDashboardData(true)}
@@ -485,8 +487,8 @@ export default function AdminDashboard() {
             }
           >
             <div className="space-y-3">
-              {recentActivity.length > 0 ? (
-                recentActivity.slice(0, 5).map((activity) => (
+              {recentActivitySlice.length > 0 ? (
+                recentActivitySlice.map((activity) => (
                   <div key={activity.id} className="flex items-start gap-3 pb-3 border-b border-slate-100 dark:border-slate-700 last:border-0 last:pb-0">
                     <div className={`w-2 h-2 rounded-full mt-2 ${
                       activity.type === 'client_created' ? 'bg-blue-500' :

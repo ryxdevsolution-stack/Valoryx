@@ -1,6 +1,6 @@
 
 
-import { useEffect, useState, useRef, useMemo } from 'react'
+import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { Link } from 'react-router-dom'
@@ -43,6 +43,7 @@ export default function CustomersPage() {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [statistics, setStatistics] = useState<Statistics | null>(null)
   const [loading, setLoading] = useState(true)
+  const [fetchError, setFetchError] = useState<string | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [filterStatus, setFilterStatus] = useState<'all' | 'Active' | 'Inactive'>('all')
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
@@ -50,6 +51,8 @@ export default function CustomersPage() {
   const [customerStats, setCustomerStats] = useState<any>(null)
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [expandedBillId, setExpandedBillId] = useState<string | null>(null)
+  const [currentPage, setCurrentPage] = useState(1)
+  const ITEMS_PER_PAGE = 25
 
   // Track ongoing request to prevent duplicates (for React Strict Mode)
   const ongoingRequest = useRef<Promise<void> | null>(null)
@@ -63,8 +66,7 @@ export default function CustomersPage() {
     fetchCustomers()
   }, [])
 
-  const fetchCustomers = async () => {
-    // If a request is already ongoing, return that promise
+  const fetchCustomers = useCallback(async () => {
     if (ongoingRequest.current) {
       return ongoingRequest.current
     }
@@ -72,11 +74,17 @@ export default function CustomersPage() {
     const request = (async () => {
       try {
         setLoading(true)
+        setFetchError(null)
         const response = await api.get('/customer/list')
+        if (!response.data.success) {
+          setFetchError(response.data.error || 'Failed to load customers')
+          return
+        }
         setCustomers(response.data.customers || [])
         setStatistics(response.data.statistics)
-      } catch (error) {
+      } catch (error: any) {
         console.error('Failed to fetch customers:', error)
+        setFetchError(error?.response?.data?.error || 'Failed to load customers. Please try again.')
       } finally {
         setLoading(false)
         ongoingRequest.current = null
@@ -85,9 +93,9 @@ export default function CustomersPage() {
 
     ongoingRequest.current = request
     return request
-  }
+  }, [])
 
-  const handleViewCustomer = async (customer: Customer) => {
+  const handleViewCustomer = useCallback(async (customer: Customer) => {
     setSelectedCustomer(customer)
     setCustomerBills([])
     setCustomerStats(null)
@@ -99,7 +107,6 @@ export default function CustomersPage() {
     try {
       setLoadingHistory(true)
       const response = await api.get(`/customer/${encodeURIComponent(customer.customer_phone)}`)
-      console.log('[CUSTOMER] API response:', JSON.stringify(response.data, null, 2))
       if (response.data.success) {
         const bills = response.data.bills || []
         // Parse items if they're JSON strings (SQLite stores JSON as text)
@@ -107,7 +114,6 @@ export default function CustomersPage() {
           ...bill,
           items: typeof bill.items === 'string' ? (() => { try { return JSON.parse(bill.items) } catch { return [] } })() : (bill.items || [])
         }))
-        console.log('[CUSTOMER] Parsed bills with items:', parsedBills.map((b: any) => ({ bill_number: b.bill_number, items_count: b.items?.length })))
         setCustomerBills(parsedBills)
         setCustomerStats(response.data.statistics || null)
         // Auto-expand the first bill so user immediately sees products
@@ -120,14 +126,14 @@ export default function CustomersPage() {
     } finally {
       setLoadingHistory(false)
     }
-  }
+  }, [])
 
-  const closeDrawer = () => {
+  const closeDrawer = useCallback(() => {
     setSelectedCustomer(null)
     setCustomerBills([])
     setCustomerStats(null)
     setExpandedBillId(null)
-  }
+  }, [])
 
   // Hoist formatters outside render — avoids recreating Intl objects on every render cycle
   const filteredCustomers = useMemo(() => {
@@ -141,6 +147,18 @@ export default function CustomersPage() {
       return matchesSearch && matchesStatus
     })
   }, [customers, searchQuery, filterStatus])
+
+  // Reset to page 1 when search/filter changes
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, filterStatus])
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filteredCustomers.length / ITEMS_PER_PAGE))
+  const paginatedCustomers = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE
+    return filteredCustomers.slice(start, start + ITEMS_PER_PAGE)
+  }, [filteredCustomers, currentPage])
 
   return (
     <DashboardLayout>
@@ -241,7 +259,18 @@ export default function CustomersPage() {
         </div>
 
         {/* Customers List */}
-        {loading ? (
+        {fetchError ? (
+          <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-xl p-6 text-center">
+            <p className="text-red-600 dark:text-red-400 font-medium">{fetchError}</p>
+            <button
+              type="button"
+              onClick={fetchCustomers}
+              className="mt-3 text-sm text-red-500 underline hover:text-red-700"
+            >
+              Retry
+            </button>
+          </div>
+        ) : loading ? (
           <>
             <div className="hidden md:block bg-white dark:bg-gray-800 rounded-2xl shadow-lg overflow-hidden">
               <div className="overflow-x-auto">
@@ -280,9 +309,11 @@ export default function CustomersPage() {
                     </tr>
                   </thead>
                   <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-                    {filteredCustomers.map((customer, index) => (
+                    {paginatedCustomers.map((customer, i) => {
+                      const globalIndex = (currentPage - 1) * ITEMS_PER_PAGE + i
+                      return (
                       <tr
-                        key={customer.is_walkin ? `walkin-${customer.bill_number}-${index}` : (customer.customer_code ?? customer.customer_phone ?? `customer-${index}`)}
+                        key={customer.is_walkin ? `walkin-${customer.bill_number}-${globalIndex}` : (customer.customer_code ?? customer.customer_phone ?? `customer-${globalIndex}`)}
                         className="hover:bg-gray-50 dark:hover:bg-gray-700 transition cursor-pointer"
                         onClick={() => handleViewCustomer(customer)}
                       >
@@ -334,7 +365,8 @@ export default function CustomersPage() {
                           </span>
                         </td>
                       </tr>
-                    ))}
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -342,54 +374,86 @@ export default function CustomersPage() {
 
             {/* Mobile Card View */}
             <div className="md:hidden space-y-3">
-              {filteredCustomers.map((customer, index) => (
-                <div
-                  key={customer.is_walkin ? `walkin-${customer.bill_number}-${index}` : (customer.customer_code ?? customer.customer_phone ?? `customer-${index}`)}
-                  onClick={() => handleViewCustomer(customer)}
-                  className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 hover:shadow-lg transition touch-manipulation border border-gray-200 dark:border-gray-700"
-                >
-                  <div className="flex items-start gap-3 mb-3">
-                    <div className="flex-shrink-0 h-12 w-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg">
-                      {customer.customer_name.charAt(0).toUpperCase()}
-                    </div>
-                    <div className="flex-1 min-w-0">
-                      <div className="flex items-center gap-2">
-                        <h3 className="text-base font-bold text-gray-900 dark:text-white truncate">{customer.customer_name}</h3>
-                        {customer.customer_code && (
-                          <span className="text-xs font-bold text-blue-600 dark:text-blue-400">#{customer.customer_code}</span>
+              {paginatedCustomers.map((customer, i) => {
+                const globalIndex = (currentPage - 1) * ITEMS_PER_PAGE + i
+                return (
+                  <div
+                    key={customer.is_walkin ? `walkin-${customer.bill_number}-${globalIndex}` : (customer.customer_code ?? customer.customer_phone ?? `customer-${globalIndex}`)}
+                    onClick={() => handleViewCustomer(customer)}
+                    className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 hover:shadow-lg transition touch-manipulation border border-gray-200 dark:border-gray-700"
+                  >
+                    <div className="flex items-start gap-3 mb-3">
+                      <div className="flex-shrink-0 h-12 w-12 rounded-full bg-gradient-to-br from-blue-500 to-purple-600 flex items-center justify-center text-white font-bold text-lg">
+                        {customer.customer_name.charAt(0).toUpperCase()}
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <h3 className="text-base font-bold text-gray-900 dark:text-white truncate">{customer.customer_name}</h3>
+                          {customer.customer_code && (
+                            <span className="text-xs font-bold text-blue-600 dark:text-blue-400">#{customer.customer_code}</span>
+                          )}
+                        </div>
+                        <p className="text-sm text-gray-600 dark:text-gray-400">{customer.customer_phone}</p>
+                        {customer.customer_email && (
+                          <p className="text-xs text-gray-500 dark:text-gray-500 truncate">{customer.customer_email}</p>
                         )}
                       </div>
-                      <p className="text-sm text-gray-600 dark:text-gray-400">{customer.customer_phone}</p>
-                      {customer.customer_email && (
-                        <p className="text-xs text-gray-500 dark:text-gray-500 truncate">{customer.customer_email}</p>
-                      )}
+                      <span className={`px-2 py-1 text-xs font-semibold rounded-full flex-shrink-0 ${
+                        customer.status === 'Active'
+                          ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200'
+                          : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-300'
+                      }`}>
+                        {customer.status}
+                      </span>
                     </div>
-                    <span className={`px-2 py-1 text-xs font-semibold rounded-full flex-shrink-0 ${
-                      customer.status === 'Active'
-                        ? 'bg-green-100 dark:bg-green-900 text-green-800 dark:text-green-200'
-                        : 'bg-gray-100 dark:bg-gray-700 text-gray-800 dark:text-gray-300'
-                    }`}>
-                      {customer.status}
-                    </span>
-                  </div>
-
-                  <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100 dark:border-gray-700">
-                    <div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">Total Bills</p>
-                      <p className="text-base font-bold text-gray-900 dark:text-white">{customer.total_bills}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-gray-500 dark:text-gray-400">Total Spent</p>
-                      <p className="text-base font-bold text-green-600 dark:text-green-400">{formatCurrency(customer.total_amount)}</p>
-                    </div>
-                    <div className="col-span-2">
-                      <p className="text-xs text-gray-500 dark:text-gray-400">Last Purchase</p>
-                      <p className="text-sm text-gray-900 dark:text-white">{formatDate(customer.last_purchase)}</p>
+                    <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100 dark:border-gray-700">
+                      <div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Total Bills</p>
+                        <p className="text-base font-bold text-gray-900 dark:text-white">{customer.total_bills}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Total Spent</p>
+                        <p className="text-base font-bold text-green-600 dark:text-green-400">{formatCurrency(customer.total_amount)}</p>
+                      </div>
+                      <div className="col-span-2">
+                        <p className="text-xs text-gray-500 dark:text-gray-400">Last Purchase</p>
+                        <p className="text-sm text-gray-900 dark:text-white">{formatDate(customer.last_purchase)}</p>
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
+                )
+              })}
             </div>
+
+            {/* Pagination Controls */}
+            {totalPages > 1 && (
+              <div className="flex items-center justify-between bg-white dark:bg-gray-800 rounded-lg shadow-md px-4 py-3 border border-gray-200 dark:border-gray-700">
+                <div className="text-xs text-gray-600 dark:text-gray-400">
+                  Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredCustomers.length)} of {filteredCustomers.length}
+                </div>
+                <div className="flex items-center gap-2">
+                  <button
+                    type="button"
+                    onClick={() => { setCurrentPage(p => p - 1); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+                    disabled={currentPage === 1}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  >
+                    Previous
+                  </button>
+                  <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                    Page {currentPage} of {totalPages}
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => { setCurrentPage(p => p + 1); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+                    disabled={currentPage === totalPages}
+                    className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </>
         )}
       </div>

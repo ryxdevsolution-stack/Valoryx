@@ -95,26 +95,27 @@ export default function AllBillsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [location.state])
 
-  // Helper function to parse payment types from bill
-  const parsePaymentTypes = (bill: Bill): string[] => {
-    if (!bill.payment_type) return []
-
-    // Check if it's a JSON string (split payment)
-    if (typeof bill.payment_type === 'string' && bill.payment_type.trim().startsWith('[')) {
-      try {
-        const parsed = JSON.parse(bill.payment_type)
-        if (Array.isArray(parsed)) {
-          return parsed.map(p => p.PAYMENT_TYPE || p.payment_type).filter(Boolean)
-        }
-      } catch (e) {
-        // If parsing fails, treat as single payment
-        return [bill.payment_type]
+  // Parse payment_type JSON once per bill and memoize as a Map<bill_id, string[]>
+  // Avoids repeated JSON.parse calls inside getExpandedBills, filteredBills, paymentTypeStats, etc.
+  const parsedPaymentMap = useMemo(() => {
+    const map = new Map<string, string[]>()
+    bills.forEach(bill => {
+      if (!bill.payment_type) { map.set(bill.bill_id, []); return }
+      if (typeof bill.payment_type === 'string' && bill.payment_type.trim().startsWith('[')) {
+        try {
+          const parsed = JSON.parse(bill.payment_type)
+          if (Array.isArray(parsed)) {
+            map.set(bill.bill_id, parsed.map((p: any) => p.PAYMENT_TYPE || p.payment_type).filter(Boolean))
+            return
+          }
+        } catch { /* fall through */ }
       }
-    }
+      map.set(bill.bill_id, [bill.payment_type])
+    })
+    return map
+  }, [bills])
 
-    // Single payment type
-    return [bill.payment_type]
-  }
+  const parsePaymentTypes = (bill: Bill): string[] => parsedPaymentMap.get(bill.bill_id) ?? []
 
   const fetchData = async () => {
     // If a request is already ongoing, return that promise

@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 4
+CURRENT_SCHEMA_VERSION = 9
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -40,6 +40,26 @@ def _set_stored_version(db, version: int):
     )
     db.session.commit()
 
+# ── Dialect helpers ───────────────────────────────────────────────────────────
+
+def _normalize_col_def(definition: str, dialect: str) -> str:
+    """
+    Translate SQLite column definition syntax to the current dialect.
+    Called by every _add_col() so migrations stay dialect-agnostic.
+    """
+    if dialect == 'postgresql':
+        import re
+        d = definition
+        # DATETIME → TIMESTAMP  (PostgreSQL has no DATETIME type)
+        d = re.sub(r'\bDATETIME\b', 'TIMESTAMP', d, flags=re.IGNORECASE)
+        # BOOLEAN DEFAULT 0 → BOOLEAN DEFAULT FALSE
+        d = re.sub(r'(BOOLEAN\b.*?DEFAULT\s+)0\b', r'\1FALSE', d, flags=re.IGNORECASE)
+        # BOOLEAN DEFAULT 1 → BOOLEAN DEFAULT TRUE
+        d = re.sub(r'(BOOLEAN\b.*?DEFAULT\s+)1\b', r'\1TRUE', d, flags=re.IGNORECASE)
+        return d
+    return definition  # SQLite: pass through unchanged
+
+
 # ── Migration functions (add new ones at the bottom, never reorder) ──────────
 
 def _m001_core_columns(db):
@@ -61,7 +81,8 @@ def _m001_core_columns(db):
         except Exception:
             return  # table doesn't exist yet — skip
         if col not in cols:
-            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
             logging.info(f"[Migration] {table}.{col} added")
 
     # ── users ─────────────────────────────────────────────────────────────────
@@ -142,8 +163,8 @@ def _m001_core_columns(db):
                 response_body   TEXT NULL,
                 error           TEXT NULL,
                 created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                delivered_at    DATETIME NULL,
-                next_retry_at   DATETIME NULL
+                delivered_at    TIMESTAMP NULL,
+                next_retry_at   TIMESTAMP NULL
             )
         """))
         db.session.execute(text(
@@ -172,9 +193,11 @@ def _m001_core_columns(db):
         logging.info("[Migration] sync_metadata table created")
 
     if 'sync_log' not in tables:
-        db.session.execute(text("""
+        dialect = db.engine.dialect.name
+        pk_col = 'id SERIAL PRIMARY KEY' if dialect == 'postgresql' else 'id INTEGER PRIMARY KEY AUTOINCREMENT'
+        db.session.execute(text(f"""
             CREATE TABLE IF NOT EXISTS sync_log (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                {pk_col},
                 table_name  VARCHAR(100),
                 rows_synced INTEGER DEFAULT 0,
                 synced_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -242,7 +265,8 @@ def _m003_shop_receipt_settings(db):
         except Exception:
             return
         if col not in cols:
-            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
             logging.info(f"[Migration] {table}.{col} added")
 
     _add_col('client_entry', 'address2',        'TEXT NULL')
@@ -272,7 +296,8 @@ def _m004_users_and_client_missing_cols(db):
         except Exception:
             return
         if col not in cols:
-            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
             logging.info(f"[Migration] {table}.{col} added")
 
     _add_col('users', 'reset_token',          'VARCHAR(100) NULL')
@@ -293,6 +318,280 @@ def _m004_users_and_client_missing_cols(db):
     logging.info("[Migration] v4: missing users and client_entry columns added")
 
 
+def _m005_stock_transfer_workflow_v2(db):
+    """
+    Upgrade stock_transfers for the two-step workflow:
+      - transfer_type: 'send' (owner dispatches) | 'request' (branch requests)
+      - dispatched_at: when stock was deducted from source
+      - received_by / received_at: who confirmed receipt and when
+    Also adds manager_id to branches for branch→manager assignment tracking.
+    """
+    inspector = sa_inspect(db.engine)
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return  # table doesn't exist yet — skip
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    tables = inspector.get_table_names()
+
+    # stock_transfers — new workflow columns
+    if 'stock_transfers' in tables:
+        _add_col('stock_transfers', 'transfer_type',  "VARCHAR(10) NOT NULL DEFAULT 'send'")
+        _add_col('stock_transfers', 'dispatched_at',  'TIMESTAMP NULL')
+        _add_col('stock_transfers', 'received_by',    'VARCHAR(36) NULL')
+        _add_col('stock_transfers', 'received_at',    'TIMESTAMP NULL')
+
+        # Backfill: old 'completed' transfers were single-step sends — mark as received
+        db.session.execute(text("""
+            UPDATE stock_transfers
+            SET dispatched_at = approved_at,
+                received_at   = completed_at,
+                received_by   = approved_by
+            WHERE status = 'completed'
+              AND dispatched_at IS NULL
+        """))
+        logging.info("[Migration] v5: stock_transfers backfilled for completed rows")
+
+    # branches — optional manager pointer (nullable, for fast UI lookups)
+    if 'branches' in tables:
+        _add_col('branches', 'manager_id', 'VARCHAR(36) NULL')
+
+    db.session.commit()
+    logging.info("[Migration] v5: stock transfer workflow v2 columns added")
+
+
+def _m006_customer_loyalty_points(db):
+    """
+    Add loyalty_points column to the customer table.
+    Was added to SQLite schema locally but never migrated.
+    Supabase fix: run separately — ALTER TABLE customer ADD COLUMN IF NOT EXISTS loyalty_points INTEGER DEFAULT 0;
+    """
+    inspector = sa_inspect(db.engine)
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    _add_col('customer', 'loyalty_points', 'INTEGER NOT NULL DEFAULT 0')
+
+    db.session.commit()
+    logging.info("[Migration] v6: customer.loyalty_points column added")
+
+
+def _m007_fix_permission_sections(db):
+    """
+    Fix permission_sections and remove dead permissions that are never enforced.
+    Dead permissions: delete_product, manage_customers, manage_stock,
+                      manage_payment_types, manage_settings, manage_users, manage_permissions
+    """
+    dead_perms = [
+        'delete_product', 'manage_customers', 'manage_stock',
+        'manage_payment_types', 'manage_settings', 'manage_users', 'manage_permissions',
+    ]
+
+    with db.engine.connect() as conn:
+        import uuid as _uuid
+
+        def _get_or_create_section(name, order):
+            row = conn.execute(
+                text("SELECT section_id FROM permission_sections WHERE section_name = :name"),
+                {'name': name}
+            ).fetchone()
+            if row:
+                return str(row[0])
+            sid = str(_uuid.uuid4())
+            conn.execute(
+                text("INSERT INTO permission_sections (section_id, section_name, display_order) "
+                     "VALUES (:id, :name, :order)"),
+                {'id': sid, 'name': name, 'order': order}
+            )
+            return sid
+
+        def _link_permission(perm_name, section_id):
+            conn.execute(
+                text("UPDATE permissions SET section_id = :sid WHERE permission_name = :pname"),
+                {'sid': section_id, 'pname': perm_name}
+            )
+
+        # Remove dead permissions (cascades to user_permissions via FK)
+        for perm in dead_perms:
+            conn.execute(
+                text("DELETE FROM permissions WHERE permission_name = :pname"),
+                {'pname': perm}
+            )
+
+        # Remove orphaned sections (Settings, Admin) left after dead perm removal
+        for section in ('Settings', 'Admin'):
+            conn.execute(
+                text("DELETE FROM permission_sections WHERE section_name = :name"),
+                {'name': section}
+            )
+
+        # Correct section structure
+        dashboard_sid = _get_or_create_section('Dashboard', 0)
+        _link_permission('view_dashboard', dashboard_sid)
+
+        billing_sid = _get_or_create_section('Billing', 1)
+        for p in ['gst_billing', 'non_gst_billing', 'view_all_bills', 'view_own_bills', 'edit_bill_details', 'print_bills']:
+            _link_permission(p, billing_sid)
+
+        stock_sid = _get_or_create_section('Stock', 2)
+        for p in ['view_stock', 'add_product', 'edit_product_details']:
+            _link_permission(p, stock_sid)
+
+        customers_sid = _get_or_create_section('Customers', 3)
+        _link_permission('view_customers', customers_sid)
+
+        reports_sid = _get_or_create_section('Reports', 4)
+        _link_permission('view_sales_reports', reports_sid)
+        _link_permission('export_reports', reports_sid)
+
+        audit_sid = _get_or_create_section('Audit', 5)
+        _link_permission('view_audit_logs', audit_sid)
+
+        conn.commit()
+    logging.info("[Migration] v7: dead permissions removed, sections corrected")
+
+
+def _m008_supplier_tables(db):
+    """
+    Create supplier management tables:
+      - suppliers        (vendor master)
+      - supplier_deliveries  (delivery records)
+      - supplier_delivery_items  (line items per delivery)
+    """
+    inspector = sa_inspect(db.engine)
+    tables = inspector.get_table_names()
+
+    if 'suppliers' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS suppliers (
+                supplier_id    VARCHAR(36) PRIMARY KEY,
+                client_id      VARCHAR(36) NOT NULL
+                               REFERENCES client_entry(client_id) ON DELETE CASCADE,
+                name           VARCHAR(255) NOT NULL,
+                contact_person VARCHAR(255) NULL,
+                phone          VARCHAR(20)  NULL,
+                email          VARCHAR(255) NULL,
+                address        TEXT         NULL,
+                gst_number     VARCHAR(15)  NULL,
+                transport_fee  NUMERIC      DEFAULT 0,
+                payment_terms  VARCHAR(100) NULL,
+                notes          TEXT         NULL,
+                is_active      BOOLEAN      NOT NULL DEFAULT 1,
+                created_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_suppliers_client ON suppliers (client_id)"))
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_suppliers_client_active ON suppliers (client_id, is_active)"))
+        logging.info("[Migration] v8: suppliers table created")
+
+    if 'supplier_deliveries' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS supplier_deliveries (
+                delivery_id             VARCHAR(36) PRIMARY KEY,
+                client_id               VARCHAR(36) NOT NULL
+                                        REFERENCES client_entry(client_id) ON DELETE CASCADE,
+                supplier_id             VARCHAR(36) NOT NULL
+                                        REFERENCES suppliers(supplier_id) ON DELETE CASCADE,
+                branch_id               VARCHAR(36) NULL,
+                invoice_number          VARCHAR(100) NULL,
+                delivery_date           DATE         NULL,
+                transport_fee           NUMERIC      DEFAULT 0,
+                notes                   TEXT         NULL,
+                status                  VARCHAR(20)  NOT NULL DEFAULT 'draft',
+                products_confirmed      BOOLEAN      NOT NULL DEFAULT 0,
+                confirmed_by            VARCHAR(36)  NULL,
+                confirmed_at            TIMESTAMP    NULL,
+                delivery_note_filename  VARCHAR(255) NULL,
+                delivery_note_path      VARCHAR(500) NULL,
+                delivery_note_type      VARCHAR(10)  NULL,
+                completed_by            VARCHAR(36)  NULL,
+                completed_at            TIMESTAMP    NULL,
+                created_at              TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at              TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_sdel_client ON supplier_deliveries (client_id)"))
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_sdel_supplier ON supplier_deliveries (supplier_id)"))
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_sdel_client_status ON supplier_deliveries (client_id, status)"))
+        logging.info("[Migration] v8: supplier_deliveries table created")
+
+    if 'supplier_delivery_items' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS supplier_delivery_items (
+                id              VARCHAR(36) PRIMARY KEY,
+                delivery_id     VARCHAR(36) NOT NULL
+                                REFERENCES supplier_deliveries(delivery_id) ON DELETE CASCADE,
+                product_id      VARCHAR(36) NULL
+                                REFERENCES stock_entry(product_id) ON DELETE SET NULL,
+                product_name    VARCHAR(255) NOT NULL,
+                category        VARCHAR(100) NULL,
+                quantity        INTEGER      NOT NULL DEFAULT 1,
+                cost_price      NUMERIC      NULL,
+                selling_price   NUMERIC      NULL,
+                mrp             NUMERIC      NULL,
+                unit            VARCHAR(20)  DEFAULT 'pcs',
+                barcode         VARCHAR(100) NULL,
+                item_code       VARCHAR(50)  NULL,
+                gst_percentage  NUMERIC      DEFAULT 0,
+                hsn_code        VARCHAR(20)  NULL,
+                created_at      TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_sdel_item_delivery ON supplier_delivery_items (delivery_id)"))
+        db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_sdel_item_product ON supplier_delivery_items (product_id)"))
+        logging.info("[Migration] v8: supplier_delivery_items table created")
+
+    db.session.commit()
+    logging.info("[Migration] v8: supplier tables done")
+
+
+def _m009_role_quotas(db):
+    """
+    Add role_quotas JSON column to client_entry.
+    Stores per-client per-role user limits set by superadmin.
+    e.g. {"admin": 1, "manager": 2, "staff": 3, "cashier": 3}
+    null = unlimited for that role.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    try:
+        cols = [c['name'] for c in inspector.get_columns('client_entry')]
+    except Exception:
+        return  # table doesn't exist yet
+
+    if 'role_quotas' not in cols:
+        col_type = 'JSONB' if dialect == 'postgresql' else 'TEXT'
+        db.session.execute(text(
+            f"ALTER TABLE client_entry ADD COLUMN role_quotas {col_type} NULL"
+        ))
+        logging.info("[Migration] v9: client_entry.role_quotas column added")
+
+    db.session.commit()
+    logging.info("[Migration] v9: role_quotas migration done")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -300,6 +599,11 @@ MIGRATIONS = [
     (2, _m002_barcode_per_client_unique),
     (3, _m003_shop_receipt_settings),
     (4, _m004_users_and_client_missing_cols),
+    (5, _m005_stock_transfer_workflow_v2),
+    (6, _m006_customer_loyalty_points),
+    (7, _m007_fix_permission_sections),
+    (8, _m008_supplier_tables),
+    (9, _m009_role_quotas),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

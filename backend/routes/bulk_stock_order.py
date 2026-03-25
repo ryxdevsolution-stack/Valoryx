@@ -2,6 +2,7 @@ import uuid
 from datetime import datetime
 from flask import Blueprint, request, jsonify, g
 from extensions import db
+from sqlalchemy import func, case
 from models.bulk_stock_order_model import BulkStockOrder, BulkStockOrderItem
 from models.stock_model import StockEntry
 from utils.auth_middleware import authenticate
@@ -15,41 +16,29 @@ bulk_order_bp = Blueprint('bulk_stock_order', __name__)
 def generate_order_number(client_id):
     """Generate unique order number: ORD-YYYY-###"""
     year = datetime.now().year
-
-    # Find the highest order number for this year and client
     prefix = f"ORD-{year}-"
-    existing_orders = BulkStockOrder.query.filter(
+
+    # Single MAX() query — no collision loop
+    row = db.session.query(
+        func.max(
+            func.cast(
+                func.substr(BulkStockOrder.order_number, len(prefix) + 1),
+                db.Integer
+            )
+        )
+    ).filter(
         BulkStockOrder.client_id == client_id,
-        BulkStockOrder.order_number.like(f"{prefix}%")
-    ).order_by(BulkStockOrder.order_number.desc()).first()
+        BulkStockOrder.order_number.like(f"{prefix}%"),
+        func.length(BulkStockOrder.order_number) == len(prefix) + 4,
+    ).scalar()
 
-    if existing_orders:
-        try:
-            last_num = int(existing_orders.order_number.split('-')[-1])
-            next_num = last_num + 1
-        except ValueError:
-            next_num = 1
-    else:
-        next_num = 1
-
-    order_number = f"{prefix}{next_num:04d}"
-
-    # Handle collision
-    counter = 0
-    while BulkStockOrder.query.filter_by(order_number=order_number).first():
-        counter += 1
-        next_num += counter
-        order_number = f"{prefix}{next_num:04d}"
-        if counter > 100:
-            order_number = f"{prefix}{uuid.uuid4().hex[:6].upper()}"
-            break
-
-    return order_number
+    next_num = (row or 0) + 1
+    return f"{prefix}{next_num:04d}"
 
 
 @bulk_order_bp.route('', methods=['POST'])
 @authenticate
-@require_permission('add_product')
+@require_permission('create_bulk_order')
 def create_bulk_order():
     """Create a new bulk stock order"""
     try:
@@ -81,22 +70,30 @@ def create_bulk_order():
 
         db.session.add(order)
 
+        # Batch-fetch products by name to avoid N+1 per item
+        names_without_id = [
+            title_case(d['product_name'])
+            for d in data['items']
+            if not d.get('product_id') and d.get('product_name')
+        ]
+        _name_to_id: dict = {}
+        if names_without_id:
+            _rows = StockEntry.query.filter(
+                StockEntry.client_id == client_id,
+                StockEntry.product_name.in_(names_without_id)
+            ).with_entities(StockEntry.product_name, StockEntry.product_id).all()
+            _name_to_id = {r.product_name: r.product_id for r in _rows}
+
         # Add order items (apply title case to product names and categories)
         for item_data in data['items']:
             # Apply title case to name fields
             product_name = title_case(item_data['product_name'])
             category = title_case(item_data.get('category', 'Other'))
 
-            # Check if product exists
+            # Check if product exists (dict lookup — no per-item query)
             product_id = item_data.get('product_id')
             if not product_id and product_name:
-                # Try to find existing product by name
-                existing_product = StockEntry.query.filter_by(
-                    client_id=client_id,
-                    product_name=product_name
-                ).first()
-                if existing_product:
-                    product_id = existing_product.product_id
+                product_id = _name_to_id.get(product_name)
 
             order_item = BulkStockOrderItem(
                 item_id=str(uuid.uuid4()),
@@ -136,7 +133,7 @@ def create_bulk_order():
 
 @bulk_order_bp.route('', methods=['GET'])
 @authenticate
-@require_permission('view_stock')
+@require_permission('view_bulk_orders')
 def get_bulk_orders():
     """Get all bulk orders for the client"""
     try:
@@ -165,7 +162,7 @@ def get_bulk_orders():
 
 @bulk_order_bp.route('/<order_id>', methods=['GET'])
 @authenticate
-@require_permission('view_stock')
+@require_permission('view_bulk_orders')
 def get_bulk_order(order_id):
     """Get a specific bulk order with all items"""
     try:
@@ -190,7 +187,7 @@ def get_bulk_order(order_id):
 
 @bulk_order_bp.route('/<order_id>', methods=['PUT'])
 @authenticate
-@require_permission('edit_product_details')
+@require_permission('edit_bulk_order')
 def update_bulk_order(order_id):
     """Update a bulk order"""
     try:
@@ -242,7 +239,7 @@ def update_bulk_order(order_id):
 
 @bulk_order_bp.route('/<order_id>/receive', methods=['POST'])
 @authenticate
-@require_permission('add_product')
+@require_permission('receive_bulk_order')
 def receive_bulk_order(order_id):
     """
     Receive items from a bulk order and add to stock
@@ -266,6 +263,29 @@ def receive_bulk_order(order_id):
         # Store old data
         old_data = order.to_dict()
 
+        # Batch-fetch all order items and stock entries before the loop
+        incoming_ids = [d.get('item_id') for d in data['items'] if d.get('item_id')]
+        order_items_map: dict = {}
+        if incoming_ids:
+            for oi in BulkStockOrderItem.query.filter(
+                BulkStockOrderItem.item_id.in_(incoming_ids),
+                BulkStockOrderItem.order_id == order_id
+            ).all():
+                order_items_map[oi.item_id] = oi
+
+        # Pre-load stock entries by product_id and by product_name
+        _prod_ids = {oi.product_id for oi in order_items_map.values() if oi.product_id}
+        _prod_names = {oi.product_name for oi in order_items_map.values() if not oi.product_id and oi.product_name}
+        _stock_rows = StockEntry.query.filter(
+            StockEntry.client_id == client_id,
+            db.or_(
+                StockEntry.product_id.in_(_prod_ids) if _prod_ids else db.false(),
+                StockEntry.product_name.in_(_prod_names) if _prod_names else db.false(),
+            )
+        ).all() if (_prod_ids or _prod_names) else []
+        _stock_by_id: dict = {s.product_id: s for s in _stock_rows}
+        _stock_by_name: dict = {s.product_name: s for s in _stock_rows if s.product_name}
+
         # Process each received item
         for item_data in data['items']:
             item_id = item_data.get('item_id')
@@ -274,11 +294,8 @@ def receive_bulk_order(order_id):
             if quantity_received <= 0:
                 continue
 
-            # Find the order item
-            order_item = BulkStockOrderItem.query.filter_by(
-                item_id=item_id,
-                order_id=order_id
-            ).first()
+            # Find the order item (dict lookup — no per-item query)
+            order_item = order_items_map.get(item_id)
 
             if not order_item:
                 continue
@@ -290,19 +307,12 @@ def receive_bulk_order(order_id):
             if order_item.quantity_received > order_item.quantity_ordered:
                 order_item.quantity_received = order_item.quantity_ordered
 
-            # Add to stock
+            # Resolve stock entry (dict lookup — no per-item query)
             existing_product = None
             if order_item.product_id:
-                existing_product = StockEntry.query.filter_by(
-                    product_id=order_item.product_id,
-                    client_id=client_id
-                ).first()
+                existing_product = _stock_by_id.get(order_item.product_id)
             else:
-                # Try to find by product name
-                existing_product = StockEntry.query.filter_by(
-                    client_id=client_id,
-                    product_name=order_item.product_name
-                ).first()
+                existing_product = _stock_by_name.get(order_item.product_name)
 
             if existing_product:
                 # Update existing product
@@ -344,13 +354,17 @@ def receive_bulk_order(order_id):
 
                 db.session.add(new_product)
                 order_item.product_id = new_product.product_id
+                # Keep dicts in sync so duplicate names in same batch resolve correctly
+                _stock_by_id[new_product.product_id] = new_product
+                if new_product.product_name:
+                    _stock_by_name[new_product.product_name] = new_product
 
                 log_action('CREATE', 'stock_entry', new_product.product_id, None, new_product.to_dict())
 
-        # Update order status
-        all_items = order.items.all()
-        fully_received = all([item.quantity_received >= item.quantity_ordered for item in all_items])
-        partially_received = any([item.quantity_received > 0 for item in all_items])
+        # Use already-fetched map — avoids a separate SELECT on the dynamic relationship
+        all_items = list(order_items_map.values())
+        fully_received = all(item.quantity_received >= item.quantity_ordered for item in all_items)
+        partially_received = any(item.quantity_received > 0 for item in all_items)
 
         if fully_received:
             order.status = 'received'
@@ -378,7 +392,7 @@ def receive_bulk_order(order_id):
 
 @bulk_order_bp.route('/<order_id>', methods=['DELETE'])
 @authenticate
-@require_permission('edit_product_details')
+@require_permission('delete_bulk_order')
 def delete_bulk_order(order_id):
     """Delete a bulk order"""
     try:
@@ -419,25 +433,18 @@ def get_order_stats():
     try:
         client_id = g.user['client_id']
 
-        # Count orders by status
-        pending_count = BulkStockOrder.query.filter_by(
-            client_id=client_id,
-            status='pending'
-        ).count()
+        # Single GROUP BY CASE WHEN — was 4 separate COUNT queries
+        row = db.session.query(
+            func.count(BulkStockOrder.order_id).label('total'),
+            func.sum(case((BulkStockOrder.status == 'pending',  1), else_=0)).label('pending'),
+            func.sum(case((BulkStockOrder.status == 'partial',  1), else_=0)).label('partial'),
+            func.sum(case((BulkStockOrder.status == 'received', 1), else_=0)).label('received'),
+        ).filter(BulkStockOrder.client_id == client_id).one()
 
-        partial_count = BulkStockOrder.query.filter_by(
-            client_id=client_id,
-            status='partial'
-        ).count()
-
-        received_count = BulkStockOrder.query.filter_by(
-            client_id=client_id,
-            status='received'
-        ).count()
-
-        total_count = BulkStockOrder.query.filter_by(
-            client_id=client_id
-        ).count()
+        total_count    = row.total    or 0
+        pending_count  = row.pending  or 0
+        partial_count  = row.partial  or 0
+        received_count = row.received or 0
 
         return jsonify({
             'success': True,

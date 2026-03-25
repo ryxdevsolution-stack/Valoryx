@@ -326,7 +326,7 @@ export default function LoginPage() {
                   Back to login
                 </button>
                 <a
-                  href="/frontend/2fa-recover"
+                  href="/2fa-recover"
                   className="text-slate-600 hover:text-slate-400 text-xs transition-colors"
                 >
                   Lost access to your authenticator app?

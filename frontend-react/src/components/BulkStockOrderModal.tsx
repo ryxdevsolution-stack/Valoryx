@@ -4,6 +4,8 @@ import { useState, useEffect, useRef, useCallback } from 'react'
 import api from '@/lib/api'
 import { X, Upload, Plus, Trash2, FileSpreadsheet, Package, ChevronDown, ChevronUp, Camera, Loader2 } from 'lucide-react'
 import Tesseract from 'tesseract.js'
+import BarcodeScannerOverlay from '@/components/BarcodeScannerOverlay'
+import { useMobileDetect } from '@/hooks/useMobileDetect'
 
 interface OrderItem {
   item_id?: string
@@ -58,6 +60,11 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
   const imageInputRef = useRef<HTMLInputElement>(null)
   const [ocrProcessing, setOcrProcessing] = useState(false)
   const [ocrProgress, setOcrProgress] = useState(0)
+
+  // Barcode scanner state (mobile-only, per item row)
+  const [showItemScanner, setShowItemScanner] = useState(false)
+  const [scanningItemIdx, setScanningItemIdx] = useState<number | null>(null)
+  const { isMobile, supportsCamera } = useMobileDetect()
 
   // Orders list state
   const [orders, setOrders] = useState<BulkOrder[]>([])
@@ -388,8 +395,8 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
   if (!isOpen) return null
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white dark:bg-gray-800 rounded-xl max-w-5xl w-full max-h-[92vh] overflow-hidden flex flex-col shadow-2xl">
+    <div className="fixed inset-0 bg-black/50 flex items-end sm:items-center justify-center z-50 sm:p-4">
+      <div className="bg-white dark:bg-gray-800 rounded-t-2xl sm:rounded-xl max-w-5xl w-full max-h-[95vh] sm:max-h-[92vh] overflow-hidden flex flex-col shadow-2xl">
         {/* Header with Tabs */}
         <div className="border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
           <div className="flex items-center justify-between px-5 pt-4 pb-0">
@@ -434,7 +441,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
           <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
             <div className="p-5 space-y-5">
               {/* Supplier Info — Compact Row */}
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Supplier Name *</label>
                   <input
@@ -478,11 +485,11 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
               </div>
 
               {/* Items Header with Import + Add */}
-              <div className="flex items-center justify-between">
+              <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-sm font-semibold text-gray-900 dark:text-white">
                   Items {formData.items.length > 0 && <span className="text-gray-400 font-normal">({formData.items.length})</span>}
                 </h3>
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                   <input
                     ref={fileInputRef}
                     type="file"
@@ -550,88 +557,194 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                 </div>
               )}
 
-              {/* Items Table — Compact */}
+              {/* Items Table — Compact, scrollable on mobile */}
               {formData.items.length > 0 && (
                 <div className="border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden">
-                  <table className="w-full">
-                    <thead className="bg-gray-50 dark:bg-gray-700">
-                      <tr>
-                        <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-8">#</th>
-                        <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase">Product Name *</th>
-                        <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-20">Qty *</th>
-                        <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">Cost ₹</th>
-                        <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">Sell ₹</th>
-                        <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">MRP ₹</th>
-                        <th className="px-3 py-2 w-10"></th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
-                      {formData.items.map((item, index) => (
-                        <tr key={index} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
-                          <td className="px-3 py-1.5 text-xs text-gray-400">{index + 1}</td>
-                          <td className="px-3 py-1.5">
-                            <input
-                              type="text"
-                              required
-                              value={item.product_name}
-                              onChange={(e) => updateItem(index, 'product_name', e.target.value)}
-                              placeholder="Product name"
-                              className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
-                            />
-                          </td>
-                          <td className="px-3 py-1.5">
+                  {/* Desktop table */}
+                  <div className="hidden sm:block overflow-x-auto">
+                    <table className="w-full">
+                      <thead className="bg-gray-50 dark:bg-gray-700">
+                        <tr>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-8">#</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase">Product Name *</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-20">Qty *</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">Cost ₹</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">Sell ₹</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">MRP ₹</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-28">Barcode</th>
+                          <th className="px-3 py-2 w-10"></th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
+                        {formData.items.map((item, index) => (
+                          <tr key={index} className="hover:bg-gray-50 dark:hover:bg-gray-700/50">
+                            <td className="px-3 py-1.5 text-xs text-gray-400">{index + 1}</td>
+                            <td className="px-3 py-1.5">
+                              <input
+                                type="text"
+                                required
+                                value={item.product_name}
+                                onChange={(e) => updateItem(index, 'product_name', e.target.value)}
+                                placeholder="Product name"
+                                className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <input
+                                type="number"
+                                required
+                                min="1"
+                                value={item.quantity_ordered}
+                                onChange={(e) => updateItem(index, 'quantity_ordered', parseInt(e.target.value) || 0)}
+                                className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={item.cost_price}
+                                onChange={(e) => updateItem(index, 'cost_price', e.target.value)}
+                                placeholder="0.00"
+                                className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={item.selling_price}
+                                onChange={(e) => updateItem(index, 'selling_price', e.target.value)}
+                                placeholder="Later"
+                                className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 placeholder:text-gray-300 dark:placeholder:text-gray-500"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <input
+                                type="number"
+                                step="0.01"
+                                value={item.mrp}
+                                onChange={(e) => updateItem(index, 'mrp', e.target.value)}
+                                placeholder="Later"
+                                className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 placeholder:text-gray-300 dark:placeholder:text-gray-500"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <div className="flex items-center gap-1">
+                                <input
+                                  type="text"
+                                  value={item.barcode || ''}
+                                  onChange={(e) => updateItem(index, 'barcode', e.target.value)}
+                                  placeholder="Barcode"
+                                  className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500"
+                                />
+                                {isMobile && supportsCamera && (
+                                  <button
+                                    type="button"
+                                    onClick={() => { setScanningItemIdx(index); setShowItemScanner(true) }}
+                                    title="Scan barcode"
+                                    className="flex-shrink-0 p-1.5 text-blue-600 hover:text-blue-700 bg-blue-50 dark:bg-blue-900/30 rounded"
+                                  >
+                                    <Camera className="w-3.5 h-3.5" />
+                                  </button>
+                                )}
+                              </div>
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <button
+                                type="button"
+                                onClick={() => removeItem(index)}
+                                className="p-1 text-red-400 hover:text-red-600 dark:hover:text-red-300 transition"
+                              >
+                                <Trash2 className="w-3.5 h-3.5" />
+                              </button>
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  {/* Mobile card list */}
+                  <div className="sm:hidden divide-y divide-gray-100 dark:divide-gray-700">
+                    {formData.items.map((item, index) => (
+                      <div key={index} className="p-3 space-y-2">
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-[10px] font-bold text-gray-400 uppercase">Item {index + 1}</span>
+                          <button
+                            type="button"
+                            onClick={() => removeItem(index)}
+                            className="p-1 text-red-400 hover:text-red-600 transition"
+                          >
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+                        </div>
+                        <input
+                          type="text"
+                          required
+                          value={item.product_name}
+                          onChange={(e) => updateItem(index, 'product_name', e.target.value)}
+                          placeholder="Product name *"
+                          className="w-full px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-1 focus:ring-blue-500"
+                        />
+                        <div className="grid grid-cols-3 gap-2">
+                          <div>
+                            <label className="block text-[10px] text-gray-400 mb-1">Qty *</label>
                             <input
                               type="number"
                               required
                               min="1"
                               value={item.quantity_ordered}
                               onChange={(e) => updateItem(index, 'quantity_ordered', parseInt(e.target.value) || 0)}
-                              className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500"
+                              className="w-full px-2 py-1.5 text-sm border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500"
                             />
-                          </td>
-                          <td className="px-3 py-1.5">
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-gray-400 mb-1">Cost ₹</label>
                             <input
                               type="number"
                               step="0.01"
                               value={item.cost_price}
                               onChange={(e) => updateItem(index, 'cost_price', e.target.value)}
-                              placeholder="0.00"
-                              className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500"
+                              placeholder="0"
+                              className="w-full px-2 py-1.5 text-sm border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500"
                             />
-                          </td>
-                          <td className="px-3 py-1.5">
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-gray-400 mb-1">Sell ₹</label>
                             <input
                               type="number"
                               step="0.01"
                               value={item.selling_price}
                               onChange={(e) => updateItem(index, 'selling_price', e.target.value)}
                               placeholder="Later"
-                              className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 placeholder:text-gray-300 dark:placeholder:text-gray-500"
+                              className="w-full px-2 py-1.5 text-sm border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 placeholder:text-gray-300 dark:placeholder:text-gray-500"
                             />
-                          </td>
-                          <td className="px-3 py-1.5">
-                            <input
-                              type="number"
-                              step="0.01"
-                              value={item.mrp}
-                              onChange={(e) => updateItem(index, 'mrp', e.target.value)}
-                              placeholder="Later"
-                              className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 placeholder:text-gray-300 dark:placeholder:text-gray-500"
-                            />
-                          </td>
-                          <td className="px-3 py-1.5">
+                          </div>
+                        </div>
+                        {/* Barcode field (mobile card) */}
+                        <div className="flex items-center gap-2">
+                          <input
+                            type="text"
+                            value={item.barcode || ''}
+                            onChange={(e) => updateItem(index, 'barcode', e.target.value)}
+                            placeholder="Barcode (optional)"
+                            className="flex-1 px-3 py-2 text-sm border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-1 focus:ring-blue-500"
+                          />
+                          {supportsCamera && (
                             <button
                               type="button"
-                              onClick={() => removeItem(index)}
-                              className="p-1 text-red-400 hover:text-red-600 dark:hover:text-red-300 transition"
+                              onClick={() => { setScanningItemIdx(index); setShowItemScanner(true) }}
+                              title="Scan barcode"
+                              className="flex-shrink-0 p-2.5 text-blue-600 bg-blue-50 dark:bg-blue-900/30 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/50 transition"
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              <Camera className="w-4 h-4" />
                             </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
 
                   {/* Summary Row */}
                   <div className="bg-gray-50 dark:bg-gray-700 px-3 py-2 flex justify-between items-center text-xs border-t border-gray-200 dark:border-gray-600">
@@ -719,17 +832,19 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                         onClick={() => setExpandedOrder(expandedOrder === order.order_id ? null : order.order_id!)}
                         className="w-full px-4 py-3 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700/50 transition text-left"
                       >
-                        <div className="flex items-center gap-3">
-                          <span className="text-sm font-bold text-gray-900 dark:text-white">{order.order_number}</span>
-                          <span className={`px-2 py-0.5 rounded-full text-[10px] font-medium ${getStatusBadge(order.status || 'pending')}`}>
-                            {(order.status || 'pending').toUpperCase()}
-                          </span>
-                          <span className="text-xs text-gray-500 dark:text-gray-400">
+                        <div className="flex flex-col sm:flex-row sm:items-center gap-1 sm:gap-3 min-w-0 flex-1">
+                          <div className="flex items-center gap-2">
+                            <span className="text-sm font-bold text-gray-900 dark:text-white truncate">{order.order_number}</span>
+                            <span className={`flex-shrink-0 px-2 py-0.5 rounded-full text-[10px] font-medium ${getStatusBadge(order.status || 'pending')}`}>
+                              {(order.status || 'pending').toUpperCase()}
+                            </span>
+                          </div>
+                          <span className="text-xs text-gray-500 dark:text-gray-400 truncate">
                             {order.supplier_name} • {order.items?.length || 0} items
                           </span>
                         </div>
-                        <div className="flex items-center gap-2">
-                          <span className="text-xs text-gray-400">
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                          <span className="text-xs text-gray-400 hidden sm:inline">
                             {order.order_date ? new Date(order.order_date).toLocaleDateString('en-IN') : ''}
                           </span>
                           {expandedOrder === order.order_id
@@ -809,6 +924,21 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
           </div>
         )}
       </div>
+
+      {/* Barcode scanner overlay (mobile-only, per item) */}
+      {showItemScanner && scanningItemIdx !== null && (
+        <BarcodeScannerOverlay
+          onScan={(barcode) => {
+            updateItem(scanningItemIdx, 'barcode', barcode)
+            setShowItemScanner(false)
+            setScanningItemIdx(null)
+          }}
+          onClose={() => {
+            setShowItemScanner(false)
+            setScanningItemIdx(null)
+          }}
+        />
+      )}
     </div>
   )
 }

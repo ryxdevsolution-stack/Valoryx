@@ -21,6 +21,16 @@ import {
   Facebook,
   Instagram,
   LucideIcon,
+  Truck,
+  ArrowLeftRight,
+  ClipboardList,
+  Lock,
+  Send,
+  ScanLine,
+  UserPlus,
+  RefreshCcw,
+  BarChart3,
+  Smartphone,
 } from 'lucide-react'
 
 // =============================================================================
@@ -63,7 +73,9 @@ export const siteConfig = {
 // =============================================================================
 
 export const navLinks = [
+  { href: '#preview', label: 'Preview' },
   { href: '#features', label: 'Features' },
+  { href: '#modules', label: 'Modules' },
   { href: '#benefits', label: 'Benefits' },
   { href: '#testimonials', label: 'Testimonials' },
   { href: '#faq', label: 'FAQ' },
@@ -110,8 +122,8 @@ export const features: Feature[] = [
   },
   {
     icon: Users,
-    title: 'Customer Analytics',
-    description: 'Track customer behavior with predictive insights, purchase history, and identify your most valuable customers.',
+    title: 'Customer Management',
+    description: 'Track customer behavior with purchase history, billing records, and identify your most valuable customers.',
   },
   {
     icon: Shield,
@@ -129,14 +141,69 @@ export const features: Feature[] = [
     description: 'Thermal printer support with customizable receipts. No driver installation needed, works out of the box.',
   },
   {
+    icon: Truck,
+    title: 'Supplier Management',
+    description: 'Track suppliers, record deliveries, and automatically update stock when goods arrive. Full delivery history.',
+  },
+  {
+    icon: ArrowLeftRight,
+    title: 'Stock Transfer',
+    description: 'Move inventory between branches seamlessly with real-time transfer tracking and branch-level stock visibility.',
+  },
+  {
+    icon: Building2,
+    title: 'Multi-Branch Support',
+    description: 'Manage multiple store locations from one dashboard. Branch-level analytics, stock, and user management.',
+  },
+  {
+    icon: ClipboardList,
+    title: 'Audit Trail',
+    description: 'Every action logged with user, timestamp, and change details. Full accountability for every operation.',
+  },
+  {
+    icon: Lock,
+    title: 'Two-Factor Authentication',
+    description: 'Secure accounts with TOTP-based 2FA. Works with Google Authenticator, Authy, and any TOTP app.',
+  },
+  {
+    icon: Send,
+    title: 'Telegram Reports',
+    description: 'Get daily sales and revenue summaries delivered automatically to your Telegram. Stay informed anywhere.',
+  },
+  {
+    icon: RefreshCcw,
+    title: 'Bill Exchange & Returns',
+    description: 'Handle product returns and exchanges smoothly with automatic stock restoration and new bill generation.',
+  },
+  {
+    icon: ScanLine,
+    title: 'Barcode Scanning',
+    description: 'Use your phone camera as a barcode scanner for lightning-fast product lookup and bill creation.',
+  },
+  {
+    icon: UserPlus,
+    title: 'Team Management',
+    description: 'Invite team members via email, assign roles, and manage permissions across your entire organization.',
+  },
+  {
+    icon: BarChart3,
+    title: 'Reports & Analytics',
+    description: 'Sales, revenue, profit, and inventory reports with custom date ranges. Export to Excel or PDF instantly.',
+  },
+  {
     icon: Moon,
     title: 'Dark Mode',
     description: 'Easy on the eyes with full dark mode support across all features. Work comfortably day or night.',
   },
   {
     icon: Upload,
-    title: 'Bulk Operations',
-    description: 'Import and export data easily with Excel support. Migrate your existing inventory in minutes.',
+    title: 'Bulk Import / Export',
+    description: 'Import products, customers, and stock from Excel. Export any report or data with a single click.',
+  },
+  {
+    icon: Smartphone,
+    title: 'Offline & PWA',
+    description: 'Works offline as a Progressive Web App. Bills sync automatically when internet is restored.',
   },
 ]
 

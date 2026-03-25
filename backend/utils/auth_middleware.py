@@ -1,5 +1,6 @@
 import jwt
 from datetime import datetime
+from utils.dt import is_past
 from functools import wraps
 from flask import request, jsonify, g
 from config import Config
@@ -88,6 +89,7 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                 'phone': user_data.get('phone', ''),
                 'department': user_data.get('department', ''),
                 'role': user_data.get('role', 'staff'),
+                'branch_id': user_data.get('branch_id'),
                 'is_super_admin': user_data.get('is_super_admin', False),
                 'permissions': user_data.get('permissions', []),
                 'is_readonly': decoded.get('is_readonly', False),
@@ -107,6 +109,7 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                 'trial_end_date': client_data.get('trial_end_date'),
                 'trial_days_remaining': client_data.get('trial_days_remaining'),
                 'subscription_end_date': client_data.get('subscription_end_date'),
+                'points_per_100': client_data.get('points_per_100', 0),
             }
 
             # Check subscription status — skip if allow_expired is True or user is super admin
@@ -125,7 +128,7 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                     if end_str:
                         try:
                             end_date = datetime.fromisoformat(end_str)
-                            if datetime.utcnow() > end_date:
+                            if is_past(end_date):
                                 cache.delete(cache_key)
                                 return jsonify({
                                     'error': 'Subscription expired',
@@ -139,7 +142,7 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                     if trial_end_str:
                         try:
                             trial_end = datetime.fromisoformat(trial_end_str)
-                            if datetime.utcnow() > trial_end:
+                            if is_past(trial_end):
                                 cache.delete(cache_key)
                                 return jsonify({
                                     'error': 'Trial expired',
@@ -191,6 +194,7 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                 'phone': user.phone,
                 'department': user.department,
                 'role': user.role,
+                'branch_id': str(user.branch_id) if user.branch_id else None,
                 'is_super_admin': decoded.get('is_super_admin', False),
                 'permissions': decoded.get('permissions', []),
                 'is_readonly': decoded.get('is_readonly', False),
@@ -210,6 +214,7 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                 'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
                 'trial_days_remaining': client.trial_days_remaining,
                 'subscription_end_date': client.subscription_end_date.isoformat() if client.subscription_end_date else None,
+                'points_per_100': getattr(client, 'points_per_100', 0) or 0,
             }
 
             # Cache the data for future requests (24 hours)
@@ -236,7 +241,7 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                         'error': 'Session has been revoked. Please login again.',
                         'code': 'SESSION_REVOKED'
                     }), 401
-                cache.set(session_cache_key, 1, 60)  # re-validate at most once per 60s
+                cache.set(session_cache_key, 1, 300)  # re-validate at most once per 5 min
 
                 # Throttle last_seen write — at most once per 5 minutes per session
                 seen_key = f"session_seen:{session_id}"

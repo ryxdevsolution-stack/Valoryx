@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
-import axios from 'axios';
+import api from '@/lib/api';
 import {
   Building2,
   Mail,
@@ -47,6 +47,13 @@ interface UserWithPermissions {
   last_login: string | null;
 }
 
+interface RoleQuotas {
+  admin: number | '';
+  manager: number | '';
+  staff: number | '';
+  cashier: number | '';
+}
+
 interface ClientDetails {
   client_id: string;
   client_name: string;
@@ -57,6 +64,7 @@ interface ClientDetails {
   logo_url: string | null;
   is_active: boolean;
   created_at: string;
+  role_quotas?: Record<string, number> | null;
   statistics?: {
     total_users: number;
     active_users: number;
@@ -81,8 +89,6 @@ export default function ClientDetailsPage() {
   const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const navigate = useNavigate();
   const { clientId } = useParams();
-  const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5017') + '/api';
-
   const [client, setClient] = useState<ClientDetails | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -90,6 +96,9 @@ export default function ClientDetailsPage() {
   const [formData, setFormData] = useState<Partial<ClientDetails>>({});
   const [errors, setErrors] = useState<Partial<ClientDetails>>({});
   const [saving, setSaving] = useState(false);
+
+  // Role quota state (separate from formData for cleaner number/empty handling)
+  const [roleQuotas, setRoleQuotas] = useState<RoleQuotas>({ admin: '', manager: '', staff: '', cashier: '' });
 
   // User management states
   const [clientUsers, setClientUsers] = useState<UserWithPermissions[]>([]);
@@ -108,34 +117,18 @@ export default function ClientDetailsPage() {
   const fetchClientUsers = useCallback(async () => {
     try {
       setLoadingUsers(true);
-      const token = localStorage.getItem('token');
-      const response = await axios.get(
-        `${apiUrl}/admin/clients/${clientId}/users`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
+      const response = await api.get(`/admin/clients/${clientId}/users`);
       setClientUsers(response.data.users || []);
     } catch (err: any) {
       console.error('Error fetching client users:', err);
     } finally {
       setLoadingUsers(false);
     }
-  }, [apiUrl, clientId]);
+  }, [clientId]);
 
   const fetchAllPermissions = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get(
-        `${apiUrl}/permissions/all`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
+      const response = await api.get('/permissions/all');
       console.log('Permissions response:', response.data);
       setAllPermissions(response.data.permissions || []);
       setPermissionsByCategory(response.data.categorized || {});
@@ -143,25 +136,25 @@ export default function ClientDetailsPage() {
       console.error('Error fetching permissions:', err);
       console.error('Error details:', err.response?.data);
     }
-  }, [apiUrl]);
+  }, []);
 
   const fetchClientDetails = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
 
-      const token = localStorage.getItem('token');
-      const response = await axios.get<ClientDetails>(
-        `${apiUrl}/admin/clients/${clientId}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
+      const response = await api.get<ClientDetails>(`/admin/clients/${clientId}`);
 
       setClient(response.data);
       setFormData(response.data);
+      // Populate quota inputs from saved values (empty string = unlimited)
+      const q = response.data.role_quotas || {};
+      setRoleQuotas({
+        admin:   q.admin   != null ? q.admin   : '',
+        manager: q.manager != null ? q.manager : '',
+        staff:   q.staff   != null ? q.staff   : '',
+        cashier: q.cashier != null ? q.cashier : '',
+      });
       fetchClientUsers();
       fetchAllPermissions();
     } catch (err: any) {
@@ -170,7 +163,7 @@ export default function ClientDetailsPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiUrl, clientId, fetchClientUsers, fetchAllPermissions]);
+  }, [clientId, fetchClientUsers, fetchAllPermissions]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -222,24 +215,22 @@ export default function ClientDetailsPage() {
     setError(null);
 
     try {
-      const token = localStorage.getItem('token');
-      await axios.put(
-        `${apiUrl}/admin/clients/${clientId}`,
-        {
-          client_name: formData.client_name,
-          email: formData.email,
-          phone: formData.phone,
-          address: formData.address,
-          gst_number: formData.gst_number,
-          logo_url: formData.logo_url
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+      // Build role_quotas payload — only include roles with numeric values (empty string = unlimited = omit)
+      const quotasPayload: Record<string, number> = {};
+      (Object.keys(roleQuotas) as Array<keyof RoleQuotas>).forEach((role) => {
+        const val = roleQuotas[role];
+        if (val !== '' && val !== null) quotasPayload[role] = Number(val);
+      });
+
+      await api.put(`/admin/clients/${clientId}`, {
+        client_name: formData.client_name,
+        email: formData.email,
+        phone: formData.phone,
+        address: formData.address,
+        gst_number: formData.gst_number,
+        logo_url: formData.logo_url,
+        role_quotas: Object.keys(quotasPayload).length > 0 ? quotasPayload : null,
+      });
 
       setEditMode(false);
       fetchClientDetails();
@@ -253,16 +244,7 @@ export default function ClientDetailsPage() {
 
   const handleToggleStatus = async () => {
     try {
-      const token = localStorage.getItem('token');
-      await axios.post(
-        `${apiUrl}/admin/clients/${clientId}/toggle-status`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
+      await api.post(`/admin/clients/${clientId}/toggle-status`, {});
       fetchClientDetails();
     } catch (err) {
       console.error('Error toggling client status:', err);
@@ -285,16 +267,7 @@ export default function ClientDetailsPage() {
 
   const handleToggleUserStatus = async (userId: string) => {
     try {
-      const token = localStorage.getItem('token');
-      await axios.post(
-        `${apiUrl}/admin/users/${userId}/toggle-status`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
+      await api.post(`/admin/users/${userId}/toggle-status`, {});
       fetchClientUsers();
     } catch (err) {
       console.error('Error toggling user status:', err);
@@ -312,15 +285,7 @@ export default function ClientDetailsPage() {
     setDeleting(true);
     setError(null);
     try {
-      const token = localStorage.getItem('token');
-      await axios.delete(
-        `${apiUrl}/admin/users/${userToDelete.user_id}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
+      await api.delete(`/admin/users/${userToDelete.user_id}`);
       setShowDeleteModal(false);
       setUserToDelete(null);
       fetchClientUsers();
@@ -434,6 +399,14 @@ export default function ClientDetailsPage() {
                     setEditMode(false);
                     setFormData(client);
                     setErrors({});
+                    // Reset quota inputs back to saved values
+                    const q = client.role_quotas || {};
+                    setRoleQuotas({
+                      admin:   q.admin   != null ? q.admin   : '',
+                      manager: q.manager != null ? q.manager : '',
+                      staff:   q.staff   != null ? q.staff   : '',
+                      cashier: q.cashier != null ? q.cashier : '',
+                    });
                   }}
                   className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
                 >
@@ -576,6 +549,43 @@ export default function ClientDetailsPage() {
                     rows={3}
                     className="w-full px-3 py-2 border border-gray-300 rounded-lg"
                   />
+                </div>
+
+                {/* Role Quotas */}
+                <div className="md:col-span-2">
+                  <div className="border border-gray-200 rounded-lg p-4">
+                    <div className="flex items-center gap-2 mb-1">
+                      <Shield className="h-4 w-4 text-indigo-600" />
+                      <h3 className="text-sm font-semibold text-gray-800">Team Member Quotas</h3>
+                    </div>
+                    <p className="text-xs text-gray-500 mb-4">
+                      Set the maximum number of users allowed per role. Leave blank for unlimited.
+                    </p>
+                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+                      {(['admin', 'manager', 'staff', 'cashier'] as const).map((role) => {
+                        const used = clientUsers.filter(u => u.role === role && u.is_active).length;
+                        return (
+                          <div key={role}>
+                            <label className="block text-xs font-medium text-gray-600 mb-1 capitalize">
+                              {role}
+                              <span className="ml-1 text-gray-400 font-normal">({used} active)</span>
+                            </label>
+                            <input
+                              type="number"
+                              min="0"
+                              placeholder="Unlimited"
+                              value={roleQuotas[role] === '' ? '' : roleQuotas[role]}
+                              onChange={(e) => setRoleQuotas(prev => ({
+                                ...prev,
+                                [role]: e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0),
+                              }))}
+                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                            />
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </div>
             ) : (
@@ -767,7 +777,6 @@ export default function ClientDetailsPage() {
       {showCreateUserModal && (
         <CreateUserModal
           clientId={clientId!}
-          apiUrl={apiUrl}
           allPermissions={allPermissions}
           permissionsByCategory={permissionsByCategory}
           onClose={() => setShowCreateUserModal(false)}
@@ -782,7 +791,6 @@ export default function ClientDetailsPage() {
       {showPermissionsModal && selectedUser && (
         <EditPermissionsModal
           user={selectedUser}
-          apiUrl={apiUrl}
           allPermissions={allPermissions}
           permissionsByCategory={permissionsByCategory}
           onClose={() => {
@@ -848,14 +856,13 @@ export default function ClientDetailsPage() {
 // Create User Modal Component
 interface CreateUserModalProps {
   clientId: string;
-  apiUrl: string;
   allPermissions: Permission[];
   permissionsByCategory: Record<string, Permission[]>;
   onClose: () => void;
   onSuccess: () => void;
 }
 
-function CreateUserModal({ clientId, apiUrl, allPermissions, permissionsByCategory, onClose, onSuccess }: CreateUserModalProps) {
+function CreateUserModal({ clientId, allPermissions, permissionsByCategory, onClose, onSuccess }: CreateUserModalProps) {
   const [formData, setFormData] = useState({
     email: '',
     password: '',
@@ -875,20 +882,7 @@ function CreateUserModal({ clientId, apiUrl, allPermissions, permissionsByCatego
     setError('');
 
     try {
-      const token = localStorage.getItem('token');
-      await axios.post(
-        `${apiUrl}/admin/users`,
-        {
-          ...formData,
-          client_id: clientId
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+      await api.post('/admin/users', { ...formData, client_id: clientId });
       onSuccess();
     } catch (err: any) {
       console.error('Error creating user:', err);
@@ -1077,14 +1071,13 @@ function CreateUserModal({ clientId, apiUrl, allPermissions, permissionsByCatego
 // Edit Permissions Modal Component
 interface EditPermissionsModalProps {
   user: UserWithPermissions;
-  apiUrl: string;
   allPermissions: Permission[];
   permissionsByCategory: Record<string, Permission[]>;
   onClose: () => void;
   onSuccess: () => void;
 }
 
-function EditPermissionsModal({ user, apiUrl, allPermissions, permissionsByCategory, onClose, onSuccess }: EditPermissionsModalProps) {
+function EditPermissionsModal({ user, allPermissions, permissionsByCategory, onClose, onSuccess }: EditPermissionsModalProps) {
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>(user.permissions);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -1094,20 +1087,10 @@ function EditPermissionsModal({ user, apiUrl, allPermissions, permissionsByCateg
     setError('');
 
     try {
-      const token = localStorage.getItem('token');
-      await axios.post(
-        `${apiUrl}/permissions/bulk-update`,
-        {
-          user_id: user.user_id,
-          permissions: selectedPermissions
-        },
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+      await api.post('/permissions/bulk-update', {
+        user_id: user.user_id,
+        permissions: selectedPermissions
+      });
       onSuccess();
     } catch (err: any) {
       console.error('Error updating permissions:', err);

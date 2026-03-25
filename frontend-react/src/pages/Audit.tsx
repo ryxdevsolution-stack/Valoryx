@@ -1,5 +1,5 @@
 
-import { useEffect, useState, useRef } from 'react'
+import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
@@ -23,6 +23,11 @@ export default function AuditorReportsPage() {
   const [dateRange, setDateRange] = useState({ start_date: '', end_date: '' })
   const [showPreview, setShowPreview] = useState(false)
   const [exporting, setExporting] = useState(false)
+
+  // Email modal state
+  const [currentPage, setCurrentPage] = useState(1)
+  const [totalPages, setTotalPages] = useState(1)
+  const [totalRecords, setTotalRecords] = useState(0)
 
   // Email modal state
   const [showEmailModal, setShowEmailModal] = useState(false)
@@ -57,7 +62,12 @@ export default function AuditorReportsPage() {
     }
   }, [showEmailModal])
 
-  const fetchGSTBillsWithDates = async (startDate: string, endDate: string, showAlert = true) => {
+  const fetchGSTBillsWithDates = useCallback(async (
+    startDate: string,
+    endDate: string,
+    showAlert = true,
+    page = 1
+  ) => {
     if (!startDate || !endDate) {
       if (showAlert) alert('Please select date range')
       return
@@ -69,10 +79,14 @@ export default function AuditorReportsPage() {
       try {
         setLoading(true)
         const response = await api.get('/billing/list', {
-          params: { type: 'gst', date_from: startDate, date_to: endDate, limit: 1000 }
+          params: { type: 'gst', date_from: startDate, date_to: endDate, limit: 50, page }
         })
         const bills = response.data.bills || []
         setGstBills(bills.filter((b: any) => b.type === 'gst'))
+        const pag = response.data.pagination || {}
+        setTotalPages(pag.total_pages || 1)
+        setTotalRecords(pag.total_records || bills.length)
+        setCurrentPage(pag.page || page)
         setShowPreview(true)
       } catch (error: any) {
         if (showAlert) alert(error.response?.data?.error || 'Failed to fetch GST bills')
@@ -85,10 +99,12 @@ export default function AuditorReportsPage() {
 
     ongoingRequest.current = request
     return request
-  }
+  }, [])
 
-  const fetchGSTBills = (showAlert = true) =>
-    fetchGSTBillsWithDates(dateRange.start_date, dateRange.end_date, showAlert)
+  const fetchGSTBills = useCallback((showAlert = true) =>
+    fetchGSTBillsWithDates(dateRange.start_date, dateRange.end_date, showAlert, 1),
+    [fetchGSTBillsWithDates, dateRange]
+  )
 
   const handleExportPDF = async () => {
     setExporting(true)
@@ -192,9 +208,16 @@ export default function AuditorReportsPage() {
     }
   }
 
-  const getTotalSubtotal = () => gstBills.reduce((s, b) => s + parseFloat(String(b.subtotal)), 0)
-  const getTotalGSTAmount = () => gstBills.reduce((s, b) => s + parseFloat(String(b.gst_amount)), 0)
-  const getTotalFinalAmount = () => gstBills.reduce((s, b) => s + parseFloat(String(b.final_amount)), 0)
+  // Single pass over gstBills instead of 3 separate reduce() calls on every render.
+  const { totalSubtotal, totalGSTAmount, totalFinalAmount } = useMemo(() => {
+    let totalSubtotal = 0, totalGSTAmount = 0, totalFinalAmount = 0
+    for (const b of gstBills) {
+      totalSubtotal   += parseFloat(String(b.subtotal))
+      totalGSTAmount  += parseFloat(String(b.gst_amount))
+      totalFinalAmount += parseFloat(String(b.final_amount))
+    }
+    return { totalSubtotal, totalGSTAmount, totalFinalAmount }
+  }, [gstBills])
 
   return (
     <DashboardLayout>
@@ -293,24 +316,25 @@ export default function AuditorReportsPage() {
             <div className="flex-shrink-0 mb-3 grid grid-cols-1 md:grid-cols-4 gap-2">
               <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md p-2.5">
                 <p className="text-[10px] font-semibold text-gray-600 dark:text-gray-400">Total Bills</p>
-                <p className="text-lg font-bold text-gray-900 dark:text-white mt-0.5">{gstBills.length}</p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white mt-0.5">{totalRecords}</p>
               </div>
               <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md p-2.5">
                 <p className="text-[10px] font-semibold text-gray-600 dark:text-gray-400">Total Subtotal</p>
-                <p className="text-lg font-bold text-gray-900 dark:text-white mt-0.5">₹{getTotalSubtotal().toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white mt-0.5">₹{totalSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
               </div>
               <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md p-2.5">
                 <p className="text-[10px] font-semibold text-gray-600 dark:text-gray-400">Total GST Amount</p>
-                <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">₹{getTotalGSTAmount().toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">₹{totalGSTAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
               </div>
               <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md p-2.5">
                 <p className="text-[10px] font-semibold text-gray-600 dark:text-gray-400">Grand Total</p>
-                <p className="text-lg font-bold text-blue-600 dark:text-blue-400 mt-0.5">₹{getTotalFinalAmount().toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                <p className="text-lg font-bold text-blue-600 dark:text-blue-400 mt-0.5">₹{totalFinalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
               </div>
             </div>
 
             {/* Bills table */}
-            <div className="hidden md:block flex-1 overflow-auto bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md">
+            <div className="hidden md:flex md:flex-col flex-1 overflow-hidden bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md">
+              <div className="overflow-auto flex-1">
               <table className="w-full">
                 <thead className="bg-gradient-to-r from-slate-700 to-slate-600 dark:from-gray-700 dark:to-gray-600 sticky top-0 z-10">
                   <tr>
@@ -359,6 +383,36 @@ export default function AuditorReportsPage() {
                   ))}
                 </tbody>
               </table>
+              </div>
+              {/* Pagination bar */}
+              {totalPages > 1 && (
+                <div className="flex-shrink-0 flex items-center justify-between px-4 py-2.5 border-t border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40">
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400">
+                    Showing {(currentPage - 1) * 50 + 1}–{Math.min(currentPage * 50, totalRecords)} of {totalRecords} bills
+                  </p>
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => fetchGSTBillsWithDates(dateRange.start_date, dateRange.end_date, false, currentPage - 1)}
+                      disabled={currentPage === 1 || loading}
+                      className="px-2.5 py-1 rounded border border-gray-300 dark:border-gray-600 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                    >
+                      ‹ Prev
+                    </button>
+                    <span className="text-[11px] text-gray-600 dark:text-gray-400 px-1">
+                      Page {currentPage} of {totalPages}
+                    </span>
+                    <button
+                      type="button"
+                      onClick={() => fetchGSTBillsWithDates(dateRange.start_date, dateRange.end_date, false, currentPage + 1)}
+                      disabled={currentPage === totalPages || loading}
+                      className="px-2.5 py-1 rounded border border-gray-300 dark:border-gray-600 text-xs font-medium text-gray-700 dark:text-gray-300 hover:bg-white dark:hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed transition"
+                    >
+                      Next ›
+                    </button>
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Mobile card list */}
@@ -494,7 +548,7 @@ export default function AuditorReportsPage() {
                       <div>
                         <p className="text-[10px] text-gray-500 dark:text-gray-400">Grand Total</p>
                         <p className="text-xs font-semibold text-blue-600 dark:text-blue-400">
-                          ₹{getTotalFinalAmount().toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          ₹{totalFinalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </p>
                       </div>
                     </div>

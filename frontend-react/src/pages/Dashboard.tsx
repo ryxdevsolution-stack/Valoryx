@@ -1,6 +1,9 @@
 
 
-import { useEffect, useState, useRef, useCallback, useMemo, lazy } from 'react'
+import { useEffect, useState, useRef, useMemo, lazy } from 'react'
+
+// Computed once at module load — never changes during a session
+const TODAY_LABEL = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 import DashboardLayout from '@/components/DashboardLayout'
 import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
@@ -88,35 +91,44 @@ export default function DashboardPage() {
   const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month'>('month')
   const [showPredictions, setShowPredictions] = useState(false)
 
-  // Track ongoing request to prevent duplicates (for React Strict Mode)
-  const ongoingRequest = useRef<Promise<void> | null>(null)
+  // Prevent entrance animations from re-firing on subsequent data refreshes
+  const hasAnimated = useRef(false)
 
-  const fetchAnalytics = useCallback(async () => {
-    // If a request is already ongoing, return that promise
-    if (ongoingRequest.current) {
-      return ongoingRequest.current
-    }
-
-    const request = (async () => {
-      try {
-        setLoading(true)
-        const response = await api.get(`/analytics/dashboard?range=${timeRange}`)
-        setAnalytics(response.data)
-      } catch (error: any) {
-        setAnalytics(null)
-      } finally {
-        setLoading(false)
-        ongoingRequest.current = null
-      }
-    })()
-
-    ongoingRequest.current = request
-    return request
-  }, [timeRange])
+  // AbortController ref — cancelled in the useEffect cleanup when timeRange changes.
+  // Prevents the stale response from a previous range overwriting the new one.
+  const abortRef = useRef<AbortController | null>(null)
 
   useEffect(() => {
-    fetchAnalytics()
-  }, [fetchAnalytics])
+    // Cancel any in-flight request for the previous time range
+    abortRef.current?.abort()
+    const controller = new AbortController()
+    abortRef.current = controller
+
+    const run = async () => {
+      try {
+        setLoading(true)
+        const response = await api.get(`/analytics/dashboard?range=${timeRange}`, {
+          signal: controller.signal,
+        })
+        setAnalytics(response.data)
+      } catch (error: any) {
+        // Ignore cancellation — user switched time range before this resolved
+        if (error?.code !== 'ERR_CANCELED' && error?.name !== 'AbortError') {
+          setAnalytics(null)
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoading(false)
+        }
+      }
+    }
+
+    run()
+
+    return () => {
+      controller.abort()
+    }
+  }, [timeRange])
 
   // Memoize low stock calculations to prevent recalculation on every render
   const lowStockCalculations = useMemo(() => {
@@ -173,6 +185,9 @@ export default function DashboardPage() {
     </DashboardLayout>
   )
 
+  // Mark as animated so subsequent re-renders skip entrance animations
+  hasAnimated.current = true
+
   return (
     <DashboardLayout>
       {/* Header Section - Compact */}
@@ -181,7 +196,7 @@ export default function DashboardPage() {
           <div>
             <h1 className="text-lg font-semibold text-gray-900 dark:text-white">Analytics</h1>
             <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
-              {client?.client_name} • {new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })}
+              {client?.client_name} • {TODAY_LABEL}
             </p>
           </div>
 
@@ -227,7 +242,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 mb-3">
         {/* Revenue Card */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={hasAnimated.current ? false : { opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3 }}
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 hover:shadow-md transition-shadow"
@@ -252,7 +267,7 @@ export default function DashboardPage() {
 
         {/* Bills Card */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={hasAnimated.current ? false : { opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.1 }}
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 hover:shadow-md transition-shadow"
@@ -270,7 +285,7 @@ export default function DashboardPage() {
 
         {/* Avg Bill Value Card */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={hasAnimated.current ? false : { opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.2 }}
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 hover:shadow-md transition-shadow"
@@ -286,7 +301,7 @@ export default function DashboardPage() {
 
         {/* Inventory Alert Card */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={hasAnimated.current ? false : { opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.3, delay: 0.3 }}
           className={`border rounded p-3 hover:shadow-md transition-shadow ${
@@ -313,7 +328,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 xl:grid-cols-2 gap-2 mb-3">
         {/* Revenue Trend Chart */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={hasAnimated.current ? false : { opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4 }}
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"
@@ -327,7 +342,7 @@ export default function DashboardPage() {
 
         {/* Peak Hours Chart */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={hasAnimated.current ? false : { opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.1 }}
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"
@@ -341,7 +356,7 @@ export default function DashboardPage() {
 
         {/* Top Products Pie Chart - Filtered by Time Range */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={hasAnimated.current ? false : { opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.2 }}
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"
@@ -358,7 +373,7 @@ export default function DashboardPage() {
 
         {/* Product Performance Tiers Chart */}
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
+          initial={hasAnimated.current ? false : { opacity: 0, y: 20 }}
           animate={{ opacity: 1, y: 0 }}
           transition={{ duration: 0.4, delay: 0.3 }}
           className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3"

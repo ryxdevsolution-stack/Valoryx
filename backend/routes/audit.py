@@ -5,12 +5,14 @@ from models.user_model import User
 from models.permission_model import get_user_permissions
 from utils.auth_middleware import authenticate
 from utils.cache_helper import get_cache_manager
+from utils.permission_middleware import require_permission
 
 audit_bp = Blueprint('audit', __name__)
 
 
 @audit_bp.route('/logs', methods=['GET'])
 @authenticate
+@require_permission('view_audit_logs')
 def get_audit_logs():
     """
     Get audit logs filtered by client_id and user permissions
@@ -127,6 +129,7 @@ def get_audit_logs():
 
 @audit_bp.route('/export', methods=['GET'])
 @authenticate
+@require_permission('export_audit_logs')
 def export_audit_logs():
     """Export audit trail for client_id"""
     try:

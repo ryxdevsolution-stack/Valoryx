@@ -27,6 +27,7 @@ from models.permission_preset_model import PermissionPreset
 from utils.auth_middleware import authenticate, require_role
 from utils.totp_helper import require_totp_action_token
 from utils.email_service import _send_async, _base_layout, _info_table, _info_row, send_invite_email
+from utils.rate_limiter import rate_limit
 from routes.invite import INVITE_EXPIRY_HOURS
 from config import Config
 from utils.cache_helper import get_cache_manager
@@ -44,6 +45,146 @@ team_bp = Blueprint('team', __name__)
 # Role hierarchy
 # ---------------------------------------------------------------------------
 ROLE_HIERARCHY = {'cashier': 0, 'staff': 0, 'manager': 1, 'admin': 2, 'owner': 3}
+
+# ---------------------------------------------------------------------------
+# Default permission sets per role (used as fallback when no client preset exists)
+# ---------------------------------------------------------------------------
+_ALL_PERMISSIONS = [
+    # Create Bill
+    'gst_billing', 'non_gst_billing', 'apply_discount', 'add_payment',
+    'select_customer', 'add_products', 'set_tax_rate',
+    # Manage Bills
+    'view_all_bills', 'view_own_bills', 'edit_bill_details', 'delete_bills',
+    'print_bills', 'download_pdf', 'send_email', 'mark_paid', 'mark_cancelled',
+    'duplicate_bill', 'search_bills', 'show_no_exchange',
+    # Customer Management
+    'view_customers', 'add_customer', 'edit_customer', 'delete_customer',
+    'view_purchase_history', 'import_customers', 'export_customers',
+    # Stock Management
+    'view_stock', 'add_product', 'edit_product_details', 'edit_pricing',
+    'edit_cost_price', 'delete_product', 'adjust_quantity',
+    'view_low_stock_alerts', 'import_stock', 'export_stock',
+    # Reports & Analytics
+    'view_dashboard', 'view_sales_reports', 'view_revenue_reports',
+    'view_profit_reports', 'view_inventory_reports', 'view_customer_reports',
+    'export_reports', 'print_reports', 'custom_report_filters',
+    # Payment Types
+    'view_payment_types', 'add_payment_type', 'edit_payment_type',
+    'delete_payment_type', 'set_default_payment',
+    # User Management
+    'view_users', 'add_user', 'edit_user', 'delete_user',
+    'activate_deactivate_user', 'assign_permissions',
+    # System Settings
+    'view_settings', 'edit_company_settings', 'edit_billing_settings',
+    'edit_tax_settings', 'edit_notification_settings', 'edit_theme_settings',
+    # Audit & Logs
+    'view_audit_logs', 'export_audit_logs', 'view_system_logs',
+    # System Administration
+    'manage_clients', 'system_backup', 'system_restore', 'maintenance_mode',
+    # Bulk Orders
+    'view_bulk_orders', 'create_bulk_order', 'edit_bulk_order',
+    'delete_bulk_order', 'approve_bulk_order', 'receive_bulk_order',
+    # Notes
+    'view_notes', 'view_all_notes', 'create_notes', 'edit_notes', 'delete_notes',
+]
+
+DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
+    'owner': _ALL_PERMISSIONS,
+
+    'admin': [
+        # Create Bill
+        'gst_billing', 'non_gst_billing', 'apply_discount', 'add_payment',
+        'select_customer', 'add_products', 'set_tax_rate',
+        # Manage Bills
+        'view_all_bills', 'view_own_bills', 'edit_bill_details', 'delete_bills',
+        'print_bills', 'download_pdf', 'send_email', 'mark_paid', 'mark_cancelled',
+        'duplicate_bill', 'search_bills', 'show_no_exchange',
+        # Customer Management
+        'view_customers', 'add_customer', 'edit_customer', 'delete_customer',
+        'view_purchase_history', 'import_customers', 'export_customers',
+        # Stock Management
+        'view_stock', 'add_product', 'edit_product_details', 'edit_pricing',
+        'edit_cost_price', 'delete_product', 'adjust_quantity',
+        'view_low_stock_alerts', 'import_stock', 'export_stock',
+        # Reports & Analytics
+        'view_dashboard', 'view_sales_reports', 'view_revenue_reports',
+        'view_profit_reports', 'view_inventory_reports', 'view_customer_reports',
+        'export_reports', 'print_reports', 'custom_report_filters',
+        # Payment Types
+        'view_payment_types', 'add_payment_type', 'edit_payment_type',
+        'delete_payment_type', 'set_default_payment',
+        # User Management
+        'view_users', 'add_user', 'edit_user', 'activate_deactivate_user', 'assign_permissions',
+        # System Settings
+        'view_settings', 'edit_company_settings', 'edit_billing_settings',
+        'edit_tax_settings', 'edit_notification_settings', 'edit_theme_settings',
+        # Audit & Logs
+        'view_audit_logs', 'export_audit_logs',
+        # Bulk Orders
+        'view_bulk_orders', 'create_bulk_order', 'edit_bulk_order',
+        'approve_bulk_order', 'receive_bulk_order',
+        # Notes
+        'view_notes', 'view_all_notes', 'create_notes', 'edit_notes', 'delete_notes',
+    ],
+
+    'manager': [
+        # Create Bill
+        'gst_billing', 'non_gst_billing', 'apply_discount', 'add_payment',
+        'select_customer', 'add_products', 'set_tax_rate',
+        # Manage Bills
+        'view_all_bills', 'view_own_bills', 'print_bills', 'download_pdf',
+        'send_email', 'mark_paid', 'mark_cancelled', 'duplicate_bill', 'search_bills',
+        # Customer Management
+        'view_customers', 'add_customer', 'edit_customer', 'view_purchase_history',
+        # Stock Management
+        'view_stock', 'add_product', 'edit_product_details', 'edit_pricing',
+        'adjust_quantity', 'view_low_stock_alerts',
+        # Reports & Analytics
+        'view_dashboard', 'view_sales_reports', 'view_revenue_reports',
+        'view_profit_reports', 'view_inventory_reports', 'view_customer_reports',
+        'print_reports',
+        # Payment Types
+        'view_payment_types',
+        # User Management
+        'view_users',
+        # System Settings
+        'view_settings',
+        # Audit & Logs
+        'view_audit_logs',
+        # Bulk Orders
+        'view_bulk_orders', 'create_bulk_order', 'receive_bulk_order',
+        # Notes
+        'view_notes', 'create_notes', 'edit_notes',
+    ],
+
+    'staff': [
+        # Create Bill
+        'gst_billing', 'non_gst_billing', 'add_payment', 'select_customer', 'add_products',
+        # Manage Bills
+        'view_own_bills', 'print_bills', 'duplicate_bill', 'search_bills',
+        # Customer Management
+        'view_customers', 'add_customer', 'view_purchase_history',
+        # Stock Management
+        'view_stock', 'view_low_stock_alerts',
+        # Reports & Analytics
+        'view_dashboard',
+        # Notes
+        'view_notes', 'create_notes',
+    ],
+
+    'cashier': [
+        # Create Bill
+        'gst_billing', 'non_gst_billing', 'add_payment', 'select_customer', 'add_products',
+        # Manage Bills
+        'view_own_bills', 'print_bills', 'search_bills',
+        # Customer Management
+        'view_customers',
+        # Stock Management
+        'view_stock',
+        # Reports & Analytics
+        'view_dashboard',
+    ],
+}
 
 
 def _can_manage(actor_role: str, target_role: str) -> bool:
@@ -308,6 +449,26 @@ def create_team_member():
                 'message': f'Your {plan_name or "current"} plan allows {max_members} additional team member(s). Please upgrade to add more.',
             }), 403
 
+        # ── Per-role quota set by superadmin ──
+        client_obj = ClientEntry.query.filter_by(client_id=client_id).first()
+        if client_obj and client_obj.role_quotas:
+            quota = client_obj.role_quotas.get(target_role)
+            if quota is not None:
+                role_count = db.session.query(db.func.count(User.user_id)).filter(
+                    User.client_id == client_id,
+                    User.role == target_role,
+                    User.deleted_at.is_(None),
+                ).scalar()
+                if role_count >= quota:
+                    return jsonify({
+                        'success': False,
+                        'error': 'ROLE_QUOTA_REACHED',
+                        'message': f'Your account allows a maximum of {quota} {target_role}(s). Please contact support to increase the limit.',
+                        'role': target_role,
+                        'quota': quota,
+                        'current': role_count,
+                    }), 403
+
         # Generate invite token — password is set by the user when they accept the invite
         invite_token = secrets.token_urlsafe(32)
         invite_expires = datetime.utcnow() + timedelta(hours=INVITE_EXPIRY_HOURS)
@@ -402,7 +563,7 @@ def create_team_member():
 
         # Send invite email (fire-and-forget) — user will set their own password via the link
         client = ClientEntry.query.filter_by(client_id=client_id).first()
-        frontend_url = Config.FRONTEND_URL
+        frontend_url = Config.get_frontend_url()
         invite_url = f"{frontend_url}/accept-invite?token={invite_token}"
         send_invite_email(
             to_email=email,
@@ -676,6 +837,7 @@ def toggle_team_member_status(user_id):
 # ---------------------------------------------------------------------------
 @team_bp.route('/<user_id>/reset-password', methods=['POST'])
 @authenticate
+@rate_limit(max_requests=10, window_seconds=60, key_func=lambda: g.user['user_id'], error_message='Too many password resets. Please wait.')
 @require_role(['owner', 'admin'])
 def reset_team_member_password(user_id):
     """Reset a team member's password (accept in body or auto-generate)."""
@@ -914,6 +1076,27 @@ def get_plan_info():
         max_members = rules['max_members']
         can_add = current_members < max_members
 
+        # Build per-role quota status for the frontend
+        client_obj = ClientEntry.query.filter_by(client_id=client_id).first()
+        role_quotas = (client_obj.role_quotas or {}) if client_obj else {}
+        role_usage: dict = {}
+        if role_quotas:
+            quota_roles = list(role_quotas.keys())
+            rows = db.session.query(User.role, db.func.count(User.user_id)).filter(
+                User.client_id == client_id,
+                User.role.in_(quota_roles),
+                User.deleted_at.is_(None),
+            ).group_by(User.role).all()
+            counts = {row[0]: row[1] for row in rows}
+            for qrole, limit in role_quotas.items():
+                used = counts.get(qrole, 0)
+                role_usage[qrole] = {
+                    'quota': limit,
+                    'used': used,
+                    'remaining': max(0, limit - used),
+                    'at_limit': used >= limit,
+                }
+
         result = {
             'success': True,
             'data': {
@@ -924,6 +1107,8 @@ def get_plan_info():
                 'can_add_member': can_add,
                 'allowed_billing': rules['allowed_billing'],
                 'slots_remaining': max(0, max_members - current_members),
+                'role_quotas': role_quotas,    # raw quotas {"admin":1, ...}
+                'role_usage': role_usage,       # {"admin": {quota,used,remaining,at_limit}}
             },
         }
         cache.set(cache_key, result, 60)
@@ -952,9 +1137,19 @@ def get_permission_preset(role):
             client_id=client_id, role=role,
         ).first()
 
+        if preset:
+            data = preset.to_dict()
+        else:
+            # Return hardcoded defaults so fresh clients always get sensible starting permissions
+            data = {
+                'role': role,
+                'permissions': DEFAULT_ROLE_PERMISSIONS.get(role, []),
+                'is_default': True,  # signals frontend this is a system default, not a saved preset
+            }
+
         return jsonify({
             'success': True,
-            'data': preset.to_dict() if preset else None,
+            'data': data,
         }), 200
 
     except Exception as exc:

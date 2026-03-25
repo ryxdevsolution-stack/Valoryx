@@ -1,6 +1,6 @@
 
-import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import api from '@/lib/api';
 import {
   FileText,
   DollarSign,
@@ -12,7 +12,6 @@ import {
   AlertCircle
 } from 'lucide-react';
 
-const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5017') + '/api';
 
 interface AnalyticsData {
   revenue: { today: number; thisWeek: number; thisMonth: number; growth: number };
@@ -34,6 +33,8 @@ const formatCurrency = (amount: number) => {
   return `₹${amount.toFixed(0)}`;
 };
 
+const CATEGORY_COLORS = ['bg-violet-500', 'bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-red-500', 'bg-pink-500'];
+
 export default function AnalyticsPage() {
   const [dateRange, setDateRange] = useState<'today' | 'week' | 'month'>('month');
   const [data, setData] = useState<AnalyticsData | null>(null);
@@ -46,10 +47,7 @@ export default function AnalyticsPage() {
       if (isRefresh) setRefreshing(true);
       else setLoading(true);
       setError(null);
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`${API_URL}/analytics/dashboard?range=${dateRange}`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const response = await api.get(`/analytics/dashboard?range=${dateRange}`);
       setData(response.data);
     } catch {
       setError('Failed to load analytics data');
@@ -60,6 +58,15 @@ export default function AnalyticsPage() {
   }, [dateRange]);
 
   useEffect(() => { fetchAnalytics(); }, [fetchAnalytics]);
+
+  const maxRevenue = useMemo(
+    () => data?.insights.revenueTrend.reduce((m, x) => x.revenue > m ? x.revenue : m, 0) ?? 0,
+    [data]
+  )
+  const paymentTotal = useMemo(
+    () => data?.insights.paymentPreferences.reduce((s, x) => s + x.amount, 0) ?? 0,
+    [data]
+  )
 
   if (loading) {
     return (
@@ -172,8 +179,7 @@ export default function AnalyticsPage() {
             <div className="overflow-x-auto">
               <div className="min-w-[500px] h-48 flex items-end justify-between gap-1">
                 {data.insights.revenueTrend.map((d) => {
-                  const max = Math.max(...data.insights.revenueTrend.map(x => x.revenue));
-                  const pct = max > 0 ? (d.revenue / max) * 100 : 0;
+                  const pct = maxRevenue > 0 ? (d.revenue / maxRevenue) * 100 : 0;
                   return (
                     <div key={d.date} className="flex-1 flex flex-col items-center gap-1" title={`${d.date}: ${formatCurrency(d.revenue)} (${d.bills} bills)`}>
                       <div className="w-full bg-violet-500 rounded-t" style={{ height: `${Math.max(pct, 2)}%` }}></div>
@@ -195,7 +201,6 @@ export default function AnalyticsPage() {
               {data.insights.categoryPerformance.slice(0, 6).map((cat, i) => {
                 const max = data.insights.categoryPerformance[0]?.revenue || 1;
                 const pct = (cat.revenue / max) * 100;
-                const colors = ['bg-violet-500', 'bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-red-500', 'bg-pink-500'];
                 return (
                   <div key={cat.category}>
                     <div className="flex justify-between text-sm mb-1">
@@ -203,7 +208,7 @@ export default function AnalyticsPage() {
                       <span className="font-semibold text-slate-900 dark:text-white ml-2">{formatCurrency(cat.revenue)}</span>
                     </div>
                     <div className="h-2 bg-slate-100 dark:bg-slate-700 rounded-full">
-                      <div className={`h-2 ${colors[i % colors.length]} rounded-full`} style={{ width: `${pct}%` }}></div>
+                      <div className={`h-2 ${CATEGORY_COLORS[i % CATEGORY_COLORS.length]} rounded-full`} style={{ width: `${pct}%` }}></div>
                     </div>
                   </div>
                 );
@@ -244,8 +249,7 @@ export default function AnalyticsPage() {
           ) : (
             <div className="space-y-3">
               {data.insights.paymentPreferences.slice(0, 5).map((p) => {
-                const total = data.insights.paymentPreferences.reduce((s, x) => s + x.amount, 0);
-                const pct = total > 0 ? Math.round((p.amount / total) * 100) : 0;
+                const pct = paymentTotal > 0 ? Math.round((p.amount / paymentTotal) * 100) : 0;
                 return (
                   <div key={p.method} className="flex items-center gap-3">
                     <div className="flex-1">

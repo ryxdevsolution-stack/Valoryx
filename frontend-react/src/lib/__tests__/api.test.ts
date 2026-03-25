@@ -110,7 +110,7 @@ describe('401 response handling', () => {
 
 // ── 6. 403 TRIAL_EXPIRED redirects to upgrade page ───────────────────────────
 describe('403 TRIAL_EXPIRED handling', () => {
-  it('changes window.location.href to /frontend/upgrade on TRIAL_EXPIRED', async () => {
+  it('changes window.location.href to /upgrade on TRIAL_EXPIRED', async () => {
     // jsdom allows assigning window.location.href
     const originalHref = window.location.href
     Object.defineProperty(window, 'location', {
@@ -128,7 +128,7 @@ describe('403 TRIAL_EXPIRED handling', () => {
     )
 
     await expect(api.get('/stock')).rejects.toThrow()
-    expect(window.location.href).toBe('/frontend/upgrade')
+    expect(window.location.href).toBe('/upgrade')
   })
 })
 

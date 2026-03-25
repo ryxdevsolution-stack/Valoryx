@@ -1,6 +1,7 @@
 from extensions import db
 from database.flexible_types import FlexibleUUID, FlexibleJSON, FlexibleNumeric
-from datetime import datetime
+from datetime import datetime, timezone
+from utils.dt import is_past, utcnow
 import uuid
 
 class ClientEntry(db.Model):
@@ -25,6 +26,7 @@ class ClientEntry(db.Model):
     subscription_end_date = db.Column(db.DateTime, nullable=True)
     razorpay_subscription_id = db.Column(db.String(100), nullable=True)  # set after first invoice.paid webhook
     telegram_chat_id = db.Column(db.String(50), nullable=True)  # Telegram chat ID for daily summary reports
+    role_quotas = db.Column(FlexibleJSON, nullable=True)  # {"admin": 1, "manager": 2, "staff": 3, "cashier": 3}; null key = unlimited
 
     # Shop / Receipt settings
     address2 = db.Column(db.Text, nullable=True)           # secondary address line
@@ -47,13 +49,16 @@ class ClientEntry(db.Model):
     def is_trial_expired(self):
         if self.subscription_status != 'trial' or not self.trial_end_date:
             return False
-        return datetime.utcnow() > self.trial_end_date
+        return is_past(self.trial_end_date)
 
     @property
     def trial_days_remaining(self):
         if self.subscription_status != 'trial' or not self.trial_end_date:
             return None
-        return max(0, (self.trial_end_date - datetime.utcnow()).days)
+        end = self.trial_end_date
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        return max(0, (end - utcnow()).days)
 
     # Relationships
     users = db.relationship('User', backref='client', lazy=True, cascade='all, delete-orphan')
@@ -89,4 +94,5 @@ class ClientEntry(db.Model):
             'points_per_100': self.points_per_100 or 0,
             'email_verified': self.email_verified,
             'deletion_scheduled_at': self.deletion_scheduled_at.isoformat() if self.deletion_scheduled_at else None,
+            'role_quotas': self.role_quotas or {},
         }

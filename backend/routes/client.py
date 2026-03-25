@@ -81,15 +81,21 @@ def get_client(client_id):
         if client_id != g.user['client_id']:
             return jsonify({'error': 'Access denied'}), 403
 
+        from utils.cache_helper import get_cache_manager
+        cache = get_cache_manager()
+        cache_key = f"client:detail:{client_id}"
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return jsonify(cached), 200
+
         client = ClientEntry.query.filter_by(client_id=client_id).first()
 
         if not client:
             return jsonify({'error': 'Client not found'}), 404
 
-        return jsonify({
-            'success': True,
-            'client': client.to_dict()
-        }), 200
+        result = {'success': True, 'client': client.to_dict()}
+        cache.set(cache_key, result, 60)
+        return jsonify(result), 200
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch client', 'message': str(e)}), 500
@@ -129,6 +135,10 @@ def update_client(client_id):
             client.telegram_chat_id = data['telegram_chat_id'] or None
 
         db.session.commit()
+
+        # Invalidate client detail cache
+        from utils.cache_helper import get_cache_manager
+        get_cache_manager().delete(f"client:detail:{client_id}")
 
         # Log action
         log_action('UPDATE', 'client_entry', client_id, old_data, client.to_dict())
@@ -306,7 +316,7 @@ def request_account_deletion(client_id):
         log_action('DELETE_REQUESTED', 'client_entry', client_id,
                    {'reason': reason}, {'deletion_scheduled_at': deletion_date.isoformat()})
 
-        reactivation_link = f"{Config.FRONTEND_URL}/reactivate-account?token={reactivation_token}"
+        reactivation_link = f"{Config.get_frontend_url()}/reactivate-account?token={reactivation_token}"
         send_account_deletion_scheduled_email(
             client.email,
             client.client_name,

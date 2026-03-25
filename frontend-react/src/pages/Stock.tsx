@@ -1,12 +1,15 @@
 
 
-import { useEffect, useState, useMemo } from 'react'
+import { useEffect, useState, useMemo, useCallback, memo, useRef } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
+import { useData } from '@/contexts/DataContext'
 import { TableSkeleton } from '@/components/SkeletonLoader'
 import BulkStockOrderModal from '@/components/BulkStockOrderModal'
 import BulkStockOrderList from '@/components/BulkStockOrderList'
 import ReceiveStockModal from '@/components/ReceiveStockModal'
+import BarcodeScannerOverlay from '@/components/BarcodeScannerOverlay'
+import { useMobileDetect } from '@/hooks/useMobileDetect'
 
 interface Stock {
   product_id: string
@@ -28,7 +31,152 @@ interface Stock {
   client_id: string
 }
 
+// Pure helper at module level so memo components can use it without being recreated
+function computeIsLowStock(stock: Stock): boolean {
+  return stock.is_low_stock ?? (stock.quantity <= stock.low_stock_alert)
+}
+
+interface StockRowProps {
+  stock: Stock
+  isLowStock: boolean
+  printingLabels: string | null
+  onEdit: (stock: Stock) => void
+  onDelete: (productId: string) => void
+  onPrintBarcode: (stock: Stock) => void
+}
+
+const StockDesktopRow = memo(function StockDesktopRow({
+  stock, isLowStock, printingLabels, onEdit, onDelete, onPrintBarcode,
+}: StockRowProps) {
+  return (
+    <tr
+      className={`transition ${
+        isLowStock
+          ? 'low-stock-row border-l-4 border-red-500 dark:border-red-600 hover:bg-red-100 dark:hover:bg-red-900/20'
+          : 'hover:bg-gray-50 dark:hover:bg-gray-700'
+      }`}
+    >
+      <td className="px-6 py-4 whitespace-nowrap text-sm">
+        <div className="flex items-center gap-2">
+          {isLowStock && (
+            <span className="text-red-500 dark:text-red-400 animate-bounce text-xl">⚠️</span>
+          )}
+          <span className={`font-medium ${
+            isLowStock ? 'text-red-900 dark:text-red-300 font-bold' : 'text-gray-900 dark:text-white'
+          }`}>
+            {stock.product_name}
+          </span>
+        </div>
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+        {stock.category || '-'}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm">
+        <span className={`font-bold text-xl ${
+          isLowStock ? 'text-red-600 dark:text-red-400 low-stock-quantity' : 'text-gray-900 dark:text-white'
+        }`}>
+          {stock.quantity}
+        </span>
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+        {stock.unit}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
+        ₹{Number(stock.rate).toFixed(2)}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm">
+        {isLowStock ? (
+          <span className="low-stock-badge px-3 py-1.5 rounded-full text-xs font-bold bg-red-500 dark:bg-red-600 text-white shadow-lg">
+            🚨 LOW STOCK
+          </span>
+        ) : (
+          <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-300 border border-green-200 dark:border-green-700">
+            ✓ In Stock
+          </span>
+        )}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm">
+        <div className="flex gap-3">
+          <button
+            type="button"
+            onClick={() => onPrintBarcode(stock)}
+            disabled={printingLabels === stock.product_id}
+            className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 font-medium disabled:opacity-50 disabled:cursor-wait flex items-center gap-1"
+            title={`Print ${stock.quantity} barcode labels`}
+          >
+            {printingLabels === stock.product_id ? (
+              <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
+                <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
+                <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
+              </svg>
+            ) : (
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
+              </svg>
+            )}
+            Barcode
+          </button>
+          <button
+            type="button"
+            onClick={() => onEdit(stock)}
+            className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 font-medium"
+          >
+            Edit
+          </button>
+          <button
+            type="button"
+            onClick={() => onDelete(stock.product_id)}
+            className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 font-medium"
+          >
+            Delete
+          </button>
+        </div>
+      </td>
+    </tr>
+  )
+})
+
+interface StockMobileCardProps {
+  stock: Stock
+  isLowStock: boolean
+  onEdit: (stock: Stock) => void
+}
+
+const StockMobileCard = memo(function StockMobileCard({ stock, isLowStock, onEdit }: StockMobileCardProps) {
+  return (
+    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+      <div className="flex items-start justify-between gap-2 mb-2">
+        <div>
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">{stock.product_name}</p>
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{stock.category || stock.unit}</p>
+        </div>
+        <button
+          type="button"
+          onClick={() => onEdit(stock)}
+          className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+        >
+          Edit
+        </button>
+      </div>
+      <div className="flex items-center justify-between">
+        <span className={`text-sm font-bold ${
+          isLowStock ? 'text-red-600 dark:text-red-400' : 'text-gray-900 dark:text-white'
+        }`}>
+          {stock.quantity} {stock.unit}
+        </span>
+        <span className="text-xs text-gray-500 dark:text-gray-400">₹{Number(stock.rate).toLocaleString()}</span>
+      </div>
+      {isLowStock && (
+        <span className="mt-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+          Low stock
+        </span>
+      )}
+    </div>
+  )
+})
+
 export default function StockManagementPage() {
+  const { invalidateCache: invalidateDataCache } = useData()
   const [stocks, setStocks] = useState<Stock[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
@@ -48,6 +196,8 @@ export default function StockManagementPage() {
   const [categoryFilter, setCategoryFilter] = useState<string>('all')
   const [statusFilter, setStatusFilter] = useState<'all' | 'low-stock' | 'in-stock'>('all')
   const [unitFilter, setUnitFilter] = useState<string>('all')
+  const [currentPage, setCurrentPage] = useState(1)
+  const ITEMS_PER_PAGE = 25
 
   // Bulk order states
   const [showBulkOrderModal, setShowBulkOrderModal] = useState(false)
@@ -58,10 +208,28 @@ export default function StockManagementPage() {
   // Barcode printing state
   const [printingLabels, setPrintingLabels] = useState<string | null>(null)
 
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+  // Camera barcode scanner overlay
+  const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
+  const { isMobile, supportsCamera } = useMobileDetect()
+
+  // Track the auto-dismiss timer so we can clear it on unmount or on the next
+  // toast call — prevents setState on an unmounted component.
+  const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  const showToast = useCallback((message: string, type: 'success' | 'error' = 'success') => {
+    if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     setToast({ show: true, message, type })
-    setTimeout(() => setToast({ show: false, message: '', type: 'success' }), 2000)
-  }
+    toastTimerRef.current = setTimeout(() => {
+      setToast({ show: false, message: '', type: 'success' })
+      toastTimerRef.current = null
+    }, 2000)
+  }, [])
+
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
+    }
+  }, [])
 
   const [formData, setFormData] = useState({
     product_name: '',
@@ -100,7 +268,7 @@ export default function StockManagementPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  const fetchStocks = async () => {
+  const fetchStocks = useCallback(async () => {
     try {
       setLoading(true)
       const response = await api.get('/stock')
@@ -140,7 +308,7 @@ export default function StockManagementPage() {
     } finally {
       setLoading(false)
     }
-  }
+  }, [])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -152,22 +320,16 @@ export default function StockManagementPage() {
         showToast('Stock updated successfully!', 'success')
         setShowAddForm(false)
         setEditingId(null)
-
-        // Optimistic update - update the stock in the list
-        const updatedStock = response.data.product
-
-        // Ensure is_low_stock is set
-        if (!updatedStock.hasOwnProperty('is_low_stock')) {
-          updatedStock.is_low_stock = updatedStock.quantity <= (updatedStock.low_stock_alert || 10)
-        }
-
-        setStocks(prev => prev.map(stock =>
-          stock.product_id === editingId ? updatedStock : stock
-        ))
+        // Reset 5-min DataContext cache so CreateBill/other pages get fresh stock
+        invalidateDataCache('products')
+        // Refetch from server to ensure correct transformation + fresh data
+        fetchStocks()
       } else {
         // Add new stock
         await api.post('/stock', formData)
         showToast('Stock added successfully!', 'success')
+        // Reset 5-min DataContext cache so CreateBill/other pages get fresh stock
+        invalidateDataCache('products')
         fetchStocks()
 
         // Clear form for next entry (but keep form open)
@@ -193,7 +355,7 @@ export default function StockManagementPage() {
     }
   }
 
-  const handleEdit = (stock: Stock) => {
+  const handleEdit = useCallback((stock: Stock) => {
     setEditingId(stock.product_id)
     setFormData({
       product_name: stock.product_name,
@@ -211,9 +373,9 @@ export default function StockManagementPage() {
     })
     setShowAddForm(true)
     setShowBulkImport(false)
-  }
+  }, [])
 
-  const handleCancelEdit = () => {
+  const handleCancelEdit = useCallback(() => {
     setEditingId(null)
     setShowAddForm(false)
     setFormData({
@@ -230,7 +392,7 @@ export default function StockManagementPage() {
       gst_percentage: 0,
       hsn_code: '',
     })
-  }
+  }, [])
 
   // Clear form without closing (for continuous adding)
   const handleClearForm = () => {
@@ -273,13 +435,14 @@ export default function StockManagementPage() {
     }
   }
 
-  const handleDelete = async (productId: string) => {
+  const handleDelete = useCallback(async (productId: string) => {
     if (!confirm('Are you sure you want to delete this product?')) return
 
     try {
       await api.delete(`/stock/${productId}`)
       showToast('Product deleted successfully!', 'success')
-
+      // Reset 5-min DataContext cache so CreateBill/other pages get fresh stock
+      invalidateDataCache('products')
       // Optimistic update - remove from list without refetching
       setStocks(prev => prev.filter(stock => stock.product_id !== productId))
     } catch (error: any) {
@@ -287,12 +450,7 @@ export default function StockManagementPage() {
       // Revert optimistic update on error
       fetchStocks()
     }
-  }
-
-  const isLowStock = (stock: Stock) => {
-    // Fallback calculation if is_low_stock is undefined
-    return stock.is_low_stock ?? (stock.quantity <= stock.low_stock_alert)
-  }
+  }, [showToast, invalidateDataCache, fetchStocks])
 
   // Get unique categories and units for filters - memoized for performance
   const uniqueCategories = useMemo(() =>
@@ -319,8 +477,8 @@ export default function StockManagementPage() {
     // Status filter
     const matchesStatus =
       statusFilter === 'all' ||
-      (statusFilter === 'low-stock' && isLowStock(stock)) ||
-      (statusFilter === 'in-stock' && !isLowStock(stock))
+      (statusFilter === 'low-stock' && computeIsLowStock(stock)) ||
+      (statusFilter === 'in-stock' && !computeIsLowStock(stock))
 
     // Unit filter
     const matchesUnit = unitFilter === 'all' || stock.unit === unitFilter
@@ -349,8 +507,6 @@ export default function StockManagementPage() {
       formData.append('file', file)
 
       try {
-        // Reading phase (optimized from 300ms)
-        await new Promise(resolve => setTimeout(resolve, 50))
         setUploadStatus('uploading')
         setUploadProgress(30)
 
@@ -369,8 +525,6 @@ export default function StockManagementPage() {
 
         setUploadStatus('processing')
         setUploadProgress(85)
-        await new Promise(resolve => setTimeout(resolve, 100))
-
         setUploadProgress(100)
         setUploadStatus('complete')
 
@@ -394,10 +548,6 @@ export default function StockManagementPage() {
         showToast(`Error importing ${file.name}: ${error.response?.data?.error || 'Failed'}`, 'error')
       }
 
-      // Small delay between files (optimized from 500ms)
-      if (i < fileArray.length - 1) {
-        await new Promise(resolve => setTimeout(resolve, 100))
-      }
     }
 
     setImportResults(results)
@@ -424,6 +574,7 @@ export default function StockManagementPage() {
       setCurrentFileIndex(0)
     }, 2000)
 
+    invalidateDataCache('products')
     fetchStocks()
     event.target.value = ''
   }
@@ -472,25 +623,25 @@ export default function StockManagementPage() {
     }
   }
 
-  const handleReceiveOrder = (order: any) => {
+  const handleReceiveOrder = useCallback((order: any) => {
     setSelectedOrder(order)
     setShowBulkOrderList(false)
     setShowReceiveModal(true)
-  }
+  }, [])
 
-  const handleOrderSuccess = () => {
+  const handleOrderSuccess = useCallback(() => {
     showToast('Order saved successfully!', 'success')
     fetchStocks()
-  }
+  }, [showToast, fetchStocks])
 
-  const handleReceiveSuccess = () => {
+  const handleReceiveSuccess = useCallback(() => {
     showToast('Items received and added to stock!', 'success')
     setShowReceiveModal(false)
     setSelectedOrder(null)
     fetchStocks()
-  }
+  }, [showToast, fetchStocks])
 
-  const handlePrintBarcode = async (stock: Stock) => {
+  const handlePrintBarcode = useCallback(async (stock: Stock) => {
     if (printingLabels) return // Prevent multiple prints
 
     setPrintingLabels(stock.product_id)
@@ -535,10 +686,22 @@ export default function StockManagementPage() {
     } finally {
       setPrintingLabels(null)
     }
-  }
+  }, [printingLabels, showToast, fetchStocks])
 
   // Memoized low stock count for performance
-  const lowStockCount = useMemo(() => stocks.filter(isLowStock).length, [stocks])
+  const lowStockCount = useMemo(() => stocks.filter(computeIsLowStock).length, [stocks])
+
+  // Reset to page 1 when filters change
+  useEffect(() => {
+    setCurrentPage(1)
+  }, [searchQuery, categoryFilter, statusFilter, unitFilter])
+
+  // Pagination
+  const totalPages = Math.max(1, Math.ceil(filteredStocks.length / ITEMS_PER_PAGE))
+  const paginatedStocks = useMemo(() => {
+    const start = (currentPage - 1) * ITEMS_PER_PAGE
+    return filteredStocks.slice(start, start + ITEMS_PER_PAGE)
+  }, [filteredStocks, currentPage])
 
   return (
     <DashboardLayout>
@@ -595,29 +758,29 @@ export default function StockManagementPage() {
         </div>
       )}
 
-      <div className="mb-6 flex justify-between items-center">
+      <div className="mb-6 flex flex-col sm:flex-row sm:justify-between sm:items-center gap-3">
         <div>
           <h1 className="text-3xl font-bold text-gray-900 dark:text-white">Stock Management</h1>
-          <p className="mt-2 text-gray-600 dark:text-gray-400">Manage your inventory and track stock levels</p>
+          <p className="mt-1 text-gray-600 dark:text-gray-400">Manage your inventory and track stock levels</p>
         </div>
-        <div className="flex gap-3">
+        <div className="flex flex-wrap gap-2 sm:flex-nowrap sm:gap-3">
           <button
             onClick={() => setShowBulkOrderList(true)}
-            className="px-6 py-3 bg-purple-600 dark:bg-purple-700 text-white rounded-lg hover:bg-purple-800 dark:hover:bg-purple-600 transition font-medium"
+            className="flex-1 sm:flex-none px-3 sm:px-6 py-2.5 sm:py-3 bg-purple-600 dark:bg-purple-700 text-white rounded-lg hover:bg-purple-800 dark:hover:bg-purple-600 transition font-medium text-sm sm:text-base whitespace-nowrap"
           >
-            📦 View Orders
+            📦 <span className="hidden sm:inline">View </span>Orders
           </button>
           <button
             onClick={() => setShowBulkOrderModal(true)}
-            className="px-6 py-3 bg-orange-600 dark:bg-orange-700 text-white rounded-lg hover:bg-orange-800 dark:hover:bg-orange-600 transition font-medium"
+            className="flex-1 sm:flex-none px-3 sm:px-6 py-2.5 sm:py-3 bg-orange-600 dark:bg-orange-700 text-white rounded-lg hover:bg-orange-800 dark:hover:bg-orange-600 transition font-medium text-sm sm:text-base whitespace-nowrap"
           >
-            📋 Bulk Order
+            📋 <span className="hidden sm:inline">Bulk </span>Order
           </button>
           <button
             onClick={() => setShowBulkImport(!showBulkImport)}
-            className="px-6 py-3 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-800 dark:hover:bg-green-600 transition font-medium"
+            className="flex-1 sm:flex-none px-3 sm:px-6 py-2.5 sm:py-3 bg-green-600 dark:bg-green-700 text-white rounded-lg hover:bg-green-800 dark:hover:bg-green-600 transition font-medium text-sm sm:text-base whitespace-nowrap"
           >
-            📥 Bulk Import
+            📥 <span className="hidden sm:inline">Bulk </span>Import
           </button>
           <button
             onClick={() => {
@@ -628,9 +791,9 @@ export default function StockManagementPage() {
                 setShowBulkImport(false)
               }
             }}
-            className="px-6 py-3 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-800 dark:hover:bg-blue-600 transition font-medium"
+            className="flex-1 sm:flex-none px-3 sm:px-6 py-2.5 sm:py-3 bg-blue-600 dark:bg-blue-700 text-white rounded-lg hover:bg-blue-800 dark:hover:bg-blue-600 transition font-medium text-sm sm:text-base whitespace-nowrap"
           >
-            {showAddForm ? 'Cancel' : '+ Add Stock'}
+            {showAddForm ? '✕ Cancel' : '+ Add Stock'}
           </button>
         </div>
       </div>
@@ -648,21 +811,37 @@ export default function StockManagementPage() {
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   Barcode *
                 </label>
-                <input
-                  type="text"
-                  value={formData.barcode}
-                  onChange={(e) =>
-                    setFormData({ ...formData, barcode: e.target.value })
-                  }
-                  onKeyDown={handleEnterKey}
-                  placeholder="Scan or enter barcode"
-                  autoFocus
-                  className={`w-full px-4 py-2 border dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:border-transparent font-mono text-lg ${
-                    duplicateBarcode && !editingId
-                      ? 'border-amber-500 dark:border-amber-400 focus:ring-amber-500'
-                      : 'border-cyan-500 dark:border-cyan-400 focus:ring-cyan-500'
-                  }`}
-                />
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    value={formData.barcode}
+                    onChange={(e) =>
+                      setFormData({ ...formData, barcode: e.target.value })
+                    }
+                    onKeyDown={handleEnterKey}
+                    placeholder="Scan or enter barcode"
+                    autoFocus
+                    className={`flex-1 min-w-0 px-4 py-2 border dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:border-transparent font-mono text-lg ${
+                      duplicateBarcode && !editingId
+                        ? 'border-amber-500 dark:border-amber-400 focus:ring-amber-500'
+                        : 'border-cyan-500 dark:border-cyan-400 focus:ring-cyan-500'
+                    }`}
+                  />
+                  {isMobile && supportsCamera && (
+                    <button
+                      type="button"
+                      onClick={() => setShowBarcodeScanner(true)}
+                      title="Scan barcode with camera"
+                      className="flex-shrink-0 flex items-center gap-1.5 px-3 py-2 bg-cyan-500 hover:bg-cyan-600 dark:bg-cyan-600 dark:hover:bg-cyan-500 text-white rounded-lg transition-colors font-medium text-sm"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 13a3 3 0 11-6 0 3 3 0 016 0z" />
+                      </svg>
+                      📷
+                    </button>
+                  )}
+                </div>
                 {duplicateBarcode && !editingId && (
                   <div className="flex items-center gap-1.5 mt-1.5 text-amber-600 dark:text-amber-400">
                     <svg className="w-4 h-4 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
@@ -927,7 +1106,7 @@ export default function StockManagementPage() {
             <p className="text-sm text-blue-700 dark:text-blue-400 mb-3">
               Download a template file with the correct format
             </p>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <button
                 onClick={() => downloadTemplate('csv')}
                 className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-800 dark:hover:bg-blue-600 transition text-sm"
@@ -1135,7 +1314,7 @@ export default function StockManagementPage() {
             <p className="text-sm text-purple-700 dark:text-purple-400 mb-3">
               Download all current stock data
             </p>
-            <div className="flex gap-3">
+            <div className="flex flex-wrap gap-3">
               <button
                 onClick={() => exportStock('csv')}
                 className="px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 transition text-sm"
@@ -1320,133 +1499,61 @@ export default function StockManagementPage() {
               </tr>
             </thead>
             <tbody className="bg-white dark:bg-gray-800 divide-y divide-gray-200 dark:divide-gray-700">
-              {filteredStocks.map((stock) => (
-                <tr
-                  key={stock.product_id}
-                  className={`transition ${
-                    isLowStock(stock)
-                      ? 'low-stock-row border-l-4 border-red-500 dark:border-red-600 hover:bg-red-100 dark:hover:bg-red-900/20'
-                      : 'hover:bg-gray-50 dark:hover:bg-gray-700'
-                  }`}
-                >
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <div className="flex items-center gap-2">
-                      {isLowStock(stock) && (
-                        <span className="text-red-500 dark:text-red-400 animate-bounce text-xl">⚠️</span>
-                      )}
-                      <span className={`font-medium ${
-                        isLowStock(stock) ? 'text-red-900 dark:text-red-300 font-bold' : 'text-gray-900 dark:text-white'
-                      }`}>
-                        {stock.product_name}
-                      </span>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                    {stock.category || '-'}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <span
-                      className={`font-bold text-xl ${
-                        isLowStock(stock) ? 'text-red-600 dark:text-red-400 low-stock-quantity' : 'text-gray-900 dark:text-white'
-                      }`}
-                    >
-                      {stock.quantity}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
-                    {stock.unit}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-                    ₹{Number(stock.rate).toFixed(2)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    {isLowStock(stock) ? (
-                      <span className="low-stock-badge px-3 py-1.5 rounded-full text-xs font-bold bg-red-500 dark:bg-red-600 text-white shadow-lg">
-                        🚨 LOW STOCK
-                      </span>
-                    ) : (
-                      <span className="px-3 py-1 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/50 text-green-800 dark:text-green-300 border border-green-200 dark:border-green-700">
-                        ✓ In Stock
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm">
-                    <div className="flex gap-3">
-                      <button
-                        onClick={() => handlePrintBarcode(stock)}
-                        disabled={printingLabels === stock.product_id}
-                        className="text-purple-600 dark:text-purple-400 hover:text-purple-800 dark:hover:text-purple-300 font-medium disabled:opacity-50 disabled:cursor-wait flex items-center gap-1"
-                        title={`Print ${stock.quantity} barcode labels`}
-                      >
-                        {printingLabels === stock.product_id ? (
-                          <svg className="animate-spin h-4 w-4" viewBox="0 0 24 24">
-                            <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" fill="none" />
-                            <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z" />
-                          </svg>
-                        ) : (
-                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v1m6 11h2m-6 0h-2v4m0-11v3m0 0h.01M12 12h4.01M16 20h4M4 12h4m12 0h.01M5 8h2a1 1 0 001-1V5a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1zm12 0h2a1 1 0 001-1V5a1 1 0 00-1-1h-2a1 1 0 00-1 1v2a1 1 0 001 1zM5 20h2a1 1 0 001-1v-2a1 1 0 00-1-1H5a1 1 0 00-1 1v2a1 1 0 001 1z" />
-                          </svg>
-                        )}
-                        Barcode
-                      </button>
-                      <button
-                        onClick={() => handleEdit(stock)}
-                        className="text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300 font-medium"
-                      >
-                        Edit
-                      </button>
-                      <button
-                        onClick={() => handleDelete(stock.product_id)}
-                        className="text-red-600 dark:text-red-400 hover:text-red-800 dark:hover:text-red-300 font-medium"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </td>
-                </tr>
+              {paginatedStocks.map(stock => (
+                  <StockDesktopRow
+                    key={stock.product_id}
+                    stock={stock}
+                    isLowStock={computeIsLowStock(stock)}
+                    printingLabels={printingLabels}
+                    onEdit={handleEdit}
+                    onDelete={handleDelete}
+                    onPrintBarcode={handlePrintBarcode}
+                  />
               ))}
             </tbody>
           </table>
         </div>
         {/* Mobile card list */}
         <div className="md:hidden space-y-3">
-          {filteredStocks.map(stock => (
-            <div
-              key={stock.product_id}
-              className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
-            >
-              <div className="flex items-start justify-between gap-2 mb-2">
-                <div>
-                  <p className="text-sm font-semibold text-gray-900 dark:text-white">{stock.product_name}</p>
-                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{stock.category || stock.unit}</p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => handleEdit(stock)}
-                  className="p-1.5 rounded-lg bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
-                >
-                  Edit
-                </button>
-              </div>
-              <div className="flex items-center justify-between">
-                <span className={`text-sm font-bold ${
-                  isLowStock(stock)
-                    ? 'text-red-600 dark:text-red-400'
-                    : 'text-gray-900 dark:text-white'
-                }`}>
-                  {stock.quantity} {stock.unit}
-                </span>
-                <span className="text-xs text-gray-500 dark:text-gray-400">₹{Number(stock.rate).toLocaleString()}</span>
-              </div>
-              {isLowStock(stock) && (
-                <span className="mt-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
-                  Low stock
-                </span>
-              )}
-            </div>
+          {paginatedStocks.map(stock => (
+              <StockMobileCard
+                key={stock.product_id}
+                stock={stock}
+                isLowStock={computeIsLowStock(stock)}
+                onEdit={handleEdit}
+              />
           ))}
         </div>
+
+        {/* Pagination Controls */}
+        {totalPages > 1 && (
+          <div className="flex items-center justify-between bg-white dark:bg-gray-800 rounded-lg shadow-md px-4 py-3 border border-gray-200 dark:border-gray-700 mt-3">
+            <div className="text-xs text-gray-600 dark:text-gray-400">
+              Showing {(currentPage - 1) * ITEMS_PER_PAGE + 1}–{Math.min(currentPage * ITEMS_PER_PAGE, filteredStocks.length)} of {filteredStocks.length}
+            </div>
+            <div className="flex items-center gap-2">
+              <button
+                type="button"
+                onClick={() => { setCurrentPage(p => p - 1); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+                disabled={currentPage === 1}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                Previous
+              </button>
+              <span className="text-xs font-medium text-gray-700 dark:text-gray-300">
+                Page {currentPage} of {totalPages}
+              </span>
+              <button
+                type="button"
+                onClick={() => { setCurrentPage(p => p + 1); window.scrollTo({ top: 0, behavior: 'smooth' }) }}
+                disabled={currentPage === totalPages}
+                className="px-3 py-1.5 text-xs font-semibold rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-600 disabled:opacity-40 disabled:cursor-not-allowed transition"
+              >
+                Next
+              </button>
+            </div>
+          </div>
+        )}
         </>
       )}
 
@@ -1467,6 +1574,14 @@ export default function StockManagementPage() {
         order={selectedOrder}
         onSuccess={handleReceiveSuccess}
       />
+
+      {/* Camera barcode scanner — full-screen overlay */}
+      {showBarcodeScanner && (
+        <BarcodeScannerOverlay
+          onScan={(barcode) => setFormData(prev => ({ ...prev, barcode }))}
+          onClose={() => setShowBarcodeScanner(false)}
+        />
+      )}
     </DashboardLayout>
   )
 }

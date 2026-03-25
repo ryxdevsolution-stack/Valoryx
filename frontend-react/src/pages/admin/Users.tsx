@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
-import axios from 'axios';
+import api from '@/lib/api';
 import {
   Search,
   Filter,
@@ -46,11 +46,10 @@ interface UsersResponse {
 export default function UserManagement() {
   const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const navigate = useNavigate();
-  const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5017') + '/api';
-
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [inputValue, setInputValue] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [roleFilter, setRoleFilter] = useState('');
   const [statusFilter, setStatusFilter] = useState('');
@@ -73,15 +72,7 @@ export default function UserManagement() {
         ...(statusFilter && { status: statusFilter })
       });
 
-      const token = localStorage.getItem('token');
-      const response = await axios.get<UsersResponse>(
-        `${apiUrl}/admin/users?${params}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
+      const response = await api.get<UsersResponse>(`/admin/users?${params}`);
       setUsers(response.data.users);
       setTotalPages(response.data.pages);
       setTotalUsers(response.data.total);
@@ -91,7 +82,13 @@ export default function UserManagement() {
     } finally {
       setLoading(false);
     }
-  }, [apiUrl, currentPage, searchTerm, roleFilter, statusFilter]);
+  }, [currentPage, searchTerm, roleFilter, statusFilter]);
+
+  // Debounce search input → API filter (400ms)
+  useEffect(() => {
+    const id = setTimeout(() => { setSearchTerm(inputValue); setCurrentPage(1); }, 400)
+    return () => clearTimeout(id)
+  }, [inputValue])
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -111,16 +108,7 @@ export default function UserManagement() {
 
   const handleToggleStatus = async (userId: string) => {
     try {
-      const token = localStorage.getItem('token');
-      await axios.post(
-        `${apiUrl}/admin/users/${userId}/toggle-status`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
+      await api.post(`/admin/users/${userId}/toggle-status`, {});
       fetchUsers();
     } catch (error) {
       console.error('Error toggling user status:', error);
@@ -130,16 +118,7 @@ export default function UserManagement() {
   const handleToggleSuperAdmin = async (userId: string) => {
     if (confirm('Are you sure you want to change super admin status for this user?')) {
       try {
-        const token = localStorage.getItem('token');
-        await axios.post(
-          `${apiUrl}/admin/users/${userId}/promote`,
-          {},
-          {
-            headers: {
-              Authorization: `Bearer ${token}`
-            }
-          }
-        );
+        await api.post(`/admin/users/${userId}/promote`, {});
         fetchUsers();
       } catch (error) {
         console.error('Error toggling super admin:', error);
@@ -150,16 +129,7 @@ export default function UserManagement() {
   const handleResetPassword = async (userId: string) => {
     if (confirm('Are you sure you want to reset the password for this user?')) {
       try {
-        const token = localStorage.getItem('token');
-        const response = await axios.post(
-          `${apiUrl}/admin/users/${userId}/password`,
-          {},
-          {
-            headers: {
-              Authorization: `Bearer ${token}`
-            }
-          }
-        );
+        const response = await api.post(`/admin/users/${userId}/password`, {});
         if (response.data.generated_password) {
           alert(`Password reset successfully. New password: ${response.data.generated_password}`);
         } else {
@@ -179,19 +149,7 @@ export default function UserManagement() {
 
     if (confirm(`Are you sure you want to ${operation} ${selectedUsers.length} user(s)?`)) {
       try {
-        const token = localStorage.getItem('token');
-        await axios.post(
-          `${apiUrl}/admin/users/bulk`,
-          {
-            user_ids: selectedUsers,
-            operation
-          },
-          {
-            headers: {
-              Authorization: `Bearer ${token}`
-            }
-          }
-        );
+        await api.post('/admin/users/bulk', { user_ids: selectedUsers, operation });
         setSelectedUsers([]);
         setShowBulkActions(false);
         fetchUsers();
@@ -277,8 +235,8 @@ export default function UserManagement() {
               <input
                 type="text"
                 placeholder="Search by name, email, or phone..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -473,14 +431,12 @@ export default function UserManagement() {
                           >
                             Reset Password
                           </button>
-                          {!user.is_super_admin || user.is_super_admin ? (
-                            <button
-                              onClick={() => handleToggleSuperAdmin(user.user_id)}
-                              className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                            >
-                              {user.is_super_admin ? 'Remove' : 'Make'} Super Admin
-                            </button>
-                          ) : null}
+                          <button
+                            onClick={() => handleToggleSuperAdmin(user.user_id)}
+                            className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
+                          >
+                            {user.is_super_admin ? 'Remove' : 'Make'} Super Admin
+                          </button>
                         </div>
                       </div>
                     </div>

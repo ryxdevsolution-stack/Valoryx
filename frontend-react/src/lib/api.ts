@@ -10,6 +10,46 @@ const api = axios.create({
   timeout: 30000, // 30 second max (was unlimited)
 })
 
+// ==================== API PERFORMANCE STORE ====================
+// Module-level store — no React state, zero re-renders. Subscribe via useApiPerformance hook.
+
+export interface ApiTimingEntry {
+  url: string
+  method: string
+  /** Total round-trip time measured by the browser (ms) */
+  durationMs: number
+  /** Server-side processing time from X-Response-Time header (ms), if available */
+  serverMs: number | null
+  /** HTTP status code */
+  status: number
+  /** Whether served from frontend cache */
+  fromCache: boolean
+  timestamp: number
+}
+
+const MAX_TIMING_ENTRIES = 50
+
+const _timingStore: ApiTimingEntry[] = []
+const _timingListeners = new Set<() => void>()
+
+export function getApiTimings(): readonly ApiTimingEntry[] {
+  return _timingStore
+}
+
+export function subscribeToApiTimings(listener: () => void): () => void {
+  _timingListeners.add(listener)
+  return () => _timingListeners.delete(listener)
+}
+
+function _recordTiming(entry: ApiTimingEntry): void {
+  _timingStore.unshift(entry) // newest first
+  if (_timingStore.length > MAX_TIMING_ENTRIES) {
+    _timingStore.pop()
+  }
+  _timingListeners.forEach(fn => fn())
+}
+// ==================== END PERFORMANCE STORE ====================
+
 // ==================== REQUEST CACHE FOR PERFORMANCE ====================
 // Cache GET requests for frequently accessed data
 interface CacheEntry {
@@ -87,17 +127,24 @@ export function setLoadingHandlers(
   hideLoadingFn = hideLoading
 }
 
-// Extend AxiosRequestConfig to support showLoading option
+// Extend AxiosRequestConfig to support showLoading + timing metadata
 declare module 'axios' {
   export interface AxiosRequestConfig {
     showLoading?: boolean  // Opt-in: set to true to show global loading
     loadingMessage?: string
+    /** Internal: request start time for measuring round-trip duration */
+    _startTime?: number
+    /** Internal: whether this response was served from frontend cache */
+    _fromCache?: boolean
   }
 }
 
-// Add request interceptor to include token and show loading
+// Add request interceptor to include token, record start time, and show loading
 api.interceptors.request.use(
   (config) => {
+    // Record start time for round-trip timing
+    config._startTime = Date.now()
+
     const token = localStorage.getItem('token')
     if (token) {
       config.headers.Authorization = `Bearer ${token}`
@@ -151,10 +198,35 @@ export function setLogoutHandler(handler: () => void) {
   logoutHandlerFn = handler
 }
 
-// Add response interceptor to handle token expiration, caching, and hide loading
+// Add response interceptor to handle token expiration, caching, timing, and hide loading
 api.interceptors.response.use(
   (response) => {
     decrementLoading(response.config)
+
+    // --- Record API timing ---
+    const startTime = response.config._startTime
+    if (startTime) {
+      const durationMs = Date.now() - startTime
+      const serverTimeHeader = response.headers['x-response-time']
+      const serverMs = serverTimeHeader ? parseFloat(serverTimeHeader) : null
+      const entry: ApiTimingEntry = {
+        url: response.config.url || '',
+        method: (response.config.method || 'GET').toUpperCase(),
+        durationMs,
+        serverMs,
+        status: response.status,
+        fromCache: response.config._fromCache ?? false,
+        timestamp: Date.now(),
+      }
+      _recordTiming(entry)
+      if (import.meta.env.DEV) {
+        const serverLabel = serverMs !== null ? ` (server: ${serverMs}ms)` : ''
+        console.debug(
+          `%c[API] ${entry.method} ${entry.url} → ${entry.status} — ${durationMs}ms${serverLabel}`,
+          'color: #4ade80; font-weight: 500'
+        )
+      }
+    }
 
     // Cache successful GET responses
     if (response.config.method === 'get' && response.config.url) {
@@ -168,6 +240,28 @@ api.interceptors.response.use(
     return response
   },
   (error) => {
+    // Record timing for failed requests too
+    const startTime = error.config?._startTime
+    if (startTime) {
+      const durationMs = Date.now() - startTime
+      const entry: ApiTimingEntry = {
+        url: error.config?.url || '',
+        method: (error.config?.method || 'GET').toUpperCase(),
+        durationMs,
+        serverMs: null,
+        status: error.response?.status ?? 0,
+        fromCache: false,
+        timestamp: Date.now(),
+      }
+      _recordTiming(entry)
+      if (import.meta.env.DEV) {
+        console.debug(
+          `%c[API] ${entry.method} ${entry.url} → ${entry.status || 'ERR'} — ${durationMs}ms`,
+          'color: #f87171; font-weight: 500'
+        )
+      }
+    }
+
     decrementLoading(error.config)
 
     if (error.response?.status === 403 && error.response?.data?.code === 'TRIAL_EXPIRED') {
@@ -179,7 +273,7 @@ api.interceptors.response.use(
         if (isElectron) {
           window.location.hash = '/upgrade'
         } else {
-          window.location.href = '/frontend/upgrade'
+          window.location.href = '/upgrade'
         }
       }
       return Promise.reject(error)
@@ -203,7 +297,7 @@ api.interceptors.response.use(
         } else {
           // Fallback to direct redirect
           const isElectron = !!(window as any).electronAPI?.isElectron
-          window.location.href = isElectron ? '#/auth/login' : '/frontend/auth/login'
+          window.location.href = isElectron ? '#/auth/login' : '/auth/login'
         }
       }
     }
@@ -220,6 +314,20 @@ export async function cachedGet<T = any>(url: string, config?: AxiosRequestConfi
   try {
     const cached = getFromCache(url)
     if (cached) {
+      // Record cache-hit timing (0ms round-trip)
+      const entry: ApiTimingEntry = {
+        url,
+        method: 'GET',
+        durationMs: 0,
+        serverMs: null,
+        status: 200,
+        fromCache: true,
+        timestamp: Date.now(),
+      }
+      _recordTiming(entry)
+      if (import.meta.env.DEV) {
+        console.debug(`%c[API] GET ${url} → 200 — 0ms (cache hit)`, 'color: #a78bfa; font-weight: 500')
+      }
       return { data: cached as T }
     }
   } catch (error) {
@@ -227,7 +335,7 @@ export async function cachedGet<T = any>(url: string, config?: AxiosRequestConfi
     console.warn(`[API Cache] Read failed for ${url}, fetching fresh`)
     invalidateCache(url)
   }
-  return api.get<T>(url, config)
+  return api.get<T>(url, { ...config, _fromCache: false })
 }
 
 // Force invalidate and refetch

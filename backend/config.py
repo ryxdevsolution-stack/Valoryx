@@ -263,6 +263,24 @@ class OptimizedConfig:
     SMTP_FROM_NAME = os.getenv('SMTP_FROM_NAME', 'Valoryx')
     FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://valoryx.ryxtech.in')
 
+    @classmethod
+    def get_frontend_url(cls) -> str:
+        """
+        Return the frontend base URL for use in emails.
+        Prefers the Origin header from the current request so the link
+        automatically matches whatever host/port the admin is on
+        (localhost:3000, :3001, :3002, or production) — no hardcoding needed.
+        Falls back to FRONTEND_URL env var when called outside a request context.
+        """
+        try:
+            from flask import request as _req
+            origin = (_req.headers.get('Origin') or '').rstrip('/')
+            if origin:
+                return origin
+        except RuntimeError:
+            pass  # Outside request context (e.g. scheduler)
+        return cls.FRONTEND_URL.rstrip('/')
+
     # -------------------------------
     # Telegram Bot (optional — scheduler disabled when token is absent)
     # -------------------------------
@@ -283,9 +301,10 @@ class OptimizedConfig:
         """Get current performance configuration"""
         return {
             "database": {
-                "pool_size": cls.SQLALCHEMY_ENGINE_OPTIONS["pool_size"],
-                "max_overflow": cls.SQLALCHEMY_ENGINE_OPTIONS["max_overflow"],
-                "pool_timeout": cls.SQLALCHEMY_ENGINE_OPTIONS["pool_timeout"],
+                "mode": cls.DB_MODE,
+                "pool_size": cls.SQLALCHEMY_ENGINE_OPTIONS.get("pool_size", "N/A (SQLite)"),
+                "max_overflow": cls.SQLALCHEMY_ENGINE_OPTIONS.get("max_overflow", "N/A (SQLite)"),
+                "pool_timeout": cls.SQLALCHEMY_ENGINE_OPTIONS.get("pool_timeout", "N/A (SQLite)"),
                 "statement_timeout": "10s",
             },
             "cache": {

@@ -2,7 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
 import { useNotification } from '@/hooks/useNotification';
-import axios from 'axios';
+import api from '@/lib/api';
 import {
   Search,
   Filter,
@@ -58,7 +58,6 @@ interface ClientsResponse {
 export default function ClientManagement() {
   const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const navigate = useNavigate();
-  const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5017') + '/api';
   const { showSuccess, showError, showWarning, NotificationContainer } = useNotification();
 
   const [clients, setClients] = useState<Client[]>([]);
@@ -85,15 +84,7 @@ export default function ClientManagement() {
         ...(statusFilter && { status: statusFilter })
       });
 
-      const token = localStorage.getItem('token');
-      const response = await axios.get<ClientsResponse>(
-        `${apiUrl}/admin/clients?${params}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
+      const response = await api.get<ClientsResponse>(`/admin/clients?${params}`);
 
       setClients(response.data.clients);
       setTotalPages(response.data.pages);
@@ -104,7 +95,7 @@ export default function ClientManagement() {
     } finally {
       setLoading(false);
     }
-  }, [apiUrl, currentPage, searchTerm, statusFilter]);
+  }, [currentPage, searchTerm, statusFilter]);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -124,16 +115,7 @@ export default function ClientManagement() {
 
   const handleToggleStatus = async (clientId: string) => {
     try {
-      const token = localStorage.getItem('token');
-      await axios.post(
-        `${apiUrl}/admin/clients/${clientId}/toggle-status`,
-        {},
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
+      await api.post(`/admin/clients/${clientId}/toggle-status`, {});
       fetchClients();
     } catch (error) {
       console.error('Error toggling client status:', error);
@@ -154,15 +136,7 @@ export default function ClientManagement() {
 
     try {
       setDeleting(true);
-      const token = localStorage.getItem('token');
-      const response = await axios.delete(
-        `${apiUrl}/admin/clients/${clientToDelete.client_id}`,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`
-          }
-        }
-      );
+      const response = await api.delete(`/admin/clients/${clientToDelete.client_id}`);
 
       // Show success message with deletion summary
       const summary = response.data.summary;

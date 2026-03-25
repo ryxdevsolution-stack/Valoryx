@@ -68,6 +68,11 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
+    // Strip all console.* and debugger statements from production builds
+    minify: 'esbuild',
+    esbuildOptions: {
+      drop: ['console', 'debugger'],
+    },
     rollupOptions: {
       output: {
         manualChunks: {

@@ -227,7 +227,7 @@ export default function ProfilePage() {
   }
 
   const getUpgradeUrl = () => {
-    return (window as any).electronAPI?.isElectron ? '#/upgrade' : '/frontend/upgrade'
+    return (window as any).electronAPI?.isElectron ? '#/upgrade' : '/upgrade'
   }
 
   const formatPrice = (paise: number) => {

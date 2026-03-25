@@ -1,7 +1,7 @@
 import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
-import axios from 'axios';
+import api from '@/lib/api';
 import {
   Activity,
   Search,
@@ -40,6 +40,7 @@ export default function AuditLogViewer() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [inputValue, setInputValue] = useState('');
   const [searchTerm, setSearchTerm] = useState('');
   const [actionFilter, setActionFilter] = useState('');
   const [entityFilter, setEntityFilter] = useState('');
@@ -62,7 +63,7 @@ export default function AuditLogViewer() {
         ...(dateFilter && { date: dateFilter })
       });
 
-      const response = await axios.get(`/api/audit/logs?${params}`);
+      const response = await api.get(`/audit/logs?${params}`);
       setLogs(response.data.logs || []);
       setTotalPages(response.data.pages || 1);
       setTotalLogs(response.data.total || 0);
@@ -74,6 +75,12 @@ export default function AuditLogViewer() {
       setLoading(false);
     }
   }, [currentPage, searchTerm, actionFilter, entityFilter, dateFilter]);
+
+  // Debounce search input → API filter (400ms)
+  useEffect(() => {
+    const id = setTimeout(() => { setSearchTerm(inputValue); setCurrentPage(1); }, 400)
+    return () => clearTimeout(id)
+  }, [inputValue])
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -123,7 +130,7 @@ export default function AuditLogViewer() {
 
   const exportLogs = async () => {
     try {
-      const response = await axios.get('/api/audit/export', {
+      const response = await api.get('/audit/export', {
         responseType: 'blob',
         params: {
           search: searchTerm,
@@ -190,11 +197,8 @@ export default function AuditLogViewer() {
               <input
                 type="text"
                 placeholder="Search by user, action, or details..."
-                value={searchTerm}
-                onChange={(e) => {
-                  setSearchTerm(e.target.value);
-                  setCurrentPage(1);
-                }}
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
                 className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
               />
             </div>
@@ -313,8 +317,7 @@ export default function AuditLogViewer() {
                     <td className="px-6 py-4">
                       {log.details && Object.keys(log.details).length > 0 ? (
                         <div className="text-sm text-gray-600 max-w-xs truncate">
-                          {JSON.stringify(log.details).substring(0, 100)}
-                          {JSON.stringify(log.details).length > 100 && '...'}
+                          {(() => { const s = JSON.stringify(log.details); return s.length > 100 ? s.substring(0, 100) + '...' : s; })()}
                         </div>
                       ) : (
                         <span className="text-sm text-gray-400">-</span>

@@ -9,7 +9,7 @@ export default function TrialExpiredPage() {
 
   function handleSubscribed() {
     const isElectron = !!(window as any).electronAPI?.isElectron
-    window.location.href = isElectron ? '#/dashboard' : '/frontend/dashboard'
+    window.location.href = isElectron ? '#/dashboard' : '/dashboard'
   }
 
   function handleBack() {
@@ -17,7 +17,7 @@ export default function TrialExpiredPage() {
       navigate(-1)
     } else {
       const isElectron = !!(window as any).electronAPI?.isElectron
-      window.location.href = isElectron ? '#/billing/create' : '/frontend/billing/create'
+      window.location.href = isElectron ? '#/billing/create' : '/billing/create'
     }
   }
 

@@ -25,3 +25,4 @@ from models.report_model import Report                                   # noqa:
 from models.expense_model import Expense, ExpenseSummary                 # noqa: F401
 from models.webhook_model import WebhookEndpoint, WebhookDelivery        # noqa: F401
 from models.sync_metadata_model import SyncMetadata, SyncLog             # noqa: F401
+from models.supplier_model import Supplier, SupplierDelivery, SupplierDeliveryItem  # noqa: F401

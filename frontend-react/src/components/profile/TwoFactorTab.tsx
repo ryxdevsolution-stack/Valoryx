@@ -213,7 +213,7 @@ export default function TwoFactorTab() {
                 </div>
               )}
               <p className="text-xs text-gray-400 dark:text-slate-500">
-                Lost your device? <a href="/frontend/2fa-recover" className="text-violet-600 dark:text-violet-400 underline hover:no-underline">Request recovery by email</a>
+                Lost your device? <a href="/2fa-recover" className="text-violet-600 dark:text-violet-400 underline hover:no-underline">Request recovery by email</a>
               </p>
             </div>
           )}

@@ -14,6 +14,7 @@ import CTASection from '@/components/landing/CTASection'
 import PricingSection from '@/components/landing/PricingSection'
 import LandingFooter from '@/components/landing/LandingFooter'
 import AppPreviewSection from '@/components/landing/AppPreviewSection'
+import ModuleShowcaseSection from '@/components/landing/ModuleShowcaseSection'
 import DemoVideoModal from '@/components/landing/DemoVideoModal'
 
 const DEMO_VIDEO = 'https://www.youtube.com/embed/wz8e0IfWaNM?autoplay=1'
@@ -40,6 +41,9 @@ export default function LandingPage() {
 
           {/* Features Section */}
           <FeaturesSection />
+
+          {/* Module Showcase Section */}
+          <ModuleShowcaseSection />
 
           {/* Stats Section */}
           <StatsSection />

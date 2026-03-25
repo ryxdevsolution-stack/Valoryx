@@ -130,13 +130,19 @@ class CacheManager:
         return self._memory_cache.delete(key)
 
     def delete_pattern(self, pattern: str) -> int:
-        """Delete all keys matching pattern"""
+        """Delete all keys matching pattern.
+        Uses SCAN cursor (non-blocking) instead of KEYS (O(N) blocking)."""
         if self._use_redis:
             try:
-                keys = self.redis_client.keys(pattern)
-                if keys:
-                    return self.redis_client.delete(*keys)
-                return 0
+                deleted = 0
+                cursor = 0
+                while True:
+                    cursor, keys = self.redis_client.scan(cursor, match=pattern, count=200)
+                    if keys:
+                        deleted += self.redis_client.delete(*keys)
+                    if cursor == 0:
+                        break
+                return deleted
             except Exception as e:
                 logger.error(f"Cache delete pattern error: {e}")
                 return 0
@@ -217,8 +223,11 @@ def cache_result(timeout: int = 300, key_prefix: str = ""):
 
 def cache_route(timeout: int = 60):
     """
-    Decorator specifically for Flask routes
-    Caches based on URL, query params, and client_id
+    Decorator specifically for Flask routes.
+    Caches based on URL, query params, and client_id.
+
+    Stores the extracted JSON dict (not the Flask Response object) so the
+    cache is Redis-serializable. Reconstructs the Response on a cache hit.
 
     Usage:
         @stock_bp.route('', methods=['GET'])
@@ -227,6 +236,8 @@ def cache_route(timeout: int = 60):
         def get_stock():
             # ... route logic
     """
+    from flask import jsonify as _jsonify
+
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
@@ -239,21 +250,28 @@ def cache_route(timeout: int = 60):
 
             cache_key = f"route:{client_id}:{url_path}:{query_string}"
 
-            # Try to get from cache
-            cached_response = cache.get(cache_key)
-            if cached_response is not None:
+            # Try to get from cache — stored as plain dict, reconstruct Response here.
+            cached_data = cache.get(cache_key)
+            if cached_data is not None:
                 logger.debug(f"Route cache hit: {url_path}")
-                return cached_response
+                return _jsonify(cached_data), 200
 
-            # Execute route and cache result
+            # Execute route
             logger.debug(f"Route cache miss: {url_path}")
             result = func(*args, **kwargs)
 
-            # Only cache successful responses
-            if isinstance(result, tuple):
-                response_data, status_code = result
-                if status_code == 200:
-                    cache.set(cache_key, result, timeout)
+            # Only cache successful 200 responses.
+            # Extract the JSON-serializable dict from the Response before storing —
+            # Flask Response objects are not JSON-serializable so we never store them directly.
+            if isinstance(result, tuple) and len(result) == 2:
+                response_obj, status_code = result
+                if status_code == 200 and hasattr(response_obj, 'get_json'):
+                    try:
+                        data = response_obj.get_json(silent=True)
+                        if data is not None:
+                            cache.set(cache_key, data, timeout)
+                    except Exception:
+                        pass  # Caching is best-effort; never break the response
 
             return result
 
@@ -277,7 +295,10 @@ def invalidate_billing_cache(client_id: str):
     cache.delete_pattern(f"*bill*:{client_id}:*")
     cache.delete_pattern(f"route:{client_id}:/api/billing*")
     cache.delete_pattern(f"*analytics*:{client_id}:*")
-    logger.info(f"Invalidated billing cache for client {client_id}")
+    cache.delete(f"billing:next_number:{client_id}")
+    # Customer stats are derived from billing data — bust together
+    cache.delete(f"customers:list:{client_id}")
+    logger.info(f"Invalidated billing+customer cache for client {client_id}")
 
 
 def invalidate_analytics_cache(client_id: str):
@@ -296,15 +317,24 @@ def warm_cache(client_id: str):
 
         cache = get_cache_manager()
 
-        # Pre-cache stock list
-        stock_entries = StockEntry.query.filter_by(client_id=client_id).all()
+        # Pre-cache stock list — key must match the format used in stock.py get_stock()
+        # MED-1: old keys "stock_list:{id}:all" and "stock_alerts:{id}" never hit the read path.
+        MAX_STOCK_LIMIT = 5000
+        stock_entries = StockEntry.query.filter_by(client_id=client_id).order_by(
+            StockEntry.product_name
+        ).limit(MAX_STOCK_LIMIT).all()
         stock_data = [entry.to_dict() for entry in stock_entries]
-        cache.set(f"stock_list:{client_id}:all", stock_data, 300)
+        stock_response = {'success': True, 'stock': stock_data}
+        cache.set(f"stock:list:{client_id}:::{MAX_STOCK_LIMIT}", stock_response, 300)
 
-        # Pre-cache low stock items
-        low_stock = [e for e in stock_entries if e.quantity <= e.low_stock_alert]
-        low_stock_data = [entry.to_dict() for entry in low_stock]
-        cache.set(f"stock_alerts:{client_id}", low_stock_data, 600)
+        # Pre-cache low stock items — key must match get_low_stock_alerts()
+        low_stock_dicts = [d for d in stock_data if d.get('quantity', 0) <= d.get('low_stock_alert', 0)]
+        alerts = [{'product_id': d['product_id'], 'product_name': d['product_name'],
+                   'current_quantity': d['quantity'], 'alert_threshold': d['low_stock_alert'],
+                   'unit': d['unit']} for d in low_stock_dicts]
+        low_stock_response = {'success': True, 'alerts': alerts,
+                              'low_stock_products': low_stock_dicts, 'alert_count': len(low_stock_dicts)}
+        cache.set(f"stock:alerts:{client_id}", low_stock_response, 600)
 
         logger.info(f"Cache warmed for client {client_id}")
 

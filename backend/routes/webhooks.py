@@ -63,6 +63,9 @@ def create_endpoint():
     db.session.add(ep)
     db.session.commit()
 
+    from utils.cache_helper import get_cache_manager
+    get_cache_manager().delete(f"webhooks:list:{client_id}")
+
     result = ep.to_dict(include_secret=True)
     result['_note'] = 'Save the secret now — it will not be shown again.'
     return jsonify({'success': True, 'endpoint': result}), 201
@@ -72,10 +75,18 @@ def create_endpoint():
 @authenticate
 def list_endpoints():
     client_id = g.user['client_id']
+    from utils.cache_helper import get_cache_manager
+    cache = get_cache_manager()
+    cache_key = f"webhooks:list:{client_id}"
+    cached = cache.get(cache_key)
+    if cached is not None:
+        return jsonify(cached), 200
     endpoints = WebhookEndpoint.query.filter_by(client_id=client_id).order_by(
         WebhookEndpoint.created_at.desc()
     ).all()
-    return jsonify({'success': True, 'endpoints': [e.to_dict() for e in endpoints]}), 200
+    result = {'success': True, 'endpoints': [e.to_dict() for e in endpoints]}
+    cache.set(cache_key, result, 60)
+    return jsonify(result), 200
 
 
 @webhooks_bp.route('/<endpoint_id>', methods=['GET'])
@@ -112,6 +123,8 @@ def update_endpoint(endpoint_id):
         ep.is_active = bool(data['is_active'])
 
     db.session.commit()
+    from utils.cache_helper import get_cache_manager
+    get_cache_manager().delete(f"webhooks:list:{g.user['client_id']}")
     return jsonify({'success': True, 'endpoint': ep.to_dict()}), 200
 
 
@@ -128,6 +141,8 @@ def delete_endpoint(endpoint_id):
 
     db.session.delete(ep)
     db.session.commit()
+    from utils.cache_helper import get_cache_manager
+    get_cache_manager().delete(f"webhooks:list:{g.user['client_id']}")
     return jsonify({'success': True, 'message': 'Webhook endpoint deleted'}), 200
 
 

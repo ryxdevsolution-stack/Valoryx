@@ -12,6 +12,7 @@ from utils.permission_middleware import require_permission
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager, invalidate_stock_cache
 from utils.helpers import title_case
+from utils.rate_limiter import rate_limit
 
 stock_bp = Blueprint('stock', __name__)
 
@@ -35,36 +36,41 @@ def generate_item_code(client_id, product_name):
     # Extract client prefix (first 3 chars of client_id)
     client_prefix = client_id[:3].upper()
 
-    # Find the highest sequence number using SQL MAX - OPTIMIZED (was O(n) loop)
-    # Use raw SQL to extract max sequence number efficiently
-    from sqlalchemy import func, cast, Integer
-    from sqlalchemy.sql.expression import case
+    # Find the highest existing sequence for this prefix in one MAX() query,
+    # replacing the old while-loop that could issue up to 100 DB queries.
+    from sqlalchemy import func
 
-    # Get count of existing items to estimate next sequence (much faster than parsing all codes)
-    item_count = db.session.query(func.count(StockEntry.product_id)).filter_by(client_id=client_id).scalar() or 0
+    prefix = f"{product_prefix}-{client_prefix}-"
+    existing_max = db.session.query(
+        func.max(StockEntry.item_code)
+    ).filter(
+        StockEntry.client_id == client_id,
+        StockEntry.item_code.like(f"{prefix}%"),
+    ).scalar()
 
-    # Start from count + 1 as a baseline
-    next_sequence = item_count + 1
+    if existing_max:
+        try:
+            current_seq = int(existing_max.rsplit('-', 1)[-1])
+            next_sequence = current_seq + 1
+        except (ValueError, IndexError):
+            # Suffix isn't a plain integer (e.g. UUID fallback) — start from count+1
+            next_sequence = (db.session.query(func.count(StockEntry.product_id))
+                             .filter_by(client_id=client_id).scalar() or 0) + 1
+    else:
+        next_sequence = 1
 
-    # Format: PROD-CLI-001
-    item_code = f"{product_prefix}-{client_prefix}-{next_sequence:03d}"
+    item_code = f"{prefix}{next_sequence:03d}"
 
-    # Handle collision (in case of race condition)
-    counter = 0
-    while StockEntry.query.filter_by(client_id=client_id, item_code=item_code).first():
-        counter += 1
-        next_sequence += counter
-        item_code = f"{product_prefix}-{client_prefix}-{next_sequence:03d}"
-        if counter > 100:  # Safety limit
-            # Fallback to UUID-based code
-            item_code = f"{product_prefix}-{client_prefix}-{uuid.uuid4().hex[:6].upper()}"
-            break
+    # Single-query collision guard (covers concurrent inserts at the exact same sequence)
+    if StockEntry.query.filter_by(client_id=client_id, item_code=item_code).first():
+        item_code = f"{prefix}{uuid.uuid4().hex[:6].upper()}"
 
     return item_code
 
 
 @stock_bp.route('', methods=['POST'])
 @authenticate
+@rate_limit(max_requests=30, window_seconds=60, key_func=lambda: g.user['user_id'])
 @require_permission('add_product')
 def add_stock():
     """
@@ -201,33 +207,31 @@ def get_stock():
     """List stock entries filtered by client_id - OPTIMIZED with caching"""
     try:
         client_id = g.user['client_id']
+        category  = request.args.get('category', '')
+        search    = request.args.get('search', '')
+        # HIGH-2: Cap at MAX_STOCK_LIMIT — limit=0 (falsy) previously skipped the LIMIT clause,
+        # loading the entire catalog into memory on every cache-miss.
+        MAX_STOCK_LIMIT = 5000
+        requested_limit = request.args.get('limit', 0, type=int)
+        limit = min(requested_limit, MAX_STOCK_LIMIT) if requested_limit > 0 else MAX_STOCK_LIMIT
 
-        # Get query parameters
-        category = request.args.get('category')
-        search = request.args.get('search')
-        limit = request.args.get('limit', type=int)  # Optional limit
+        cache     = get_cache_manager()
+        cache_key = f"stock:list:{client_id}:{category}:{search}:{limit}"
+        cached    = cache.get(cache_key)
+        if cached is not None:
+            return jsonify(cached), 200
 
-        # Build query
         query = StockEntry.query.filter_by(client_id=client_id)
-
         if category:
             query = query.filter_by(category=category)
-
         if search:
             query = query.filter(StockEntry.product_name.ilike(f'%{search}%'))
+        query = query.order_by(StockEntry.product_name).limit(limit)
 
-        if limit:
-            query = query.limit(limit)
-
-        query = query.order_by(StockEntry.product_name)
-
-        stock_entries = query.all()
-        stock_data = [entry.to_dict() for entry in stock_entries]
-
-        resp = jsonify({'success': True, 'stock': stock_data})
-        resp.headers['Cache-Control'] = 'no-store, no-cache, must-revalidate'
-        resp.headers['Pragma'] = 'no-cache'
-        return resp, 200
+        stock_data = [entry.to_dict() for entry in query.all()]
+        response   = {'success': True, 'stock': stock_data}
+        cache.set(cache_key, response, STOCK_CACHE_TIMEOUT)
+        return jsonify(response), 200
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch stock', 'message': str(e)}), 500
@@ -235,6 +239,7 @@ def get_stock():
 
 @stock_bp.route('/alerts', methods=['GET'])
 @authenticate
+@require_permission('view_low_stock_alerts')
 def get_low_stock_alerts():
     """Get low stock alerts filtered by client_id with full product details"""
     try:
@@ -252,20 +257,24 @@ def get_low_stock_alerts():
             StockEntry.quantity <= StockEntry.low_stock_alert
         ).order_by(StockEntry.quantity).all()
 
+        # MED-2: Serialize once via to_dict(); derive compact 'alerts' list from the same data.
+        # Previously: to_dict() called once for low_stock_products AND a separate list comprehension
+        # for alerts — iterating the ORM objects twice.
+        low_stock_dicts = [item.to_dict() for item in low_stock]
         result = {
             'success': True,
             'alerts': [
                 {
-                    'product_id': item.product_id,
-                    'product_name': item.product_name,
-                    'current_quantity': item.quantity,
-                    'alert_threshold': item.low_stock_alert,
-                    'unit': item.unit
+                    'product_id': d['product_id'],
+                    'product_name': d['product_name'],
+                    'current_quantity': d['quantity'],
+                    'alert_threshold': d['low_stock_alert'],
+                    'unit': d['unit']
                 }
-                for item in low_stock
+                for d in low_stock_dicts
             ],
-            'low_stock_products': [item.to_dict() for item in low_stock],
-            'alert_count': len(low_stock)
+            'low_stock_products': low_stock_dicts,
+            'alert_count': len(low_stock_dicts)
         }
         cache.set(cache_key, result, 60)
         return jsonify(result), 200
@@ -334,6 +343,9 @@ def update_stock(product_id):
 
         db.session.commit()
 
+        # Invalidate stock cache so changes appear immediately
+        invalidate_stock_cache(client_id)
+
         # Log action
         log_action('UPDATE', 'stock_entry', product_id, old_data, product.to_dict())
 
@@ -350,25 +362,69 @@ def update_stock(product_id):
 
 @stock_bp.route('/<product_id>', methods=['DELETE'])
 @authenticate
+@require_permission('delete_product')
 def delete_stock(product_id):
-    """Delete stock entry with client_id validation"""
+    """Delete stock entry with client_id validation.
+
+    Uses a raw DBAPI connection to completely bypass the SQLAlchemy ORM session.
+    The ORM's BranchInventory backref causes an automatic SET NULL on
+    branch_inventory.product_id during session flush, which violates the
+    NOT NULL constraint in PostgreSQL.
+    """
     try:
         client_id = g.user['client_id']
+        pid = str(product_id)
+        cid = str(client_id)
 
-        # Find product
-        product = StockEntry.query.filter_by(
-            product_id=product_id,
-            client_id=client_id
-        ).first()
+        # Get the raw DBAPI connection — completely bypasses ORM identity map & autoflush
+        is_sqlite = str(db.engine.url).startswith('sqlite')
+        ph = '?' if is_sqlite else '%s'  # placeholder syntax differs per driver
 
-        if not product:
-            return jsonify({'error': 'Product not found'}), 404
+        conn = db.engine.raw_connection()
+        try:
+            cur = conn.cursor()
 
-        # Store data for audit
-        old_data = product.to_dict()
+            # Fetch product data for audit log
+            cur.execute(
+                f"SELECT product_name, category, rate, quantity, unit, item_code "
+                f"FROM stock_entry WHERE product_id = {ph} AND client_id = {ph}",
+                (pid, cid)
+            )
+            row = cur.fetchone()
 
-        db.session.delete(product)
-        db.session.commit()
+            if not row:
+                conn.close()
+                return jsonify({'error': 'Product not found'}), 404
+
+            old_data = {
+                'product_id': pid,
+                'product_name': row[0],
+                'category': row[1],
+                'rate': float(row[2]) if row[2] else None,
+                'quantity': row[3],
+                'unit': row[4],
+                'item_code': row[5],
+            }
+
+            # Delete all child rows, then the parent
+            cur.execute(f"DELETE FROM branch_inventory WHERE product_id = {ph}", (pid,))
+            cur.execute(f"DELETE FROM stock_transfer_items WHERE product_id = {ph}", (pid,))
+            cur.execute(f"DELETE FROM bulk_stock_order_item WHERE product_id = {ph}", (pid,))
+            cur.execute(f"UPDATE supplier_delivery_items SET product_id = NULL WHERE product_id = {ph}", (pid,))
+            cur.execute(f"DELETE FROM stock_entry WHERE product_id = {ph} AND client_id = {ph}", (pid, cid))
+
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
+        # Evict any cached ORM objects for this product so they don't linger
+        db.session.expire_all()
+
+        # Invalidate stock cache so deletion appears immediately
+        invalidate_stock_cache(client_id)
 
         # Log action
         log_action('DELETE', 'stock_entry', product_id, old_data, None)
@@ -385,6 +441,8 @@ def delete_stock(product_id):
 
 @stock_bp.route('/bulk-import', methods=['POST'])
 @authenticate
+@require_permission('import_stock')
+@rate_limit(max_requests=5, window_seconds=60, key_func=lambda: g.user['user_id'], error_message='Bulk import is limited to 5 times per minute.')
 def bulk_import_stock():
     """
     Bulk import stock from CSV or Excel file
@@ -429,6 +487,46 @@ def bulk_import_stock():
                 'found_columns': list(df.columns)
             }), 400
 
+        # ==================== PRE-LOAD: eliminates N+1 per-row DB lookups ====================
+        # One query loads all existing stock for this client into dicts.
+        # The inner loop never hits the DB for product-name or barcode lookups.
+        _all_existing = StockEntry.query.filter_by(client_id=client_id).all()
+        existing_by_name = {e.product_name: e for e in _all_existing}
+        existing_barcodes = {e.barcode: e.product_id for e in _all_existing if e.barcode}
+        existing_item_codes = {e.item_code for e in _all_existing if e.item_code}
+
+        # Per-prefix sequence counters for item_code generation (avoids repeated MAX queries).
+        import re as _re_bulk
+        _prefix_seq: dict = {}
+
+        def _gen_item_code_fast(pname: str) -> str:
+            """Generate a unique item code without any DB round-trips."""
+            clean = _re_bulk.sub(r'[^a-zA-Z0-9]', '', pname)
+            prod_pfx = clean[:3].upper() if clean else 'ITM'
+            cli_pfx = client_id[:3].upper()
+            prefix = f"{prod_pfx}-{cli_pfx}-"
+            if prefix not in _prefix_seq:
+                # Seed counter from the highest existing code with this prefix.
+                candidates = [c for c in existing_item_codes if c and c.startswith(prefix)]
+                if candidates:
+                    try:
+                        max_seq = max(
+                            int(c.rsplit('-', 1)[-1]) for c in candidates
+                            if c.rsplit('-', 1)[-1].isdigit()
+                        )
+                        _prefix_seq[prefix] = max_seq + 1
+                    except (ValueError, IndexError):
+                        _prefix_seq[prefix] = len(candidates) + 1
+                else:
+                    _prefix_seq[prefix] = 1
+            seq = _prefix_seq[prefix]
+            _prefix_seq[prefix] += 1
+            code = f"{prefix}{seq:03d}"
+            if code in existing_item_codes:
+                code = f"{prefix}{uuid.uuid4().hex[:6].upper()}"
+            existing_item_codes.add(code)
+            return code
+
         # Process each row
         success_count = 0
         error_count = 0
@@ -460,10 +558,10 @@ def bulk_import_stock():
                     cost_price = float(row['cost_price'])
                 mrp = float(row['mrp']) if 'mrp' in row and not pd.isna(row['mrp']) else None
 
-                # Handle item_code - auto-generate if not provided
+                # Handle item_code — use fast in-memory generator (no DB queries)
                 item_code = str(row['item_code']).strip() if 'item_code' in row and not pd.isna(row['item_code']) else ''
                 if not item_code:
-                    item_code = generate_item_code(client_id, product_name)
+                    item_code = _gen_item_code_fast(product_name)
 
                 # Handle barcode - set to None if empty
                 barcode = str(row['barcode']).strip() if 'barcode' in row and not pd.isna(row['barcode']) else ''
@@ -480,26 +578,15 @@ def bulk_import_stock():
                     errors.append(f"Row {index + 2}: Quantity and rate must be positive")
                     continue
 
-                # All DB lookups wrapped in no_autoflush to prevent autoflush from
-                # poisoning the session before the savepoint can catch the error.
-                with db.session.no_autoflush:
-                    existing_product = StockEntry.query.filter_by(
-                        client_id=client_id,
-                        product_name=product_name
-                    ).first()
+                # All lookups use pre-loaded dicts — no DB round-trips inside the loop.
+                existing_product = existing_by_name.get(product_name)
 
-                    # Resolve barcode conflicts before any insert/update
-                    if barcode:
-                        # Check globally — matches the current DB unique constraint on barcode.
-                        # After migration v2 runs this becomes per-client, but checking globally
-                        # is always safe (just more conservative).
-                        barcode_taken = StockEntry.query.filter(
-                            StockEntry.barcode == barcode,
-                            StockEntry.product_id != (existing_product.product_id if existing_product else None)
-                        ).first()
-                        if barcode_taken:
-                            errors.append(f"Row {index + 2}: Barcode '{barcode}' already in use — imported '{product_name}' without barcode")
-                            barcode = None
+                # Resolve barcode conflicts using pre-loaded barcodes dict.
+                if barcode:
+                    owner_id = existing_product.product_id if existing_product else None
+                    if existing_barcodes.get(barcode) not in (None, owner_id):
+                        errors.append(f"Row {index + 2}: Barcode '{barcode}' already in use — imported '{product_name}' without barcode")
+                        barcode = None
 
                 if existing_product:
                     # Update existing product (auto-sum quantity)
@@ -523,6 +610,9 @@ def bulk_import_stock():
                     existing_product.updated_at = datetime.utcnow()
 
                     log_action('UPDATE', 'stock_entry', existing_product.product_id, old_data, existing_product.to_dict())
+                    # Keep barcode dict consistent for later rows in the same CSV.
+                    if barcode:
+                        existing_barcodes[barcode] = existing_product.product_id
                     updated_count += 1
                 else:
                     new_product = StockEntry(
@@ -544,6 +634,10 @@ def bulk_import_stock():
                     )
                     db.session.add(new_product)
                     log_action('CREATE', 'stock_entry', new_product.product_id, None, new_product.to_dict())
+                    # Track new product in dicts so duplicate rows later in the CSV are handled.
+                    existing_by_name[product_name] = new_product
+                    if barcode:
+                        existing_barcodes[barcode] = new_product.product_id
                     created_count += 1
 
                 savepoint.commit()
@@ -556,6 +650,9 @@ def bulk_import_stock():
 
         # Commit all changes
         db.session.commit()
+
+        # Invalidate stock cache so all imported products appear immediately
+        invalidate_stock_cache(client_id)
 
         return jsonify({
             'success': True,
@@ -649,6 +746,7 @@ def download_template():
 
 @stock_bp.route('/bulk-export', methods=['POST'])
 @authenticate
+@require_permission('export_stock')
 def bulk_export_stock():
     """Export all stock data to CSV or Excel"""
     try:
@@ -779,6 +877,7 @@ def lookup_product(code):
 
 @stock_bp.route('/export-low-stock', methods=['POST'])
 @authenticate
+@require_permission('export_stock')
 def export_low_stock():
     """Export low stock items to PDF or Excel for easy ordering"""
     try:

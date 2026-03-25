@@ -17,6 +17,7 @@ import {
   ArrowLeftRight,
   Store,
   Download,
+  Truck,
 } from 'lucide-react'
 import { usePWA } from '@/hooks/usePWA'
 
@@ -27,6 +28,7 @@ const allNavigation = [
   { name: 'Bills', href: '/billing', icon: FileText, permissions: ['view_all_bills', 'view_own_bills'] },
   { name: 'Customers', href: '/customers', icon: Users, permission: 'view_customers' },
   { name: 'Stock Management', href: '/stock', icon: Package, permission: 'view_stock' },
+  { name: 'Suppliers', href: '/suppliers', icon: Truck, permission: 'view_stock' },
   { name: 'Stock Transfer', href: '/stock-transfer', icon: ArrowLeftRight, ownerOnly: true },
   { name: 'Reports', href: '/reports', icon: TrendingUp, permission: 'view_sales_reports' },
   { name: 'Audit Logs', href: '/audit', icon: Search, permission: 'view_audit_logs' },

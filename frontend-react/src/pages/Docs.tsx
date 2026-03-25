@@ -22,7 +22,14 @@ import {
   ChevronRight,
   ChevronDown,
   Home,
-  ArrowLeft
+  ArrowLeft,
+  Truck,
+  ArrowLeftRight,
+  Building2,
+  ClipboardList,
+  Lock,
+  Send,
+  UserPlus,
 } from 'lucide-react'
 import { Link } from 'react-router-dom'
 
@@ -180,8 +187,69 @@ const docSections = [
     ]
   },
   {
+    id: 'suppliers',
+    title: '15. Supplier Management',
+    icon: Truck,
+    subsections: [
+      'Adding Suppliers',
+      'Recording Deliveries',
+      'Delivery History',
+      'Stock Auto-Update',
+    ]
+  },
+  {
+    id: 'stock-transfer',
+    title: '16. Stock Transfer & Branches',
+    icon: ArrowLeftRight,
+    subsections: [
+      'Creating a Transfer',
+      'Branch Management',
+      'Transfer History',
+    ]
+  },
+  {
+    id: 'team',
+    title: '17. Team Management',
+    icon: UserPlus,
+    subsections: [
+      'Inviting Team Members',
+      'Assigning Roles',
+      'Managing Permissions',
+    ]
+  },
+  {
+    id: 'two-factor',
+    title: '18. Two-Factor Authentication',
+    icon: Lock,
+    subsections: [
+      'Enabling 2FA',
+      'Using 2FA on Login',
+      'Recovery Codes',
+    ]
+  },
+  {
+    id: 'telegram',
+    title: '19. Telegram Notifications',
+    icon: Send,
+    subsections: [
+      'Connecting Telegram',
+      'Report Schedule',
+      'What You Receive',
+    ]
+  },
+  {
+    id: 'audit',
+    title: '20. Audit Trail',
+    icon: ClipboardList,
+    subsections: [
+      'Viewing Audit Logs',
+      'Filtering & Exporting',
+      'What Gets Logged',
+    ]
+  },
+  {
     id: 'glossary',
-    title: '15. Glossary',
+    title: '21. Glossary',
     icon: BookOpen,
     subsections: []
   }
@@ -391,15 +459,30 @@ const docContent: Record<string, React.ReactNode> = {
       <div className="space-y-4">
         <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Navigation</h3>
         <p className="text-gray-600 dark:text-gray-300">The sidebar menu provides access to all modules:</p>
-        <ul className="list-disc list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
-          <li><strong>Dashboard</strong> - Overview and quick stats</li>
-          <li><strong>Billing</strong> - Create and manage bills</li>
-          <li><strong>Inventory</strong> - Manage products and stock</li>
-          <li><strong>Customers</strong> - Customer database</li>
-          <li><strong>Reports</strong> - Sales and stock reports</li>
-          <li><strong>Expenses</strong> - Track business expenses</li>
-          <li><strong>Settings</strong> - Configuration options</li>
-        </ul>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {[
+            { label: 'Dashboard', desc: 'Overview and live KPIs' },
+            { label: 'Billing', desc: 'Create and manage GST / Non-GST bills' },
+            { label: 'Stock', desc: 'Manage products and inventory' },
+            { label: 'Customers', desc: 'Customer database and history' },
+            { label: 'Suppliers', desc: 'Supplier management and deliveries' },
+            { label: 'Stock Transfer', desc: 'Move stock between branches' },
+            { label: 'Reports', desc: 'Sales and inventory reports' },
+            { label: 'Audit', desc: 'Full activity and change log' },
+            { label: 'Profile', desc: 'Account settings and 2FA' },
+            { label: 'Shop Settings', desc: 'Business info and bill configuration' },
+            { label: 'Team', desc: 'Invite and manage staff' },
+            { label: 'Expenses', desc: 'Track business expenses' },
+          ].map((item) => (
+            <div key={item.label} className="flex gap-3 bg-gray-50 dark:bg-gray-800 p-3 rounded-lg">
+              <div className="mt-1.5 w-2 h-2 rounded-full bg-primary-500 flex-shrink-0" />
+              <div>
+                <span className="font-medium text-gray-900 dark:text-white text-sm">{item.label}</span>
+                <p className="text-xs text-gray-500 dark:text-gray-400">{item.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
       </div>
     </div>
   ),
@@ -1071,6 +1154,339 @@ const docContent: Record<string, React.ReactNode> = {
           <li>Contact your administrator</li>
           <li>Contact support team at <strong>support@ryxbilling.com</strong></li>
         </ol>
+      </div>
+    </div>
+  ),
+
+  'suppliers': (
+    <div className="space-y-8">
+      <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
+        The Supplier Management module lets you track all your suppliers, record incoming deliveries, and automatically update your stock when goods arrive.
+      </p>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Adding Suppliers</h3>
+        <div className="overflow-x-auto">
+          <table className="min-w-full divide-y divide-gray-200 dark:divide-gray-700">
+            <thead className="bg-gray-50 dark:bg-gray-800">
+              <tr>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Field</th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">Description</th>
+              </tr>
+            </thead>
+            <tbody className="bg-white dark:bg-gray-900 divide-y divide-gray-200 dark:divide-gray-700">
+              {[
+                { field: 'Supplier Name', desc: 'Business or individual name' },
+                { field: 'Contact Person', desc: 'Primary point of contact' },
+                { field: 'Phone', desc: 'Contact phone number' },
+                { field: 'Email', desc: 'Supplier email address' },
+                { field: 'Address', desc: 'Supplier location / warehouse address' },
+                { field: 'GSTIN', desc: 'GST number for B2B purchases (optional)' },
+              ].map((row) => (
+                <tr key={row.field}>
+                  <td className="px-6 py-4 text-sm font-medium text-gray-900 dark:text-white">{row.field}</td>
+                  <td className="px-6 py-4 text-sm text-gray-600 dark:text-gray-300">{row.desc}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Recording Deliveries</h3>
+        <p className="text-gray-600 dark:text-gray-300">When stock arrives from a supplier:</p>
+        <div className="space-y-3">
+          {[
+            { step: 1, title: 'Open Supplier', desc: 'Go to Suppliers → select the supplier → click New Delivery' },
+            { step: 2, title: 'Add Items', desc: 'Add each product received with its quantity and purchase price' },
+            { step: 3, title: 'Set Delivery Date', desc: 'Enter the actual delivery date for records' },
+            { step: 4, title: 'Complete Delivery', desc: 'Click Complete — stock is automatically added to inventory' },
+          ].map((item) => (
+            <div key={item.step} className="flex gap-4 bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
+              <div className="flex-shrink-0 w-8 h-8 bg-purple-500 text-white rounded-full flex items-center justify-center font-bold text-sm">
+                {item.step}
+              </div>
+              <div>
+                <h5 className="font-semibold text-gray-900 dark:text-white">{item.title}</h5>
+                <p className="text-sm text-gray-600 dark:text-gray-400">{item.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Stock Auto-Update</h3>
+        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+          <p className="text-green-700 dark:text-green-300 text-sm">
+            <strong>Automatic:</strong> When you complete a delivery, each item&apos;s stock quantity is automatically increased. No manual stock entries needed.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Delivery History</h3>
+        <ul className="list-disc list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
+          <li>View all past deliveries per supplier</li>
+          <li>See item-level details for each delivery</li>
+          <li>Filter by date range or status</li>
+          <li>Export delivery records</li>
+        </ul>
+      </div>
+    </div>
+  ),
+
+  'stock-transfer': (
+    <div className="space-y-8">
+      <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
+        Stock Transfer lets you move inventory between your branches. Branch Management lets you create and manage multiple store locations.
+      </p>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Branch Management</h3>
+        <p className="text-gray-600 dark:text-gray-300">Go to <strong>Stock Transfer → Branch Management</strong> to:</p>
+        <ul className="list-disc list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
+          <li>Create new branches with name, address, and contact</li>
+          <li>View stock levels per branch</li>
+          <li>Deactivate branches you no longer use</li>
+          <li>Assign users to specific branches</li>
+        </ul>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Creating a Transfer</h3>
+        <div className="space-y-3">
+          {[
+            { step: 1, title: 'Start Transfer', desc: 'Go to Stock Transfer → New Transfer' },
+            { step: 2, title: 'Select Branches', desc: 'Choose the source branch (sending) and destination branch (receiving)' },
+            { step: 3, title: 'Add Products', desc: 'Search and add products with the quantity to transfer' },
+            { step: 4, title: 'Confirm', desc: 'Submit the transfer — stock deducts from source and adds to destination instantly' },
+          ].map((item) => (
+            <div key={item.step} className="flex gap-4 bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
+              <div className="flex-shrink-0 w-8 h-8 bg-cyan-500 text-white rounded-full flex items-center justify-center font-bold text-sm">
+                {item.step}
+              </div>
+              <div>
+                <h5 className="font-semibold text-gray-900 dark:text-white">{item.title}</h5>
+                <p className="text-sm text-gray-600 dark:text-gray-400">{item.desc}</p>
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Transfer History</h3>
+        <ul className="list-disc list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
+          <li>View all transfers with date, from/to branch, and items</li>
+          <li>Filter by branch or date range</li>
+          <li>See who initiated each transfer</li>
+        </ul>
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+          <p className="text-blue-700 dark:text-blue-300 text-sm">
+            <strong>Note:</strong> Transfers are immediate and irreversible. Double-check quantities before confirming.
+          </p>
+        </div>
+      </div>
+    </div>
+  ),
+
+  'team': (
+    <div className="space-y-8">
+      <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
+        Team Management lets you invite staff, assign their roles, and control exactly what each person can access in Valoryx.
+      </p>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Inviting Team Members</h3>
+        <ol className="list-decimal list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
+          <li>Go to <strong>Profile → Team</strong></li>
+          <li>Click <strong>Invite Member</strong></li>
+          <li>Enter their email address</li>
+          <li>Select a role (Staff, Cashier, Manager, Admin)</li>
+          <li>Click <strong>Send Invite</strong> — they receive an email with a secure link</li>
+          <li>They set their own password on first login</li>
+        </ol>
+        <div className="bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg p-4">
+          <p className="text-yellow-700 dark:text-yellow-300 text-sm">
+            <strong>Tip:</strong> New members are forced to change their password on first login for security.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Assigning Roles</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[
+            { role: 'Owner', access: 'Full access to all features. Cannot be modified.', color: 'red' },
+            { role: 'Admin', access: 'All features including user and settings management.', color: 'purple' },
+            { role: 'Manager', access: 'Billing, stock, reports, and customer management.', color: 'blue' },
+            { role: 'Staff', access: 'Billing and basic stock viewing.', color: 'green' },
+            { role: 'Cashier', access: 'Create bills only. Minimal access.', color: 'orange' },
+          ].map((item) => (
+            <div key={item.role} className="bg-gray-50 dark:bg-gray-800 p-4 rounded-lg">
+              <span className="inline-block text-xs font-semibold px-2 py-0.5 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300 mb-2">{item.role}</span>
+              <p className="text-sm text-gray-600 dark:text-gray-400">{item.access}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Managing Permissions</h3>
+        <p className="text-gray-600 dark:text-gray-300">You can customize individual permissions beyond the role defaults:</p>
+        <ul className="list-disc list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
+          <li>Enable or disable specific features per user</li>
+          <li>50+ granular permissions available</li>
+          <li>Changes take effect immediately</li>
+          <li>Deactivate a member to instantly block their access</li>
+        </ul>
+      </div>
+    </div>
+  ),
+
+  'two-factor': (
+    <div className="space-y-8">
+      <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
+        Two-Factor Authentication (2FA) adds a second layer of security to your account using a time-based one-time password (TOTP).
+      </p>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Enabling 2FA</h3>
+        <ol className="list-decimal list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
+          <li>Go to <strong>Profile → Security → Two-Factor Authentication</strong></li>
+          <li>Click <strong>Enable 2FA</strong></li>
+          <li>Scan the QR code with your authenticator app (Google Authenticator, Authy, etc.)</li>
+          <li>Enter the 6-digit code from your app to confirm</li>
+          <li>Save your <strong>backup recovery codes</strong> in a safe place</li>
+        </ol>
+        <div className="bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg p-4">
+          <p className="text-green-700 dark:text-green-300 text-sm">
+            <strong>Supported apps:</strong> Google Authenticator, Microsoft Authenticator, Authy, 1Password, Bitwarden, and any TOTP-compatible app.
+          </p>
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Using 2FA on Login</h3>
+        <ol className="list-decimal list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
+          <li>Enter your email and password as usual</li>
+          <li>A prompt appears for your 6-digit code</li>
+          <li>Open your authenticator app and enter the current code</li>
+          <li>Login completes</li>
+        </ol>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Recovery Codes</h3>
+        <div className="bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg p-4">
+          <p className="text-red-700 dark:text-red-300 text-sm">
+            <strong>Important:</strong> If you lose access to your authenticator app, use a recovery code to log in. Each code can only be used once. Store them securely.
+          </p>
+        </div>
+        <p className="text-gray-600 dark:text-gray-300">
+          Go to <strong>Profile → Security → Recovery Codes</strong> to view or regenerate your codes.
+        </p>
+      </div>
+    </div>
+  ),
+
+  'telegram': (
+    <div className="space-y-8">
+      <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
+        Valoryx can automatically send your daily sales summary to a Telegram chat. Stay informed about your business without opening the app.
+      </p>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Connecting Telegram</h3>
+        <ol className="list-decimal list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
+          <li>Go to <strong>Profile → Notifications → Telegram</strong></li>
+          <li>Copy the unique link/token shown on screen</li>
+          <li>Open Telegram and start a chat with the Valoryx bot</li>
+          <li>Send the token to the bot to link your account</li>
+          <li>Confirm — you will receive a test message immediately</li>
+        </ol>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">What You Receive</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          {[
+            { title: "Today's Revenue", desc: 'Total sales amount for the day' },
+            { title: 'Bill Count', desc: 'Total number of bills created' },
+            { title: 'GST / Non-GST Split', desc: 'Breakdown of bill types' },
+            { title: 'Low Stock Alerts', desc: 'Products below threshold' },
+          ].map((item) => (
+            <div key={item.title} className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+              <h4 className="font-semibold text-blue-800 dark:text-blue-300 text-sm">{item.title}</h4>
+              <p className="text-blue-700 dark:text-blue-400 text-xs mt-1">{item.desc}</p>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Report Schedule</h3>
+        <p className="text-gray-600 dark:text-gray-300">Reports are sent automatically every morning with the previous day&apos;s summary. The schedule is configured by your administrator.</p>
+        <div className="bg-gray-50 dark:bg-gray-800 rounded-lg p-4">
+          <p className="text-sm text-gray-600 dark:text-gray-400">
+            To stop receiving reports, go to <strong>Profile → Notifications → Telegram</strong> and click <strong>Disconnect</strong>.
+          </p>
+        </div>
+      </div>
+    </div>
+  ),
+
+  'audit': (
+    <div className="space-y-8">
+      <p className="text-gray-600 dark:text-gray-300 leading-relaxed">
+        The Audit Trail records every significant action in your system — who did it, when, and what changed. Essential for accountability, compliance, and investigation.
+      </p>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Viewing Audit Logs</h3>
+        <ol className="list-decimal list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
+          <li>Go to <strong>Audit</strong> in the sidebar</li>
+          <li>Browse the chronological log of all actions</li>
+          <li>Each entry shows: <strong>User, Action, Date/Time, Details</strong></li>
+        </ol>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">What Gets Logged</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          {[
+            'Bill created, edited, or deleted',
+            'Stock added, adjusted, or transferred',
+            'Customer created or modified',
+            'User login and logout events',
+            'Settings and shop configuration changes',
+            'Team member invited or removed',
+            'Supplier added or delivery recorded',
+            'Role or permission changes',
+          ].map((item) => (
+            <div key={item} className="flex items-start gap-2 bg-gray-50 dark:bg-gray-800 p-3 rounded-lg">
+              <div className="mt-1.5 w-2 h-2 rounded-full bg-red-500 flex-shrink-0" />
+              <span className="text-sm text-gray-700 dark:text-gray-300">{item}</span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className="space-y-4">
+        <h3 className="text-xl font-semibold text-gray-900 dark:text-white">Filtering & Exporting</h3>
+        <ul className="list-disc list-inside space-y-2 text-gray-600 dark:text-gray-300 ml-4">
+          <li><strong>Filter by user</strong> — see only what a specific team member did</li>
+          <li><strong>Filter by date range</strong> — narrow down to an incident window</li>
+          <li><strong>Filter by action type</strong> — billing, stock, settings, etc.</li>
+          <li><strong>Export to Excel</strong> — for compliance reporting or management review</li>
+        </ul>
+        <div className="bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg p-4">
+          <p className="text-blue-700 dark:text-blue-300 text-sm">
+            <strong>Access:</strong> Audit Trail is typically accessible to Admin and Owner roles. Contact your administrator if you need access.
+          </p>
+        </div>
       </div>
     </div>
   ),

@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
-import axios from 'axios';
+import api from '@/lib/api';
 import {
   Building2,
   Mail,
@@ -48,9 +48,15 @@ interface UserFormData {
   full_name: string;
   phone_user: string;
   department: string;
-  role: string;
   is_super_admin: boolean;
   is_active: boolean;
+}
+
+interface RoleQuotas {
+  admin: number | '';
+  manager: number | '';
+  staff: number | '';
+  cashier: number | '';
 }
 
 interface PermissionTemplate {
@@ -66,8 +72,6 @@ interface PermissionTemplates {
 export default function CreateClient() {
   const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const navigate = useNavigate();
-  const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5017') + '/api';
-
   const [clientData, setClientData] = useState<ClientFormData>({
     client_name: '',
     email: '',
@@ -84,9 +88,15 @@ export default function CreateClient() {
     full_name: '',
     phone_user: '',
     department: '',
-    role: 'staff',
     is_super_admin: false,
     is_active: true
+  });
+
+  const [roleQuotas, setRoleQuotas] = useState<RoleQuotas>({
+    admin: '',
+    manager: '',
+    staff: '',
+    cashier: '',
   });
 
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
@@ -102,27 +112,21 @@ export default function CreateClient() {
 
   const fetchPermissions = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`${apiUrl}/permissions/all`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const response = await api.get('/permissions/all');
       setAvailablePermissions(response.data.permissions || []);
     } catch (error) {
       console.error('Error fetching permissions:', error);
     }
-  }, [apiUrl]);
+  }, []);
 
   const fetchPermissionTemplates = useCallback(async () => {
     try {
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`${apiUrl}/admin/permission-templates`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const response = await api.get('/admin/permission-templates');
       setPermissionTemplates(response.data.templates || {});
     } catch (error) {
       console.error('Error fetching permission templates:', error);
     }
-  }, [apiUrl]);
+  }, []);
 
   useEffect(() => {
     if (!authLoading && !user) {
@@ -223,7 +227,12 @@ export default function CreateClient() {
     setError(null);
 
     try {
-      const token = localStorage.getItem('token');
+      // Build role_quotas — only include roles with a set value
+      const builtQuotas: Record<string, number> = {};
+      (Object.entries(roleQuotas) as [string, number | ''][]).forEach(([role, val]) => {
+        if (val !== '' && val >= 0) builtQuotas[role] = val as number;
+      });
+
       const requestData = {
         // Client data
         client_name: clientData.client_name,
@@ -232,28 +241,20 @@ export default function CreateClient() {
         address: clientData.address,
         gst_number: clientData.gst_number,
         logo_url: clientData.logo_url,
-        // User data
+        // User data (role is always 'owner' — enforced by backend)
         user_email: userData.user_email,
         user_password: userData.user_password,
         full_name: userData.full_name,
         phone_user: userData.phone_user,
         department: userData.department,
-        role: userData.role,
         is_super_admin: userData.is_super_admin,
         is_active: userData.is_active,
-        permissions: selectedPermissions
+        permissions: selectedPermissions,
+        // Role quotas
+        role_quotas: Object.keys(builtQuotas).length > 0 ? builtQuotas : null,
       };
 
-      const response = await axios.post(
-        `${apiUrl}/admin/clients`,
-        requestData,
-        {
-          headers: {
-            Authorization: `Bearer ${token}`,
-            'Content-Type': 'application/json'
-          }
-        }
-      );
+      const response = await api.post('/admin/clients', requestData);
 
       if (response.data) {
         setSuccess(true);
@@ -276,10 +277,10 @@ export default function CreateClient() {
               full_name: '',
               phone_user: '',
               department: '',
-              role: 'staff',
               is_super_admin: false,
               is_active: true
             });
+            setRoleQuotas({ admin: '', manager: '', staff: '', cashier: '' });
             setSelectedPermissions([]);
             setSelectedTemplate('');
             setSuccess(false);
@@ -664,21 +665,16 @@ export default function CreateClient() {
           </h2>
 
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            {/* Role Selection */}
+            {/* Role — always Owner for first user */}
             <div>
               <label className="block text-sm font-medium text-gray-700 mb-2">
                 Role
               </label>
-              <select
-                name="role"
-                value={userData.role}
-                onChange={handleUserChange}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              >
-                <option value="staff">Staff</option>
-                <option value="manager">Manager</option>
-                <option value="admin">Admin</option>
-              </select>
+              <div className="flex items-center gap-2 px-3 py-2 bg-purple-50 border border-purple-200 rounded-lg">
+                <Shield className="h-4 w-4 text-purple-600" />
+                <span className="text-sm font-semibold text-purple-700">Owner</span>
+                <span className="text-xs text-purple-500 ml-1">— automatically assigned to first user</span>
+              </div>
             </div>
 
             {/* Status Toggles */}
@@ -825,6 +821,42 @@ export default function CreateClient() {
               </div>
             </details>
           )}
+        </div>
+
+        {/* Role Quotas Section */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-xl font-semibold text-gray-900 mb-1 flex items-center gap-2">
+            <Users className="h-5 w-5" />
+            Team Member Quotas
+          </h2>
+          <p className="text-sm text-gray-500 mb-4">
+            Set the maximum number of users the owner can create per role. Leave blank for unlimited.
+          </p>
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            {(['admin', 'manager', 'staff', 'cashier'] as const).map((role) => (
+              <div key={role}>
+                <label className="block text-sm font-medium text-gray-700 mb-1 capitalize">
+                  {role}
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  value={roleQuotas[role]}
+                  onChange={(e) =>
+                    setRoleQuotas((prev) => ({
+                      ...prev,
+                      [role]: e.target.value === '' ? '' : parseInt(e.target.value, 10),
+                    }))
+                  }
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500 text-sm"
+                  placeholder="Unlimited"
+                />
+              </div>
+            ))}
+          </div>
+          <p className="mt-3 text-xs text-gray-400">
+            Example: Admin = 1, Manager = 2, Staff = 5, Cashier = 3. The owner cannot exceed these limits when adding team members.
+          </p>
         </div>
 
         {/* Form Actions */}

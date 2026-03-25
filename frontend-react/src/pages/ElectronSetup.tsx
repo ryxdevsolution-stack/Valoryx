@@ -1,7 +1,5 @@
 import { useState } from 'react'
-import axios from 'axios'
-
-const API = 'http://127.0.0.1:5017/api'
+import api from '@/lib/api'
 
 export default function ElectronSetup({ onComplete }: { onComplete: () => void }) {
   const [email, setEmail] = useState('')
@@ -17,7 +15,7 @@ export default function ElectronSetup({ onComplete }: { onComplete: () => void }
     setStep('syncing')
 
     try {
-      await axios.post(`${API}/electron/setup`, {
+      await api.post('/electron/setup', {
         email,
         password,
         server_url: 'https://valoryx.ryxtech.in',

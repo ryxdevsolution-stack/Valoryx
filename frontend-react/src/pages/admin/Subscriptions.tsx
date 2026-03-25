@@ -1,6 +1,6 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
-import axios from 'axios';
+import api from '@/lib/api';
 import {
   CreditCard,
   Package,
@@ -17,8 +17,6 @@ import {
   RefreshCw,
   AlertCircle
 } from 'lucide-react';
-
-const API_URL = (import.meta.env.VITE_API_URL || 'http://localhost:5017') + '/api';
 
 interface Plan {
   id: string;
@@ -75,12 +73,9 @@ export default function SubscriptionManagementPage() {
     try {
       setLoading(true);
       setError(null);
-      const token = localStorage.getItem('token');
-      const headers = { Authorization: `Bearer ${token}` };
-
       const [plansRes, historyRes] = await Promise.allSettled([
-        axios.get(`${API_URL}/subscription/plans`),
-        axios.get(`${API_URL}/subscription/history`, { headers })
+        api.get('/subscription/plans'),
+        api.get('/subscription/history')
       ]);
 
       if (plansRes.status === 'fulfilled') {

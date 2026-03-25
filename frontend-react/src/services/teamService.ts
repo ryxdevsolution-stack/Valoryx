@@ -70,6 +70,13 @@ export interface UpdateTeamMemberPayload {
   branch_id?: string | null
 }
 
+export interface RoleUsageEntry {
+  quota: number
+  used: number
+  remaining: number
+  at_limit: boolean
+}
+
 export interface PlanInfo {
   plan_name: string | null
   is_trial: boolean
@@ -78,15 +85,18 @@ export interface PlanInfo {
   can_add_member: boolean
   allowed_billing: string[]
   slots_remaining: number
+  role_quotas: Record<string, number>        // {"admin": 1, "manager": 2, ...}
+  role_usage: Record<string, RoleUsageEntry> // {"admin": {quota,used,remaining,at_limit}}
 }
 
 export interface PermissionPreset {
-  preset_id: string
-  client_id: string
+  preset_id?: string
+  client_id?: string
   role: string
   permissions: string[]
-  updated_at: string | null
-  updated_by: string | null
+  updated_at?: string | null
+  updated_by?: string | null
+  is_default?: boolean  // true when backend returned system defaults (no saved preset)
 }
 
 // ─── Service ─────────────────────────────────────────────────────────

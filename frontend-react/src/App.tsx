@@ -1,5 +1,6 @@
 import { Suspense, useState, useEffect } from 'react'
 import { Routes, Route, Outlet } from 'react-router-dom'
+import api from '@/lib/api'
 import { ThemeProvider } from '@/contexts/ThemeContext'
 import { LoadingProvider } from '@/contexts/LoadingContext'
 import { ClientProvider } from '@/contexts/ClientContext'
@@ -11,6 +12,7 @@ import ElectronSplash from '@/components/ElectronSplash'
 import ElectronSetup from '@/pages/ElectronSetup'
 import UpdateNotification from '@/components/UpdateNotification'
 import { InstallBanner } from '@/components/pwa/InstallBanner'
+import { ApiPerformanceBar } from '@/components/ApiPerformanceBar'
 
 function LoadingFallback() {
   return (
@@ -64,9 +66,8 @@ export default function App() {
   // After backend is ready, check if first-time setup is needed
   useEffect(() => {
     if (!isElectron || !backendReady) return
-    fetch('http://127.0.0.1:5017/api/electron/needs-setup')
-      .then(r => r.json())
-      .then(d => { if (d.needs_setup) setNeedsSetup(true) })
+    api.get('/electron/needs-setup')
+      .then(r => { if (r.data.needs_setup) setNeedsSetup(true) })
       .catch(() => {})
   }, [isElectron, backendReady])
 
@@ -85,6 +86,7 @@ export default function App() {
               <Suspense fallback={<LoadingFallback />}>
                 <AppRoutes />
               </Suspense>
+              <ApiPerformanceBar />
             </DataProvider>
           </ClientProvider>
         </LoadingInitializer>

@@ -5,6 +5,7 @@ import pyotp
 import hashlib as _hashlib
 import secrets as _secrets
 from datetime import datetime, timedelta
+from utils.dt import is_past
 from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.user_model import User
@@ -15,6 +16,7 @@ from models.session_model import UserSession
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager
+from utils.rate_limiter import rate_limit
 from routes.admin import _email_enabled
 from utils.email_service import (
     send_welcome_email,
@@ -244,10 +246,6 @@ def login():
 
         token = jwt.encode(token_payload, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
 
-        # OPTIMIZED: Defer last_login update and audit log to after response
-        # Update last_login without blocking (will be committed with cache set)
-        user.last_login = datetime.utcnow()
-
         # Prepare user data for caching (branch resolved via outerjoin above)
         user_data = {
             'user_id': str(user.user_id),
@@ -273,6 +271,7 @@ def login():
             'phone': client.phone,
             'email': client.email,
             'gstin': client.gst_number,
+            'points_per_100': getattr(client, 'points_per_100', 0) or 0,
             'subscription_status': client.subscription_status,
             'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
             'trial_days_remaining': client.trial_days_remaining,
@@ -369,6 +368,7 @@ def login():
 
 
 @auth_bp.route('/register', methods=['POST'])
+@rate_limit(max_requests=5, window_seconds=60, error_message='Too many registration attempts. Please wait.')
 def register():
     """Register new user (requires client_id)"""
     try:
@@ -512,7 +512,7 @@ def signup():
             email=email,
             password_hash=password_hash,
             client_id=client_id,
-            role='admin',
+            role='owner',  # first user of a new client is always owner
             is_super_admin=False,
             created_at=now,
             is_active=True,
@@ -552,7 +552,7 @@ def signup():
         db.session.commit()
 
         # Send verification email instead of welcome email
-        verify_link = f"{Config.FRONTEND_URL}/verify-email?token={verification_token}"
+        verify_link = f"{Config.get_frontend_url()}/verify-email?token={verification_token}"
         if _email_enabled('email_on_verification'):
             send_verification_email(email, business_name, verify_link)
 
@@ -626,6 +626,7 @@ def verify_token():
 
 
 @auth_bp.route('/forgot-password', methods=['POST'])
+@rate_limit(max_requests=5, window_seconds=300, error_message='Too many password reset requests. Please wait 5 minutes.')
 def forgot_password():
     """
     Request a password reset link.
@@ -654,7 +655,7 @@ def forgot_password():
         user.reset_token_expires = datetime.utcnow() + timedelta(hours=1)
         db.session.commit()
 
-        reset_link = f"{Config.FRONTEND_URL}/reset-password?token={token}"
+        reset_link = f"{Config.get_frontend_url()}/reset-password?token={token}"
         if _email_enabled('email_on_password_changed'):
             send_password_reset_email(email, client_name, reset_link)
 
@@ -666,6 +667,7 @@ def forgot_password():
 
 
 @auth_bp.route('/reset-password', methods=['POST'])
+@rate_limit(max_requests=10, window_seconds=300, error_message='Too many reset attempts. Please wait.')
 def reset_password():
     """
     Complete a password reset using the token from the email link.
@@ -687,7 +689,7 @@ def reset_password():
         if not user:
             return jsonify({'error': 'Invalid or expired reset link'}), 400
 
-        if not user.reset_token_expires or datetime.utcnow() > user.reset_token_expires:
+        if is_past(user.reset_token_expires):
             # Invalidate expired token
             user.reset_token = None
             user.reset_token_expires = None
@@ -731,7 +733,7 @@ def verify_email():
     if not client:
         return jsonify({'error': 'Invalid or expired verification link'}), 400
 
-    if not client.email_verification_expires or datetime.utcnow() > client.email_verification_expires:
+    if is_past(client.email_verification_expires):
         client.email_verification_token = None
         client.email_verification_expires = None
         try:
@@ -745,8 +747,8 @@ def verify_email():
     client.email_verification_token = None
     client.email_verification_expires = None
 
-    # Find the owner/admin user for this client
-    owner = User.query.filter_by(client_id=str(client.client_id), role='admin').first()
+    # Find the owner user for this client
+    owner = User.query.filter_by(client_id=str(client.client_id), role='owner').first()
     if not owner:
         db.session.rollback()
         return jsonify({'error': 'Account setup error — contact support'}), 500
@@ -885,7 +887,7 @@ def resend_verification():
         db.session.rollback()
         return jsonify({'error': 'Failed to generate new token'}), 500
 
-    verify_link = f"{Config.FRONTEND_URL}/verify-email?token={verification_token}"
+    verify_link = f"{Config.get_frontend_url()}/verify-email?token={verification_token}"
     if _email_enabled('email_on_verification'):
         send_verification_email(email, client.client_name, verify_link)
 

@@ -1,5 +1,5 @@
 
-import { createContext, useContext, useState, useCallback, useRef, ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, useRef, useMemo, ReactNode } from 'react'
 import api from '@/lib/api'
 
 interface Product {
@@ -20,14 +20,6 @@ interface PaymentType {
   payment_name: string
 }
 
-interface DataCache {
-  products: Product[]
-  paymentTypes: PaymentType[]
-  lastFetchTime: {
-    products: number | null
-    paymentTypes: number | null
-  }
-}
 
 interface DataContextType {
   products: Product[]
@@ -43,18 +35,22 @@ const DataContext = createContext<DataContextType | undefined>(undefined)
 const CACHE_DURATION = 5 * 60 * 1000
 
 export function DataProvider({ children }: { children: ReactNode }) {
-  const [cache, setCache] = useState<DataCache>({
-    products: [],
-    paymentTypes: [],
-    lastFetchTime: {
-      products: null,
-      paymentTypes: null,
-    },
+  // Split into two separate states so updating products doesn't re-render paymentType
+  // consumers and vice versa (referential equality check works correctly)
+  const [products, setProducts] = useState<Product[]>([])
+  const [paymentTypes, setPaymentTypes] = useState<PaymentType[]>([])
+
+  // Timestamp refs — don't need to be in state (don't drive rendering)
+  const fetchTimeRef = useRef<{ products: number | null; paymentTypes: number | null }>({
+    products: null,
+    paymentTypes: null,
   })
 
-  // Use ref to access current cache without causing re-renders
-  const cacheRef = useRef(cache)
-  cacheRef.current = cache
+  // Keep a live ref for each data array for use inside async callbacks
+  const productsRef = useRef<Product[]>(products)
+  const paymentTypesRef = useRef<PaymentType[]>(paymentTypes)
+  productsRef.current = products
+  paymentTypesRef.current = paymentTypes
 
   // Track ongoing requests to prevent duplicates
   const ongoingRequests = useRef<{
@@ -65,47 +61,26 @@ export function DataProvider({ children }: { children: ReactNode }) {
     paymentTypes: null,
   })
 
-  // Fetch products with caching and request deduplication
-  // FIXED: Removed cache from dependencies to prevent infinite loop
   const fetchProducts = useCallback(async (forceRefresh = false): Promise<Product[]> => {
     const now = Date.now()
+    const ft = fetchTimeRef.current
 
-    // Use ref to get current cache state without dependencies
-    const currentCache = cacheRef.current
-
-    // Check if we have valid cached data
-    if (!forceRefresh &&
-        currentCache.lastFetchTime.products &&
-        now - currentCache.lastFetchTime.products < CACHE_DURATION &&
-        currentCache.products.length > 0) {
-      return currentCache.products
+    if (!forceRefresh && ft.products && now - ft.products < CACHE_DURATION && productsRef.current.length > 0) {
+      return productsRef.current
     }
-
-    // If a request is already ongoing, return that promise
     if (ongoingRequests.current.products) {
       return ongoingRequests.current.products
     }
 
-    // Create new request
     const request = (async () => {
       try {
         const response = await api.get('/stock')
-        const products = response.data.stock || []
-
-        setCache(prev => ({
-          ...prev,
-          products,
-          lastFetchTime: {
-            ...prev.lastFetchTime,
-            products: Date.now(),
-          },
-        }))
-
-        return products
-      } catch (error) {
-        console.error('Failed to fetch products:', error)
-        // Return current cache or empty array using ref
-        return cacheRef.current.products.length > 0 ? cacheRef.current.products : []
+        const data: Product[] = response.data.stock || []
+        setProducts(data)
+        fetchTimeRef.current.products = Date.now()
+        return data
+      } catch {
+        return productsRef.current.length > 0 ? productsRef.current : []
       } finally {
         ongoingRequests.current.products = null
       }
@@ -113,49 +88,28 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     ongoingRequests.current.products = request
     return request
-  }, []) // Empty deps - uses cacheRef instead
+  }, [])
 
-  // Fetch payment types with caching and request deduplication
-  // FIXED: Removed cache from dependencies to prevent infinite loop
   const fetchPaymentTypes = useCallback(async (forceRefresh = false): Promise<PaymentType[]> => {
     const now = Date.now()
+    const ft = fetchTimeRef.current
 
-    // Use ref to get current cache state without dependencies
-    const currentCache = cacheRef.current
-
-    // Check if we have valid cached data
-    if (!forceRefresh &&
-        currentCache.lastFetchTime.paymentTypes &&
-        now - currentCache.lastFetchTime.paymentTypes < CACHE_DURATION &&
-        currentCache.paymentTypes.length > 0) {
-      return currentCache.paymentTypes
+    if (!forceRefresh && ft.paymentTypes && now - ft.paymentTypes < CACHE_DURATION && paymentTypesRef.current.length > 0) {
+      return paymentTypesRef.current
     }
-
-    // If a request is already ongoing, return that promise
     if (ongoingRequests.current.paymentTypes) {
       return ongoingRequests.current.paymentTypes
     }
 
-    // Create new request
     const request = (async () => {
       try {
         const response = await api.get('/payment/list')
-        const paymentTypes = response.data.payment_types || []
-
-        setCache(prev => ({
-          ...prev,
-          paymentTypes,
-          lastFetchTime: {
-            ...prev.lastFetchTime,
-            paymentTypes: Date.now(),
-          },
-        }))
-
-        return paymentTypes
-      } catch (error) {
-        console.error('Failed to fetch payment types:', error)
-        // Return current cache or empty array using ref
-        return cacheRef.current.paymentTypes.length > 0 ? cacheRef.current.paymentTypes : []
+        const data: PaymentType[] = response.data.payment_types || []
+        setPaymentTypes(data)
+        fetchTimeRef.current.paymentTypes = Date.now()
+        return data
+      } catch {
+        return paymentTypesRef.current.length > 0 ? paymentTypesRef.current : []
       } finally {
         ongoingRequests.current.paymentTypes = null
       }
@@ -163,40 +117,30 @@ export function DataProvider({ children }: { children: ReactNode }) {
 
     ongoingRequests.current.paymentTypes = request
     return request
-  }, []) // Empty deps - uses cacheRef instead
+  }, [])
 
-  // Invalidate cache manually
+  // Invalidate cache — reset timestamps so next fetch goes to network
   const invalidateCache = useCallback((key?: 'products' | 'paymentTypes') => {
     if (key) {
-      setCache(prev => ({
-        ...prev,
-        lastFetchTime: {
-          ...prev.lastFetchTime,
-          [key]: null,
-        },
-      }))
+      fetchTimeRef.current[key] = null
     } else {
-      // Invalidate all caches
-      setCache(prev => ({
-        ...prev,
-        lastFetchTime: {
-          products: null,
-          paymentTypes: null,
-        },
-      }))
+      fetchTimeRef.current.products = null
+      fetchTimeRef.current.paymentTypes = null
     }
   }, [])
 
+  // Memoize context value — products and paymentTypes consumers only re-render
+  // when their own state changes, not when the other one updates
+  const contextValue = useMemo(() => ({
+    products,
+    paymentTypes,
+    fetchProducts,
+    fetchPaymentTypes,
+    invalidateCache,
+  }), [products, paymentTypes, fetchProducts, fetchPaymentTypes, invalidateCache])
+
   return (
-    <DataContext.Provider
-      value={{
-        products: cache.products,
-        paymentTypes: cache.paymentTypes,
-        fetchProducts,
-        fetchPaymentTypes,
-        invalidateCache,
-      }}
-    >
+    <DataContext.Provider value={contextValue}>
       {children}
     </DataContext.Provider>
   )

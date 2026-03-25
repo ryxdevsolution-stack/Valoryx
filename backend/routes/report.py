@@ -1,6 +1,6 @@
 import uuid
 import io
-from datetime import datetime
+from datetime import datetime, time as _time, timedelta as _td
 import pytz
 from flask import Blueprint, request, jsonify, g, send_file
 from sqlalchemy import func
@@ -10,12 +10,15 @@ from models.billing_model import GSTBilling, NonGSTBilling
 from models.payment_model import PaymentType
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
+from utils.rate_limiter import rate_limit
+from utils.permission_middleware import require_permission
 
 report_bp = Blueprint('report', __name__)
 
 
 @report_bp.route('/generate', methods=['POST'])
 @authenticate
+@require_permission('view_sales_reports')
 def generate_report():
     """
     Generate report with client_id and user permission filtering
@@ -44,13 +47,18 @@ def generate_report():
         date_from = datetime.fromisoformat(data['start_date']).date()
         date_to = datetime.fromisoformat(data['end_date']).date()
 
+        # HIGH-4: Use range comparison on created_at directly so the B-tree index is usable.
+        # func.date(created_at) wraps the column in a function, preventing index use.
+        dt_from = datetime.combine(date_from, _time.min)
+        dt_to   = datetime.combine(date_to + _td(days=1), _time.min)
+
         # OPTIMIZED: Use SQL aggregation for totals instead of loading all ORM objects
         def _apply_date_user_filter(query, model, amount_col):
             """Apply common date range + user permission filters."""
             query = query.filter(
                 model.client_id == client_id,
-                func.date(model.created_at) >= date_from,
-                func.date(model.created_at) <= date_to,
+                model.created_at >= dt_from,
+                model.created_at <  dt_to,
                 model.status == 'final'
             )
             if not has_view_all:
@@ -151,16 +159,25 @@ def generate_report():
 
 @report_bp.route('/list', methods=['GET'])
 @authenticate
+@require_permission('view_sales_reports')
 def get_reports():
-    """List reports filtered by client_id"""
+    """List reports filtered by client_id with pagination"""
     try:
         client_id = g.user['client_id']
+        page  = max(1, int(request.args.get('page', 1)))
+        limit = min(int(request.args.get('limit', 50)), 200)
+        offset = (page - 1) * limit
 
-        reports = Report.query.filter_by(client_id=client_id).order_by(Report.created_at.desc()).all()
+        base_query = Report.query.filter_by(client_id=client_id)
+        total   = base_query.count()
+        reports = base_query.order_by(Report.created_at.desc()).offset(offset).limit(limit).all()
 
         return jsonify({
             'success': True,
-            'reports': [report.to_dict() for report in reports]
+            'reports': [report.to_dict() for report in reports],
+            'total': total,
+            'page': page,
+            'limit': limit,
         }), 200
 
     except Exception as e:
@@ -169,6 +186,7 @@ def get_reports():
 
 @report_bp.route('/<report_id>', methods=['GET'])
 @authenticate
+@require_permission('view_sales_reports')
 def get_report_details(report_id):
     """Get report details with client_id validation"""
     try:
@@ -190,6 +208,8 @@ def get_report_details(report_id):
 
 @report_bp.route('/export-pdf', methods=['POST'])
 @authenticate
+@require_permission('export_reports')
+@rate_limit(max_requests=10, window_seconds=60, key_func=lambda: g.user['user_id'], error_message='PDF export limit reached. Please wait.')
 def export_pdf():
     """
     Generate professional PDF report for GST bills with business header and logo watermark.
@@ -238,16 +258,29 @@ def export_pdf():
         from models.client_model import ClientEntry as _ClientEntry
         from models.user_model import User as _User
 
+        # Use datetime range (avoids func.date() which prevents index use)
+        from datetime import time as _time, timedelta as _td
+        dt_from = datetime.combine(date_from_obj, _time.min)
+        dt_to   = datetime.combine(date_to_obj + _td(days=1), _time.min)
+
         gst_query = GSTBilling.query.filter(
             GSTBilling.client_id == client_id,
-            func.date(GSTBilling.created_at) >= date_from_obj,
-            func.date(GSTBilling.created_at) <= date_to_obj,
+            GSTBilling.created_at >= dt_from,
+            GSTBilling.created_at <  dt_to,
             GSTBilling.status == 'final',
         )
         if not has_view_all:
             gst_query = gst_query.filter(GSTBilling.created_by == user_id)
 
-        db_bills = gst_query.order_by(GSTBilling.created_at.asc()).all()
+        # with_entities: only fetch needed columns — skips large items JSON blob
+        db_bills = gst_query.with_entities(
+            GSTBilling.customer_name,
+            GSTBilling.created_at,
+            GSTBilling.subtotal,
+            GSTBilling.gst_percentage,
+            GSTBilling.gst_amount,
+            GSTBilling.final_amount,
+        ).order_by(GSTBilling.created_at.asc()).limit(5000).all()
 
         if not db_bills:
             return jsonify({'error': 'No GST bills found for the selected date range'}), 400
@@ -298,15 +331,23 @@ def export_pdf():
         buffer = io.BytesIO()
 
         # Download logo for watermark — only allow http/https to prevent SSRF
+        # 3-second hard cap prevents a slow CDN from stalling the Gunicorn worker
         logo_temp_path = None
         if logo_url:
             try:
                 from urllib.parse import urlparse as _urlparse
+                import httpx as _httpx
                 _parsed = _urlparse(logo_url)
                 if _parsed.scheme in ('http', 'https'):
                     with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as _tmp:
                         logo_temp_path = _tmp.name
-                    urllib.request.urlretrieve(logo_url, logo_temp_path)
+                    with _httpx.Client(timeout=3.0) as _client:
+                        _resp = _client.get(logo_url)
+                        if _resp.status_code == 200:
+                            with open(logo_temp_path, 'wb') as _f:
+                                _f.write(_resp.content)
+                        else:
+                            logo_temp_path = None
             except Exception:
                 logo_temp_path = None
 
@@ -557,6 +598,8 @@ def export_pdf():
 
 @report_bp.route('/send-auditor-email', methods=['POST'])
 @authenticate
+@require_permission('export_reports')
+@rate_limit(max_requests=5, window_seconds=300, key_func=lambda: g.user['user_id'], error_message='Email send limit reached. Please wait 5 minutes.')
 def send_auditor_email():
     """
     Generate a GST bills PDF (with VALORYX watermark and optional TRIAL watermark)
@@ -610,20 +653,34 @@ def send_auditor_email():
         from models.billing_model import GSTBilling
 
         date_from_obj = datetime.fromisoformat(start_date).date()
-        date_to_obj = datetime.fromisoformat(end_date).date()
+        date_to_obj   = datetime.fromisoformat(end_date).date()
+
+        # Use datetime range (avoids func.date() which prevents index use)
+        from datetime import time as _time, timedelta as _td
+        dt_from = datetime.combine(date_from_obj, _time.min)
+        dt_to   = datetime.combine(date_to_obj + _td(days=1), _time.min)
 
         gst_query = GSTBilling.query.filter(
             GSTBilling.client_id == client_id,
-            func.date(GSTBilling.created_at) >= date_from_obj,
-            func.date(GSTBilling.created_at) <= date_to_obj,
+            GSTBilling.created_at >= dt_from,
+            GSTBilling.created_at <  dt_to,
             GSTBilling.status == 'final',
         )
         if not has_view_all:
             gst_query = gst_query.filter(GSTBilling.created_by == user_id)
 
-        db_bills = gst_query.order_by(GSTBilling.created_at.asc()).all()
+        # with_entities: only fetch needed columns — skips large items JSON blob
+        db_bills = gst_query.with_entities(
+            GSTBilling.bill_id,
+            GSTBilling.customer_name,
+            GSTBilling.created_at,
+            GSTBilling.subtotal,
+            GSTBilling.gst_percentage,
+            GSTBilling.gst_amount,
+            GSTBilling.final_amount,
+        ).order_by(GSTBilling.created_at.asc()).limit(5000).all()
 
-        # Convert ORM objects to the dict shape the PDF builder expects
+        # Convert to the dict shape the PDF builder expects
         bills = [
             {
                 'bill_id': str(b.bill_id),
@@ -667,15 +724,23 @@ def send_auditor_email():
         buffer = io.BytesIO()
 
         # Download logo for watermark — only allow http/https to prevent SSRF
+        # 3-second hard cap prevents a slow CDN from stalling the Gunicorn worker
         logo_temp_path = None
         if logo_url:
             try:
                 from urllib.parse import urlparse as _urlparse
+                import httpx as _httpx
                 _parsed = _urlparse(logo_url)
                 if _parsed.scheme in ('http', 'https'):
                     with tempfile.NamedTemporaryFile(delete=False, suffix='.png') as _tmp:
                         logo_temp_path = _tmp.name
-                    urllib.request.urlretrieve(logo_url, logo_temp_path)
+                    with _httpx.Client(timeout=3.0) as _client:
+                        _resp = _client.get(logo_url)
+                        if _resp.status_code == 200:
+                            with open(logo_temp_path, 'wb') as _f:
+                                _f.write(_resp.content)
+                        else:
+                            logo_temp_path = None
             except Exception:
                 logo_temp_path = None
 

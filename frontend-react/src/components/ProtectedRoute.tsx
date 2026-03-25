@@ -1,8 +1,14 @@
 import { useLocation, Navigate } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
 
-export default function ProtectedRoute({ children }: { children: React.ReactNode }) {
-  const { isAuthenticated, isLoading } = useClient()
+interface ProtectedRouteProps {
+  children: React.ReactNode
+  /** If provided, user must have this permission or they are redirected to /dashboard */
+  permission?: string
+}
+
+export default function ProtectedRoute({ children, permission }: ProtectedRouteProps) {
+  const { isAuthenticated, isLoading, hasPermission, user } = useClient()
   const { pathname } = useLocation()
 
   // Show loading state while checking authentication
@@ -34,9 +40,15 @@ export default function ProtectedRoute({ children }: { children: React.ReactNode
   }
 
   // If user must change password, redirect synchronously with no flash of protected content
-  const mustChange = localStorage.getItem('must_change_password') === 'true'
+  // Read from React state (already in memory) instead of hitting localStorage on every render
+  const mustChange = user?.must_change_password === true
   if (mustChange && pathname !== '/change-password') {
     return <Navigate to="/change-password" replace />
+  }
+
+  // Check page-level permission if specified — redirect to billing (safe fallback, not /dashboard which would loop)
+  if (permission && !hasPermission(permission)) {
+    return <Navigate to="/billing" replace />
   }
 
   return <>{children}</>

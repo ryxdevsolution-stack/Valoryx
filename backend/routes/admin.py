@@ -9,8 +9,17 @@ from models.stock_model import StockEntry
 from models.customer_model import Customer
 from models.payment_model import PaymentType
 from models.report_model import Report
+from models.supplier_model import Supplier, SupplierDelivery, SupplierDeliveryItem
+from models.subscription_model import PaymentTransaction
+from models.branch_model import Branch
+from models.branch_inventory_model import BranchInventory
+from models.stock_transfer_model import StockTransfer, StockTransferItem
+from models.sync_metadata_model import SyncMetadata, SyncLog
+from models.expense_model import Expense, ExpenseSummary
+from models.bulk_stock_order_model import BulkStockOrder, BulkStockOrderItem
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_super_admin, require_permission
+from utils.rate_limiter import rate_limit
 from utils.email_service import (
     send_account_deactivated_email,
     send_account_reactivated_email,
@@ -25,6 +34,18 @@ from sqlalchemy.orm import joinedload
 
 # Create admin blueprint
 admin_bp = Blueprint('admin', __name__)
+
+# Module-level cache for Permission rows (rarely change — 1-hour TTL)
+_perm_cache: dict = {'data': None, 'expires_at': 0.0}
+
+def _get_all_permissions() -> list:
+    """Return all Permission rows, cached in-process for 1 hour."""
+    import time
+    now = time.monotonic()
+    if _perm_cache['data'] is None or now > _perm_cache['expires_at']:
+        _perm_cache['data'] = Permission.query.all()
+        _perm_cache['expires_at'] = now + 3600  # 1 hour
+    return _perm_cache['data']
 
 # Helper function to log admin actions
 def log_admin_action(action_type, table_name='users', record_id=None, old_data=None, new_data=None):
@@ -43,7 +64,7 @@ def log_admin_action(action_type, table_name='users', record_id=None, old_data=N
             user_agent=request.headers.get('User-Agent', '')
         )
         db.session.add(audit_log)
-        db.session.commit()
+        # Caller commits — no standalone commit here to avoid extra round-trip
     except Exception as e:
         print(f"Error logging admin action: {e}")
 
@@ -282,8 +303,10 @@ def create_user():
         # 'both' — keep whatever was passed (both already set by caller or permissions list)
 
         if permissions:
+            # Single IN query instead of 1 query per permission name
+            _perm_map = {p.permission_name: p for p in _get_all_permissions()}
             for perm_name in permissions:
-                permission = Permission.query.filter_by(permission_name=perm_name).first()
+                permission = _perm_map.get(perm_name)
                 if permission:
                     user_permission = UserPermission(
                         id=str(uuid.uuid4()),
@@ -438,6 +461,7 @@ def delete_user(user_id):
 
 @admin_bp.route('/users/<user_id>/password', methods=['POST'])
 @authenticate
+@rate_limit(max_requests=10, window_seconds=60, key_func=lambda: g.user['user_id'], error_message='Too many password resets. Please wait.')
 @require_super_admin
 def reset_user_password(user_id):
     """Reset user password"""
@@ -567,8 +591,8 @@ def toggle_super_admin(user_id):
 
         # If promoting to super admin, grant all permissions
         if user.is_super_admin:
-            # Get all permissions
-            all_permissions = Permission.query.all()
+            # Get all permissions (cached 1 hr)
+            all_permissions = _get_all_permissions()
             permission_ids = [p.permission_id for p in all_permissions]
 
             # Batch fetch existing permissions for this user (avoid N+1)
@@ -612,6 +636,7 @@ def toggle_super_admin(user_id):
 
 @admin_bp.route('/users/bulk', methods=['POST'])
 @authenticate
+@rate_limit(max_requests=10, window_seconds=60, key_func=lambda: g.user['user_id'], error_message='Bulk operation limit reached. Please wait.')
 @require_super_admin
 def bulk_user_operations():
     """Perform bulk operations on multiple users"""
@@ -743,32 +768,33 @@ def get_admin_dashboard():
     try:
         client_id = g.user['client_id']
 
-        # Get user statistics
-        total_users = User.query.filter_by(client_id=client_id).count()
-        active_users = User.query.filter_by(client_id=client_id, is_active=True).count()
-        inactive_users = User.query.filter_by(client_id=client_id, is_active=False).count()
-        super_admins = User.query.filter_by(client_id=client_id, is_super_admin=True).count()
+        # Collapse 6 COUNT queries into 1 aggregate query
+        from datetime import datetime, timedelta
+        from sqlalchemy import case
+        seven_days_ago = datetime.utcnow() - timedelta(days=7)
+        one_day_ago    = datetime.utcnow() - timedelta(days=1)
+
+        stats = db.session.query(
+            func.count(User.user_id).label('total_users'),
+            func.count(case((User.is_active == True,  1))).label('active_users'),
+            func.count(case((User.is_active == False, 1))).label('inactive_users'),
+            func.count(case((User.is_super_admin == True, 1))).label('super_admins'),
+            func.count(case((User.created_at >= seven_days_ago, 1))).label('recent_users'),
+            func.count(case((User.last_login  >= one_day_ago,   1))).label('active_today'),
+        ).filter(User.client_id == client_id).one()
+
+        total_users   = stats.total_users
+        active_users  = stats.active_users
+        inactive_users = stats.inactive_users
+        super_admins  = stats.super_admins
+        recent_users  = stats.recent_users
+        active_today  = stats.active_today
 
         # Get users by role
         role_distribution = db.session.query(
-        User.role,
-        func.count(User.user_id)
+            User.role,
+            func.count(User.user_id)
         ).filter_by(client_id=client_id).group_by(User.role).all()
-
-        # Get recent users (last 7 days)
-        from datetime import datetime, timedelta
-        seven_days_ago = datetime.utcnow() - timedelta(days=7)
-        recent_users = User.query.filter(
-        User.client_id == client_id,
-        User.created_at >= seven_days_ago
-        ).count()
-
-        # Get users with recent activity (last 24 hours)
-        one_day_ago = datetime.utcnow() - timedelta(days=1)
-        active_today = User.query.filter(
-        User.client_id == client_id,
-        User.last_login >= one_day_ago
-        ).count()
 
         # Get recent admin actions
         recent_actions = AuditLog.query.filter(
@@ -822,7 +848,7 @@ def get_permission_templates():
                 'name': 'Full Access (All Permissions)',
                 'description': 'Complete access to all features - for owners/managers',
                 'business_type': 'all',
-                'permissions': [p.permission_name for p in Permission.query.all()]
+                'permissions': [p.permission_name for p in _get_all_permissions()]
             },
 
             # Dress Shop / Fashion Boutique
@@ -1226,12 +1252,23 @@ def get_client_details(client_id):
         if not client:
             return jsonify({'error': 'Client not found'}), 404
 
-        # Get all users for this client (exclude deleted users)
-        users = User.query.filter_by(client_id=client_id).filter(User.deleted_at.is_(None)).all()
+        # Get user stats in one aggregate (no full ORM load)
+        from sqlalchemy import case as sa_case
+        user_base = db.session.query(User).filter(
+            User.client_id == client_id,
+            User.deleted_at.is_(None)
+        )
+        stats = user_base.with_entities(
+            func.count(User.user_id).label('total'),
+            func.count(sa_case((User.is_active == True,    1))).label('active'),
+            func.count(sa_case((User.is_super_admin == True, 1))).label('super_admins'),
+        ).one()
 
-        # Get statistics
-        active_users = len([u for u in users if u.is_active])
-        super_admins = len([u for u in users if u.is_super_admin])
+        # Fetch only the columns needed for the user list
+        users = user_base.with_entities(
+            User.user_id, User.email, User.full_name,
+            User.role, User.is_super_admin, User.is_active
+        ).all()
 
         # Get recent activity (last 10 audit logs)
         recent_activity = AuditLog.query.filter_by(client_id=client_id).order_by(
@@ -1240,9 +1277,9 @@ def get_client_details(client_id):
 
         client_data = client.to_dict()
         client_data['statistics'] = {
-            'total_users': len(users),
-            'active_users': active_users,
-            'super_admins': super_admins
+            'total_users': stats.total,
+            'active_users': stats.active,
+            'super_admins': stats.super_admins,
         }
         client_data['users'] = [
             {
@@ -1299,6 +1336,16 @@ def create_client():
         if existing_user:
             return jsonify({'error': 'User with this email already exists'}), 409
 
+        # Validate role_quotas if provided
+        role_quotas = data.get('role_quotas')
+        if role_quotas is not None:
+            allowed_quota_roles = {'admin', 'manager', 'staff', 'cashier'}
+            for qrole, qval in role_quotas.items():
+                if qrole not in allowed_quota_roles:
+                    return jsonify({'error': f"Invalid role in quotas: '{qrole}'"}), 400
+                if not isinstance(qval, int) or qval < 0:
+                    return jsonify({'error': f"Quota for '{qrole}' must be a non-negative integer"}), 400
+
         # Create new client
         new_client = ClientEntry(
             client_id=str(uuid.uuid4()),
@@ -1309,16 +1356,27 @@ def create_client():
             gst_number=data.get('gst_number'),
             phone=data['phone'],
             created_at=datetime.utcnow(),
-            is_active=True
+            is_active=True,
+            role_quotas=role_quotas,  # per-role user limits set by superadmin
         )
 
         db.session.add(new_client)
         db.session.flush()  # Get the client_id before creating user
 
+        # Auto-create Main Branch for new client
+        from models.branch_model import Branch
+        main_branch = Branch(
+            branch_id=str(uuid.uuid4()),
+            client_id=new_client.client_id,
+            name='Main Branch',
+            is_active=True,
+        )
+        db.session.add(main_branch)
+
         # Hash password for user
         password_hash = bcrypt.hashpw(user_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
 
-        # Create admin user for this client
+        # First user of a new client is always owner — superadmin cannot change this
         new_user = User(
             user_id=str(uuid.uuid4()),
             email=user_email,
@@ -1326,10 +1384,11 @@ def create_client():
             full_name=data.get('full_name', ''),
             phone=data.get('phone_user', ''),
             department=data.get('department', ''),
-            role=data.get('role', 'staff'),
+            role='owner',  # always owner — first user of a new client
             client_id=new_client.client_id,
             is_super_admin=data.get('is_super_admin', False),
             is_active=data.get('is_active', True),
+            branch_id=main_branch.branch_id,  # owner belongs to Main Branch
             created_by=g.user['user_id'],
             created_at=datetime.utcnow()
         )
@@ -1337,11 +1396,12 @@ def create_client():
         db.session.add(new_user)
         db.session.flush()  # Get the user_id before assigning permissions
 
-        # Assign permissions if provided
+        # Assign permissions if provided (use cached map — no per-perm query)
         permissions = data.get('permissions', [])
         if permissions:
+            _perm_map = {p.permission_name: p for p in _get_all_permissions()}
             for perm_name in permissions:
-                permission = Permission.query.filter_by(permission_name=perm_name).first()
+                permission = _perm_map.get(perm_name)
                 if permission:
                     user_permission = UserPermission(
                         id=str(uuid.uuid4()),
@@ -1438,6 +1498,18 @@ def update_client(client_id):
         if 'is_active' in data:
             changes['is_active'] = {'old': client.is_active, 'new': data['is_active']}
             client.is_active = data['is_active']
+
+        if 'role_quotas' in data:
+            new_quotas = data['role_quotas']
+            if new_quotas is not None:
+                allowed_quota_roles = {'admin', 'manager', 'staff', 'cashier'}
+                for qrole, qval in new_quotas.items():
+                    if qrole not in allowed_quota_roles:
+                        return jsonify({'error': f"Invalid role in quotas: '{qrole}'"}), 400
+                    if not isinstance(qval, int) or qval < 0:
+                        return jsonify({'error': f"Quota for '{qrole}' must be a non-negative integer"}), 400
+            changes['role_quotas'] = {'old': client.role_quotas, 'new': new_quotas}
+            client.role_quotas = new_quotas
 
         db.session.commit()
 
@@ -1624,30 +1696,88 @@ def delete_client(client_id):
         reports_count = Report.query.filter_by(client_id=client_id).count()
         audit_logs_count = AuditLog.query.filter_by(client_id=client_id).count()
 
-        # Delete all associated data in correct order (respecting foreign keys)
+        # Delete all associated data using raw SQL to avoid varchar/uuid type cast issues.
+        # Order matters: child tables must be deleted before their parent tables.
+        cid = str(client_id)
+        user_ids = [str(u.user_id) for u in users]
 
-        # 1. Delete user permissions first (depends on users)
-        for user in users:
-            UserPermission.query.filter_by(user_id=user.user_id).delete()
+        # 1. Delete notes (user_id FK → users, no cascade)
+        if user_ids:
+            db.session.execute(db.text(
+                "DELETE FROM notes WHERE user_id = ANY(:uids)"
+            ), {"uids": user_ids})
 
-        # 2. Delete reports (may depend on other tables)
-        Report.query.filter_by(client_id=client_id).delete()
+        # 2. Delete user sessions (user_id FK → users; CASCADE exists but be explicit)
+        if user_ids:
+            db.session.execute(db.text(
+                "DELETE FROM user_sessions WHERE user_id = ANY(:uids)"
+            ), {"uids": user_ids})
 
-        # 3. Delete bills (both GST and Non-GST)
-        GSTBilling.query.filter_by(client_id=client_id).delete()
-        NonGSTBilling.query.filter_by(client_id=client_id).delete()
+        # 3. Delete user permissions (user_id FK → users)
+        if user_ids:
+            db.session.execute(db.text(
+                "DELETE FROM user_permissions WHERE user_id = ANY(:uids)"
+            ), {"uids": user_ids})
 
-        # 4. Delete stock entries
-        StockEntry.query.filter_by(client_id=client_id).delete()
+        # 4. Delete stock transfer items → transfers
+        db.session.execute(db.text(
+            "DELETE FROM stock_transfer_items WHERE transfer_id IN "
+            "(SELECT transfer_id FROM stock_transfers WHERE client_id = :cid)"
+        ), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM stock_transfers WHERE client_id = :cid"), {"cid": cid})
 
-        # 5. Delete customers
-        Customer.query.filter_by(client_id=client_id).delete()
+        # 5. Delete bulk stock order items → orders
+        db.session.execute(db.text(
+            "DELETE FROM bulk_stock_order_item WHERE order_id IN "
+            "(SELECT order_id FROM bulk_stock_order WHERE client_id = :cid)"
+        ), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM bulk_stock_order WHERE client_id = :cid"), {"cid": cid})
 
-        # 6. Delete payment types
-        PaymentType.query.filter_by(client_id=client_id).delete()
+        # 6. Delete supplier delivery items → deliveries → suppliers
+        db.session.execute(db.text(
+            "DELETE FROM supplier_delivery_items WHERE delivery_id IN "
+            "(SELECT delivery_id FROM supplier_deliveries WHERE client_id = :cid)"
+        ), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM supplier_deliveries WHERE client_id = :cid"), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM suppliers WHERE client_id = :cid"), {"cid": cid})
 
-        # 7. Delete users
-        User.query.filter_by(client_id=client_id).delete()
+        # 7. Delete branch inventory → branches
+        db.session.execute(db.text("DELETE FROM branch_inventory WHERE client_id = :cid"), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM branches WHERE client_id = :cid"), {"cid": cid})
+
+        # 8. Delete webhook deliveries → endpoints
+        db.session.execute(db.text("DELETE FROM webhook_deliveries WHERE client_id = :cid"), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM webhook_endpoints WHERE client_id = :cid"), {"cid": cid})
+
+        # 9. Delete payment transactions
+        db.session.execute(db.text("DELETE FROM payment_transaction WHERE client_id = :cid"), {"cid": cid})
+
+        # 10. Delete expenses
+        db.session.execute(db.text("DELETE FROM expense WHERE client_id = :cid"), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM expense_summary WHERE client_id = :cid"), {"cid": cid})
+
+        # 11. Delete reports
+        db.session.execute(db.text("DELETE FROM report WHERE client_id = :cid"), {"cid": cid})
+
+        # 12. Delete bills
+        db.session.execute(db.text("DELETE FROM gst_billing WHERE client_id = :cid"), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM non_gst_billing WHERE client_id = :cid"), {"cid": cid})
+
+        # 13. Delete stock entries
+        db.session.execute(db.text("DELETE FROM stock_entry WHERE client_id = :cid"), {"cid": cid})
+
+        # 14. Delete customers
+        db.session.execute(db.text("DELETE FROM customer WHERE client_id = :cid"), {"cid": cid})
+
+        # 15. Delete payment types
+        db.session.execute(db.text("DELETE FROM payment_type WHERE client_id = :cid"), {"cid": cid})
+
+        # 16. Delete sync metadata / logs
+        db.session.execute(db.text("DELETE FROM sync_metadata WHERE client_id = :cid"), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM sync_log WHERE client_id = :cid"), {"cid": cid})
+
+        # 17. Delete users
+        db.session.execute(db.text("DELETE FROM users WHERE client_id = :cid"), {"cid": cid})
 
         # Prepare deletion summary
         deletion_summary = {

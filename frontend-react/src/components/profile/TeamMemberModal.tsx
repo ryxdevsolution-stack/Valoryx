@@ -54,6 +54,7 @@ const BILLING_PERMS = new Set(['gst_billing', 'non_gst_billing'])
 
 const API_ERROR_MESSAGES: Record<string, string> = {
   PLAN_LIMIT_REACHED: 'You have reached your team member limit. Please upgrade your plan to add more.',
+  ROLE_QUOTA_REACHED: 'The quota for this role has been reached. Please contact support to increase the limit.',
   BILLING_PERMISSION_RESTRICTED: 'Some billing permissions are not available on your current plan.',
 }
 
@@ -152,6 +153,20 @@ export default function TeamMemberModal({
     return roleLevel < currentLevel
   })
 
+  // ─── Role quota helpers ────────────────────────────────────────
+
+  const getRoleQuotaInfo = (role: string) => {
+    if (!planInfo?.role_usage) return null
+    return planInfo.role_usage[role] ?? null
+  }
+
+  const isRoleAtQuota = (role: string) => {
+    // In edit mode, quota doesn't block (role might not change)
+    if (isEditMode) return false
+    const info = getRoleQuotaInfo(role)
+    return info ? info.at_limit : false
+  }
+
   // ─── Branch combobox computed values ──────────────────────────
 
   const filteredBranches = useMemo(() => {
@@ -188,7 +203,22 @@ export default function TeamMemberModal({
         : Promise.resolve(null),
     ])
 
-    if (branchRes) setBranches(branchRes.data.data)
+    if (branchRes) {
+      const fetchedBranches: BranchItem[] = branchRes.data.data
+      setBranches(fetchedBranches)
+      // In create mode: if role is owner, auto-select Main Branch after branches load
+      if (!editingUser) {
+        setForm((prev) => {
+          if (prev.role === 'owner') {
+            const mainBranch = fetchedBranches.find(
+              (b) => b.name.toLowerCase() === 'main branch'
+            )
+            if (mainBranch) return { ...prev, branch_id: mainBranch.branch_id }
+          }
+          return prev
+        })
+      }
+    }
     setLoadingBranches(false)
 
     if (allPermsRes) setAllPermissions(allPermsRes.data.data)
@@ -246,34 +276,55 @@ export default function TeamMemberModal({
     }
   }, [isOpen, editingUser, loadInitialData])
 
-  // ─── Fetch preset when role changes (create mode only) ──────
+  // ─── Fetch & auto-apply preset when role changes (create mode only) ──────
 
   useEffect(() => {
     if (!isOpen || isEditMode) return
 
     let cancelled = false
-    const fetchPreset = async () => {
+    const fetchAndApplyPreset = async () => {
       setPreset(null)
       setPresetApplied(false)
       try {
         const res = await teamService.getPreset(form.role)
-        if (!cancelled && res.data.data) {
-          setPreset(res.data.data)
+        if (cancelled) return
+        const data = res.data.data
+        if (data) {
+          setPreset(data)
+          // Auto-apply immediately — no manual "Apply" step needed
+          const allowed = (data.permissions as string[]).filter(
+            (p) => !restrictedPermissions.has(p)
+          )
+          setSelectedPermissions(new Set(allowed))
+          setPresetApplied(true)
         }
       } catch {
         // Non-critical — silently ignore
       }
+
+      // (Main Branch selection is handled in a separate effect below)
     }
-    fetchPreset()
+    fetchAndApplyPreset()
     return () => { cancelled = true }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [form.role, isOpen, isEditMode])
 
-  // ─── Apply preset handler ───────────────────────────────────
+  // ─── Auto-select Main Branch when role is owner (create mode) ──
+
+  useEffect(() => {
+    if (!isOpen || isEditMode || form.role !== 'owner') return
+    const mainBranch = branches.find((b) => b.name.toLowerCase() === 'main branch')
+    if (mainBranch) {
+      setForm((prev) => ({ ...prev, branch_id: mainBranch.branch_id }))
+    }
+  }, [form.role, branches, isOpen, isEditMode])
+
+  // ─── Apply preset handler (manual re-apply from UI) ─────────
 
   const applyPreset = useCallback(() => {
     if (!preset) return
     const presetPerms = new Set(
-      preset.permissions.filter((p) => !restrictedPermissions.has(p))
+      (preset.permissions as string[]).filter((p) => !restrictedPermissions.has(p))
     )
     setSelectedPermissions(presetPerms)
     setPresetApplied(true)
@@ -708,12 +759,29 @@ export default function TeamMemberModal({
                 onChange={(e) => setForm((prev) => ({ ...prev, role: e.target.value }))}
                 className={`${INPUT_CLASS} appearance-none cursor-pointer`}
               >
-                {availableRoles.map((role) => (
-                  <option key={role} value={role}>
-                    {role.charAt(0).toUpperCase() + role.slice(1)}
-                  </option>
-                ))}
+                {availableRoles.map((role) => {
+                  const quotaInfo = getRoleQuotaInfo(role)
+                  const atLimit = isRoleAtQuota(role)
+                  const label = role.charAt(0).toUpperCase() + role.slice(1)
+                  const suffix = quotaInfo
+                    ? ` (${quotaInfo.used}/${quotaInfo.quota}${atLimit ? ' — full' : ''})`
+                    : ''
+                  return (
+                    <option key={role} value={role} disabled={atLimit && !isEditMode}>
+                      {label}{suffix}
+                    </option>
+                  )
+                })}
               </select>
+              {/* Warn if currently selected role is at its quota */}
+              {!isEditMode && isRoleAtQuota(form.role) && (() => {
+                const info = getRoleQuotaInfo(form.role)
+                return (
+                  <p className="mt-1 text-xs text-red-600">
+                    {form.role.charAt(0).toUpperCase() + form.role.slice(1)} quota reached ({info?.used}/{info?.quota}). Select a different role or contact support.
+                  </p>
+                )
+              })()}
             </div>
 
             {/* Branch — creatable combobox */}
@@ -894,29 +962,12 @@ export default function TeamMemberModal({
               )}
             </button>
 
-            {/* Preset recommendation banner — create mode only */}
-            {!isEditMode && preset && !presetApplied && (
-              <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg">
-                <Sparkles className="w-4 h-4 text-blue-500 flex-shrink-0" />
-                <p className="text-xs text-blue-700 dark:text-blue-300 flex-1">
-                  Recommended permissions available for <strong className="capitalize">{form.role}</strong> role
-                </p>
-                <button
-                  type="button"
-                  onClick={applyPreset}
-                  className="px-2.5 py-1 text-xs font-medium text-blue-700 dark:text-blue-300 bg-blue-100 dark:bg-blue-800/50 hover:bg-blue-200 dark:hover:bg-blue-800 rounded-md transition-colors"
-                >
-                  Apply
-                </button>
-              </div>
-            )}
-
-            {/* Preset applied confirmation */}
+            {/* Auto-applied permissions notice — create mode only */}
             {!isEditMode && presetApplied && (
               <div className="mt-2 flex items-center gap-2 px-3 py-2 bg-green-50 dark:bg-green-900/20 border border-green-200 dark:border-green-800 rounded-lg">
-                <Check className="w-4 h-4 text-green-500 flex-shrink-0" />
+                <Sparkles className="w-4 h-4 text-green-500 flex-shrink-0" />
                 <p className="text-xs text-green-700 dark:text-green-300 flex-1">
-                  Recommended preset applied. You can still customize below.
+                  Default <strong className="capitalize">{form.role}</strong> permissions applied. You can customize below.
                 </p>
               </div>
             )}

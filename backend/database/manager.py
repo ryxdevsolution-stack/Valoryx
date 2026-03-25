@@ -86,13 +86,16 @@ class DatabaseManager:
 
         if self.mode == 'online':
             # PostgreSQL configuration
+            # MED-5: pool_size=50/max_overflow=100 (150 total) would exhaust Supabase's connection
+            # limits (free: 20, Pro: 60). Use conservative values that fit within quota.
             engine = create_engine(
                 database_uri,
                 poolclass=pool.QueuePool,
-                pool_size=50,
-                max_overflow=100,
+                pool_size=10,
+                max_overflow=20,
                 pool_pre_ping=True,
                 pool_recycle=3600,
+                pool_timeout=5,
                 echo=os.getenv('SQLALCHEMY_ECHO', 'false').lower() == 'true'
             )
 
@@ -117,8 +120,11 @@ class DatabaseManager:
                 cursor.execute("PRAGMA journal_mode=WAL")
                 cursor.execute("PRAGMA foreign_keys=ON")
                 cursor.execute("PRAGMA synchronous=NORMAL")
-                cursor.execute("PRAGMA cache_size=10000")
+                cursor.execute("PRAGMA cache_size=-32000")   # 32MB page cache
                 cursor.execute("PRAGMA temp_store=MEMORY")
+                cursor.execute("PRAGMA mmap_size=268435456")  # 256MB memory-mapped I/O
+                cursor.execute("PRAGMA busy_timeout=5000")    # 5s wait on locked db
+                cursor.execute("PRAGMA wal_autocheckpoint=1000")  # checkpoint every 1000 pages
                 cursor.close()
 
             print(f"[DatabaseManager] SQLite engine initialized at: {database_uri}")

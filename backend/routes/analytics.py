@@ -5,6 +5,8 @@ from models.stock_model import StockEntry
 from models.payment_model import PaymentType
 from utils.auth_middleware import authenticate
 from utils.cache_helper import get_cache_manager
+from utils.rate_limiter import rate_limit
+from utils.permission_middleware import require_permission
 from sqlalchemy import func, desc
 from datetime import datetime, timedelta
 from collections import defaultdict
@@ -23,6 +25,8 @@ ANALYTICS_CACHE_TIMEOUT = 300  # Default fallback
 
 @analytics_bp.route('/dashboard', methods=['GET'])
 @authenticate
+@require_permission('view_dashboard')
+@rate_limit(max_requests=20, window_seconds=60, key_func=lambda: g.user['user_id'])
 def get_dashboard_analytics():
     """
     Get comprehensive analytics for dashboard with real data - OPTIMIZED with SQL and caching
@@ -51,7 +55,9 @@ def get_dashboard_analytics():
             return jsonify(cached_data), 200
 
         # Calculate date range
-        now = datetime.utcnow()
+        # Bills are stored as IST naive datetimes; use local time so "today_start" etc.
+        # align with the actual calendar day — not UTC midnight (which is 05:30 IST).
+        now = datetime.now()
         if time_range == 'today':
             start_date = now.replace(hour=0, minute=0, second=0, microsecond=0)
         elif time_range == 'week':
@@ -121,12 +127,11 @@ def get_dashboard_analytics():
         total_bills = total_gst_bills + total_non_gst_bills
         avg_bill_value = (revenue_month / total_bills) if total_bills > 0 else 0
 
-        # ==================== LOAD ONLY RECENT BILLS (PARTIAL COLUMNS) ====================
-        # Select only columns needed for product analysis, payment, peak-hours, customer insights.
-        # Avoids loading bill_id, discount_*, negotiable_amount etc. from every row.
+        # ==================== LOAD BILLS FOR PRODUCT / PROFIT ANALYSIS ONLY ====================
+        # customer_name, payment_type, peak_hours, revenue_trend are now computed via
+        # SQL GROUP BY queries below — no need to load those columns into Python here.
         _gst_q = db.session.query(
-            GSTBilling.final_amount, GSTBilling.items, GSTBilling.created_at,
-            GSTBilling.customer_name, GSTBilling.payment_type
+            GSTBilling.final_amount, GSTBilling.items, GSTBilling.created_at
         ).filter(
             GSTBilling.client_id == client_id,
             GSTBilling.created_at >= prev_month_start
@@ -136,8 +141,7 @@ def get_dashboard_analytics():
         gst_bills = _gst_q.all()
 
         _non_q = db.session.query(
-            NonGSTBilling.total_amount, NonGSTBilling.items, NonGSTBilling.created_at,
-            NonGSTBilling.customer_name, NonGSTBilling.payment_type
+            NonGSTBilling.total_amount, NonGSTBilling.items, NonGSTBilling.created_at
         ).filter(
             NonGSTBilling.client_id == client_id,
             NonGSTBilling.created_at >= prev_month_start
@@ -145,6 +149,161 @@ def get_dashboard_analytics():
         if not has_view_all:
             _non_q = _non_q.filter(NonGSTBilling.created_by == user_id)
         non_gst_bills = _non_q.all()
+
+        # ==================== SQL GROUP BY: peak hours, revenue trend, customers, payments ====================
+        # These 4 computations don't need the items JSON column — push aggregation to the DB.
+        # For N bills this reduces Python-side work from O(N) to O(distinct groups) ≈ O(1).
+
+        import json as _json
+        import re as _re
+        _UUID_RE = _re.compile(r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$', _re.I)
+
+        def _resolve_payment_label(raw):
+            if not raw:
+                return 'Unknown'
+            raw_str = str(raw).strip()
+            if raw_str.startswith('[') or raw_str.startswith('{'):
+                try:
+                    parsed = _json.loads(raw_str)
+                    if isinstance(parsed, list):
+                        labels = []
+                        for p in parsed:
+                            if not isinstance(p, dict):
+                                continue
+                            label = p.get('payment_type') or p.get('PAYMENT_TYPE') or ''
+                            if label:
+                                labels.append(str(label).title())
+                        return '+'.join(labels) if labels else 'Unknown'
+                    if isinstance(parsed, dict):
+                        label = parsed.get('payment_type') or parsed.get('PAYMENT_TYPE') or ''
+                        return str(label).title() if label else 'Unknown'
+                except (ValueError, KeyError):
+                    pass
+            return raw_str  # UUID resolved via payment_types map later
+
+        def _apply_user_filter_gst(q):
+            return q.filter(GSTBilling.created_by == user_id) if not has_view_all else q
+
+        def _apply_user_filter_non(q):
+            return q.filter(NonGSTBilling.created_by == user_id) if not has_view_all else q
+
+        # — Peak hours (GROUP BY hour) —
+        # Use func.extract() — dialect-agnostic, works on both SQLite and PostgreSQL
+        _gst_ph = _apply_user_filter_gst(db.session.query(
+            func.extract('hour', GSTBilling.created_at).cast(db.Integer).label('hour'),
+            func.sum(GSTBilling.final_amount).label('sales'),
+            func.count(GSTBilling.bill_id).label('cnt'),
+        ).filter(GSTBilling.client_id == client_id, GSTBilling.created_at >= prev_month_start)
+        ).group_by(func.extract('hour', GSTBilling.created_at)).all()
+
+        _non_ph = _apply_user_filter_non(db.session.query(
+            func.extract('hour', NonGSTBilling.created_at).cast(db.Integer).label('hour'),
+            func.sum(NonGSTBilling.total_amount).label('sales'),
+            func.count(NonGSTBilling.bill_id).label('cnt'),
+        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.created_at >= prev_month_start)
+        ).group_by(func.extract('hour', NonGSTBilling.created_at)).all()
+
+        _ph_agg = defaultdict(lambda: {'sales': 0.0, 'count': 0})
+        for r in _gst_ph:
+            _ph_agg[r.hour]['sales'] += float(r.sales or 0)
+            _ph_agg[r.hour]['count'] += int(r.cnt or 0)
+        for r in _non_ph:
+            _ph_agg[r.hour]['sales'] += float(r.sales or 0)
+            _ph_agg[r.hour]['count'] += int(r.cnt or 0)
+        peak_hours = [
+            {'hour': h, 'sales': round(d['sales'], 2), 'count': d['count']}
+            for h, d in sorted(_ph_agg.items())
+        ]
+
+        # — Revenue trend (GROUP BY date) —
+        _gst_tr = _apply_user_filter_gst(db.session.query(
+            func.date(GSTBilling.created_at).label('dt'),
+            func.sum(GSTBilling.final_amount).label('revenue'),
+            func.count(GSTBilling.bill_id).label('bills'),
+        ).filter(GSTBilling.client_id == client_id, GSTBilling.created_at >= start_date)
+        ).group_by(func.date(GSTBilling.created_at)).all()
+
+        _non_tr = _apply_user_filter_non(db.session.query(
+            func.date(NonGSTBilling.created_at).label('dt'),
+            func.sum(NonGSTBilling.total_amount).label('revenue'),
+            func.count(NonGSTBilling.bill_id).label('bills'),
+        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.created_at >= start_date)
+        ).group_by(func.date(NonGSTBilling.created_at)).all()
+
+        _tr_agg = defaultdict(lambda: {'revenue': 0.0, 'bills': 0})
+        for r in _gst_tr:
+            _tr_agg[str(r.dt)]['revenue'] += float(r.revenue or 0)
+            _tr_agg[str(r.dt)]['bills'] += int(r.bills or 0)
+        for r in _non_tr:
+            _tr_agg[str(r.dt)]['revenue'] += float(r.revenue or 0)
+            _tr_agg[str(r.dt)]['bills'] += int(r.bills or 0)
+        revenue_trend_list = sorted(
+            [{'date': dt, 'revenue': round(d['revenue'], 2), 'bills': d['bills']} for dt, d in _tr_agg.items()],
+            key=lambda x: x['date'],
+        )
+
+        # — Top customers (GROUP BY customer_name) —
+        _gst_cu = _apply_user_filter_gst(db.session.query(
+            func.coalesce(GSTBilling.customer_name, 'Walk-in').label('customer'),
+            func.sum(GSTBilling.final_amount).label('spend'),
+            func.count(GSTBilling.bill_id).label('visits'),
+        ).filter(GSTBilling.client_id == client_id, GSTBilling.created_at >= prev_month_start)
+        ).group_by(func.coalesce(GSTBilling.customer_name, 'Walk-in')).all()
+
+        _non_cu = _apply_user_filter_non(db.session.query(
+            func.coalesce(NonGSTBilling.customer_name, 'Walk-in').label('customer'),
+            func.sum(NonGSTBilling.total_amount).label('spend'),
+            func.count(NonGSTBilling.bill_id).label('visits'),
+        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.created_at >= prev_month_start)
+        ).group_by(func.coalesce(NonGSTBilling.customer_name, 'Walk-in')).all()
+
+        _cu_agg = defaultdict(lambda: {'spend': 0.0, 'visits': 0})
+        for r in _gst_cu:
+            _cu_agg[r.customer]['spend'] += float(r.spend or 0)
+            _cu_agg[r.customer]['visits'] += int(r.visits or 0)
+        for r in _non_cu:
+            _cu_agg[r.customer]['spend'] += float(r.spend or 0)
+            _cu_agg[r.customer]['visits'] += int(r.visits or 0)
+        top_customers = sorted(
+            [{'name': n, 'total_spend': round(d['spend'], 2), 'visit_count': d['visits'],
+              'avg_spend': round(d['spend'] / d['visits'], 2) if d['visits'] > 0 else 0}
+             for n, d in _cu_agg.items()],
+            key=lambda x: x['total_spend'], reverse=True,
+        )[:10]
+
+        # — Payment preferences (GROUP BY payment_type) —
+        _gst_py = _apply_user_filter_gst(db.session.query(
+            GSTBilling.payment_type,
+            func.count(GSTBilling.bill_id).label('cnt'),
+            func.sum(GSTBilling.final_amount).label('amount'),
+        ).filter(GSTBilling.client_id == client_id, GSTBilling.created_at >= prev_month_start)
+        ).group_by(GSTBilling.payment_type).all()
+
+        _non_py = _apply_user_filter_non(db.session.query(
+            NonGSTBilling.payment_type,
+            func.count(NonGSTBilling.bill_id).label('cnt'),
+            func.sum(NonGSTBilling.total_amount).label('amount'),
+        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.created_at >= prev_month_start)
+        ).group_by(NonGSTBilling.payment_type).all()
+
+        _py_agg = defaultdict(lambda: {'count': 0, 'amount': 0.0})
+        for r in _gst_py:
+            label = _resolve_payment_label(r.payment_type)
+            _py_agg[label]['count'] += int(r.cnt or 0)
+            _py_agg[label]['amount'] += float(r.amount or 0)
+        for r in _non_py:
+            label = _resolve_payment_label(r.payment_type)
+            _py_agg[label]['count'] += int(r.cnt or 0)
+            _py_agg[label]['amount'] += float(r.amount or 0)
+
+        from utils.query_cache import get_payment_type_map
+        payment_types = get_payment_type_map(client_id)
+        payment_preferences = sorted(
+            [{'method': payment_types.get(pid, 'Custom') if _UUID_RE.match(pid) else pid,
+              'count': d['count'], 'amount': d['amount']}
+             for pid, d in _py_agg.items()],
+            key=lambda x: x['amount'], reverse=True,
+        )
 
         # Product performance analysis (ALL TIME)
         product_sales = defaultdict(lambda: {'quantity': 0, 'revenue': 0.0, 'category': '', 'recent_sales': 0, 'old_sales': 0})
@@ -275,7 +434,11 @@ def get_dashboard_analytics():
             if row.quantity is not None and row.low_stock_alert is not None
             and row.quantity <= row.low_stock_alert
         ]
-        inventory_total_value = sum(float(row.rate or 0) * (row.quantity or 0) for row in low_stock_items)
+        # Total inventory value across ALL products, using cost_price when available
+        inventory_total_value = sum(
+            (float(row.cost_price) if row.cost_price else float(row.rate or 0)) * (row.quantity or 0)
+            for row in all_stock_rows
+        )
         # Build cost lookup from the same rows (avoids a second stock query below)
         all_stock = {
             row.product_name: float(row.cost_price) if row.cost_price else float(row.rate or 0) * 0.7
@@ -324,101 +487,8 @@ def get_dashboard_analytics():
             for cat, data in sorted(category_performance.items(), key=lambda x: x[1]['revenue'], reverse=True)
         ]
 
-        # Payment preferences
-        payment_stats = defaultdict(lambda: {'count': 0, 'amount': 0.0})
-
-        for bill in gst_bills:
-            payment_id = str(bill.payment_type) if bill.payment_type else 'Unknown'
-            payment_stats[payment_id]['count'] += 1
-            payment_stats[payment_id]['amount'] += float(bill.final_amount)
-
-        for bill in non_gst_bills:
-            payment_id = str(bill.payment_type) if bill.payment_type else 'Unknown'
-            payment_stats[payment_id]['count'] += 1
-            payment_stats[payment_id]['amount'] += float(bill.total_amount)
-
-        # Get payment type names (request-cached)
-        from utils.query_cache import get_payment_type_map
-        payment_types = get_payment_type_map(client_id)
-
-        payment_preferences = [
-            {
-                'method': payment_types.get(payment_id, 'Unknown' if payment_id == 'Unknown' else f'Payment {payment_id[:8]}...'),
-                'count': data['count'],
-                'amount': data['amount']
-            }
-            for payment_id, data in sorted(payment_stats.items(), key=lambda x: x[1]['amount'], reverse=True)
-        ]
-
-        # Peak hours analysis - REAL DATA
-        peak_hours_data = defaultdict(lambda: {'sales': 0.0, 'count': 0})
-
-        for bill in gst_bills:
-            hour = bill.created_at.hour
-            peak_hours_data[hour]['sales'] += float(bill.final_amount)
-            peak_hours_data[hour]['count'] += 1
-
-        for bill in non_gst_bills:
-            hour = bill.created_at.hour
-            peak_hours_data[hour]['sales'] += float(bill.total_amount)
-            peak_hours_data[hour]['count'] += 1
-
-        peak_hours = [
-            {
-                'hour': hour,
-                'sales': round(peak_hours_data[hour]['sales'], 2),
-                'count': peak_hours_data[hour]['count']
-            }
-            for hour in sorted(peak_hours_data.keys())
-        ]
-
-        # Revenue trend (daily breakdown for charts)
-        revenue_trend = defaultdict(lambda: {'date': '', 'revenue': 0.0, 'bills': 0})
-
-        for bill in gst_bills:
-            if bill.created_at >= start_date:
-                date_key = bill.created_at.strftime('%Y-%m-%d')
-                revenue_trend[date_key]['date'] = date_key
-                revenue_trend[date_key]['revenue'] += float(bill.final_amount)
-                revenue_trend[date_key]['bills'] += 1
-
-        for bill in non_gst_bills:
-            if bill.created_at >= start_date:
-                date_key = bill.created_at.strftime('%Y-%m-%d')
-                revenue_trend[date_key]['date'] = date_key
-                revenue_trend[date_key]['revenue'] += float(bill.total_amount)
-                revenue_trend[date_key]['bills'] += 1
-
-        revenue_trend_list = sorted(
-            [{'date': data['date'], 'revenue': round(data['revenue'], 2), 'bills': data['bills']}
-             for data in revenue_trend.values()],
-            key=lambda x: x['date']
-        )
-
-        # Customer insights
-        customer_frequency = defaultdict(int)
-        customer_spend = defaultdict(float)
-
-        for bill in gst_bills:
-            customer = bill.customer_name or 'Walk-in'
-            customer_frequency[customer] += 1
-            customer_spend[customer] += float(bill.final_amount)
-
-        for bill in non_gst_bills:
-            customer = bill.customer_name or 'Walk-in'
-            customer_frequency[customer] += 1
-            customer_spend[customer] += float(bill.total_amount)
-
-        # Top customers by spend
-        top_customers = [
-            {
-                'name': customer,
-                'total_spend': round(spend, 2),
-                'visit_count': customer_frequency[customer],
-                'avg_spend': round(spend / customer_frequency[customer], 2)
-            }
-            for customer, spend in sorted(customer_spend.items(), key=lambda x: x[1], reverse=True)[:10]
-        ]
+        # peak_hours, revenue_trend_list, top_customers, payment_preferences
+        # are now computed via SQL GROUP BY above — no Python loops needed here.
 
         # Profit margin analysis (based on cost_price vs selling price)
         total_cost = 0

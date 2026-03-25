@@ -1,6 +1,22 @@
-import { useState } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Maximize2, LayoutDashboard, Receipt, Users, UserPlus, BarChart2, Package, Zap, ShieldCheck, Clock } from 'lucide-react'
+import {
+  Maximize2,
+  LayoutDashboard,
+  Receipt,
+  Users,
+  UserPlus,
+  BarChart2,
+  Package,
+  Zap,
+  ShieldCheck,
+  Clock,
+  Truck,
+  ArrowLeftRight,
+  ClipboardList,
+  Pause,
+  Play,
+} from 'lucide-react'
 import { fadeInUp, staggerContainer, viewportOnce } from '@/lib/landing/animations'
 import ImageLightboxModal from './ImageLightboxModal'
 
@@ -11,6 +27,7 @@ const tabs = [
     id: 'dashboard',
     label: 'Dashboard',
     icon: LayoutDashboard,
+    color: 'from-sky-500 to-blue-600',
     screenshots: [
       {
         src: '/screenshots/das1.png',
@@ -28,6 +45,7 @@ const tabs = [
     id: 'billing',
     label: 'Billing',
     icon: Receipt,
+    color: 'from-green-500 to-emerald-600',
     screenshots: [
       {
         src: '/screenshots/bill.png',
@@ -42,9 +60,49 @@ const tabs = [
     ],
   },
   {
+    id: 'stock',
+    label: 'Stock',
+    icon: Package,
+    color: 'from-orange-500 to-amber-600',
+    screenshots: [
+      {
+        src: '/screenshots/stock.png',
+        label: 'Stock Management',
+        description: 'Track inventory levels, low-stock alerts, and product catalog.',
+      },
+    ],
+  },
+  {
+    id: 'suppliers',
+    label: 'Suppliers',
+    icon: Truck,
+    color: 'from-purple-500 to-violet-600',
+    screenshots: [
+      {
+        src: '/screenshots/suppliers.png',
+        label: 'Supplier List',
+        description: 'Manage all your suppliers and track delivery history.',
+      },
+    ],
+  },
+  {
+    id: 'transfer',
+    label: 'Stock Transfer',
+    icon: ArrowLeftRight,
+    color: 'from-cyan-500 to-teal-600',
+    screenshots: [
+      {
+        src: '/screenshots/transfer.png',
+        label: 'Stock Transfer',
+        description: 'Transfer stock between branches with real-time tracking.',
+      },
+    ],
+  },
+  {
     id: 'customers',
     label: 'Customers',
     icon: Users,
+    color: 'from-pink-500 to-rose-600',
     screenshots: [
       {
         src: '/screenshots/cus.png',
@@ -54,21 +112,10 @@ const tabs = [
     ],
   },
   {
-    id: 'users',
-    label: 'User Management',
-    icon: UserPlus,
-    screenshots: [
-      {
-        src: '/screenshots/adduser.png',
-        label: 'Add / Manage Users',
-        description: 'Create staff accounts with role-based access control.',
-      },
-    ],
-  },
-  {
     id: 'reports',
     label: 'Reports',
     icon: BarChart2,
+    color: 'from-indigo-500 to-purple-600',
     screenshots: [
       {
         src: '/screenshots/report.png',
@@ -78,14 +125,28 @@ const tabs = [
     ],
   },
   {
-    id: 'stock',
-    label: 'Stock',
-    icon: Package,
+    id: 'audit',
+    label: 'Audit',
+    icon: ClipboardList,
+    color: 'from-red-500 to-rose-600',
     screenshots: [
       {
-        src: '/screenshots/stock.png',
-        label: 'Stock Management',
-        description: 'Track inventory levels, low-stock alerts, and product catalog.',
+        src: '/screenshots/audit.png',
+        label: 'Audit Trail',
+        description: 'Every action logged — who did what, when, and what changed.',
+      },
+    ],
+  },
+  {
+    id: 'users',
+    label: 'Team',
+    icon: UserPlus,
+    color: 'from-yellow-500 to-orange-500',
+    screenshots: [
+      {
+        src: '/screenshots/adduser.png',
+        label: 'Team Management',
+        description: 'Create staff accounts with role-based access control.',
       },
     ],
   },
@@ -93,17 +154,66 @@ const tabs = [
 
 // ─── Component ────────────────────────────────────────────────────────────────
 
+const AUTO_PLAY_INTERVAL = 4000 // ms per tab
+
 export default function AppPreviewSection() {
   const [activeTab, setActiveTab] = useState(0)
   const [activeScreenshot, setActiveScreenshot] = useState(0)
   const [lightboxOpen, setLightboxOpen] = useState(false)
   const [lightboxIndex, setLightboxIndex] = useState(0)
+  const [isPlaying, setIsPlaying] = useState(true)
+  const [progress, setProgress] = useState(0)
+  const intervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const progressRef = useRef<ReturnType<typeof setInterval> | null>(null)
 
   const currentTab = tabs[activeTab]
   const currentScreenshots = currentTab.screenshots
-
-  // Flat list of all screenshots for lightbox prev/next
   const allScreenshots = tabs.flatMap((t) => t.screenshots)
+
+  // Auto-play: cycle through tabs
+  const startAutoPlay = () => {
+    if (intervalRef.current) clearInterval(intervalRef.current)
+    if (progressRef.current) clearInterval(progressRef.current)
+
+    setProgress(0)
+    let elapsed = 0
+    const TICK = 50
+
+    progressRef.current = setInterval(() => {
+      elapsed += TICK
+      setProgress(Math.min((elapsed / AUTO_PLAY_INTERVAL) * 100, 100))
+    }, TICK)
+
+    intervalRef.current = setInterval(() => {
+      elapsed = 0
+      setProgress(0)
+      setActiveTab((prev) => (prev + 1) % tabs.length)
+      setActiveScreenshot(0)
+    }, AUTO_PLAY_INTERVAL)
+  }
+
+  const stopAutoPlay = () => {
+    if (intervalRef.current) { clearInterval(intervalRef.current); intervalRef.current = null }
+    if (progressRef.current) { clearInterval(progressRef.current); progressRef.current = null }
+    setProgress(0)
+  }
+
+  useEffect(() => {
+    if (isPlaying) startAutoPlay()
+    else stopAutoPlay()
+    return () => { stopAutoPlay() }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isPlaying, activeTab])
+
+  const handleTabChange = (idx: number) => {
+    setActiveTab(idx)
+    setActiveScreenshot(0)
+    if (isPlaying) {
+      stopAutoPlay()
+      // restart timer from 0
+      setTimeout(() => startAutoPlay(), 0)
+    }
+  }
 
   const openLightbox = (globalIndex: number) => {
     setLightboxIndex(globalIndex)
@@ -114,11 +224,6 @@ export default function AppPreviewSection() {
     let count = 0
     for (let i = 0; i < tabIdx; i++) count += tabs[i].screenshots.length
     return count + ssIdx
-  }
-
-  const handleTabChange = (idx: number) => {
-    setActiveTab(idx)
-    setActiveScreenshot(0)
   }
 
   return (
@@ -144,6 +249,13 @@ export default function AppPreviewSection() {
           variants={staggerContainer}
           className="text-center mb-12"
         >
+          <motion.span
+            variants={fadeInUp}
+            className="inline-block px-4 py-1.5 rounded-full bg-primary-100 dark:bg-primary-900/30 text-primary-700 dark:text-primary-300 text-sm font-semibold mb-4 border border-primary-200/50 dark:border-primary-700/30"
+          >
+            Live App Preview
+          </motion.span>
+
           <motion.h2
             variants={fadeInUp}
             className="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-4"
@@ -158,7 +270,7 @@ export default function AppPreviewSection() {
             variants={fadeInUp}
             className="text-base sm:text-lg text-gray-600 dark:text-gray-400 max-w-xl mx-auto mb-8"
           >
-            From billing to stock to reports — everything your shop needs, in one clean interface.
+            From billing to stock to reports — every module your shop needs, in one clean interface.
           </motion.p>
 
           {/* 3 value pills */}
@@ -180,7 +292,6 @@ export default function AppPreviewSection() {
               </span>
             ))}
           </motion.div>
-
         </motion.div>
 
         {/* Tab bar */}
@@ -189,7 +300,7 @@ export default function AppPreviewSection() {
           whileInView={{ opacity: 1, y: 0 }}
           viewport={viewportOnce}
           transition={{ duration: 0.5, delay: 0.2 }}
-          className="flex flex-wrap justify-center gap-2 mb-8"
+          className="flex flex-wrap justify-center gap-2 mb-6"
         >
           {tabs.map((tab, idx) => {
             const Icon = tab.icon
@@ -206,20 +317,50 @@ export default function AppPreviewSection() {
               >
                 <Icon className="w-4 h-4" />
                 {tab.label}
-                {tab.screenshots.length > 1 && (
-                  <span
-                    className={`text-xs px-1.5 py-0.5 rounded-full ${
-                      isActive
-                        ? 'bg-white/20 text-white'
-                        : 'bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400'
-                    }`}
-                  >
-                    {tab.screenshots.length}
-                  </span>
-                )}
               </button>
             )
           })}
+        </motion.div>
+
+        {/* Auto-play controls */}
+        <motion.div
+          initial={{ opacity: 0 }}
+          whileInView={{ opacity: 1 }}
+          viewport={viewportOnce}
+          className="flex items-center justify-center gap-3 mb-6"
+        >
+          <button
+            onClick={() => setIsPlaying((p) => !p)}
+            className="flex items-center gap-2 text-xs text-gray-500 dark:text-gray-400 hover:text-primary-500 dark:hover:text-primary-400 transition-colors"
+          >
+            {isPlaying ? <Pause className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
+            {isPlaying ? 'Pause auto-play' : 'Resume auto-play'}
+          </button>
+
+          {/* Progress bar */}
+          {isPlaying && (
+            <div className="w-32 h-1 bg-gray-200 dark:bg-gray-700 rounded-full overflow-hidden">
+              <motion.div
+                className="h-full bg-primary-500 rounded-full"
+                style={{ width: `${progress}%` }}
+              />
+            </div>
+          )}
+
+          {/* Tab dots */}
+          <div className="flex gap-1">
+            {tabs.map((_, idx) => (
+              <button
+                key={idx}
+                onClick={() => handleTabChange(idx)}
+                className={`rounded-full transition-all duration-300 ${
+                  activeTab === idx
+                    ? 'w-4 h-2 bg-primary-500'
+                    : 'w-2 h-2 bg-gray-300 dark:bg-gray-600 hover:bg-primary-400'
+                }`}
+              />
+            ))}
+          </div>
         </motion.div>
 
         {/* Screenshot display */}
@@ -233,21 +374,20 @@ export default function AppPreviewSection() {
           {/* Browser Chrome Frame */}
           <div className="bg-white dark:bg-gray-900 rounded-2xl shadow-2xl border border-gray-200/60 dark:border-gray-700/60 overflow-hidden">
             {/* Browser header */}
-            <div className="flex items-center gap-3 px-4 py-3 bg-gray-100 dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700">
+            <div className={`flex items-center gap-3 px-4 py-3 border-b border-gray-200 dark:border-gray-700 bg-gradient-to-r ${currentTab.color} bg-opacity-10`}>
               <div className="flex gap-1.5">
                 <div className="w-3 h-3 rounded-full bg-red-400" />
                 <div className="w-3 h-3 rounded-full bg-yellow-400" />
                 <div className="w-3 h-3 rounded-full bg-green-400" />
               </div>
               <div className="flex-1 flex justify-center">
-                <div className="px-4 py-1 rounded-lg bg-white dark:bg-gray-700 text-xs text-gray-500 dark:text-gray-400 font-mono border border-gray-200 dark:border-gray-600 max-w-xs">
+                <div className="px-4 py-1 rounded-lg bg-white/80 dark:bg-gray-800 text-xs text-gray-500 dark:text-gray-400 font-mono border border-gray-200 dark:border-gray-600 max-w-xs">
                   app.valoryx.in / {currentTab.id}
                 </div>
               </div>
-              {/* Expand hint */}
               <button
                 onClick={() => openLightbox(getGlobalIndex(activeTab, activeScreenshot))}
-                className="flex items-center gap-1 text-xs text-gray-400 hover:text-primary-500 transition-colors"
+                className="flex items-center gap-1 text-xs text-white/80 hover:text-white transition-colors"
                 title="View full size"
               >
                 <Maximize2 className="w-3.5 h-3.5" />
@@ -255,7 +395,7 @@ export default function AppPreviewSection() {
               </button>
             </div>
 
-            {/* Screenshot image — clickable */}
+            {/* Screenshot image */}
             <div
               className="relative cursor-zoom-in group bg-gray-50 dark:bg-gray-950"
               onClick={() => openLightbox(getGlobalIndex(activeTab, activeScreenshot))}
@@ -268,7 +408,7 @@ export default function AppPreviewSection() {
                   initial={{ opacity: 0, y: 10 }}
                   animate={{ opacity: 1, y: 0 }}
                   exit={{ opacity: 0, y: -10 }}
-                  transition={{ duration: 0.25 }}
+                  transition={{ duration: 0.3 }}
                   className="w-full object-contain max-h-[520px]"
                   draggable={false}
                 />
@@ -282,7 +422,7 @@ export default function AppPreviewSection() {
               </div>
             </div>
 
-            {/* Caption + sub-tabs (if multiple screenshots in tab) */}
+            {/* Caption + sub-tabs */}
             <div className="px-5 py-4 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 bg-white dark:bg-gray-900 border-t border-gray-100 dark:border-gray-800">
               <div>
                 <p className="font-semibold text-gray-900 dark:text-white text-sm">
@@ -356,7 +496,6 @@ export default function AppPreviewSection() {
           onNext={() => setLightboxIndex((i) => (i + 1) % allScreenshots.length)}
         />
       )}
-
     </section>
   )
 }

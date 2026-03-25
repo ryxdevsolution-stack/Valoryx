@@ -108,10 +108,10 @@ export default function UnifiedBillingPage() {
   const isRestoringFromStorage = useRef(false)
   const barcodeBuffer = useRef('')
 
-  // Derive per-user localStorage keys so drafts are isolated between users
-  const userId = (() => {
+  // M-4: useMemo so localStorage is read once per mount, not on every render
+  const userId = useMemo(() => {
     try { return JSON.parse(localStorage.getItem('user') || '{}').user_id || 'guest' } catch { return 'guest' }
-  })()
+  }, [])
   const DRAFT_STORAGE_KEY = `billing_draft_tabs_${userId}`
   const VIEW_MODE_KEY = `billing_view_mode_${userId}`
 
@@ -121,6 +121,7 @@ export default function UnifiedBillingPage() {
     return stored === 'list' || stored === 'card' ? stored : 'list'
   })
   const barcodeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const draftSaveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // For detecting fast typing (barcode scanner) in product search field
   const searchInputTimestamp = useRef<number>(0)
@@ -383,25 +384,30 @@ export default function UnifiedBillingPage() {
     }
   }, [loadInitialData])
 
-  // Save drafts to localStorage whenever billTabs or activeTabId changes
+  // M-7: Debounce draft saves — previously wrote ~10KB synchronously on every keystroke.
+  // 500ms debounce means at most 2 writes/second during active typing.
   useEffect(() => {
-    // Skip saving during initial restoration
     if (isRestoringFromStorage.current) {
       isRestoringFromStorage.current = false
       return
     }
-
-    try {
-      const dataToSave = {
-        tabs: billTabs,
-        activeTabId: activeTabId,
-        savedAt: new Date().toISOString()
+    if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current)
+    draftSaveTimer.current = setTimeout(() => {
+      try {
+        localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify({
+          tabs: billTabs,
+          activeTabId,
+          savedAt: new Date().toISOString()
+        }))
+      } catch (e) {
+        console.error('Failed to save draft to localStorage:', e)
       }
-      localStorage.setItem(DRAFT_STORAGE_KEY, JSON.stringify(dataToSave))
-    } catch (e) {
-      console.error('Failed to save draft to localStorage:', e)
+      draftSaveTimer.current = null
+    }, 500)
+    return () => {
+      if (draftSaveTimer.current) clearTimeout(draftSaveTimer.current)
     }
-  }, [billTabs, activeTabId])
+  }, [billTabs, activeTabId, DRAFT_STORAGE_KEY])
 
   // Persist view mode preference (per user)
   useEffect(() => {
@@ -1147,64 +1153,30 @@ export default function UnifiedBillingPage() {
     updateActiveTab({ items: updatedItems })
   }
 
-  const calculateSubtotal = () => {
-    return activeTab.items.reduce((sum, item) => sum + item.quantity * item.rate, 0)
-  }
+  // C-2: Single useMemo replaces 8 plain functions that each iterated/re-computed on every render.
+  // Previous pattern: getRoundedGrandTotal → calculateGrandTotal → calculateSubtotal + calculateTotalGST
+  // = 4 separate array passes per render. Now: 1 pass, result cached until deps change.
+  const billTotals = useMemo(() => {
+    const subtotal = activeTab.items.reduce((sum, item) => sum + item.quantity * item.rate, 0)
+    const totalGST = activeTab.items.reduce((sum, item) => sum + item.gst_amount, 0)
+    const subtotalWithGST = subtotal + totalGST
 
-  const calculateTotalGST = () => {
-    return activeTab.items.reduce((sum, item) => sum + item.gst_amount, 0)
-  }
+    const grandTotal = activeTab.useNegotiablePrice && activeTab.negotiableAmount > 0
+      ? Math.max(0, subtotalWithGST - activeTab.negotiableAmount)
+      : Math.max(0, subtotalWithGST - (subtotalWithGST * activeTab.discountPercentage) / 100)
 
-  const calculateGrandTotal = () => {
-    const subtotalWithGST = calculateSubtotal() + calculateTotalGST()
+    const rounded = Math.round(grandTotal)
 
-    // If negotiable price is enabled, subtract the negotiable amount as discount
-    if (activeTab.useNegotiablePrice && activeTab.negotiableAmount > 0) {
-      return Math.max(0, subtotalWithGST - activeTab.negotiableAmount)
+    return {
+      subtotal,
+      totalGST,
+      grandTotal: rounded,
+      roundOff: rounded - grandTotal,
+      discountAmount: (subtotalWithGST * activeTab.discountPercentage) / 100,
+      balance: activeTab.amountReceived - rounded,
     }
-
-    // Otherwise use discount percentage
-    const calculatedDiscountAmount = (subtotalWithGST * activeTab.discountPercentage) / 100
-    return Math.max(0, subtotalWithGST - calculatedDiscountAmount)
-  }
-
-  const getRoundedGrandTotal = () => {
-    const grandTotal = calculateGrandTotal()
-    return Math.round(grandTotal) // Rounds to nearest whole number (0.5 and above rounds up)
-  }
-
-  const getRoundOffAmount = () => {
-    const grandTotal = calculateGrandTotal()
-    const rounded = getRoundedGrandTotal()
-    return rounded - grandTotal // Positive if rounded up, negative if rounded down
-  }
-
-  const getDiscountAmount = () => {
-    const subtotalWithGST = calculateSubtotal() + calculateTotalGST()
-    return (subtotalWithGST * activeTab.discountPercentage) / 100
-  }
-
-  const getBalanceAmount = () => {
-    const grandTotal = getRoundedGrandTotal() // Use rounded total for balance
-    return activeTab.amountReceived - grandTotal
-  }
-
-  const hasGSTItems = () => {
-    // Non-GST only: Never has GST items
-    if (nonGstOnly) return false
-    // GST only: Always has GST (even if all items are 0%, treat as GST bill)
-    if (gstOnly) return true
-    // Both permissions: Smart detection based on items
-    return activeTab.items.some((item) => item.gst_percentage > 0)
-  }
-
-  const getBillType = () => {
-    // Permission-based bill type determination
-    if (gstOnly) return 'GST Bill'
-    if (nonGstOnly) return 'Non-GST Bill'
-    // Both permissions: Smart detection
-    return activeTab.items.some((item) => item.gst_percentage > 0) ? 'GST Bill' : 'Non-GST Bill'
-  }
+  }, [activeTab.items, activeTab.discountPercentage, activeTab.negotiableAmount,
+      activeTab.useNegotiablePrice, activeTab.amountReceived])
 
   // Determine if GST columns should be shown in the table
   const showGstColumns = () => {
@@ -1228,7 +1200,7 @@ export default function UnifiedBillingPage() {
     }
 
     const totalSplits = getTotalPaymentSplits()
-    const grandTotal = getRoundedGrandTotal()
+    const grandTotal = billTotals.grandTotal
 
     if (Math.abs(totalSplits - grandTotal) > 0.01) {
       alert(`Payment splits total (₹${totalSplits.toFixed(2)}) must equal bill total (₹${grandTotal.toFixed(2)})`)
@@ -2527,7 +2499,7 @@ export default function UnifiedBillingPage() {
                     <span className="text-gray-700 dark:text-gray-300">Total Payment Splits:</span>
                     <span
                       className={`${
-                        Math.abs(getTotalPaymentSplits() - getRoundedGrandTotal()) < 0.01
+                        Math.abs(getTotalPaymentSplits() - billTotals.grandTotal) < 0.01
                           ? 'text-green-600 dark:text-green-400'
                           : 'text-red-600 dark:text-red-400'
                       }`}
@@ -2536,13 +2508,13 @@ export default function UnifiedBillingPage() {
                     </span>
                   </div>
                   {/* Balance to Collect or Change to Give */}
-                  {getTotalPaymentSplits() > 0 && Math.abs(getTotalPaymentSplits() - getRoundedGrandTotal()) >= 0.01 && (
+                  {getTotalPaymentSplits() > 0 && Math.abs(getTotalPaymentSplits() - billTotals.grandTotal) >= 0.01 && (
                     <div className="flex justify-between text-xs font-bold mt-1 py-1 px-2 rounded bg-orange-50 dark:bg-orange-900/20">
-                      <span className={getTotalPaymentSplits() < getRoundedGrandTotal() ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
-                        {getTotalPaymentSplits() < getRoundedGrandTotal() ? '⚠️ Balance to Collect:' : '💰 Change to Give:'}
+                      <span className={getTotalPaymentSplits() < billTotals.grandTotal ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
+                        {getTotalPaymentSplits() < billTotals.grandTotal ? '⚠️ Balance to Collect:' : '💰 Change to Give:'}
                       </span>
-                      <span className={getTotalPaymentSplits() < getRoundedGrandTotal() ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
-                        ₹{Math.abs(getRoundedGrandTotal() - getTotalPaymentSplits()).toFixed(2)}
+                      <span className={getTotalPaymentSplits() < billTotals.grandTotal ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
+                        ₹{Math.abs(billTotals.grandTotal - getTotalPaymentSplits()).toFixed(2)}
                       </span>
                     </div>
                   )}
@@ -2557,7 +2529,7 @@ export default function UnifiedBillingPage() {
                   <UpiQrCode
                     upiId={shopSettings.upi_id}
                     shopName={shopSettings.shop_name || client?.client_name || ''}
-                    amount={getRoundedGrandTotal()}
+                    amount={billTotals.grandTotal}
                     size={160}
                   />
                 </div>
@@ -2569,7 +2541,7 @@ export default function UnifiedBillingPage() {
           <div className="md:hidden flex items-center justify-between gap-3 px-4 py-3 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 sticky bottom-16">
             <div>
               <p className="text-xs text-gray-500 dark:text-gray-400">Total</p>
-              <p className="text-lg font-bold text-gray-900 dark:text-white">₹{getRoundedGrandTotal()?.toLocaleString()}</p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">₹{billTotals.grandTotal?.toLocaleString()}</p>
             </div>
             <button
               type="submit"
@@ -2611,16 +2583,16 @@ export default function UnifiedBillingPage() {
                       Subtotal:
                     </span>
                     <span className="text-xs font-semibold text-gray-900 dark:text-white">
-                      ₹{calculateSubtotal().toFixed(2)}
+                      ₹{billTotals.subtotal.toFixed(2)}
                     </span>
                   </div>
-                  {showGstColumns() && calculateTotalGST() > 0 && (
+                  {showGstColumns() && billTotals.totalGST > 0 && (
                     <div className="flex justify-between items-center">
                       <span className="text-xs text-gray-700 dark:text-gray-300 font-medium">
                         Total GST:
                       </span>
                       <span className="text-xs font-semibold text-gray-900 dark:text-white">
-                        ₹{calculateTotalGST().toFixed(2)}
+                        ₹{billTotals.totalGST.toFixed(2)}
                       </span>
                     </div>
                   )}
@@ -2630,7 +2602,7 @@ export default function UnifiedBillingPage() {
                         Discount ({activeTab.discountPercentage}%):
                       </span>
                       <span className="text-xs font-semibold text-red-600 dark:text-red-400">
-                        - ₹{getDiscountAmount().toFixed(2)}
+                        - ₹{billTotals.discountAmount.toFixed(2)}
                       </span>
                     </div>
                   )}
@@ -2644,13 +2616,13 @@ export default function UnifiedBillingPage() {
                       </span>
                     </div>
                   )}
-                  {getRoundOffAmount() !== 0 && (
+                  {billTotals.roundOff !== 0 && (
                     <div className="flex justify-between items-center border-t border-gray-300 dark:border-gray-600 pt-1">
                       <span className="text-xs text-gray-700 dark:text-gray-300 font-medium">
                         Round Off:
                       </span>
-                      <span className={`text-xs font-semibold ${getRoundOffAmount() > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                        {getRoundOffAmount() > 0 ? '+' : ''}{getRoundOffAmount().toFixed(2)}
+                      <span className={`text-xs font-semibold ${billTotals.roundOff > 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                        {billTotals.roundOff > 0 ? '+' : ''}{billTotals.roundOff.toFixed(2)}
                       </span>
                     </div>
                   )}
@@ -2659,7 +2631,7 @@ export default function UnifiedBillingPage() {
                       Grand Total:
                     </span>
                     <span className="text-lg font-bold text-green-700 dark:text-green-400">
-                      ₹{getRoundedGrandTotal().toFixed(2)}
+                      ₹{billTotals.grandTotal.toFixed(2)}
                     </span>
                   </div>
                   {activeTab.amountReceived > 0 && (
@@ -2678,12 +2650,12 @@ export default function UnifiedBillingPage() {
                         </span>
                         <span
                           className={`text-xs font-semibold ${
-                            getBalanceAmount() >= 0
+                            billTotals.balance >= 0
                               ? 'text-purple-700 dark:text-purple-400'
                               : 'text-red-600 dark:text-red-400'
                           }`}
                         >
-                          ₹{getBalanceAmount().toFixed(2)}
+                          ₹{billTotals.balance.toFixed(2)}
                         </span>
                       </div>
                     </>
@@ -2742,10 +2714,10 @@ export default function UnifiedBillingPage() {
                           rate: item.rate,
                           amount: item.amount,
                         })),
-                        subtotal: calculateSubtotal(),
-                        gstAmount: calculateTotalGST(),
-                        discount: activeTab.useNegotiablePrice ? activeTab.negotiableAmount : getDiscountAmount(),
-                        grandTotal: getRoundedGrandTotal(),
+                        subtotal: billTotals.subtotal,
+                        gstAmount: billTotals.totalGST,
+                        discount: activeTab.useNegotiablePrice ? activeTab.negotiableAmount : billTotals.discountAmount,
+                        grandTotal: billTotals.grandTotal,
                         footerText: shopSettings?.receipt_footer || '',
                       }
                       try {

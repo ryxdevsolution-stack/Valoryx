@@ -1,6 +1,7 @@
 import os
 import sys
-from flask import Flask, send_from_directory
+import time as _time_module
+from flask import Flask, send_from_directory, g, request
 from flask_cors import CORS
 from werkzeug.exceptions import HTTPException
 
@@ -40,6 +41,9 @@ def create_app():
         level=logging.INFO,
         format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
     )
+    # Suppress noisy httpx request/response logs (e.g. Telegram polling spam)
+    logging.getLogger('httpx').setLevel(logging.WARNING)
+    logging.getLogger('httpcore').setLevel(logging.WARNING)
 
     db_initialized = init_db_safely(app)
 
@@ -85,31 +89,102 @@ def create_app():
                 from models.permission_model import Permission
                 default_perms = [
                     # Dashboard
-                    ('view_dashboard', 'View dashboard page'),
-                    # Billing
-                    ('gst_billing', 'Create GST bills'),
-                    ('non_gst_billing', 'Create Non-GST bills'),
-                    ('view_all_bills', 'View all bills'),
-                    ('view_own_bills', 'View own created bills'),
-                    ('edit_bill_details', 'Edit existing bills'),
+                    ('view_dashboard', 'Access main dashboard'),
+                    # Create Bill
+                    ('gst_billing', 'Create bills with GST'),
+                    ('non_gst_billing', 'Create bills without GST'),
+                    ('apply_discount', 'Apply discounts to bills'),
+                    ('add_payment', 'Add payment methods to bills'),
+                    ('select_customer', 'Select and assign customers to bills'),
+                    ('add_products', 'Add products to bills'),
+                    ('set_tax_rate', 'Set custom tax/GST rates'),
+                    # Manage Bills
+                    ('view_all_bills', 'View all bills in the system'),
+                    ('view_own_bills', 'View only own created bills'),
+                    ('edit_bill_details', 'Edit bill information and details'),
+                    ('delete_bills', 'Delete bills from the system'),
                     ('print_bills', 'Print bills'),
-                    # Stock
-                    ('view_stock', 'View stock/inventory'),
-                    ('add_product', 'Add new products to stock'),
-                    ('edit_product_details', 'Edit product details'),
-                    ('delete_product', 'Delete products from stock'),
-                    # Customers
-                    ('view_customers', 'View customers'),
-                    ('manage_customers', 'Create/edit/delete customers'),
-                    # Reports
+                    ('download_pdf', 'Download bills as PDF'),
+                    ('send_email', 'Send bills via email'),
+                    ('mark_paid', 'Mark bills as paid'),
+                    ('mark_cancelled', 'Mark bills as cancelled'),
+                    ('duplicate_bill', 'Duplicate existing bills'),
+                    ('search_bills', 'Search and filter bills'),
+                    ('show_no_exchange', 'Show "No Exchange Available" on printed bills'),
+                    # Customer Management
+                    ('view_customers', 'View customer list and details'),
+                    ('add_customer', 'Add new customers'),
+                    ('edit_customer', 'Edit customer information'),
+                    ('delete_customer', 'Delete customers'),
+                    ('view_purchase_history', 'View customer purchase history'),
+                    ('import_customers', 'Import customers from file'),
+                    ('export_customers', 'Export customer data'),
+                    # Stock Management
+                    ('view_stock', 'View stock and inventory'),
+                    ('add_product', 'Add new products to inventory'),
+                    ('edit_product_details', 'Edit product information'),
+                    ('edit_pricing', 'Edit product MRP and sale price'),
+                    ('edit_cost_price', 'Edit product cost price'),
+                    ('delete_product', 'Delete products from inventory'),
+                    ('adjust_quantity', 'Adjust stock quantities'),
+                    ('view_low_stock_alerts', 'View low stock alerts'),
+                    ('import_stock', 'Import stock from file'),
+                    ('export_stock', 'Export stock data'),
+                    # Reports & Analytics
                     ('view_sales_reports', 'View sales reports'),
-                    ('export_reports', 'Export reports'),
-                    # Audit
-                    ('view_audit_logs', 'View audit logs'),
-                    # Settings
+                    ('view_revenue_reports', 'View revenue reports'),
+                    ('view_profit_reports', 'View profit and margin reports'),
+                    ('view_inventory_reports', 'View inventory reports'),
+                    ('view_customer_reports', 'View customer analytics'),
+                    ('export_reports', 'Export reports to file'),
+                    ('print_reports', 'Print reports'),
+                    ('custom_report_filters', 'Use custom filters in reports'),
+                    # Payment Types
+                    ('view_payment_types', 'View payment types'),
+                    ('add_payment_type', 'Add new payment types'),
+                    ('edit_payment_type', 'Edit payment types'),
+                    ('delete_payment_type', 'Delete payment types'),
+                    ('set_default_payment', 'Set default payment type'),
+                    # User Management
+                    ('view_users', 'View system users'),
+                    ('add_user', 'Add new users'),
+                    ('edit_user', 'Edit user information'),
+                    ('delete_user', 'Delete users'),
+                    ('activate_deactivate_user', 'Activate or deactivate users'),
+                    ('assign_permissions', 'Assign permissions to users'),
+                    # System Settings
+                    ('view_settings', 'View system settings'),
+                    ('edit_company_settings', 'Edit company information'),
+                    ('edit_billing_settings', 'Edit billing configuration'),
+                    ('edit_tax_settings', 'Edit tax and GST settings'),
+                    ('edit_notification_settings', 'Edit notification preferences'),
+                    ('edit_theme_settings', 'Edit theme and appearance'),
+                    # Audit & Logs
+                    ('view_audit_logs', 'View audit trail logs'),
+                    ('export_audit_logs', 'Export audit logs'),
+                    ('view_system_logs', 'View system error logs'),
+                    # System Administration
+                    ('manage_clients', 'Manage client organizations'),
+                    ('system_backup', 'Create system backups'),
+                    ('system_restore', 'Restore from backups'),
+                    ('maintenance_mode', 'Enable maintenance mode'),
+                    # Bulk Orders
+                    ('view_bulk_orders', 'View bulk stock orders'),
+                    ('create_bulk_order', 'Create new bulk stock orders'),
+                    ('edit_bulk_order', 'Edit bulk stock orders'),
+                    ('delete_bulk_order', 'Delete bulk stock orders'),
+                    ('approve_bulk_order', 'Approve bulk stock orders'),
+                    ('receive_bulk_order', 'Mark bulk orders as received'),
+                    # Notes
+                    ('view_notes', 'View notes'),
+                    ('view_all_notes', 'View all users notes (admin)'),
+                    ('create_notes', 'Create new notes'),
+                    ('edit_notes', 'Edit existing notes'),
+                    ('delete_notes', 'Delete notes'),
+                    # Legacy broad permissions (kept for backward compatibility)
+                    ('manage_customers', 'Create/edit/delete customers'),
                     ('manage_payment_types', 'Manage payment types'),
                     ('manage_settings', 'Manage account settings'),
-                    # Users / Permissions
                     ('manage_users', 'Create/edit/delete users'),
                     ('manage_permissions', 'Manage user permissions'),
                 ]
@@ -366,6 +441,13 @@ def create_app():
         import_errors.append(f"shop_settings: {str(e)}")
         logging.error(f"Failed to import shop_settings blueprint: {e}")
 
+    suppliers_bp = None
+    try:
+        from routes.suppliers import suppliers_bp
+    except Exception as e:
+        import_errors.append(f"suppliers: {str(e)}")
+        logging.error(f"Failed to import suppliers blueprint: {e}")
+
     # Store import errors for debugging
     app.config['IMPORT_ERRORS'] = import_errors
     if import_errors:
@@ -560,22 +642,89 @@ def create_app():
         except Exception as e:
             print(f"Warning: Could not register shop_settings blueprint: {e}")
 
+    if suppliers_bp:
+        try:
+            app.register_blueprint(suppliers_bp, url_prefix='/api/suppliers')
+            blueprints_registered.append('suppliers')
+        except Exception as e:
+            print(f"Warning: Could not register suppliers blueprint: {e}")
+
     # Store blueprint registration status
     app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered
 
-    # Telegram: manually trigger daily report (for testing)
+    # Telegram: manually trigger daily report (super-admin only)
     @app.route('/api/telegram/trigger-report', methods=['POST'])
     def trigger_telegram_report():
-        """Fire the daily Telegram report immediately (useful for testing)."""
+        """Fire the daily Telegram report immediately. Requires super-admin JWT."""
+        from utils.auth_middleware import authenticate as _auth
+        from flask import g as _g, request as _req
+
+        # Inline auth check — route is defined outside a blueprint so we
+        # call the middleware helper directly.
+        token = (_req.headers.get('Authorization') or '').removeprefix('Bearer ').strip()
+        if not token:
+            return {'error': 'Authentication required'}, 401
+
+        try:
+            import jwt as _jwt
+            from config import Config as _Cfg
+            decoded = _jwt.decode(token, _Cfg.JWT_SECRET_KEY, algorithms=['HS256'])
+        except Exception:
+            return {'error': 'Invalid or expired token'}, 401
+
+        if not decoded.get('is_super_admin'):
+            return {'error': 'Super-admin access required'}, 403
+
         sched = app.config.get('TELEGRAM_SCHEDULER')
         if not sched:
             return {
                 'error': 'Telegram scheduler not configured',
                 'message': 'Set TELEGRAM_BOT_TOKEN in .env and restart the server'
             }, 400
+
         import threading as _threading
         _threading.Thread(target=sched.trigger_now, daemon=True).start()
         return {'status': 'triggered', 'message': 'Daily report is being sent in the background'}, 200
+
+    # Telegram: send a test message to the calling user's chat ID (auth required)
+    @app.route('/api/telegram/test-send', methods=['POST'])
+    def test_telegram_send():
+        """
+        Send a test Telegram message to the authenticated user's chat ID.
+        Useful for verifying bot token and VPS outbound connectivity.
+        """
+        token = (request.headers.get('Authorization') or '').removeprefix('Bearer ').strip()
+        if not token:
+            return jsonify({'error': 'Authentication required'}), 401
+
+        try:
+            import jwt as _jwt
+            from config import Config as _Cfg
+            decoded = _jwt.decode(token, _Cfg.JWT_SECRET_KEY, algorithms=['HS256'])
+        except Exception:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+
+        user_id = decoded.get('user_id')
+        if not user_id:
+            return jsonify({'error': 'Invalid token'}), 401
+
+        from models.user_model import User
+        user = User.query.filter_by(user_id=user_id).first()
+        if not user or not user.telegram_chat_id:
+            return jsonify({
+                'error': 'No Telegram chat ID configured',
+                'message': 'Set your Telegram chat ID in Profile settings first'
+            }), 400
+
+        from services.telegram_service import send_telegram_message
+        ok = send_telegram_message(
+            user.telegram_chat_id,
+            "✅ <b>Valoryx Test Message</b>\n\nYour Telegram notifications are working correctly!"
+        )
+
+        if ok:
+            return jsonify({'success': True, 'message': f'Test message sent to chat ID {user.telegram_chat_id}'}), 200
+        return jsonify({'error': 'Failed to send — check TELEGRAM_BOT_TOKEN and chat ID'}), 502
 
     # Health check endpoint (basic uptime check)
     @app.route('/api/health', methods=['GET'])
@@ -819,6 +968,47 @@ def create_app():
             'message': 'Client ID set for sync operations'
         }, 200
 
+    # ==================== PERFORMANCE TIMING MIDDLEWARE ====================
+    # Records start time for every request; after_request adds X-Response-Time header.
+    # Works for both online (Supabase) and offline (SQLite) modes.
+    @app.before_request
+    def record_request_start_time():
+        g._request_start_time = _time_module.time()
+
+    # ==================== SECURITY + TIMING AFTER_REQUEST ====================
+    # Adds X-Response-Time header (ms) + hardened security headers to every response.
+    @app.after_request
+    def add_timing_and_security_headers(response):
+        # --- Timing ---
+        if hasattr(g, '_request_start_time'):
+            elapsed_ms = round((_time_module.time() - g._request_start_time) * 1000, 2)
+            response.headers['X-Response-Time'] = f'{elapsed_ms}ms'
+
+        # --- Security headers ---
+        response.headers.setdefault('X-Content-Type-Options', 'nosniff')
+        response.headers.setdefault('X-Frame-Options', 'DENY')
+        response.headers.setdefault('X-XSS-Protection', '1; mode=block')
+        response.headers.setdefault('Referrer-Policy', 'strict-origin-when-cross-origin')
+        response.headers.setdefault('Permissions-Policy', 'camera=(), microphone=(), geolocation=()')
+        if not app.debug:
+            response.headers.setdefault('Strict-Transport-Security', 'max-age=31536000; includeSubDomains')
+
+        # CSP: strict for API routes, permissive enough for served frontend assets
+        if request.path.startswith('/api/'):
+            response.headers.setdefault(
+                'Content-Security-Policy',
+                "default-src 'none'; frame-ancestors 'none'"
+            )
+        else:
+            response.headers.setdefault(
+                'Content-Security-Policy',
+                "default-src 'self'; script-src 'self' 'unsafe-inline'; "
+                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
+                "font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+            )
+
+        return response
+
     # Handle CORS preflight requests explicitly
     @app.before_request
     def handle_preflight():
@@ -932,16 +1122,6 @@ def create_app():
         if not filename.startswith('api/'):
             return send_from_directory(FRONTEND_DIR, 'index.html')
         return {"error": "Not found"}, 404
-
-    @app.after_request
-    def set_security_headers(response):
-        response.headers['X-Frame-Options'] = 'DENY'
-        response.headers['X-Content-Type-Options'] = 'nosniff'
-        response.headers['Referrer-Policy'] = 'strict-origin-when-cross-origin'
-        response.headers['Permissions-Policy'] = 'geolocation=(), microphone=(), camera=()'
-        if not app.debug:
-            response.headers['Strict-Transport-Security'] = 'max-age=31536000; includeSubDomains'
-        return response
 
     return app
 
@@ -1132,22 +1312,101 @@ if __name__ == '__main__':
             from models.permission_model import Permission
             import uuid as _uuid
             default_perms = [
-                ('view_dashboard', 'View dashboard page'),
-                ('gst_billing', 'Create GST bills'),
-                ('non_gst_billing', 'Create Non-GST bills'),
-                ('view_all_bills', 'View all bills'),
-                ('view_own_bills', 'View own created bills'),
-                ('edit_bill_details', 'Edit existing bills'),
+                # Dashboard
+                ('view_dashboard', 'Access main dashboard'),
+                # Create Bill
+                ('gst_billing', 'Create bills with GST'),
+                ('non_gst_billing', 'Create bills without GST'),
+                ('apply_discount', 'Apply discounts to bills'),
+                ('add_payment', 'Add payment methods to bills'),
+                ('select_customer', 'Select and assign customers to bills'),
+                ('add_products', 'Add products to bills'),
+                ('set_tax_rate', 'Set custom tax/GST rates'),
+                # Manage Bills
+                ('view_all_bills', 'View all bills in the system'),
+                ('view_own_bills', 'View only own created bills'),
+                ('edit_bill_details', 'Edit bill information and details'),
+                ('delete_bills', 'Delete bills from the system'),
                 ('print_bills', 'Print bills'),
-                ('view_stock', 'View stock/inventory'),
-                ('add_product', 'Add new products to stock'),
-                ('edit_product_details', 'Edit product details'),
-                ('delete_product', 'Delete products from stock'),
-                ('view_customers', 'View customers'),
-                ('manage_customers', 'Create/edit/delete customers'),
+                ('download_pdf', 'Download bills as PDF'),
+                ('send_email', 'Send bills via email'),
+                ('mark_paid', 'Mark bills as paid'),
+                ('mark_cancelled', 'Mark bills as cancelled'),
+                ('duplicate_bill', 'Duplicate existing bills'),
+                ('search_bills', 'Search and filter bills'),
+                ('show_no_exchange', 'Show "No Exchange Available" on printed bills'),
+                # Customer Management
+                ('view_customers', 'View customer list and details'),
+                ('add_customer', 'Add new customers'),
+                ('edit_customer', 'Edit customer information'),
+                ('delete_customer', 'Delete customers'),
+                ('view_purchase_history', 'View customer purchase history'),
+                ('import_customers', 'Import customers from file'),
+                ('export_customers', 'Export customer data'),
+                # Stock Management
+                ('view_stock', 'View stock and inventory'),
+                ('add_product', 'Add new products to inventory'),
+                ('edit_product_details', 'Edit product information'),
+                ('edit_pricing', 'Edit product MRP and sale price'),
+                ('edit_cost_price', 'Edit product cost price'),
+                ('delete_product', 'Delete products from inventory'),
+                ('adjust_quantity', 'Adjust stock quantities'),
+                ('view_low_stock_alerts', 'View low stock alerts'),
+                ('import_stock', 'Import stock from file'),
+                ('export_stock', 'Export stock data'),
+                # Reports & Analytics
                 ('view_sales_reports', 'View sales reports'),
-                ('export_reports', 'Export reports'),
-                ('view_audit_logs', 'View audit logs'),
+                ('view_revenue_reports', 'View revenue reports'),
+                ('view_profit_reports', 'View profit and margin reports'),
+                ('view_inventory_reports', 'View inventory reports'),
+                ('view_customer_reports', 'View customer analytics'),
+                ('export_reports', 'Export reports to file'),
+                ('print_reports', 'Print reports'),
+                ('custom_report_filters', 'Use custom filters in reports'),
+                # Payment Types
+                ('view_payment_types', 'View payment types'),
+                ('add_payment_type', 'Add new payment types'),
+                ('edit_payment_type', 'Edit payment types'),
+                ('delete_payment_type', 'Delete payment types'),
+                ('set_default_payment', 'Set default payment type'),
+                # User Management
+                ('view_users', 'View system users'),
+                ('add_user', 'Add new users'),
+                ('edit_user', 'Edit user information'),
+                ('delete_user', 'Delete users'),
+                ('activate_deactivate_user', 'Activate or deactivate users'),
+                ('assign_permissions', 'Assign permissions to users'),
+                # System Settings
+                ('view_settings', 'View system settings'),
+                ('edit_company_settings', 'Edit company information'),
+                ('edit_billing_settings', 'Edit billing configuration'),
+                ('edit_tax_settings', 'Edit tax and GST settings'),
+                ('edit_notification_settings', 'Edit notification preferences'),
+                ('edit_theme_settings', 'Edit theme and appearance'),
+                # Audit & Logs
+                ('view_audit_logs', 'View audit trail logs'),
+                ('export_audit_logs', 'Export audit logs'),
+                ('view_system_logs', 'View system error logs'),
+                # System Administration
+                ('manage_clients', 'Manage client organizations'),
+                ('system_backup', 'Create system backups'),
+                ('system_restore', 'Restore from backups'),
+                ('maintenance_mode', 'Enable maintenance mode'),
+                # Bulk Orders
+                ('view_bulk_orders', 'View bulk stock orders'),
+                ('create_bulk_order', 'Create new bulk stock orders'),
+                ('edit_bulk_order', 'Edit bulk stock orders'),
+                ('delete_bulk_order', 'Delete bulk stock orders'),
+                ('approve_bulk_order', 'Approve bulk stock orders'),
+                ('receive_bulk_order', 'Mark bulk orders as received'),
+                # Notes
+                ('view_notes', 'View notes'),
+                ('view_all_notes', 'View all users notes (admin)'),
+                ('create_notes', 'Create new notes'),
+                ('edit_notes', 'Edit existing notes'),
+                ('delete_notes', 'Delete notes'),
+                # Legacy broad permissions (kept for backward compatibility)
+                ('manage_customers', 'Create/edit/delete customers'),
                 ('manage_payment_types', 'Manage payment types'),
                 ('manage_settings', 'Manage account settings'),
                 ('manage_users', 'Create/edit/delete users'),

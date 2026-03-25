@@ -1,7 +1,7 @@
 
 import React, { useState, useEffect, useCallback } from 'react';
 import { useClient } from '@/contexts/ClientContext';
-import axios from 'axios';
+import api from '@/lib/api';
 import {
   Settings,
   Building2,
@@ -215,8 +215,6 @@ const defaultSettings: SystemSettings = {
 
 export default function SystemSettingsPage() {
   const { user, isSuperAdmin } = useClient();
-  const apiUrl = (import.meta.env.VITE_API_URL || 'http://localhost:5017') + '/api';
-
   const [activeSection, setActiveSection] = useState('general');
   const [settings, setSettings] = useState<SystemSettings>(defaultSettings);
   const [originalSettings, setOriginalSettings] = useState<SystemSettings>(defaultSettings);
@@ -229,10 +227,7 @@ export default function SystemSettingsPage() {
   const fetchSettings = useCallback(async () => {
     try {
       setLoading(true);
-      const token = localStorage.getItem('token');
-      const response = await axios.get(`${apiUrl}/admin/settings`, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      const response = await api.get('/admin/settings');
       if (response.data) {
         setSettings({ ...defaultSettings, ...response.data });
         setOriginalSettings({ ...defaultSettings, ...response.data });
@@ -243,7 +238,7 @@ export default function SystemSettingsPage() {
     } finally {
       setLoading(false);
     }
-  }, [apiUrl]);
+  }, []);
 
   useEffect(() => {
     fetchSettings();
@@ -256,10 +251,7 @@ export default function SystemSettingsPage() {
   const handleSave = async () => {
     try {
       setSaving(true);
-      const token = localStorage.getItem('token');
-      await axios.put(`${apiUrl}/admin/settings`, settings, {
-        headers: { Authorization: `Bearer ${token}` }
-      });
+      await api.put('/admin/settings', settings);
       setOriginalSettings(settings);
       setSaveSuccess(true);
       setTimeout(() => setSaveSuccess(false), 3000);

@@ -4,10 +4,13 @@ from extensions import db
 from models.client_model import ClientEntry
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
+from utils.cache_helper import get_cache_manager
 
 logger = logging.getLogger(__name__)
 
 shop_settings_bp = Blueprint('shop_settings', __name__)
+
+_SHOP_SETTINGS_TTL = 300  # 5 min — shop settings rarely change
 
 # Fields that can be read/written via shop-settings endpoints.
 # Maps API field name → ClientEntry column attribute name.
@@ -37,8 +40,14 @@ def get_shop_settings():
     """
     try:
         client_id = g.user['client_id']
-        client = ClientEntry.query.filter_by(client_id=client_id).first()
+        cache     = get_cache_manager()
+        cache_key = f"shop:settings:{client_id}"
 
+        cached = cache.get(cache_key)
+        if cached is not None:
+            return jsonify(cached), 200
+
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
         if not client:
             return jsonify({'success': False, 'error': 'Client not found'}), 404
 
@@ -46,7 +55,9 @@ def get_shop_settings():
         for api_field, col_attr in _SETTINGS_FIELDS.items():
             data[api_field] = getattr(client, col_attr, None) or ''
 
-        return jsonify({'success': True, 'data': data}), 200
+        response = {'success': True, 'data': data}
+        cache.set(cache_key, response, _SHOP_SETTINGS_TTL)
+        return jsonify(response), 200
 
     except Exception as e:
         logger.exception('Failed to fetch shop settings')
@@ -98,6 +109,7 @@ def update_shop_settings():
             return jsonify({'success': False, 'error': 'No valid fields to update'}), 400
 
         db.session.commit()
+        get_cache_manager().delete(f"shop:settings:{client_id}")
 
         # Build new data for audit
         new_data = {}

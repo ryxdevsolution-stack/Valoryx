@@ -41,9 +41,17 @@ def get_customers():
 
     OPTIMIZED: Uses UNION ALL to merge GST + Non-GST in one query,
     partial column loading for walk-ins, and pre-built lookup dicts.
+    Response cached 3 minutes — busted on new bill creation.
     """
     try:
         client_id = g.user['client_id']
+
+        from utils.cache_helper import get_cache_manager
+        _cache = get_cache_manager()
+        _cache_key = f"customers:list:{client_id}"
+        _cached = _cache.get(_cache_key)
+        if _cached is not None:
+            return jsonify(_cached), 200
 
         # ── REGULAR CUSTOMERS: single UNION ALL query instead of 2 separate queries ──
         gst_sub = db.session.query(
@@ -136,7 +144,7 @@ def get_customers():
         # ── REGISTERED CUSTOMERS: single query, build two dicts ──
         reg_rows = db.session.query(
             Customer.customer_phone, Customer.customer_code, Customer.loyalty_points
-        ).filter_by(client_id=client_id).all()
+        ).filter_by(client_id=client_id).limit(50000).all()
 
         registered_customers = {r.customer_phone: r.customer_code for r in reg_rows}
         registered_points = {r.customer_phone: (r.loyalty_points or 0) for r in reg_rows}
@@ -190,7 +198,7 @@ def get_customers():
         active_customers = sum(1 for c in customers_list if c['status'] == 'Active')
         total_revenue = sum(c['total_amount'] for c in customers_list)
 
-        return jsonify({
+        response = {
             'success': True,
             'customers': customers_list,
             'statistics': {
@@ -200,14 +208,17 @@ def get_customers():
                 'total_revenue': round(total_revenue, 2),
                 'top_customer': customers_list[0] if customers_list else None
             }
-        }), 200
+        }
+        _cache.set(_cache_key, response, 180)  # 3-min cache — busted on new bill
+        return jsonify(response), 200
 
     except Exception as e:
-        return jsonify({'error': 'Failed to fetch customers', 'message': str(e)}), 500
+        return jsonify({'success': False, 'error': 'Failed to fetch customers', 'message': str(e)}), 500
 
 
 @customer_bp.route('/<phone>', methods=['GET'])
 @authenticate
+@require_permission('view_purchase_history')
 def get_customer_details(phone):
     """Get detailed information about a specific customer.
 
@@ -335,6 +346,7 @@ def get_customer_by_code(customer_code):
 
 @customer_bp.route('/create', methods=['POST'])
 @authenticate
+@require_permission('add_customer')
 def create_customer():
     """Create a new customer with auto-generated code"""
     try:
@@ -420,6 +432,7 @@ def get_customer_by_phone(phone):
 
 @customer_bp.route('/search', methods=['GET'])
 @authenticate
+@require_permission('view_customers')
 def search_customers():
     """Search customers by code, phone, or name"""
     try:
