@@ -1,0 +1,16 @@
+User-agent: *
+Allow: /
+
+# Sitemap
+Sitemap: https://app.ryxbilling.com/sitemap.xml
+
+# Disallow app routes from crawling
+Disallow: /dashboard
+Disallow: /admin/
+Disallow: /api/
+
+# Allow login/register for indexing
+Allow: /auth/login
+Allow: /auth/register
+Disallow: /auth/reset-password
+Disallow: /auth/verify

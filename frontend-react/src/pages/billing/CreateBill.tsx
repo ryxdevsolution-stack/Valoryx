@@ -259,17 +259,12 @@ export default function UnifiedBillingPage() {
     try {
       setProductsLoading(true)
       // Single parallel load — no retries, no recursive loops
-      const [productsData, billNumberResponse, paymentResponse] = await Promise.all([
+      const [productsData, billNumberResponse] = await Promise.all([
         fetchProducts(false),
         api.get('/billing/next-number'),
-        api.get('/payment/list').catch(() => null),
       ])
       setProducts(productsData)
       setNextBillNumber(billNumberResponse.data.next_bill_number || 1)
-      // Use API payment types if available, keep fallback otherwise
-      if (paymentResponse?.data?.payment_types?.length) {
-        setPaymentTypes(paymentResponse.data.payment_types.map((pt: any) => pt.payment_name))
-      }
     } catch (error) {
       console.error('Failed to load initial data:', error)
       setNextBillNumber(1)

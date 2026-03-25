@@ -95,9 +95,9 @@ export default function HeroSection({ onWatchDemo }: { onWatchDemo?: () => void 
               variants={fadeInUp}
               className="text-4xl sm:text-5xl lg:text-6xl xl:text-7xl font-bold text-gray-900 dark:text-white leading-[1.1] mb-6"
             >
-              {siteConfig.tagline.split(' ').slice(0, 2).join(' ')}{' '}
+              GST Billing Software{' '}
               <span className="text-transparent bg-clip-text bg-gradient-to-r from-primary-500 via-primary-600 to-indigo-600 dark:from-primary-400 dark:via-cyan-400 dark:to-purple-400">
-                {siteConfig.tagline.split(' ').slice(2).join(' ')}
+                for Indian Businesses
               </span>
             </motion.h1>
 

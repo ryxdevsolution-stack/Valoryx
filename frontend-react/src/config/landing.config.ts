@@ -31,6 +31,13 @@ import {
   RefreshCcw,
   BarChart3,
   Smartphone,
+  Wallet,
+  Monitor,
+  Star,
+  Webhook,
+  Settings,
+  LogIn,
+  Download,
 } from 'lucide-react'
 
 // =============================================================================
@@ -39,7 +46,7 @@ import {
 
 export const siteConfig = {
   name: 'Valoryx',
-  tagline: 'Modern Billing for Modern Businesses',
+  tagline: 'GST Billing Software for Indian Businesses',
   description: 'GST-compliant invoicing, real-time inventory, and powerful analytics. Everything you need to run your retail or service business efficiently.',
   logoPath: `${import.meta.env.BASE_URL}valoryx-logo.png`,
   appUrl: 'app.ryxbilling.com',
@@ -73,11 +80,10 @@ export const siteConfig = {
 // =============================================================================
 
 export const navLinks = [
-  { href: '#preview', label: 'Preview' },
   { href: '#features', label: 'Features' },
-  { href: '#modules', label: 'Modules' },
+  { href: '#integrations', label: 'Integrations' },
   { href: '#benefits', label: 'Benefits' },
-  { href: '#testimonials', label: 'Testimonials' },
+  { href: '#contact', label: 'Contact' },
   { href: '#faq', label: 'FAQ' },
 ]
 
@@ -96,7 +102,7 @@ export const trustBadges = [
   { label: 'GST Compliant', color: 'green' },
   { label: 'Bank-grade Security', color: 'blue' },
   { label: 'Made in India', color: 'purple' },
-  { label: 'ISO Certified', color: 'orange' },
+  { label: '256-bit Encryption', color: 'orange' },
 ]
 
 // =============================================================================
@@ -204,6 +210,41 @@ export const features: Feature[] = [
     icon: Smartphone,
     title: 'Offline & PWA',
     description: 'Works offline as a Progressive Web App. Bills sync automatically when internet is restored.',
+  },
+  {
+    icon: Wallet,
+    title: 'Expense Tracking',
+    description: 'Track business expenses by category with summaries and reports. Know exactly where your money goes.',
+  },
+  {
+    icon: Monitor,
+    title: 'Desktop App',
+    description: 'Install Valoryx as a native desktop app on Windows and Mac. Faster startup, offline-first, no browser needed.',
+  },
+  {
+    icon: Star,
+    title: 'Loyalty Points',
+    description: 'Reward repeat customers with loyalty points on every purchase. Points auto-calculated during billing.',
+  },
+  {
+    icon: LogIn,
+    title: 'Google OAuth Login',
+    description: 'Sign in with Google for quick, secure access. No passwords to remember — one click and you are in.',
+  },
+  {
+    icon: Webhook,
+    title: 'Webhooks & Integrations',
+    description: 'Connect Valoryx to your tools with custom webhooks. Automate workflows when bills, stock, or customers change.',
+  },
+  {
+    icon: Settings,
+    title: 'Shop Customization',
+    description: 'Customize your shop name, logo, receipt headers, tax settings, and more from a single settings page.',
+  },
+  {
+    icon: Download,
+    title: 'Data Export & GDPR',
+    description: 'Export all your business data anytime. Full data portability — your data, your control.',
   },
 ]
 
@@ -366,14 +407,14 @@ export const testimonials: Testimonial[] = [
     business: 'Reddy Beauty Salon',
     location: 'Hyderabad',
     rating: 5,
-    quote: 'Simple to use, yet powerful. My staff learned it in a day. The appointment booking combined with billing is a game-changer.',
+    quote: 'Simple to use, yet powerful. My staff learned it in a day. The role-based access means cashiers only see what they need — billing is a breeze.',
   },
   {
     name: 'Mohammed Farhan',
     business: 'Farhan Auto Parts',
     location: 'Bangalore',
     rating: 5,
-    quote: 'Managing 5000+ SKUs was a nightmare before RYX. Now inventory management is a breeze. Best investment for our business.',
+    quote: 'Managing 5000+ SKUs was a nightmare before Valoryx. Now inventory management is a breeze. Best investment for our business.',
   },
   {
     name: 'Kavita Joshi',
@@ -426,6 +467,22 @@ export const faqs: FAQ[] = [
     question: 'Can I cancel anytime?',
     answer: 'Absolutely. There are no long-term contracts or cancellation fees. You can cancel your subscription at any time. If you cancel, you will have access until the end of your billing period, and you can export all your data.',
   },
+  {
+    question: 'Is Valoryx the best billing software for Indian businesses?',
+    answer: 'Valoryx is purpose-built for Indian retail and service businesses. Unlike generic international tools, it supports GST (CGST/SGST/IGST), HSN codes, GSTIN validation, thermal printers common in India, UPI payments, and works offline for areas with unstable internet. It is designed for kirana stores, salons, restaurants, boutiques, and wholesale businesses across India.',
+  },
+  {
+    question: 'Does Valoryx work on mobile and desktop?',
+    answer: 'Yes. Valoryx is a fully responsive web app that works on any device — desktop, laptop, tablet, or mobile phone. It also installs as a Progressive Web App (PWA) for app-like experience, and we offer a native desktop app for Windows and Mac for faster startup and offline-first operation.',
+  },
+  {
+    question: 'Can I manage multiple branches from one account?',
+    answer: 'Yes, Valoryx supports multi-branch management from a single dashboard. You can track inventory, sales, and team members per branch. Stock transfer between branches is built-in with real-time tracking. Branch-level analytics help you compare performance across locations.',
+  },
+  {
+    question: 'How is Valoryx different from Tally or Zoho Invoice?',
+    answer: 'Valoryx is designed specifically for retail POS and service billing, not accounting. Unlike Tally (desktop-only, complex), Valoryx works in your browser and offline. Unlike Zoho Invoice (invoicing-only), Valoryx includes real-time inventory, supplier management, barcode scanning, loyalty points, and multi-branch stock transfers — all in one platform at a fraction of the cost.',
+  },
 ]
 
 // =============================================================================
@@ -447,40 +504,32 @@ export const footerSections: FooterSection[] = [
     title: 'Product',
     links: [
       { label: 'Features', href: '#features' },
-      { label: 'Pricing', href: '#pricing' },
-      { label: 'Integrations', href: '#' },
-      { label: 'Changelog', href: '#' },
-      { label: 'Roadmap', href: '#' },
+      { label: 'Integrations', href: '#integrations' },
+      { label: 'Contact', href: '#contact' },
+      { label: 'FAQ', href: '#faq' },
     ],
   },
   {
     title: 'Resources',
     links: [
-      { label: 'Documentation', href: '/docs' },
-      { label: 'Help Center', href: '/docs#troubleshooting' },
-      { label: 'Blog', href: '#' },
-      { label: 'Tutorials', href: '/docs#getting-started' },
-      { label: 'API Reference', href: '#' },
+      { label: 'Benefits', href: '#benefits' },
+      { label: 'Testimonials', href: '#testimonials' },
+      { label: 'Watch Demo', href: '#features' },
     ],
   },
   {
     title: 'Company',
     links: [
-      { label: 'About Us', href: '#' },
-      { label: 'Careers', href: '#' },
-      { label: 'Contact', href: '#' },
-      { label: 'Partners', href: '#' },
-      { label: 'Press Kit', href: '#' },
+      { label: 'About Valoryx', href: '#benefits' },
+      { label: 'Contact Us', href: `mailto:${siteConfig.contact.email}` },
     ],
   },
   {
     title: 'Legal',
     links: [
-      { label: 'Privacy Policy', href: '#' },
-      { label: 'Terms of Service', href: '#' },
-      { label: 'Cookie Policy', href: '#' },
-      { label: 'GDPR', href: '#' },
-      { label: 'Security', href: '#' },
+      { label: 'Privacy Policy', href: '/privacy' },
+      { label: 'Terms of Service', href: '/terms' },
+      { label: 'Data Security', href: '#faq' },
     ],
   },
 ]
@@ -500,6 +549,25 @@ export const socialLinks: SocialLink[] = [
   { icon: Linkedin, href: siteConfig.social.linkedin, label: 'LinkedIn' },
   { icon: Facebook, href: siteConfig.social.facebook, label: 'Facebook' },
   { icon: Instagram, href: siteConfig.social.instagram, label: 'Instagram' },
+]
+
+// =============================================================================
+// INTEGRATIONS
+// =============================================================================
+
+export interface Integration {
+  icon: LucideIcon
+  name: string
+  description: string
+}
+
+export const integrations: Integration[] = [
+  { icon: Send, name: 'Telegram', description: 'Automated daily reports & alerts' },
+  { icon: LogIn, name: 'Google OAuth', description: 'One-click secure sign-in' },
+  { icon: CreditCard, name: 'Razorpay', description: 'Online payment processing' },
+  { icon: ScanLine, name: 'Barcode Scanner', description: 'Camera-based product lookup' },
+  { icon: Printer, name: 'Thermal Printers', description: '58mm & 80mm receipt printers' },
+  { icon: Upload, name: 'Excel Import/Export', description: 'Bulk data migration' },
 ]
 
 // =============================================================================

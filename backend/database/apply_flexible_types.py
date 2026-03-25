@@ -18,8 +18,7 @@ models_to_update = [
     'models/client_model.py',
     'models/customer_model.py',
     'models/user_model.py',
-    'models/payment_model.py',
-    'models/expense_model.py',
+'models/expense_model.py',
     'models/permission_model.py',
     'models/notes_model.py',
     'models/bulk_stock_order_model.py'

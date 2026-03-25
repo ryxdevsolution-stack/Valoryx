@@ -65,7 +65,6 @@ class ClientEntry(db.Model):
     stock_entries = db.relationship('StockEntry', backref='client', lazy=True, cascade='all, delete-orphan')
     gst_bills = db.relationship('GSTBilling', backref='client', lazy=True, cascade='all, delete-orphan')
     non_gst_bills = db.relationship('NonGSTBilling', backref='client', lazy=True, cascade='all, delete-orphan')
-    payment_types = db.relationship('PaymentType', backref='client', lazy=True, cascade='all, delete-orphan')
     reports = db.relationship('Report', backref='client', lazy=True, cascade='all, delete-orphan')
     audit_logs = db.relationship('AuditLog', backref='client', lazy=True, cascade='all, delete-orphan')
 

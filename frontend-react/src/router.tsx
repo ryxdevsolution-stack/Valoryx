@@ -20,7 +20,6 @@ const Customers = React.lazy(() => import('@/pages/Customers'))
 const Reports = React.lazy(() => import('@/pages/Reports'))
 const Audit = React.lazy(() => import('@/pages/Audit'))
 const Profile = React.lazy(() => import('@/pages/Profile'))
-const PaymentTypes = React.lazy(() => import('@/pages/PaymentTypes'))
 const Docs = React.lazy(() => import('@/pages/Docs'))
 const TrialExpired = React.lazy(() => import('@/pages/TrialExpired'))
 const Pricing = React.lazy(() => import('@/pages/Pricing'))
@@ -184,8 +183,7 @@ export function AppRoutes() {
         <Route path="/audit" element={<ProtectedRoute><Audit /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
         <Route path="/shop-settings" element={<ProtectedRoute><ShopSettings /></ProtectedRoute>} />
-        <Route path="/payment-types" element={<ProtectedRoute><PaymentTypes /></ProtectedRoute>} />
-        <Route path="/docs" element={<ProtectedRoute><Docs /></ProtectedRoute>} />
+<Route path="/docs" element={<ProtectedRoute><Docs /></ProtectedRoute>} />
 
         {/* Admin routes - wrapped in AdminLayout */}
         <Route path="/admin" element={<AdminLayout />}>

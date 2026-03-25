@@ -308,7 +308,7 @@ export default function ClientDetailsPage() {
   if (authLoading || loading) {
     return (
       <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 dark:border-blue-400"></div>
       </div>
     );
   }
@@ -317,7 +317,7 @@ export default function ClientDetailsPage() {
     return (
       <div className="flex items-center justify-center min-h-screen">
         <div className="text-center">
-          <p className="text-red-600 mb-4">{error}</p>
+          <p className="text-red-600 dark:text-red-400 mb-4">{error}</p>
           <button
             onClick={fetchClientDetails}
             className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
@@ -332,12 +332,12 @@ export default function ClientDetailsPage() {
   if (!client) return null;
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
+    <div className="p-6 max-w-7xl mx-auto text-slate-900 dark:text-slate-100">
       {/* Header */}
       <div className="mb-6">
         <button
           onClick={() => navigate('/admin/clients')}
-          className="flex items-center gap-2 text-gray-600 hover:text-gray-900 mb-4"
+          className="flex items-center gap-2 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white mb-4"
         >
           <ArrowLeft className="h-4 w-4" />
           Back to Clients
@@ -353,19 +353,21 @@ export default function ClientDetailsPage() {
                 className="h-16 w-16 rounded-full object-cover"
               />
             ) : (
-              <div className="h-16 w-16 rounded-full bg-blue-100 flex items-center justify-center">
-                <Building2 className="h-8 w-8 text-blue-600" />
+              <div className="h-16 w-16 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center">
+                <Building2 className="h-8 w-8 text-blue-600 dark:text-blue-400" />
               </div>
             )}
             <div>
-              <h1 className="text-3xl font-bold text-gray-900">{client.client_name}</h1>
+              <h1 className="text-3xl font-bold text-slate-900 dark:text-white">{client.client_name}</h1>
               <div className="flex items-center gap-4 mt-1">
                 <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${
-                  client.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                  client.is_active
+                    ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400'
+                    : 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-400'
                 }`}>
                   {client.is_active ? 'Active' : 'Inactive'}
                 </span>
-                <span className="text-sm text-gray-500">
+                <span className="text-sm text-slate-500 dark:text-slate-400">
                   Created on {new Date(client.created_at).toLocaleDateString()}
                 </span>
               </div>
@@ -376,7 +378,7 @@ export default function ClientDetailsPage() {
               <>
                 <button
                   onClick={() => setEditMode(true)}
-                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                  className="flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition text-slate-700 dark:text-slate-300"
                 >
                   <Edit2 className="h-4 w-4" />
                   Edit
@@ -408,7 +410,7 @@ export default function ClientDetailsPage() {
                       cashier: q.cashier != null ? q.cashier : '',
                     });
                   }}
-                  className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
+                  className="flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition text-slate-700 dark:text-slate-300"
                 >
                   <X className="h-4 w-4" />
                   Cancel
@@ -438,23 +440,23 @@ export default function ClientDetailsPage() {
 
       {/* Error Message */}
       {error && (
-        <div className="mb-6 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
-          <AlertCircle className="h-5 w-5 text-red-600" />
-          <p className="text-red-800">{error}</p>
+        <div className="mb-6 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2">
+          <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+          <p className="text-red-800 dark:text-red-300">{error}</p>
         </div>
       )}
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
         {/* Client Information */}
         <div className="lg:col-span-2">
-          <div className="bg-white rounded-lg shadow p-6">
-            <h2 className="text-lg font-semibold mb-4">Client Information</h2>
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow dark:shadow-slate-900/20 p-6">
+            <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Client Information</h2>
 
             {editMode ? (
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 {/* Editable fields */}
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     Client Name *
                   </label>
                   <input
@@ -462,17 +464,17 @@ export default function ClientDetailsPage() {
                     name="client_name"
                     value={formData.client_name}
                     onChange={handleChange}
-                    className={`w-full px-3 py-2 border rounded-lg ${
-                      errors.client_name ? 'border-red-500' : 'border-gray-300'
+                    className={`w-full px-3 py-2 border rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 ${
+                      errors.client_name ? 'border-red-500' : 'border-slate-300 dark:border-slate-600'
                     }`}
                   />
                   {errors.client_name && (
-                    <p className="mt-1 text-sm text-red-600">{errors.client_name}</p>
+                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.client_name}</p>
                   )}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     Email *
                   </label>
                   <input
@@ -480,17 +482,17 @@ export default function ClientDetailsPage() {
                     name="email"
                     value={formData.email}
                     onChange={handleChange}
-                    className={`w-full px-3 py-2 border rounded-lg ${
-                      errors.email ? 'border-red-500' : 'border-gray-300'
+                    className={`w-full px-3 py-2 border rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 ${
+                      errors.email ? 'border-red-500' : 'border-slate-300 dark:border-slate-600'
                     }`}
                   />
                   {errors.email && (
-                    <p className="mt-1 text-sm text-red-600">{errors.email}</p>
+                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.email}</p>
                   )}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     Phone *
                   </label>
                   <input
@@ -498,17 +500,17 @@ export default function ClientDetailsPage() {
                     name="phone"
                     value={formData.phone}
                     onChange={handleChange}
-                    className={`w-full px-3 py-2 border rounded-lg ${
-                      errors.phone ? 'border-red-500' : 'border-gray-300'
+                    className={`w-full px-3 py-2 border rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 ${
+                      errors.phone ? 'border-red-500' : 'border-slate-300 dark:border-slate-600'
                     }`}
                   />
                   {errors.phone && (
-                    <p className="mt-1 text-sm text-red-600">{errors.phone}</p>
+                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.phone}</p>
                   )}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     GST Number
                   </label>
                   <input
@@ -516,17 +518,17 @@ export default function ClientDetailsPage() {
                     name="gst_number"
                     value={formData.gst_number || ''}
                     onChange={handleChange}
-                    className={`w-full px-3 py-2 border rounded-lg ${
-                      errors.gst_number ? 'border-red-500' : 'border-gray-300'
+                    className={`w-full px-3 py-2 border rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500 ${
+                      errors.gst_number ? 'border-red-500' : 'border-slate-300 dark:border-slate-600'
                     }`}
                   />
                   {errors.gst_number && (
-                    <p className="mt-1 text-sm text-red-600">{errors.gst_number}</p>
+                    <p className="mt-1 text-sm text-red-600 dark:text-red-400">{errors.gst_number}</p>
                   )}
                 </div>
 
                 <div>
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     Logo URL
                   </label>
                   <input
@@ -534,12 +536,12 @@ export default function ClientDetailsPage() {
                     name="logo_url"
                     value={formData.logo_url || ''}
                     onChange={handleChange}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
                   />
                 </div>
 
                 <div className="md:col-span-2">
-                  <label className="block text-sm font-medium text-gray-700 mb-2">
+                  <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">
                     Address
                   </label>
                   <textarea
@@ -547,18 +549,18 @@ export default function ClientDetailsPage() {
                     value={formData.address || ''}
                     onChange={handleChange}
                     rows={3}
-                    className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                    className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
                   />
                 </div>
 
                 {/* Role Quotas */}
                 <div className="md:col-span-2">
-                  <div className="border border-gray-200 rounded-lg p-4">
+                  <div className="border border-slate-200 dark:border-slate-700 rounded-lg p-4">
                     <div className="flex items-center gap-2 mb-1">
-                      <Shield className="h-4 w-4 text-indigo-600" />
-                      <h3 className="text-sm font-semibold text-gray-800">Team Member Quotas</h3>
+                      <Shield className="h-4 w-4 text-indigo-600 dark:text-indigo-400" />
+                      <h3 className="text-sm font-semibold text-slate-800 dark:text-slate-200">Team Member Quotas</h3>
                     </div>
-                    <p className="text-xs text-gray-500 mb-4">
+                    <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
                       Set the maximum number of users allowed per role. Leave blank for unlimited.
                     </p>
                     <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
@@ -566,9 +568,9 @@ export default function ClientDetailsPage() {
                         const used = clientUsers.filter(u => u.role === role && u.is_active).length;
                         return (
                           <div key={role}>
-                            <label className="block text-xs font-medium text-gray-600 mb-1 capitalize">
+                            <label className="block text-xs font-medium text-slate-600 dark:text-slate-400 mb-1 capitalize">
                               {role}
-                              <span className="ml-1 text-gray-400 font-normal">({used} active)</span>
+                              <span className="ml-1 text-slate-400 dark:text-slate-500 font-normal">({used} active)</span>
                             </label>
                             <input
                               type="number"
@@ -579,7 +581,7 @@ export default function ClientDetailsPage() {
                                 ...prev,
                                 [role]: e.target.value === '' ? '' : Math.max(0, parseInt(e.target.value) || 0),
                               }))}
-                              className="w-full px-3 py-2 border border-gray-300 rounded-lg text-sm"
+                              className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg text-sm bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
                             />
                           </div>
                         );
@@ -591,37 +593,37 @@ export default function ClientDetailsPage() {
             ) : (
               <div className="space-y-4">
                 <div className="flex items-start gap-3">
-                  <Mail className="h-5 w-5 text-gray-400 mt-0.5" />
+                  <Mail className="h-5 w-5 text-slate-400 dark:text-slate-500 mt-0.5" />
                   <div>
-                    <p className="text-sm font-medium text-gray-700">Email</p>
-                    <p className="text-sm text-gray-900">{client.email}</p>
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Email</p>
+                    <p className="text-sm text-slate-900 dark:text-white">{client.email}</p>
                   </div>
                 </div>
 
                 <div className="flex items-start gap-3">
-                  <Phone className="h-5 w-5 text-gray-400 mt-0.5" />
+                  <Phone className="h-5 w-5 text-slate-400 dark:text-slate-500 mt-0.5" />
                   <div>
-                    <p className="text-sm font-medium text-gray-700">Phone</p>
-                    <p className="text-sm text-gray-900">{client.phone}</p>
+                    <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Phone</p>
+                    <p className="text-sm text-slate-900 dark:text-white">{client.phone}</p>
                   </div>
                 </div>
 
                 {client.address && (
                   <div className="flex items-start gap-3">
-                    <MapPin className="h-5 w-5 text-gray-400 mt-0.5" />
+                    <MapPin className="h-5 w-5 text-slate-400 dark:text-slate-500 mt-0.5" />
                     <div>
-                      <p className="text-sm font-medium text-gray-700">Address</p>
-                      <p className="text-sm text-gray-900">{client.address}</p>
+                      <p className="text-sm font-medium text-slate-700 dark:text-slate-300">Address</p>
+                      <p className="text-sm text-slate-900 dark:text-white">{client.address}</p>
                     </div>
                   </div>
                 )}
 
                 {client.gst_number && (
                   <div className="flex items-start gap-3">
-                    <FileText className="h-5 w-5 text-gray-400 mt-0.5" />
+                    <FileText className="h-5 w-5 text-slate-400 dark:text-slate-500 mt-0.5" />
                     <div>
-                      <p className="text-sm font-medium text-gray-700">GST Number</p>
-                      <p className="text-sm text-gray-900">{client.gst_number}</p>
+                      <p className="text-sm font-medium text-slate-700 dark:text-slate-300">GST Number</p>
+                      <p className="text-sm text-slate-900 dark:text-white">{client.gst_number}</p>
                     </div>
                   </div>
                 )}
@@ -630,9 +632,9 @@ export default function ClientDetailsPage() {
           </div>
 
           {/* Users & Permissions Management */}
-          <div className="bg-white rounded-lg shadow p-6 mt-6">
+          <div className="bg-white dark:bg-slate-800 rounded-lg shadow dark:shadow-slate-900/20 p-6 mt-6">
             <div className="flex justify-between items-center mb-4">
-              <h2 className="text-lg font-semibold">Users & Permissions</h2>
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white">Users & Permissions</h2>
               <button
                 onClick={() => setShowCreateUserModal(true)}
                 className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
@@ -644,41 +646,43 @@ export default function ClientDetailsPage() {
 
             {loadingUsers ? (
               <div className="flex justify-center py-8">
-                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+                <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600 dark:border-blue-400"></div>
               </div>
             ) : clientUsers.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                <Users className="h-12 w-12 mx-auto mb-3 text-gray-400" />
+              <div className="text-center py-8 text-slate-500 dark:text-slate-400">
+                <Users className="h-12 w-12 mx-auto mb-3 text-slate-400 dark:text-slate-500" />
                 <p>No users yet. Add the first user to get started.</p>
               </div>
             ) : (
               <div className="space-y-3">
                 {clientUsers.map((user) => (
-                  <div key={user.user_id} className="flex items-center justify-between p-4 border border-gray-200 rounded-lg hover:bg-gray-50">
+                  <div key={user.user_id} className="flex items-center justify-between p-4 border border-slate-200 dark:border-slate-700 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700/50">
                     <div className="flex-1">
                       <div className="flex items-center gap-2 mb-1">
-                        <p className="text-sm font-medium text-gray-900">
+                        <p className="text-sm font-medium text-slate-900 dark:text-white">
                           {user.full_name || user.email}
                         </p>
                         {user.is_super_admin && (
-                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 text-purple-800">
+                          <span className="inline-flex items-center px-2 py-0.5 rounded text-xs font-medium bg-purple-100 dark:bg-purple-900/30 text-purple-800 dark:text-purple-400">
                             <Shield className="h-3 w-3 mr-1" />
                             Super Admin
                           </span>
                         )}
                         <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${
-                          user.is_active ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'
+                          user.is_active
+                            ? 'bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400'
+                            : 'bg-red-100 dark:bg-red-900/30 text-red-800 dark:text-red-400'
                         }`}>
                           {user.is_active ? <CheckCircle className="h-3 w-3 mr-1" /> : <XCircle className="h-3 w-3 mr-1" />}
                           {user.is_active ? 'Active' : 'Inactive'}
                         </span>
                       </div>
-                      <p className="text-xs text-gray-500">{user.email}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">{user.email}</p>
                       <div className="flex items-center gap-2 mt-1">
-                        <span className="text-xs px-2 py-0.5 bg-gray-100 rounded capitalize">
+                        <span className="text-xs px-2 py-0.5 bg-gray-100 dark:bg-slate-700 text-slate-700 dark:text-slate-300 rounded capitalize">
                           {user.role}
                         </span>
-                        <span className="text-xs text-gray-500">
+                        <span className="text-xs text-slate-500 dark:text-slate-400">
                           {user.permissions.length} permissions
                         </span>
                       </div>
@@ -686,7 +690,7 @@ export default function ClientDetailsPage() {
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => openPermissionsModal(user)}
-                        className="flex items-center gap-1 px-3 py-1.5 text-sm border border-blue-600 text-blue-600 rounded hover:bg-blue-50 transition"
+                        className="flex items-center gap-1 px-3 py-1.5 text-sm border border-blue-600 dark:border-blue-500 text-blue-600 dark:text-blue-400 rounded hover:bg-blue-50 dark:hover:bg-blue-900/20 transition"
                         title="Manage Permissions"
                       >
                         <Key className="h-4 w-4" />
@@ -696,8 +700,8 @@ export default function ClientDetailsPage() {
                         onClick={() => handleToggleUserStatus(user.user_id)}
                         className={`px-3 py-1.5 text-sm rounded transition ${
                           user.is_active
-                            ? 'border border-yellow-600 text-yellow-600 hover:bg-yellow-50'
-                            : 'border border-green-600 text-green-600 hover:bg-green-50'
+                            ? 'border border-yellow-600 dark:border-yellow-500 text-yellow-600 dark:text-yellow-400 hover:bg-yellow-50 dark:hover:bg-yellow-900/20'
+                            : 'border border-green-600 dark:border-green-500 text-green-600 dark:text-green-400 hover:bg-green-50 dark:hover:bg-green-900/20'
                         }`}
                         title={user.is_active ? 'Deactivate' : 'Activate'}
                       >
@@ -705,7 +709,7 @@ export default function ClientDetailsPage() {
                       </button>
                       <button
                         onClick={() => openDeleteModal(user)}
-                        className="p-1.5 text-red-600 hover:bg-red-50 rounded transition"
+                        className="p-1.5 text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded transition"
                         title="Delete User"
                       >
                         <Trash2 className="h-4 w-4" />
@@ -722,29 +726,29 @@ export default function ClientDetailsPage() {
         <div className="space-y-6">
           {/* Statistics */}
           {client.statistics && (
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-lg font-semibold mb-4">Statistics</h2>
+            <div className="bg-white dark:bg-slate-800 rounded-lg shadow dark:shadow-slate-900/20 p-6">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Statistics</h2>
               <div className="space-y-4">
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Users className="h-5 w-5 text-blue-600" />
-                    <span className="text-sm text-gray-700">Total Users</span>
+                    <Users className="h-5 w-5 text-blue-600 dark:text-blue-400" />
+                    <span className="text-sm text-slate-700 dark:text-slate-300">Total Users</span>
                   </div>
-                  <span className="text-2xl font-semibold">{client.statistics.total_users}</span>
+                  <span className="text-2xl font-semibold text-slate-900 dark:text-white">{client.statistics.total_users}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <UserCheck className="h-5 w-5 text-green-600" />
-                    <span className="text-sm text-gray-700">Active Users</span>
+                    <UserCheck className="h-5 w-5 text-green-600 dark:text-green-400" />
+                    <span className="text-sm text-slate-700 dark:text-slate-300">Active Users</span>
                   </div>
-                  <span className="text-2xl font-semibold">{client.statistics.active_users}</span>
+                  <span className="text-2xl font-semibold text-slate-900 dark:text-white">{client.statistics.active_users}</span>
                 </div>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-2">
-                    <Shield className="h-5 w-5 text-purple-600" />
-                    <span className="text-sm text-gray-700">Super Admins</span>
+                    <Shield className="h-5 w-5 text-purple-600 dark:text-purple-400" />
+                    <span className="text-sm text-slate-700 dark:text-slate-300">Super Admins</span>
                   </div>
-                  <span className="text-2xl font-semibold">{client.statistics.super_admins}</span>
+                  <span className="text-2xl font-semibold text-slate-900 dark:text-white">{client.statistics.super_admins}</span>
                 </div>
               </div>
             </div>
@@ -752,15 +756,15 @@ export default function ClientDetailsPage() {
 
           {/* Recent Activity */}
           {client.recent_activity && client.recent_activity.length > 0 && (
-            <div className="bg-white rounded-lg shadow p-6">
-              <h2 className="text-lg font-semibold mb-4">Recent Activity</h2>
+            <div className="bg-white dark:bg-slate-800 rounded-lg shadow dark:shadow-slate-900/20 p-6">
+              <h2 className="text-lg font-semibold text-slate-900 dark:text-white mb-4">Recent Activity</h2>
               <div className="space-y-3">
                 {client.recent_activity.map((activity, index) => (
                   <div key={index} className="flex items-start gap-3">
-                    <Activity className="h-4 w-4 text-gray-400 mt-0.5" />
+                    <Activity className="h-4 w-4 text-slate-400 dark:text-slate-500 mt-0.5" />
                     <div className="flex-1">
-                      <p className="text-sm text-gray-900">{activity.action}</p>
-                      <p className="text-xs text-gray-500">
+                      <p className="text-sm text-slate-900 dark:text-white">{activity.action}</p>
+                      <p className="text-xs text-slate-500 dark:text-slate-400">
                         <Clock className="h-3 w-3 inline mr-1" />
                         {new Date(activity.created_at).toLocaleString()}
                       </p>
@@ -808,16 +812,16 @@ export default function ClientDetailsPage() {
       {/* Delete User Confirmation Modal */}
       {showDeleteModal && userToDelete && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg max-w-md w-full shadow-xl">
+          <div className="bg-white dark:bg-slate-800 rounded-lg max-w-md w-full shadow-xl dark:shadow-slate-900/30">
             <div className="p-6">
-              <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-red-100">
-                <Trash2 className="h-6 w-6 text-red-600" />
+              <div className="flex items-center justify-center w-12 h-12 mx-auto mb-4 rounded-full bg-red-100 dark:bg-red-900/30">
+                <Trash2 className="h-6 w-6 text-red-600 dark:text-red-400" />
               </div>
-              <h3 className="text-lg font-semibold text-center text-gray-900 mb-2">
+              <h3 className="text-lg font-semibold text-center text-slate-900 dark:text-white mb-2">
                 Delete User
               </h3>
-              <p className="text-center text-gray-600 mb-6">
-                Are you sure you want to delete <span className="font-medium">{userToDelete.full_name || userToDelete.email}</span>? This action cannot be undone.
+              <p className="text-center text-slate-600 dark:text-slate-400 mb-6">
+                Are you sure you want to delete <span className="font-medium text-slate-900 dark:text-white">{userToDelete.full_name || userToDelete.email}</span>? This action cannot be undone.
               </p>
               <div className="flex gap-3">
                 <button
@@ -826,7 +830,7 @@ export default function ClientDetailsPage() {
                     setUserToDelete(null);
                   }}
                   disabled={deleting}
-                  className="flex-1 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
+                  className="flex-1 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition disabled:opacity-50 text-slate-700 dark:text-slate-300"
                 >
                   Cancel
                 </button>
@@ -920,76 +924,76 @@ function CreateUserModal({ clientId, allPermissions, permissionsByCategory, onCl
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
-          <h2 className="text-xl font-semibold">Add New User</h2>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+      <div className="bg-white dark:bg-slate-800 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-6 py-4 flex justify-between items-center">
+          <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Add New User</h2>
+          <button onClick={onClose} className="text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
             <X className="h-6 w-6" />
           </button>
         </div>
 
         <form onSubmit={handleSubmit} className="p-6">
           {error && (
-            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
-              <AlertCircle className="h-5 w-5 text-red-600" />
-              <p className="text-red-800">{error}</p>
+            <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+              <p className="text-red-800 dark:text-red-300">{error}</p>
             </div>
           )}
 
           <div className="grid grid-cols-2 gap-4 mb-6">
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Email *</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Email *</label>
               <input
                 type="email"
                 required
                 value={formData.email}
                 onChange={(e) => setFormData({...formData, email: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Password *</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Password *</label>
               <input
                 type="password"
                 required
                 value={formData.password}
                 onChange={(e) => setFormData({...formData, password: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Full Name</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Full Name</label>
               <input
                 type="text"
                 value={formData.full_name}
                 onChange={(e) => setFormData({...formData, full_name: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Phone</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Phone</label>
               <input
                 type="tel"
                 value={formData.phone}
                 onChange={(e) => setFormData({...formData, phone: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Department</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Department</label>
               <input
                 type="text"
                 value={formData.department}
                 onChange={(e) => setFormData({...formData, department: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white placeholder:text-slate-400 dark:placeholder:text-slate-500"
               />
             </div>
             <div>
-              <label className="block text-sm font-medium text-gray-700 mb-2">Role</label>
+              <label className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-2">Role</label>
               <select
                 value={formData.role}
                 onChange={(e) => setFormData({...formData, role: e.target.value})}
-                className="w-full px-3 py-2 border border-gray-300 rounded-lg"
+                className="w-full px-3 py-2 border border-slate-300 dark:border-slate-600 rounded-lg bg-white dark:bg-slate-700 text-slate-900 dark:text-white"
               >
                 <option value="staff">Staff</option>
                 <option value="admin">Admin</option>
@@ -1004,23 +1008,23 @@ function CreateUserModal({ clientId, allPermissions, permissionsByCategory, onCl
                 type="checkbox"
                 checked={formData.is_super_admin}
                 onChange={(e) => setFormData({...formData, is_super_admin: e.target.checked})}
-                className="w-4 h-4 text-blue-600"
+                className="w-4 h-4 text-blue-600 dark:bg-slate-700"
               />
-              <span className="text-sm font-medium text-gray-700">Make Super Admin (grants all permissions)</span>
+              <span className="text-sm font-medium text-slate-700 dark:text-slate-300">Make Super Admin (grants all permissions)</span>
             </label>
           </div>
 
           <div className="mb-6">
-            <h3 className="text-lg font-semibold mb-3">Permissions</h3>
+            <h3 className="text-lg font-semibold text-slate-900 dark:text-white mb-3">Permissions</h3>
             <div className="space-y-4">
               {Object.entries(permissionsByCategory).map(([category, perms]) => (
-                <div key={category} className="border rounded-lg p-4">
+                <div key={category} className="border border-slate-200 dark:border-slate-700 rounded-lg p-4">
                   <div className="flex items-center justify-between mb-3">
-                    <h4 className="font-medium text-gray-900 capitalize">{category}</h4>
+                    <h4 className="font-medium text-slate-900 dark:text-white capitalize">{category}</h4>
                     <button
                       type="button"
                       onClick={() => selectAllInCategory(category)}
-                      className="text-sm text-blue-600 hover:text-blue-800"
+                      className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
                     >
                       {perms.every(p => formData.permissions.includes(p.permission_name)) ? 'Deselect All' : 'Select All'}
                     </button>
@@ -1032,11 +1036,11 @@ function CreateUserModal({ clientId, allPermissions, permissionsByCategory, onCl
                           type="checkbox"
                           checked={formData.permissions.includes(perm.permission_name)}
                           onChange={() => togglePermission(perm.permission_name)}
-                          className="mt-1 w-4 h-4 text-blue-600"
+                          className="mt-1 w-4 h-4 text-blue-600 dark:bg-slate-700"
                         />
                         <div>
-                          <div className="text-sm font-medium text-gray-900">{perm.permission_name.replace(/_/g, ' ')}</div>
-                          <div className="text-xs text-gray-500">{perm.description}</div>
+                          <div className="text-sm font-medium text-slate-900 dark:text-white">{perm.permission_name.replace(/_/g, ' ')}</div>
+                          <div className="text-xs text-slate-500 dark:text-slate-400">{perm.description}</div>
                         </div>
                       </label>
                     ))}
@@ -1046,11 +1050,11 @@ function CreateUserModal({ clientId, allPermissions, permissionsByCategory, onCl
             </div>
           </div>
 
-          <div className="flex justify-end gap-3 border-t pt-4">
+          <div className="flex justify-end gap-3 border-t border-slate-200 dark:border-slate-700 pt-4">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              className="px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
             >
               Cancel
             </button>
@@ -1121,32 +1125,32 @@ function EditPermissionsModal({ user, allPermissions, permissionsByCategory, onC
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-      <div className="bg-white rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-white border-b px-6 py-4 flex justify-between items-center">
+      <div className="bg-white dark:bg-slate-800 rounded-lg max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 px-6 py-4 flex justify-between items-center">
           <div>
-            <h2 className="text-xl font-semibold">Manage Permissions</h2>
-            <p className="text-sm text-gray-600">{user.email}</p>
+            <h2 className="text-xl font-semibold text-slate-900 dark:text-white">Manage Permissions</h2>
+            <p className="text-sm text-slate-600 dark:text-slate-400">{user.email}</p>
           </div>
-          <button onClick={onClose} className="text-gray-500 hover:text-gray-700">
+          <button onClick={onClose} className="text-slate-500 dark:text-slate-400 hover:text-slate-700 dark:hover:text-slate-200">
             <X className="h-6 w-6" />
           </button>
         </div>
 
         <div className="p-6">
           {error && (
-            <div className="mb-4 p-4 bg-red-50 border border-red-200 rounded-lg flex items-center gap-2">
-              <AlertCircle className="h-5 w-5 text-red-600" />
-              <p className="text-red-800">{error}</p>
+            <div className="mb-4 p-4 bg-red-50 dark:bg-red-900/20 border border-red-200 dark:border-red-800 rounded-lg flex items-center gap-2">
+              <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+              <p className="text-red-800 dark:text-red-300">{error}</p>
             </div>
           )}
 
           {user.is_super_admin && (
-            <div className="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+            <div className="mb-4 p-4 bg-purple-50 dark:bg-purple-900/20 border border-purple-200 dark:border-purple-800 rounded-lg">
               <div className="flex items-center gap-3">
-                <Shield className="h-6 w-6 text-purple-600" />
+                <Shield className="h-6 w-6 text-purple-600 dark:text-purple-400" />
                 <div>
-                  <p className="text-purple-800 font-medium">Super Administrator</p>
-                  <p className="text-purple-600 text-sm">This user has all permissions by default and cannot be modified.</p>
+                  <p className="text-purple-800 dark:text-purple-300 font-medium">Super Administrator</p>
+                  <p className="text-purple-600 dark:text-purple-400 text-sm">This user has all permissions by default and cannot be modified.</p>
                 </div>
               </div>
             </div>
@@ -1154,13 +1158,13 @@ function EditPermissionsModal({ user, allPermissions, permissionsByCategory, onC
 
           <div className="space-y-4">
             {Object.entries(permissionsByCategory).map(([category, perms]) => (
-              <div key={category} className="border rounded-lg p-4">
+              <div key={category} className="border border-slate-200 dark:border-slate-700 rounded-lg p-4">
                 <div className="flex items-center justify-between mb-3">
-                  <h4 className="font-medium text-gray-900 capitalize">{category}</h4>
+                  <h4 className="font-medium text-slate-900 dark:text-white capitalize">{category}</h4>
                   <button
                     type="button"
                     onClick={() => selectAllInCategory(category)}
-                    className="text-sm text-blue-600 hover:text-blue-800"
+                    className="text-sm text-blue-600 dark:text-blue-400 hover:text-blue-800 dark:hover:text-blue-300"
                   >
                     {perms.every(p => selectedPermissions.includes(p.permission_name)) ? 'Deselect All' : 'Select All'}
                   </button>
@@ -1172,11 +1176,11 @@ function EditPermissionsModal({ user, allPermissions, permissionsByCategory, onC
                         type="checkbox"
                         checked={selectedPermissions.includes(perm.permission_name)}
                         onChange={() => togglePermission(perm.permission_name)}
-                        className="mt-1 w-4 h-4 text-blue-600"
+                        className="mt-1 w-4 h-4 text-blue-600 dark:bg-slate-700"
                       />
                       <div>
-                        <div className="text-sm font-medium text-gray-900">{perm.permission_name.replace(/_/g, ' ')}</div>
-                        <div className="text-xs text-gray-500">{perm.description}</div>
+                        <div className="text-sm font-medium text-slate-900 dark:text-white">{perm.permission_name.replace(/_/g, ' ')}</div>
+                        <div className="text-xs text-slate-500 dark:text-slate-400">{perm.description}</div>
                       </div>
                     </label>
                   ))}
@@ -1185,11 +1189,11 @@ function EditPermissionsModal({ user, allPermissions, permissionsByCategory, onC
             ))}
           </div>
 
-          <div className="flex justify-end gap-3 border-t pt-4 mt-6">
+          <div className="flex justify-end gap-3 border-t border-slate-200 dark:border-slate-700 pt-4 mt-6">
             <button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50"
+              className="px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300"
             >
               Cancel
             </button>

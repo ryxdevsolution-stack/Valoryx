@@ -290,7 +290,7 @@ def google_callback():
                     email=email,
                     password_hash=dummy_pw,
                     client_id=new_client_id,
-                    role='admin',
+                    role='owner',
                     full_name=name,
                     google_id=google_id,
                     avatar_url=_safe_avatar_url(avatar),

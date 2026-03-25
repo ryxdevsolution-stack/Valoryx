@@ -19,7 +19,6 @@ from models.customer_model import Customer                               # noqa:
 from models.stock_model import StockEntry                                # noqa: F401
 from models.bulk_stock_order_model import BulkStockOrder, BulkStockOrderItem  # noqa: F401
 from models.stock_transfer_model import StockTransfer, StockTransferItem # noqa: F401
-from models.payment_model import PaymentType                             # noqa: F401
 from models.notes_model import Note                                      # noqa: F401
 from models.report_model import Report                                   # noqa: F401
 from models.expense_model import Expense, ExpenseSummary                 # noqa: F401

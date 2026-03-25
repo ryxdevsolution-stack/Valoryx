@@ -245,12 +245,12 @@ describe('loading spinner', () => {
     setLoadingHandlers(showLoading, hideLoading)
 
     server.use(
-      http.get(`${BASE}/payment`, async () => {
+      http.get(`${BASE}/customer/search`, async () => {
         return HttpResponse.json([])
       })
     )
 
-    const promise = api.get('/payment', { showLoading: true })
+    const promise = api.get('/customer/search', { showLoading: true })
     // Advance only 50ms — under the 100ms delay threshold
     vi.advanceTimersByTime(50)
     await promise
@@ -268,7 +268,7 @@ describe('loading spinner', () => {
     await Promise.all([
       api.get('/stock', { showLoading: true }),
       api.get('/billing/list', { showLoading: true }),
-      api.get('/payment', { showLoading: true }),
+      api.get('/customer/search', { showLoading: true }),
     ])
 
     // If hideLoading were called after each request, it would be called 3 times.

@@ -268,7 +268,7 @@ def create_app():
 
     # Import each blueprint separately to identify which one fails
     auth_bp = billing_bp = stock_bp = report_bp = audit_bp = None
-    client_bp = payment_bp = customer_bp = analytics_bp = None
+    client_bp = customer_bp = analytics_bp = None
     permissions_bp = admin_bp = notes_bp = bulk_order_bp = expense_bp = profile_bp = None
     branch_bp = stock_transfer_bp = team_bp = invite_bp = sessions_bp = None
     totp_bp = oauth_bp = None
@@ -308,12 +308,6 @@ def create_app():
     except Exception as e:
         import_errors.append(f"client: {str(e)}")
         logging.error(f"Failed to import client blueprint: {e}")
-
-    try:
-        from routes.payment import payment_bp
-    except Exception as e:
-        import_errors.append(f"payment: {str(e)}")
-        logging.error(f"Failed to import payment blueprint: {e}")
 
     try:
         from routes.customer import customer_bp
@@ -496,13 +490,6 @@ def create_app():
         except Exception as e:
             print(f"Warning: Could not register client blueprint: {e}")
     
-    if payment_bp:
-        try:
-            app.register_blueprint(payment_bp, url_prefix='/api/payment')
-            blueprints_registered.append('payment')
-        except Exception as e:
-            print(f"Warning: Could not register payment blueprint: {e}")
-
     if customer_bp:
         try:
             app.register_blueprint(customer_bp, url_prefix='/api/customer')

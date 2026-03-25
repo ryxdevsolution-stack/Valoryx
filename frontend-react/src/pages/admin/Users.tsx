@@ -1,24 +1,34 @@
-import React, { useEffect, useState, useCallback } from 'react';
-import { useNavigate } from 'react-router-dom';
+import { useEffect, useState, useCallback } from 'react';
+import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
 import api from '@/lib/api';
 import {
-  Search,
-  Filter,
+  PageHeader,
+  SearchInput,
+  Select,
+  Pagination,
+  Button,
+  Card,
+  LoadingState,
+  EmptyState,
+  ConfirmDialog,
+} from '@/lib/admin';
+import {
   UserPlus,
   Edit,
-  Trash2,
-  MoreVertical,
-  ChevronLeft,
-  ChevronRight,
   Shield,
   UserCheck,
   UserX,
   RefreshCw,
-  Download,
-  Upload,
   Check,
-  X
+  X,
+  MoreVertical,
+  Users,
+  AlertTriangle,
+  KeyRound,
+  ShieldCheck,
+  ShieldOff,
+  Lock,
 } from 'lucide-react';
 
 interface User {
@@ -43,9 +53,63 @@ interface UsersResponse {
   pages: number;
 }
 
+const ROLE_OPTIONS = [
+  { value: 'owner', label: 'Owner' },
+  { value: 'admin', label: 'Admin' },
+  { value: 'manager', label: 'Manager' },
+  { value: 'staff', label: 'Staff' },
+  { value: 'cashier', label: 'Cashier' },
+];
+
+const STATUS_OPTIONS = [
+  { value: 'active', label: 'Active' },
+  { value: 'inactive', label: 'Inactive' },
+  { value: 'super_admin', label: 'Super Admin' },
+];
+
+function RoleBadge({ role, isSuperAdmin }: { role: string; isSuperAdmin: boolean }) {
+  const colors: Record<string, string> = {
+    owner: 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400',
+    admin: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
+    manager: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
+    staff: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
+    cashier: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400',
+  };
+  return (
+    <div className="flex items-center gap-1.5">
+      <span className={`inline-flex items-center px-2 py-0.5 rounded-md text-xs font-medium capitalize ${colors[role] || colors.staff}`}>
+        {role}
+      </span>
+      {isSuperAdmin && (
+        <span className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded-md text-[10px] font-semibold bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-400 ring-1 ring-purple-200/60 dark:ring-purple-800/40" title="Super Admin">
+          <Shield className="h-2.5 w-2.5" />
+          SA
+        </span>
+      )}
+    </div>
+  );
+}
+
+function ActiveBadge({ active }: { active: boolean }) {
+  return active ? (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">
+      <Check className="h-3 w-3" />
+      Active
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+      <X className="h-3 w-3" />
+      Inactive
+    </span>
+  );
+}
+
 export default function UserManagement() {
-  const { user, isLoading: authLoading, isSuperAdmin } = useClient();
+  const { user: currentUser, isLoading: authLoading, isSuperAdmin } = useClient();
   const navigate = useNavigate();
+  const [searchParams, setSearchParams] = useSearchParams();
+  const clientIdFilter = searchParams.get('client_id') || '';
+
   const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -57,498 +121,429 @@ export default function UserManagement() {
   const [totalPages, setTotalPages] = useState(1);
   const [totalUsers, setTotalUsers] = useState(0);
   const [selectedUsers, setSelectedUsers] = useState<string[]>([]);
-  const [showBulkActions, setShowBulkActions] = useState(false);
+  const [bulkConfirm, setBulkConfirm] = useState<{ op: string; open: boolean }>({ op: '', open: false });
+  const [openMenuId, setOpenMenuId] = useState<string | null>(null);
 
   const fetchUsers = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-
       const params = new URLSearchParams({
         page: currentPage.toString(),
         limit: '10',
         ...(searchTerm && { search: searchTerm }),
         ...(roleFilter && { role: roleFilter }),
-        ...(statusFilter && { status: statusFilter })
+        ...(statusFilter && { status: statusFilter }),
+        ...(clientIdFilter && { client_id: clientIdFilter }),
       });
-
       const response = await api.get<UsersResponse>(`/admin/users?${params}`);
       setUsers(response.data.users);
       setTotalPages(response.data.pages);
       setTotalUsers(response.data.total);
-    } catch (error) {
-      console.error('Error fetching users:', error);
+    } catch {
       setError('Failed to load users');
     } finally {
       setLoading(false);
     }
-  }, [currentPage, searchTerm, roleFilter, statusFilter]);
+  }, [currentPage, searchTerm, roleFilter, statusFilter, clientIdFilter]);
 
-  // Debounce search input → API filter (400ms)
+  // Debounce search
   useEffect(() => {
-    const id = setTimeout(() => { setSearchTerm(inputValue); setCurrentPage(1); }, 400)
-    return () => clearTimeout(id)
-  }, [inputValue])
+    const id = setTimeout(() => { setSearchTerm(inputValue); setCurrentPage(1); }, 400);
+    return () => clearTimeout(id);
+  }, [inputValue]);
 
   useEffect(() => {
-    if (!authLoading && !user) {
-      navigate('/auth/login');
-      return;
-    }
+    if (!authLoading && !currentUser) { navigate('/auth/login'); return; }
+    if (!authLoading && currentUser && !isSuperAdmin()) { navigate('/dashboard'); return; }
+    if (currentUser && isSuperAdmin()) fetchUsers();
+  }, [currentUser, authLoading, isSuperAdmin, navigate, fetchUsers]);
 
-    if (!authLoading && user && !isSuperAdmin()) {
-      navigate('/dashboard');
-      return;
-    }
-
-    if (user && isSuperAdmin()) {
-      fetchUsers();
-    }
-  }, [user, authLoading, isSuperAdmin, navigate, fetchUsers]);
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!openMenuId) return;
+    const handler = () => setOpenMenuId(null);
+    document.addEventListener('click', handler);
+    return () => document.removeEventListener('click', handler);
+  }, [openMenuId]);
 
   const handleToggleStatus = async (userId: string) => {
     try {
       await api.post(`/admin/users/${userId}/toggle-status`, {});
       fetchUsers();
-    } catch (error) {
-      console.error('Error toggling user status:', error);
-    }
+    } catch { /* swallow */ }
   };
 
   const handleToggleSuperAdmin = async (userId: string) => {
-    if (confirm('Are you sure you want to change super admin status for this user?')) {
-      try {
-        await api.post(`/admin/users/${userId}/promote`, {});
-        fetchUsers();
-      } catch (error) {
-        console.error('Error toggling super admin:', error);
-      }
-    }
+    try {
+      await api.post(`/admin/users/${userId}/promote`, {});
+      fetchUsers();
+    } catch { /* swallow */ }
   };
 
   const handleResetPassword = async (userId: string) => {
-    if (confirm('Are you sure you want to reset the password for this user?')) {
-      try {
-        const response = await api.post(`/admin/users/${userId}/password`, {});
-        if (response.data.generated_password) {
-          alert(`Password reset successfully. New password: ${response.data.generated_password}`);
-        } else {
-          alert('Password reset successfully');
-        }
-      } catch (error) {
-        console.error('Error resetting password:', error);
+    try {
+      const response = await api.post(`/admin/users/${userId}/password`, {});
+      if (response.data.generated_password) {
+        alert(`New password: ${response.data.generated_password}`);
       }
-    }
+    } catch { /* swallow */ }
   };
 
-  const handleBulkOperation = async (operation: string) => {
-    if (selectedUsers.length === 0) {
-      alert('Please select users first');
-      return;
-    }
-
-    if (confirm(`Are you sure you want to ${operation} ${selectedUsers.length} user(s)?`)) {
-      try {
-        await api.post('/admin/users/bulk', { user_ids: selectedUsers, operation });
-        setSelectedUsers([]);
-        setShowBulkActions(false);
-        fetchUsers();
-      } catch (error) {
-        console.error('Error performing bulk operation:', error);
-      }
-    }
+  const handleBulkOperation = async () => {
+    if (selectedUsers.length === 0) return;
+    try {
+      await api.post('/admin/users/bulk', { user_ids: selectedUsers, operation: bulkConfirm.op });
+      setSelectedUsers([]);
+      setBulkConfirm({ op: '', open: false });
+      fetchUsers();
+    } catch { /* swallow */ }
   };
 
   const toggleUserSelection = (userId: string) => {
-    setSelectedUsers(prev =>
-      prev.includes(userId)
-        ? prev.filter(id => id !== userId)
-        : [...prev, userId]
+    setSelectedUsers((prev) =>
+      prev.includes(userId) ? prev.filter((id) => id !== userId) : [...prev, userId]
     );
   };
 
   const selectAllUsers = () => {
-    if (selectedUsers.length === users.length) {
-      setSelectedUsers([]);
-    } else {
-      setSelectedUsers(users.map(u => u.user_id));
-    }
+    setSelectedUsers((prev) => (prev.length === users.length ? [] : users.map((u) => u.user_id)));
   };
 
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <LoadingState message="Loading users..." size="lg" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <p className="text-red-600 mb-4">{error}</p>
-          <button
-            onClick={fetchUsers}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            Retry
-          </button>
-        </div>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <EmptyState
+          icon={AlertTriangle}
+          title="Failed to load users"
+          description={error}
+          action={<Button onClick={fetchUsers}>Retry</Button>}
+        />
       </div>
     );
   }
 
   return (
-    <div className="p-6 max-w-7xl mx-auto">
-      {/* Header */}
-      <div className="mb-6">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">User Management</h1>
-            <p className="text-gray-600 mt-1">Manage all users and their permissions</p>
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={() => navigate('/admin/users/create')}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-            >
-              <UserPlus className="h-5 w-5" />
-              Create User
-            </button>
-            <button
-              onClick={fetchUsers}
-              className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
-            >
-              <RefreshCw className="h-5 w-5" />
-            </button>
-          </div>
+    <div className="max-w-7xl mx-auto space-y-5">
+      {/* Client filter banner */}
+      {clientIdFilter && (
+        <div className="flex items-center justify-between px-4 py-3 bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-xl text-sm">
+          <span className="text-blue-700 dark:text-blue-300">
+            Showing users for client <span className="font-semibold">{clientIdFilter.slice(0, 8)}...</span>
+          </span>
+          <Button
+            variant="ghost"
+            size="sm"
+            icon={X}
+            onClick={() => { searchParams.delete('client_id'); setSearchParams(searchParams); }}
+          >
+            Show All
+          </Button>
         </div>
-      </div>
+      )}
+
+      {/* Header */}
+      <PageHeader
+        title="User Management"
+        description={clientIdFilter ? "Showing users for selected client" : "Manage all users and their permissions"}
+        actions={
+          <>
+            <Button variant="outline" onClick={fetchUsers} icon={RefreshCw} size="sm">
+              <span className="hidden sm:inline">Refresh</span>
+            </Button>
+            <Button onClick={() => navigate('/admin/users/create')} icon={UserPlus} size="sm">
+              Create User
+            </Button>
+          </>
+        }
+      />
 
       {/* Filters */}
-      <div className="bg-white rounded-lg shadow mb-6 p-4">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by name, email, or phone..."
-                value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
-            </div>
-          </div>
-          <select
+      <Card noPadding>
+        <div className="flex flex-col md:flex-row gap-3 p-4">
+          <SearchInput
+            value={inputValue}
+            onChange={setInputValue}
+            placeholder="Search by name, email, or phone..."
+            className="flex-1"
+          />
+          <Select
             value={roleFilter}
-            onChange={(e) => setRoleFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="">All Roles</option>
-            <option value="admin">Admin</option>
-            <option value="manager">Manager</option>
-            <option value="staff">Staff</option>
-          </select>
-          <select
+            onChange={(v) => { setRoleFilter(v); setCurrentPage(1); }}
+            options={ROLE_OPTIONS}
+            placeholder="All Roles"
+          />
+          <Select
             value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="">All Status</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-            <option value="super_admin">Super Admin</option>
-          </select>
-          {selectedUsers.length > 0 && (
-            <div className="flex gap-2">
-              <button
-                onClick={() => setShowBulkActions(!showBulkActions)}
-                className="px-4 py-2 bg-gray-600 text-white rounded-lg hover:bg-gray-700"
-              >
-                Bulk Actions ({selectedUsers.length})
-              </button>
-            </div>
-          )}
+            onChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}
+            options={STATUS_OPTIONS}
+            placeholder="All Status"
+          />
         </div>
-
-        {/* Bulk Actions */}
-        {showBulkActions && selectedUsers.length > 0 && (
-          <div className="mt-4 flex gap-2 p-3 bg-gray-50 rounded-lg">
-            <button
-              onClick={() => handleBulkOperation('activate')}
-              className="px-3 py-1 bg-green-600 text-white rounded hover:bg-green-700"
-            >
-              Activate
-            </button>
-            <button
-              onClick={() => handleBulkOperation('deactivate')}
-              className="px-3 py-1 bg-yellow-600 text-white rounded hover:bg-yellow-700"
-            >
-              Deactivate
-            </button>
-            <button
-              onClick={() => handleBulkOperation('delete')}
-              className="px-3 py-1 bg-red-600 text-white rounded hover:bg-red-700"
-            >
-              Delete
-            </button>
-            <button
-              onClick={() => {
-                setSelectedUsers([]);
-                setShowBulkActions(false);
-              }}
-              className="px-3 py-1 border border-gray-300 rounded hover:bg-white"
-            >
-              Cancel
-            </button>
+        {/* Bulk Actions Bar */}
+        {selectedUsers.length > 0 && (
+          <div className="flex items-center gap-3 px-4 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/60">
+            <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
+              {selectedUsers.length} selected
+            </span>
+            <div className="flex gap-2 ml-auto">
+              <Button size="sm" variant="outline" onClick={() => setBulkConfirm({ op: 'activate', open: true })}>
+                Activate
+              </Button>
+              <Button size="sm" variant="outline" onClick={() => setBulkConfirm({ op: 'deactivate', open: true })}>
+                Deactivate
+              </Button>
+              <Button size="sm" variant="danger" onClick={() => setBulkConfirm({ op: 'delete', open: true })}>
+                Delete
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setSelectedUsers([])}>
+                Cancel
+              </Button>
+            </div>
           </div>
         )}
-      </div>
+      </Card>
 
-      {/* Users Table */}
-      <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden">
+      {/* Desktop Table */}
+      <Card noPadding className="hidden md:block overflow-hidden">
         <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/60">
+                <th className="px-5 py-3 text-left w-10">
                   <input
                     type="checkbox"
                     checked={selectedUsers.length === users.length && users.length > 0}
                     onChange={selectAllUsers}
-                    className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                    className="rounded border-slate-300 dark:border-slate-600 text-violet-600 focus:ring-violet-500 dark:bg-slate-700"
                   />
                 </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  User
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Role
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Department
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Last Login
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
+                {['User', 'Role', 'Department', 'Status', 'Last Login', 'Actions'].map((h, i) => (
+                  <th
+                    key={h}
+                    className={`px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 ${
+                      i === 5 ? 'text-right' : 'text-left'
+                    }`}
+                  >
+                    {h}
+                  </th>
+                ))}
               </tr>
             </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {users.map((user) => (
-                <tr key={user.user_id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">
+            <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+              {users.map((u) => (
+                <tr
+                  key={u.user_id}
+                  className={`hover:bg-slate-50/60 dark:hover:bg-slate-700/30 transition-colors ${
+                    selectedUsers.includes(u.user_id) ? 'bg-violet-50/40 dark:bg-violet-900/10' : ''
+                  }`}
+                >
+                  <td className="px-5 py-3.5">
                     <input
                       type="checkbox"
-                      checked={selectedUsers.includes(user.user_id)}
-                      onChange={() => toggleUserSelection(user.user_id)}
-                      className="rounded border-gray-300 text-blue-600 focus:ring-blue-500"
+                      checked={selectedUsers.includes(u.user_id)}
+                      onChange={() => toggleUserSelection(u.user_id)}
+                      className="rounded border-slate-300 dark:border-slate-600 text-violet-600 focus:ring-violet-500 dark:bg-slate-700"
                     />
                   </td>
-                  <td className="px-6 py-4">
-                    <div>
-                      <div className="text-sm font-medium text-gray-900">
-                        {user.full_name || user.email}
-                      </div>
-                      <div className="text-sm text-gray-500">{user.email}</div>
-                      {user.phone && (
-                        <div className="text-xs text-gray-500">{user.phone}</div>
+                  <td className="px-5 py-3.5">
+                    <div className="min-w-0">
+                      <p className="font-medium text-slate-900 dark:text-white truncate">
+                        {u.full_name || u.email}
+                      </p>
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{u.email}</p>
+                      {u.phone && (
+                        <p className="text-[11px] text-slate-400 dark:text-slate-500">{u.phone}</p>
                       )}
                     </div>
                   </td>
-                  <td className="px-6 py-4">
-                    <div className="flex items-center gap-2">
-                      <span className="text-sm text-gray-900 capitalize">{user.role}</span>
-                      {user.is_super_admin && (
-                        <Shield className="h-4 w-4 text-purple-600" aria-label="Super Admin" />
-                      )}
-                    </div>
+                  <td className="px-5 py-3.5">
+                    <RoleBadge role={u.role} isSuperAdmin={u.is_super_admin} />
                   </td>
-                  <td className="px-6 py-4">
-                    <span className="text-sm text-gray-900">
-                      {user.department || '-'}
-                    </span>
+                  <td className="px-5 py-3.5 text-slate-700 dark:text-slate-300">
+                    {u.department || <span className="text-slate-400 dark:text-slate-500">-</span>}
                   </td>
-                  <td className="px-6 py-4">
-                    {user.is_active ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                        <Check className="h-3 w-3 mr-1" />
-                        Active
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                        <X className="h-3 w-3 mr-1" />
-                        Inactive
-                      </span>
-                    )}
+                  <td className="px-5 py-3.5">
+                    <ActiveBadge active={u.is_active} />
                   </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">
-                    {user.last_login
-                      ? new Date(user.last_login).toLocaleDateString()
-                      : 'Never'}
+                  <td className="px-5 py-3.5 text-xs text-slate-500 dark:text-slate-400">
+                    {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
                   </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
+                  <td className="px-5 py-3.5">
+                    <div className="flex items-center justify-end gap-1">
                       <button
-                        onClick={() => navigate(`/admin/users/${user.user_id}`)}
-                        className="text-blue-600 hover:text-blue-900"
-                        title="View/Edit"
+                        type="button"
+                        onClick={() => navigate(`/admin/users/${u.user_id}`)}
+                        className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                        title="Edit"
                       >
                         <Edit className="h-4 w-4" />
                       </button>
                       <button
-                        onClick={() => handleToggleStatus(user.user_id)}
-                        className={`${
-                          user.is_active
-                            ? 'text-yellow-600 hover:text-yellow-900'
-                            : 'text-green-600 hover:text-green-900'
+                        type="button"
+                        onClick={() => handleToggleStatus(u.user_id)}
+                        className={`p-1.5 rounded-lg transition-colors ${
+                          u.is_active
+                            ? 'text-slate-500 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20'
+                            : 'text-slate-500 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
                         }`}
-                        title={user.is_active ? 'Deactivate' : 'Activate'}
+                        title={u.is_active ? 'Deactivate' : 'Activate'}
                       >
-                        {user.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+                        {u.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
                       </button>
-                      <div className="relative group">
-                        <button className="text-gray-400 hover:text-gray-600">
+                      {/* More actions dropdown */}
+                      <div className="relative">
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); setOpenMenuId(openMenuId === u.user_id ? null : u.user_id); }}
+                          className="p-1.5 rounded-lg text-slate-400 dark:text-slate-500 hover:text-slate-600 dark:hover:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700 transition-colors"
+                        >
                           <MoreVertical className="h-4 w-4" />
                         </button>
-                        <div className="absolute right-0 mt-2 w-48 bg-white rounded-md shadow-lg z-10 hidden group-hover:block">
-                          <button
-                            onClick={() => navigate(`/admin/permissions?user=${user.user_id}`)}
-                            className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                          >
-                            Manage Permissions
-                          </button>
-                          <button
-                            onClick={() => handleResetPassword(user.user_id)}
-                            className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                          >
-                            Reset Password
-                          </button>
-                          <button
-                            onClick={() => handleToggleSuperAdmin(user.user_id)}
-                            className="block w-full text-left px-4 py-2 text-sm text-gray-700 hover:bg-gray-100"
-                          >
-                            {user.is_super_admin ? 'Remove' : 'Make'} Super Admin
-                          </button>
-                        </div>
+                        {openMenuId === u.user_id && (
+                          <div className="absolute right-0 mt-1 w-52 bg-white dark:bg-slate-800 rounded-xl shadow-lg ring-1 ring-slate-200 dark:ring-slate-700 z-20 py-1 animate-in fade-in slide-in-from-top-1 duration-150">
+                            <button
+                              type="button"
+                              onClick={() => { navigate(`/admin/permissions?user=${u.user_id}`); setOpenMenuId(null); }}
+                              className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+                            >
+                              <KeyRound className="h-4 w-4 text-slate-400" />
+                              Manage Permissions
+                            </button>
+                            <button
+                              type="button"
+                              onClick={() => { handleResetPassword(u.user_id); setOpenMenuId(null); }}
+                              className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+                            >
+                              <Lock className="h-4 w-4 text-slate-400" />
+                              Reset Password
+                            </button>
+                            <div className="my-1 border-t border-slate-100 dark:border-slate-700" />
+                            <button
+                              type="button"
+                              onClick={() => { handleToggleSuperAdmin(u.user_id); setOpenMenuId(null); }}
+                              className="flex items-center gap-2.5 w-full px-4 py-2.5 text-sm text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700/60 transition-colors"
+                            >
+                              {u.is_super_admin ? (
+                                <><ShieldOff className="h-4 w-4 text-red-400" /> Remove Super Admin</>
+                              ) : (
+                                <><ShieldCheck className="h-4 w-4 text-violet-400" /> Make Super Admin</>
+                              )}
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </td>
                 </tr>
               ))}
+              {users.length === 0 && (
+                <tr>
+                  <td colSpan={7} className="py-12">
+                    <EmptyState
+                      icon={Users}
+                      title="No users found"
+                      description={inputValue ? 'Try adjusting your search.' : 'Create your first user to get started.'}
+                      action={
+                        !inputValue ? (
+                          <Button onClick={() => navigate('/admin/users/create')} icon={UserPlus} size="sm">
+                            Create User
+                          </Button>
+                        ) : undefined
+                      }
+                    />
+                  </td>
+                </tr>
+              )}
             </tbody>
           </table>
         </div>
+        {totalUsers > 0 && (
+          <Pagination page={currentPage} limit={10} total={totalUsers} onPageChange={setCurrentPage} />
+        )}
+      </Card>
 
-        {/* Pagination */}
-        <div className="bg-gray-50 px-6 py-3 flex items-center justify-between">
-          <div className="text-sm text-gray-700">
-            Showing {(currentPage - 1) * 10 + 1} to {Math.min(currentPage * 10, totalUsers)} of {totalUsers} users
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-              disabled={currentPage === 1}
-              className="px-3 py-1 border border-gray-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <span className="text-sm text-gray-700">
-              Page {currentPage} of {totalPages}
-            </span>
-            <button
-              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-              disabled={currentPage === totalPages}
-              className="px-3 py-1 border border-gray-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile Cards - visible only on small screens */}
+      {/* Mobile Cards */}
       <div className="md:hidden space-y-3">
-        {users.map((user) => (
-          <div key={user.user_id} className="bg-white rounded-lg shadow p-4">
+        {users.map((u) => (
+          <Card key={u.user_id} className="!p-4">
             <div className="flex items-start justify-between mb-3">
-              <div>
-                <div className="text-sm font-semibold text-gray-900">{user.full_name || user.email}</div>
-                <div className="text-xs text-gray-500">{user.email}</div>
-                {user.phone && <div className="text-xs text-gray-400">{user.phone}</div>}
+              <div className="min-w-0">
+                <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">
+                  {u.full_name || u.email}
+                </p>
+                <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">{u.email}</p>
+                {u.phone && <p className="text-[11px] text-slate-400 dark:text-slate-500">{u.phone}</p>}
               </div>
-              <div className="flex items-center gap-2 ml-2">
-                <button
-                  onClick={() => navigate(`/admin/users/${user.user_id}`)}
-                  className="text-blue-600 hover:text-blue-900 p-1"
-                  title="View/Edit"
-                >
+              <div className="flex items-center gap-0.5 ml-2 flex-shrink-0">
+                <button type="button" onClick={() => navigate(`/admin/users/${u.user_id}`)} className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20">
                   <Edit className="h-4 w-4" />
                 </button>
-                <button
-                  onClick={() => handleToggleStatus(user.user_id)}
-                  className={`p-1 ${user.is_active ? 'text-yellow-600 hover:text-yellow-900' : 'text-green-600 hover:text-green-900'}`}
-                  title={user.is_active ? 'Deactivate' : 'Activate'}
-                >
-                  {user.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+                <button type="button" onClick={() => handleToggleStatus(u.user_id)} className={`p-1.5 rounded-lg ${u.is_active ? 'text-slate-400 hover:text-amber-600' : 'text-slate-400 hover:text-emerald-600'}`}>
+                  {u.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
                 </button>
               </div>
             </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
+            <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
               <div>
-                <span className="text-gray-500 font-medium">Role: </span>
-                <span className="text-gray-900 capitalize">{user.role}</span>
-                {user.is_super_admin && <Shield className="inline h-3 w-3 text-purple-600 ml-1" />}
+                <span className="text-slate-500 dark:text-slate-400">Role </span>
+                <RoleBadge role={u.role} isSuperAdmin={u.is_super_admin} />
               </div>
               <div>
-                <span className="text-gray-500 font-medium">Dept: </span>
-                <span className="text-gray-900">{user.department || '-'}</span>
+                <span className="text-slate-500 dark:text-slate-400">Dept </span>
+                <span className="text-slate-800 dark:text-slate-200">{u.department || '-'}</span>
               </div>
               <div>
-                <span className="text-gray-500 font-medium">Status: </span>
-                {user.is_active ? (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
-                ) : (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Inactive</span>
-                )}
+                <span className="text-slate-500 dark:text-slate-400">Status </span>
+                <ActiveBadge active={u.is_active} />
               </div>
               <div>
-                <span className="text-gray-500 font-medium">Last Login: </span>
-                <span className="text-gray-900">{user.last_login ? new Date(user.last_login).toLocaleDateString() : 'Never'}</span>
+                <span className="text-slate-500 dark:text-slate-400">Last Login </span>
+                <span className="text-slate-800 dark:text-slate-200">
+                  {u.last_login ? new Date(u.last_login).toLocaleDateString() : 'Never'}
+                </span>
               </div>
             </div>
-          </div>
+          </Card>
         ))}
-        {/* Mobile Pagination */}
-        <div className="flex items-center justify-between py-3 px-1">
-          <div className="text-xs text-gray-600">
-            Page {currentPage} of {totalPages} ({totalUsers} users)
+        {users.length === 0 && (
+          <EmptyState icon={Users} title="No users found" description="Try adjusting your search." />
+        )}
+        {totalUsers > 0 && (
+          <div className="flex items-center justify-between py-3 px-1">
+            <span className="text-xs text-slate-500 dark:text-slate-400">
+              Page {currentPage} of {totalPages} ({totalUsers} users)
+            </span>
+            <div className="flex gap-2">
+              <Button variant="outline" size="sm" onClick={() => setCurrentPage((p) => Math.max(1, p - 1))} disabled={currentPage === 1}>
+                Prev
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))} disabled={currentPage === totalPages}>
+                Next
+              </Button>
+            </div>
           </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-              disabled={currentPage === 1}
-              className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 hover:bg-gray-50 text-sm"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-              disabled={currentPage === totalPages}
-              className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 hover:bg-gray-50 text-sm"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
+        )}
       </div>
+
+      {/* Bulk Confirm */}
+      <ConfirmDialog
+        isOpen={bulkConfirm.open}
+        onClose={() => setBulkConfirm({ op: '', open: false })}
+        onConfirm={handleBulkOperation}
+        title={`Bulk ${bulkConfirm.op}`}
+        message={`Are you sure you want to ${bulkConfirm.op} ${selectedUsers.length} user(s)?`}
+        confirmText={bulkConfirm.op.charAt(0).toUpperCase() + bulkConfirm.op.slice(1)}
+        variant={bulkConfirm.op === 'delete' ? 'danger' : 'warning'}
+      />
     </div>
   );
 }

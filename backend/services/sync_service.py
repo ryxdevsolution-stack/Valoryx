@@ -14,8 +14,7 @@ from database.type_converters import (
     BILLING_COLUMN_TYPES,
     STOCK_COLUMN_TYPES,
     CUSTOMER_COLUMN_TYPES,
-    PAYMENT_TYPE_COLUMN_TYPES,
-    EXPENSE_COLUMN_TYPES,
+EXPENSE_COLUMN_TYPES,
     EXPENSE_SUMMARY_COLUMN_TYPES,
     BULK_ORDER_COLUMN_TYPES,
     BULK_ORDER_ITEM_COLUMN_TYPES,
@@ -113,7 +112,6 @@ class SyncService:
                     "non_gst_bills": 0,
                     "stock": 0,
                     "customers": 0,
-                    "payment_types": 0,
                     "expenses": 0,
                     "expense_summaries": 0,
                     "bulk_orders": 0,
@@ -162,16 +160,7 @@ class SyncService:
                 logger.error(f"[SyncService] Customer sync failed: {e}")
                 results["errors"].append(f"Customers: {str(e)}")
 
-            # Sync payment types
-            try:
-                count = self._sync_payment_types()
-                results["synced"]["payment_types"] = count
-                logger.info(f"[SyncService] Uploaded {count} payment types")
-            except Exception as e:
-                logger.error(f"[SyncService] Payment type sync failed: {e}")
-                results["errors"].append(f"Payment types: {str(e)}")
-
-            # Sync expenses
+# Sync expenses
             try:
                 count = self._sync_expenses()
                 results["synced"]["expenses"] = count
@@ -505,48 +494,7 @@ class SyncService:
         self._mark_as_synced('customer', 'customer_id', synced_ids)
         return len(synced_ids)
 
-    def _sync_payment_types(self):
-        """Sync payment types from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM payment_type
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            types = [dict(row._mapping) for row in result]
-
-        if not types:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for ptype in types:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(ptype, PAYMENT_TYPE_COLUMN_TYPES)
-
-                    pg_conn.execute(text("""
-                        INSERT INTO payment_type (
-                            payment_type_id, client_id, payment_name, is_active, created_at, updated_at
-                        ) VALUES (
-                            :payment_type_id, :client_id, :payment_name, :is_active, :created_at, :updated_at
-                        )
-                        ON CONFLICT (payment_type_id) DO UPDATE SET
-                            payment_name = EXCLUDED.payment_name,
-                            is_active = EXCLUDED.is_active,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(ptype['payment_type_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync payment type {ptype.get('payment_type_id')}: {e}")
-
-        self._mark_as_synced('payment_type', 'payment_type_id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_expenses(self):
+def _sync_expenses(self):
         """Sync expenses from SQLite to PostgreSQL"""
         with self.sqlite_engine.connect() as sqlite_conn:
             result = sqlite_conn.execute(text("""
@@ -965,7 +913,6 @@ class SyncService:
                     "non_gst_bills": 0,
                     "stock": 0,
                     "customers": 0,
-                    "payment_types": 0,
                     "expenses": 0,
                     "expense_summaries": 0,
                     "bulk_orders": 0,
@@ -984,7 +931,6 @@ class SyncService:
                 ("non_gst_bills", self._download_non_gst_bills),
                 ("stock", self._download_stock),
                 ("customers", self._download_customers),
-                ("payment_types", self._download_payment_types),
                 ("expenses", self._download_expenses),
                 ("expense_summaries", self._download_expense_summaries),
                 ("bulk_orders", self._download_bulk_orders),
@@ -1047,7 +993,6 @@ class SyncService:
                     "non_gst_bills": 0,
                     "stock": 0,
                     "customers": 0,
-                    "payment_types": 0,
                     "expenses": 0,
                     "expense_summaries": 0,
                     "bulk_orders": 0,
@@ -1063,7 +1008,6 @@ class SyncService:
                 ("non_gst_bills", self._download_non_gst_bills),
                 ("stock", self._download_stock),
                 ("customers", self._download_customers),
-                ("payment_types", self._download_payment_types),
                 ("expenses", self._download_expenses),
                 ("expense_summaries", self._download_expense_summaries),
                 ("bulk_orders", self._download_bulk_orders),
@@ -1375,36 +1319,7 @@ class SyncService:
 
         return self._upsert_to_sqlite('customer', converted_records, 'customer_id', columns)
 
-    def _download_payment_types(self, client_id, last_download):
-        """Download payment types from Supabase to SQLite"""
-        query = """
-            SELECT * FROM payment_type
-            WHERE client_id = :client_id
-        """
-        if last_download:
-            query += " AND updated_at > :last_download"
-
-        query += " ORDER BY created_at LIMIT 1000"
-
-        params = {"client_id": client_id}
-        if last_download:
-            params["last_download"] = last_download
-
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
-
-        if not records:
-            return 0
-
-        converted_records = [TypeConverter.convert_dict_to_sqlite(r, PAYMENT_TYPE_COLUMN_TYPES) for r in records]
-
-        columns = ['payment_type_id', 'client_id', 'payment_name', 'is_active',
-                   'created_at', 'updated_at', 'synced_at']
-
-        return self._upsert_to_sqlite('payment_type', converted_records, 'payment_type_id', columns)
-
-    def _download_expenses(self, client_id, last_download):
+def _download_expenses(self, client_id, last_download):
         """Download expenses from Supabase to SQLite"""
         query = """
             SELECT * FROM expense

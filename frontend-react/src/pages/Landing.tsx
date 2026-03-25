@@ -5,16 +5,15 @@ import { ThemeProvider } from '@/contexts/ThemeContext'
 import LandingNavbar from '@/components/landing/LandingNavbar'
 import HeroSection from '@/components/landing/HeroSection'
 import TrustedBySection from '@/components/landing/TrustedBySection'
-import FeaturesSection from '@/components/landing/FeaturesSection'
+import ProductShowcaseSection from '@/components/landing/ProductShowcaseSection'
+import IntegrationsSection from '@/components/landing/IntegrationsSection'
 import BenefitsSection from '@/components/landing/BenefitsSection'
 import StatsSection from '@/components/landing/StatsSection'
 import TestimonialsSection from '@/components/landing/TestimonialsSection'
+import ContactSection from '@/components/landing/ContactSection'
 import FAQSection from '@/components/landing/FAQSection'
 import CTASection from '@/components/landing/CTASection'
-import PricingSection from '@/components/landing/PricingSection'
 import LandingFooter from '@/components/landing/LandingFooter'
-import AppPreviewSection from '@/components/landing/AppPreviewSection'
-import ModuleShowcaseSection from '@/components/landing/ModuleShowcaseSection'
 import DemoVideoModal from '@/components/landing/DemoVideoModal'
 
 const DEMO_VIDEO = 'https://www.youtube.com/embed/wz8e0IfWaNM?autoplay=1'
@@ -33,17 +32,14 @@ export default function LandingPage() {
           {/* Hero Section */}
           <HeroSection onWatchDemo={() => setVideoOpen(true)} />
 
-          {/* App Preview Section */}
-          <AppPreviewSection />
-
           {/* Trusted By Section */}
           <TrustedBySection />
 
-          {/* Features Section */}
-          <FeaturesSection />
+          {/* Product Showcase — BentoGrid (replaces Features + AppPreview + ModuleShowcase) */}
+          <ProductShowcaseSection />
 
-          {/* Module Showcase Section */}
-          <ModuleShowcaseSection />
+          {/* Integrations Section */}
+          <IntegrationsSection />
 
           {/* Stats Section */}
           <StatsSection />
@@ -54,8 +50,8 @@ export default function LandingPage() {
           {/* Testimonials Section */}
           <TestimonialsSection />
 
-          {/* Pricing Section */}
-          <PricingSection />
+          {/* Contact Section */}
+          <ContactSection />
 
           {/* FAQ Section */}
           <FAQSection />

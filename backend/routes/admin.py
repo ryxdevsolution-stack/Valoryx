@@ -7,7 +7,6 @@ from models.audit_model import AuditLog
 from models.billing_model import GSTBilling, NonGSTBilling
 from models.stock_model import StockEntry
 from models.customer_model import Customer
-from models.payment_model import PaymentType
 from models.report_model import Report
 from models.supplier_model import Supplier, SupplierDelivery, SupplierDeliveryItem
 from models.subscription_model import PaymentTransaction
@@ -873,8 +872,6 @@ def get_permission_templates():
                     # Reports
                     'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_inventory',
                     'reports.generate', 'reports.export', 'reports.print',
-                    # Payment types
-                    'payment_types.view', 'payment_types.view_all'
                 ]
             },
 
@@ -900,8 +897,6 @@ def get_permission_templates():
                     # Reports
                     'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
                     'reports.view_inventory', 'reports.generate', 'reports.export',
-                    # Payment types
-                    'payment_types.view', 'payment_types.view_all', 'payment_types.create'
                 ]
             },
 
@@ -924,8 +919,6 @@ def get_permission_templates():
                     'stock.adjust_quantity',
                     # Reports - Basic
                     'reports.view', 'reports.view_sales', 'reports.view_inventory',
-                    # Payment types
-                    'payment_types.view', 'payment_types.view_all'
                 ]
             },
 
@@ -949,8 +942,6 @@ def get_permission_templates():
                     # Reports
                     'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_inventory',
                     'reports.generate', 'reports.export',
-                    # Payment types
-                    'payment_types.view', 'payment_types.view_all'
                 ]
             },
 
@@ -976,8 +967,6 @@ def get_permission_templates():
                     # Reports
                     'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
                     'reports.generate', 'reports.export', 'reports.custom_filters',
-                    # Payment types
-                    'payment_types.view', 'payment_types.view_all', 'payment_types.create'
                 ]
             },
 
@@ -999,8 +988,6 @@ def get_permission_templates():
                     'stock.edit', 'stock.edit_price', 'stock.adjust_quantity',
                     # Reports - Basic sales
                     'reports.view', 'reports.view_sales', 'reports.view_inventory',
-                    # Payment types
-                    'payment_types.view', 'payment_types.view_all'
                 ]
             },
 
@@ -1029,8 +1016,6 @@ def get_permission_templates():
                     'reports.generate', 'reports.export',
                     # Audit - Important for compliance
                     'audit.view', 'audit.view_all', 'audit.search',
-                    # Payment types
-                    'payment_types.view', 'payment_types.view_all'
                 ]
             },
 
@@ -1058,8 +1043,6 @@ def get_permission_templates():
                     # Reports
                     'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
                     'reports.view_inventory', 'reports.generate', 'reports.export',
-                    # Payment types
-                    'payment_types.view', 'payment_types.view_all', 'payment_types.create'
                 ]
             },
 
@@ -1087,8 +1070,6 @@ def get_permission_templates():
                     # Reports
                     'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
                     'reports.view_inventory', 'reports.generate', 'reports.export',
-                    # Payment types
-                    'payment_types.view', 'payment_types.view_all', 'payment_types.create'
                 ]
             },
 
@@ -1118,8 +1099,6 @@ def get_permission_templates():
                     'reports.export', 'reports.custom_filters',
                     # Audit - Critical for high value
                     'audit.view', 'audit.view_all', 'audit.search', 'audit.export',
-                    # Payment types
-                    'payment_types.view', 'payment_types.view_all', 'payment_types.create'
                 ]
             },
 
@@ -1138,8 +1117,6 @@ def get_permission_templates():
                     'customers.view', 'customers.create',
                     # Stock - View only
                     'stock.view', 'stock.view_all', 'stock.search',
-                    # Payment types
-                    'payment_types.view', 'payment_types.view_all'
                 ]
             },
 
@@ -1178,8 +1155,9 @@ def get_all_clients():
         search = request.args.get('search', '')
         status_filter = request.args.get('status', '')
 
-        # Base query for all clients
-        query = ClientEntry.query
+        # Base query — exclude the super admin's own client
+        super_admin_client_id = g.user.get('client_id')
+        query = ClientEntry.query.filter(ClientEntry.client_id != super_admin_client_id)
 
         # Apply search filter
         if search:
@@ -1692,7 +1670,6 @@ def delete_client(client_id):
         non_gst_bills_count = NonGSTBilling.query.filter_by(client_id=client_id).count()
         stock_count = StockEntry.query.filter_by(client_id=client_id).count()
         customer_count = Customer.query.filter_by(client_id=client_id).count()
-        payment_types_count = PaymentType.query.filter_by(client_id=client_id).count()
         reports_count = Report.query.filter_by(client_id=client_id).count()
         audit_logs_count = AuditLog.query.filter_by(client_id=client_id).count()
 
@@ -1702,21 +1679,22 @@ def delete_client(client_id):
         user_ids = [str(u.user_id) for u in users]
 
         # 1. Delete notes (user_id FK → users, no cascade)
+        #    Cast uuid column to text to avoid uuid/text type mismatch with ANY()
         if user_ids:
             db.session.execute(db.text(
-                "DELETE FROM notes WHERE user_id = ANY(:uids)"
+                "DELETE FROM notes WHERE user_id::text = ANY(:uids)"
             ), {"uids": user_ids})
 
         # 2. Delete user sessions (user_id FK → users; CASCADE exists but be explicit)
         if user_ids:
             db.session.execute(db.text(
-                "DELETE FROM user_sessions WHERE user_id = ANY(:uids)"
+                "DELETE FROM user_sessions WHERE user_id::text = ANY(:uids)"
             ), {"uids": user_ids})
 
         # 3. Delete user permissions (user_id FK → users)
         if user_ids:
             db.session.execute(db.text(
-                "DELETE FROM user_permissions WHERE user_id = ANY(:uids)"
+                "DELETE FROM user_permissions WHERE user_id::text = ANY(:uids)"
             ), {"uids": user_ids})
 
         # 4. Delete stock transfer items → transfers
@@ -1741,43 +1719,28 @@ def delete_client(client_id):
         db.session.execute(db.text("DELETE FROM supplier_deliveries WHERE client_id = :cid"), {"cid": cid})
         db.session.execute(db.text("DELETE FROM suppliers WHERE client_id = :cid"), {"cid": cid})
 
-        # 7. Delete branch inventory → branches
-        db.session.execute(db.text("DELETE FROM branch_inventory WHERE client_id = :cid"), {"cid": cid})
-        db.session.execute(db.text("DELETE FROM branches WHERE client_id = :cid"), {"cid": cid})
-
-        # 8. Delete webhook deliveries → endpoints
-        db.session.execute(db.text("DELETE FROM webhook_deliveries WHERE client_id = :cid"), {"cid": cid})
-        db.session.execute(db.text("DELETE FROM webhook_endpoints WHERE client_id = :cid"), {"cid": cid})
-
-        # 9. Delete payment transactions
-        db.session.execute(db.text("DELETE FROM payment_transaction WHERE client_id = :cid"), {"cid": cid})
-
-        # 10. Delete expenses
+        # 7. Delete all data tables that may have created_by FK → users
+        #    These MUST all be deleted before users to avoid FK violations.
         db.session.execute(db.text("DELETE FROM expense WHERE client_id = :cid"), {"cid": cid})
         db.session.execute(db.text("DELETE FROM expense_summary WHERE client_id = :cid"), {"cid": cid})
-
-        # 11. Delete reports
         db.session.execute(db.text("DELETE FROM report WHERE client_id = :cid"), {"cid": cid})
-
-        # 12. Delete bills
         db.session.execute(db.text("DELETE FROM gst_billing WHERE client_id = :cid"), {"cid": cid})
         db.session.execute(db.text("DELETE FROM non_gst_billing WHERE client_id = :cid"), {"cid": cid})
-
-        # 13. Delete stock entries
         db.session.execute(db.text("DELETE FROM stock_entry WHERE client_id = :cid"), {"cid": cid})
-
-        # 14. Delete customers
         db.session.execute(db.text("DELETE FROM customer WHERE client_id = :cid"), {"cid": cid})
-
-        # 15. Delete payment types
-        db.session.execute(db.text("DELETE FROM payment_type WHERE client_id = :cid"), {"cid": cid})
-
-        # 16. Delete sync metadata / logs
+        db.session.execute(db.text("DELETE FROM payment_transaction WHERE client_id = :cid"), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM webhook_deliveries WHERE client_id = :cid"), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM webhook_endpoints WHERE client_id = :cid"), {"cid": cid})
         db.session.execute(db.text("DELETE FROM sync_metadata WHERE client_id = :cid"), {"cid": cid})
         db.session.execute(db.text("DELETE FROM sync_log WHERE client_id = :cid"), {"cid": cid})
 
-        # 17. Delete users
+        # 8. Delete users (must happen after all tables with created_by FK,
+        #    but before branches — users.branch_id FK → branches)
         db.session.execute(db.text("DELETE FROM users WHERE client_id = :cid"), {"cid": cid})
+
+        # 9. Delete branch inventory → branches
+        db.session.execute(db.text("DELETE FROM branch_inventory WHERE client_id = :cid"), {"cid": cid})
+        db.session.execute(db.text("DELETE FROM branches WHERE client_id = :cid"), {"cid": cid})
 
         # Prepare deletion summary
         deletion_summary = {
@@ -1788,8 +1751,7 @@ def delete_client(client_id):
             'total_bills': gst_bills_count + non_gst_bills_count,
             'stock_entries': stock_count,
             'customers': customer_count,
-            'payment_types': payment_types_count,
-            'reports': reports_count,
+'reports': reports_count,
             'audit_logs': audit_logs_count
         }
 

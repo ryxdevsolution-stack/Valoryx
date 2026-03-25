@@ -20,6 +20,7 @@ import {
   ChevronRight,
   Play,
   Pause,
+  Wallet,
 } from 'lucide-react'
 import { viewportOnce } from '@/lib/landing/animations'
 
@@ -87,7 +88,7 @@ const modules = [
       'Full delivery history per supplier',
       'Pending & completed delivery tracking',
     ],
-    preview: '/screenshots/suppliers.png',
+    preview: '/screenshots/supplier.png',
   },
   {
     id: 'customers',
@@ -150,7 +151,7 @@ const modules = [
       'Branch-level analytics',
       'Manage branches from one dashboard',
     ],
-    preview: '/screenshots/transfer.png',
+    preview: '/screenshots/stock-transfer.png',
   },
   {
     id: 'payments',
@@ -192,7 +193,7 @@ const modules = [
       'User login and session tracking',
       'Export audit logs for compliance',
     ],
-    preview: '/screenshots/audit.png',
+    preview: '/screenshots/das1.png',
   },
   {
     id: 'security',
@@ -277,6 +278,27 @@ const modules = [
       'Force password change for new users',
     ],
     preview: '/screenshots/adduser.png',
+  },
+  {
+    id: 'expenses',
+    icon: Wallet,
+    label: 'Expenses',
+    color: 'from-emerald-500 to-green-600',
+    bg: 'bg-emerald-50 dark:bg-emerald-950/30',
+    border: 'border-emerald-200 dark:border-emerald-800',
+    accent: 'text-emerald-600 dark:text-emerald-400',
+    headline: 'Track every rupee spent',
+    description:
+      'Record business expenses by category — rent, utilities, supplies, salaries. Know exactly where your money goes with summaries and reports.',
+    points: [
+      'Categorize expenses (rent, utilities, supplies)',
+      'Date-wise expense recording',
+      'Monthly and yearly summaries',
+      'Profit & loss overview with expenses',
+      'Export expense reports to Excel',
+      'Multi-branch expense tracking',
+    ],
+    preview: '/screenshots/das1.png',
   },
 ]
 
@@ -472,8 +494,9 @@ export default function ModuleShowcaseSection() {
 
                   <img
                     src={mod.preview}
-                    alt={mod.label}
+                    alt={`${mod.label} module screenshot — Valoryx billing software`}
                     className="w-full object-cover object-top max-h-[280px]"
+                    loading="lazy"
                     draggable={false}
                   />
                 </div>

@@ -4,6 +4,14 @@ import { motion } from 'framer-motion'
 import { industries, trustBadges, stats } from '@/config/landing.config'
 import { viewportOnce, getStaggerDelay } from '@/lib/landing/animations'
 
+// Static class map — Tailwind purges dynamic classes like `bg-${color}-500`
+const badgeColorMap: Record<string, string> = {
+  green: 'bg-green-500',
+  blue: 'bg-blue-500',
+  purple: 'bg-purple-500',
+  orange: 'bg-orange-500',
+}
+
 export default function TrustedBySection() {
   const businessCount = stats[0].value // Get from stats config
 
@@ -51,9 +59,9 @@ export default function TrustedBySection() {
         {/* Trust Badges */}
         <div className="mt-12 pt-12 border-t border-gray-200 dark:border-gray-700/50">
           <div className="flex flex-wrap justify-center items-center gap-6 lg:gap-12 text-sm text-gray-500 dark:text-gray-400">
-            {trustBadges.map((badge, index) => (
+            {trustBadges.map((badge) => (
               <span key={badge.label} className="flex items-center gap-2">
-                <span className={`w-2 h-2 rounded-full bg-${badge.color}-500`} />
+                <span className={`w-2 h-2 rounded-full ${badgeColorMap[badge.color]}`} />
                 {badge.label}
               </span>
             ))}

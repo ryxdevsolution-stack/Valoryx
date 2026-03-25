@@ -2,7 +2,6 @@ from flask import Blueprint, jsonify, g, request
 from extensions import db
 from models.billing_model import GSTBilling, NonGSTBilling
 from models.stock_model import StockEntry
-from models.payment_model import PaymentType
 from utils.auth_middleware import authenticate
 from utils.cache_helper import get_cache_manager
 from utils.rate_limiter import rate_limit
@@ -296,11 +295,8 @@ def get_dashboard_analytics():
             _py_agg[label]['count'] += int(r.cnt or 0)
             _py_agg[label]['amount'] += float(r.amount or 0)
 
-        from utils.query_cache import get_payment_type_map
-        payment_types = get_payment_type_map(client_id)
         payment_preferences = sorted(
-            [{'method': payment_types.get(pid, 'Custom') if _UUID_RE.match(pid) else pid,
-              'count': d['count'], 'amount': d['amount']}
+            [{'method': pid, 'count': d['count'], 'amount': d['amount']}
              for pid, d in _py_agg.items()],
             key=lambda x: x['amount'], reverse=True,
         )

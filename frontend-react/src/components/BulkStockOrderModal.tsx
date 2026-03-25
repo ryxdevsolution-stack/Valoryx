@@ -60,6 +60,9 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
   const imageInputRef = useRef<HTMLInputElement>(null)
   const [ocrProcessing, setOcrProcessing] = useState(false)
   const [ocrProgress, setOcrProgress] = useState(0)
+  const [showCameraCapture, setShowCameraCapture] = useState(false)
+  const cameraVideoRef = useRef<HTMLVideoElement>(null)
+  const cameraStreamRef = useRef<MediaStream | null>(null)
 
   // Barcode scanner state (mobile-only, per item row)
   const [showItemScanner, setShowItemScanner] = useState(false)
@@ -210,117 +213,146 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
   }
 
   // OCR: Extract items from bill image/PDF
+  const openCameraForScan = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'environment', width: { ideal: 1920 }, height: { ideal: 1080 } },
+        audio: false,
+      })
+      cameraStreamRef.current = stream
+      setShowCameraCapture(true)
+      // Wait for video element to mount, then attach stream
+      requestAnimationFrame(() => {
+        if (cameraVideoRef.current) {
+          cameraVideoRef.current.srcObject = stream
+          cameraVideoRef.current.play()
+        }
+      })
+    } catch {
+      // Camera not available — fall back to file picker
+      imageInputRef.current?.click()
+    }
+  }
+
+  const capturePhotoAndOCR = async () => {
+    const video = cameraVideoRef.current
+    if (!video) return
+
+    // Draw current frame to canvas
+    const canvas = document.createElement('canvas')
+    canvas.width = video.videoWidth
+    canvas.height = video.videoHeight
+    const ctx = canvas.getContext('2d')
+    if (!ctx) return
+    ctx.drawImage(video, 0, 0)
+
+    // Stop camera
+    cameraStreamRef.current?.getTracks().forEach(t => t.stop())
+    cameraStreamRef.current = null
+    setShowCameraCapture(false)
+
+    // Convert to blob and run OCR
+    canvas.toBlob(async (blob) => {
+      if (!blob) return
+      setOcrProcessing(true)
+      setOcrProgress(0)
+      try {
+        const result = await Tesseract.recognize(blob, 'eng+hin', {
+          logger: (m) => {
+            if (m.status === 'recognizing text') {
+              setOcrProgress(Math.round(m.progress * 100))
+            }
+          }
+        })
+        processOcrText(result.data.text)
+      } catch {
+        alert('Failed to process the captured image. Try again with better lighting.')
+      } finally {
+        setOcrProcessing(false)
+        setOcrProgress(0)
+      }
+    }, 'image/jpeg', 0.9)
+  }
+
+  const closeCameraCapture = () => {
+    cameraStreamRef.current?.getTracks().forEach(t => t.stop())
+    cameraStreamRef.current = null
+    setShowCameraCapture(false)
+  }
+
+  const processOcrText = (text: string) => {
+    if (!text.trim()) {
+      alert('Could not extract any text from the image. Try a clearer photo.')
+      return
+    }
+    const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 3)
+    const newItems: OrderItem[] = []
+    for (const line of lines) {
+      const lower = line.toLowerCase()
+      if (lower.includes('total') || lower.includes('subtotal') || lower.includes('grand') ||
+          lower.includes('gst') || lower.includes('cgst') || lower.includes('sgst') ||
+          lower.includes('invoice') || lower.includes('bill no') || lower.includes('date') ||
+          lower.includes('phone') || lower.includes('address') || lower.includes('thank') ||
+          lower.includes('tax') || lower.includes('discount') || lower.includes('amount') ||
+          lower.includes('sr.') || lower.includes('s.no') || lower.includes('sl.') ||
+          lower.includes('description') || lower.includes('particulars') || lower.includes('hsn') ||
+          /^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/.test(line)) {
+        continue
+      }
+      const numbers = line.match(/[\d,]+\.?\d*/g)?.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n) && n > 0) || []
+      const nameMatch = line.match(/^[^\d]*[a-zA-Z\u0900-\u097F][\w\s\u0900-\u097F./-]*/)?.[0]?.trim()
+      if (!nameMatch || nameMatch.length < 2) continue
+      const name = nameMatch.replace(/^[\d.)\-\s]+/, '').trim()
+      if (name.length < 2) continue
+      let qty = 1
+      let price = 0
+      if (numbers.length >= 2) {
+        const lastNum = numbers[numbers.length - 1]
+        const secondLast = numbers[numbers.length - 2]
+        if (secondLast <= 999 && secondLast === Math.floor(secondLast)) {
+          qty = secondLast
+          price = lastNum
+        } else {
+          price = lastNum
+        }
+      } else if (numbers.length === 1) {
+        price = numbers[0]
+      }
+      newItems.push({
+        product_name: name, category: '', quantity_ordered: qty, unit: 'pcs',
+        cost_price: price || '', selling_price: '', mrp: '', gst_percentage: 0,
+      })
+    }
+    if (newItems.length === 0) {
+      alert('Could not identify product items from the image. Try a clearer photo or use CSV import.')
+    } else {
+      setFormData(prev => ({ ...prev, items: [...prev.items, ...newItems] }))
+      alert(`${newItems.length} items extracted from bill image! Please review the names, quantities and prices.`)
+    }
+  }
+
   const handleImageImport = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0]
     if (!file) return
 
+    if (file.type === 'application/pdf') {
+      alert('PDF support: For best results, take a photo/screenshot of the bill and upload the image instead.')
+      if (imageInputRef.current) imageInputRef.current.value = ''
+      return
+    }
+
     setOcrProcessing(true)
     setOcrProgress(0)
-
     try {
-      let imageSource: string | File = file
-
-      // For PDFs, we can't process directly — inform user
-      if (file.type === 'application/pdf') {
-        alert('PDF support: For best results, take a photo/screenshot of the bill and upload the image instead.')
-        setOcrProcessing(false)
-        if (imageInputRef.current) imageInputRef.current.value = ''
-        return
-      }
-
-      // Run OCR on the image
-      const result = await Tesseract.recognize(imageSource, 'eng+hin', {
+      const result = await Tesseract.recognize(file, 'eng+hin', {
         logger: (m) => {
           if (m.status === 'recognizing text') {
             setOcrProgress(Math.round(m.progress * 100))
           }
         }
       })
-
-      const text = result.data.text
-      if (!text.trim()) {
-        alert('Could not extract any text from the image. Try a clearer photo.')
-        setOcrProcessing(false)
-        if (imageInputRef.current) imageInputRef.current.value = ''
-        return
-      }
-
-      // Parse extracted text into items
-      // Common bill formats: "Item Name    Qty    Price" or "1. Item Name  x2  ₹100"
-      const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 3)
-      const newItems: OrderItem[] = []
-
-      for (const line of lines) {
-        // Skip header-like lines, totals, dates, etc.
-        const lower = line.toLowerCase()
-        if (lower.includes('total') || lower.includes('subtotal') || lower.includes('grand') ||
-            lower.includes('gst') || lower.includes('cgst') || lower.includes('sgst') ||
-            lower.includes('invoice') || lower.includes('bill no') || lower.includes('date') ||
-            lower.includes('phone') || lower.includes('address') || lower.includes('thank') ||
-            lower.includes('tax') || lower.includes('discount') || lower.includes('amount') ||
-            lower.includes('sr.') || lower.includes('s.no') || lower.includes('sl.') ||
-            lower.includes('description') || lower.includes('particulars') || lower.includes('hsn') ||
-            /^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/.test(line)) {
-          continue
-        }
-
-        // Try to extract: name, quantity, price from each line
-        // Pattern: text followed by numbers
-        // Match numbers in the line (could be qty, price, etc.)
-        const numbers = line.match(/[\d,]+\.?\d*/g)?.map(n => parseFloat(n.replace(/,/g, ''))).filter(n => !isNaN(n) && n > 0) || []
-
-        // Extract the text part (product name) — everything before the first number cluster
-        const nameMatch = line.match(/^[^\d]*[a-zA-Z\u0900-\u097F][\w\s\u0900-\u097F./-]*/)?.[0]?.trim()
-
-        if (!nameMatch || nameMatch.length < 2) continue
-
-        // Clean up the name
-        const name = nameMatch.replace(/^[\d.)\-\s]+/, '').trim()
-        if (name.length < 2) continue
-
-        // Heuristic: if we have numbers, last one is likely price, second-to-last might be qty
-        let qty = 1
-        let price = 0
-
-        if (numbers.length >= 2) {
-          // If last number is much larger, it's probably the price
-          // If a small number < 1000 appears before, it's qty
-          const lastNum = numbers[numbers.length - 1]
-          const secondLast = numbers[numbers.length - 2]
-
-          if (secondLast <= 999 && secondLast === Math.floor(secondLast)) {
-            qty = secondLast
-            price = lastNum
-          } else {
-            price = lastNum
-          }
-        } else if (numbers.length === 1) {
-          price = numbers[0]
-        }
-
-        newItems.push({
-          product_name: name,
-          category: '',
-          quantity_ordered: qty,
-          unit: 'pcs',
-          cost_price: price || '',
-          selling_price: '',
-          mrp: '',
-          gst_percentage: 0,
-        })
-      }
-
-      if (newItems.length === 0) {
-        alert('Could not identify product items from the image. The text extracted was:\n\n' + text.substring(0, 500) + '\n\nTry a clearer photo or use CSV import.')
-      } else {
-        setFormData(prev => ({
-          ...prev,
-          items: [...prev.items, ...newItems]
-        }))
-        alert(`${newItems.length} items extracted from bill image! Please review the names, quantities and prices.`)
-      }
-    } catch (error) {
-      console.error('OCR failed:', error)
+      processOcrText(result.data.text)
+    } catch {
       alert('Failed to process the image. Try a clearer photo.')
     } finally {
       setOcrProcessing(false)
@@ -501,13 +533,12 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                     ref={imageInputRef}
                     type="file"
                     accept="image/*,.pdf"
-                    capture="environment"
                     onChange={handleImageImport}
                     className="hidden"
                   />
                   <button
                     type="button"
-                    onClick={() => imageInputRef.current?.click()}
+                    onClick={openCameraForScan}
                     disabled={ocrProcessing}
                     className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-purple-700 dark:text-purple-300 bg-purple-50 dark:bg-purple-900/30 rounded-lg hover:bg-purple-100 dark:hover:bg-purple-900/50 transition border border-purple-200 dark:border-purple-800 disabled:opacity-50"
                   >
@@ -926,6 +957,46 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
       </div>
 
       {/* Barcode scanner overlay (mobile-only, per item) */}
+      {/* Camera capture overlay for bill scanning */}
+      {showCameraCapture && (
+        <div className="fixed inset-0 bg-black z-[200] flex flex-col">
+          <div className="flex items-center justify-between px-4 py-3 bg-black/90 z-10 flex-shrink-0">
+            <span className="text-white font-semibold text-base">Capture Supplier Bill</span>
+            <button
+              type="button"
+              onClick={closeCameraCapture}
+              className="p-2 rounded-full bg-white/10 hover:bg-white/20 text-white transition-colors"
+            >
+              <X className="w-5 h-5" />
+            </button>
+          </div>
+          <div className="flex-1 relative overflow-hidden">
+            <video
+              ref={cameraVideoRef}
+              className="absolute inset-0 w-full h-full object-cover"
+              playsInline
+              muted
+              autoPlay
+            />
+            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
+              <div className="w-[85%] max-w-sm aspect-[3/4] border-2 border-white/40 rounded-xl" />
+            </div>
+            <p className="absolute bottom-24 left-0 right-0 text-center text-white text-sm font-medium bg-black/50 mx-auto w-fit px-4 py-1.5 rounded-full">
+              Position the bill inside the frame
+            </p>
+          </div>
+          <div className="flex justify-center py-5 bg-black/90 z-10 flex-shrink-0">
+            <button
+              type="button"
+              onClick={capturePhotoAndOCR}
+              className="w-16 h-16 rounded-full bg-white flex items-center justify-center active:scale-95 transition-transform"
+            >
+              <div className="w-14 h-14 rounded-full border-4 border-black/20" />
+            </button>
+          </div>
+        </div>
+      )}
+
       {showItemScanner && scanningItemIdx !== null && (
         <BarcodeScannerOverlay
           onScan={(barcode) => {

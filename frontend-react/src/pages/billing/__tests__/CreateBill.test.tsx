@@ -52,9 +52,7 @@ vi.mock('@/contexts/DataContext', () => ({
   DataProvider: ({ children }: { children: React.ReactNode }) => <>{children}</>,
   useData: vi.fn(() => ({
     products: mockProducts,
-    paymentTypes: [],
     fetchProducts: vi.fn().mockResolvedValue(mockProducts),
-    fetchPaymentTypes: vi.fn().mockResolvedValue([]),
     invalidateCache: vi.fn(),
   })),
 }))

@@ -60,14 +60,17 @@ interface CacheEntry {
 
 const requestCache = new Map<string, CacheEntry>()
 
+// In-flight request deduplication — prevents simultaneous identical GET requests
+const inflightRequests = new Map<string, Promise<any>>()
+
 // Cache TTLs in milliseconds - OPTIMIZED: aligned with backend cache durations
 // Frontend cache should be slightly shorter than backend to avoid stale data
 const CACHE_TTLS: Record<string, number> = {
   '/stock/lookup': 120000,   // 2 min - product lookups
   '/customer/search': 60000, // 1 min - customer search results
-  '/payment': 300000,        // 5 min - payment types rarely change
   '/billing/printers': 120000, // 2 min - printer list
-  '/billing/list': 240000    // 4 min - billing list (aligned with stock)
+  '/billing/list': 240000,   // 4 min - billing list (aligned with stock)
+  '/subscription/plans': 300000, // 5 min - plans rarely change
 }
 
 // Get cache TTL based on URL pattern
@@ -345,5 +348,38 @@ export async function invalidateAndGet<T = any>(url: string, config?: AxiosReque
 }
 
 // ==================== END OPTIMIZED API METHODS ====================
+
+// ==================== SMART GET WITH DEDUP ====================
+// Wraps api.get to check cache first AND deduplicate in-flight requests.
+// For cacheable URLs (those with a TTL), simultaneous calls share one network request.
+const originalGet = api.get.bind(api)
+api.get = function smartGet<T = any>(url: string, config?: AxiosRequestConfig): Promise<any> {
+  const ttl = getCacheTTL(url)
+  if (ttl <= 0) return originalGet<T>(url, config)
+
+  // 1. Serve from cache if fresh
+  const cached = getFromCache(url)
+  if (cached) {
+    return Promise.resolve({ data: cached, status: 200, statusText: 'OK', headers: {}, config: { ...config, _fromCache: true } })
+  }
+
+  // 2. Deduplicate in-flight requests for the same URL
+  const inflight = inflightRequests.get(url)
+  if (inflight) return inflight
+
+  const request = originalGet<T>(url, config).then((response: any) => {
+    saveToCache(url, response.data, ttl)
+    inflightRequests.delete(url)
+    return response
+  }).catch((err: any) => {
+    inflightRequests.delete(url)
+    throw err
+  })
+
+  inflightRequests.set(url, request)
+  return request
+} as typeof api.get
+
+// ==================== END SMART GET ====================
 
 export default api

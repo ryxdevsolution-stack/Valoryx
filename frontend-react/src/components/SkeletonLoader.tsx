@@ -136,26 +136,3 @@ export function DashboardSkeleton() {
   )
 }
 
-export function PaymentTypesSkeleton({ count = 6 }: { count?: number }) {
-  return (
-    <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-      {Array.from({ length: count }).map((_, index) => (
-        <div key={index} className="bg-white dark:bg-gray-800 rounded-lg shadow p-6">
-          <div className="animate-pulse">
-            <div className="flex items-start justify-between mb-4">
-              <div className="flex-1">
-                <div className="h-5 bg-slate-200 dark:bg-gray-700 rounded w-32 mb-2"></div>
-                <div className="h-3 bg-slate-200 dark:bg-gray-700 rounded w-40"></div>
-              </div>
-              <div className="w-12 h-12 bg-slate-200 dark:bg-gray-700 rounded"></div>
-            </div>
-            <div className="border-t dark:border-gray-700 pt-4 flex justify-between items-center">
-              <div className="h-3 bg-slate-200 dark:bg-gray-700 rounded w-24"></div>
-              <div className="h-4 bg-slate-200 dark:bg-gray-700 rounded w-16"></div>
-            </div>
-          </div>
-        </div>
-      ))}
-    </div>
-  )
-}

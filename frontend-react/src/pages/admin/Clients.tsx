@@ -1,32 +1,37 @@
-import React, { useEffect, useState, useCallback } from 'react';
+import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
 import { useNotification } from '@/hooks/useNotification';
 import api from '@/lib/api';
 import {
-  Search,
-  Filter,
+  PageHeader,
+  SearchInput,
+  Select,
+  Pagination,
+  StatusBadge,
+  Button,
+  Card,
+  LoadingState,
+  EmptyState,
+  ConfirmDialog,
+} from '@/lib/admin';
+import {
   Plus,
   Edit,
   Users,
-  MoreVertical,
-  ChevronLeft,
-  ChevronRight,
   Building2,
   UserCheck,
   UserX,
   RefreshCw,
-  Check,
-  X,
   Phone,
   Mail,
   MapPin,
   Trash2,
-  AlertTriangle,
-  Upload,
-  Image as ImageIcon,
   Crown,
-  Clock
+  Clock,
+  X,
+  Check,
+  AlertTriangle,
 } from 'lucide-react';
 
 interface Client {
@@ -55,10 +60,71 @@ interface ClientsResponse {
   pages: number;
 }
 
+const STATUS_OPTIONS = [
+  { value: 'active', label: 'Active' },
+  { value: 'inactive', label: 'Inactive' },
+];
+
+function SubscriptionBadge({ client }: { client: Client }) {
+  if (client.subscription_status === 'active') {
+    return (
+      <div>
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">
+          <Crown className="h-3 w-3" />
+          Active
+        </span>
+        {client.subscription_end_date && (
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            Expires {new Date(client.subscription_end_date).toLocaleDateString()}
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (client.subscription_status === 'trial') {
+    return (
+      <div>
+        <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400">
+          <Clock className="h-3 w-3" />
+          Trial
+        </span>
+        {client.trial_end_date && (
+          <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">
+            Ends {new Date(client.trial_end_date).toLocaleDateString()}
+          </p>
+        )}
+      </div>
+    );
+  }
+  if (client.subscription_status === 'expired') {
+    return (
+      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+        <X className="h-3 w-3" />
+        Expired
+      </span>
+    );
+  }
+  return <span className="text-xs text-slate-400 dark:text-slate-500">&mdash;</span>;
+}
+
+function ActiveBadge({ active }: { active: boolean }) {
+  return active ? (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400">
+      <Check className="h-3 w-3" />
+      Active
+    </span>
+  ) : (
+    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
+      <X className="h-3 w-3" />
+      Inactive
+    </span>
+  );
+}
+
 export default function ClientManagement() {
   const { user, isLoading: authLoading, isSuperAdmin } = useClient();
   const navigate = useNavigate();
-  const { showSuccess, showError, showWarning, NotificationContainer } = useNotification();
+  const { showSuccess, showError, NotificationContainer } = useNotification();
 
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(true);
@@ -71,26 +137,25 @@ export default function ClientManagement() {
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [selectedClients, setSelectedClients] = useState<string[]>([]);
+  const [bulkConfirm, setBulkConfirm] = useState<{ op: string; open: boolean }>({ op: '', open: false });
+  const [bulkProcessing, setBulkProcessing] = useState(false);
 
   const fetchClients = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-
       const params = new URLSearchParams({
         page: currentPage.toString(),
         limit: '10',
         ...(searchTerm && { search: searchTerm }),
-        ...(statusFilter && { status: statusFilter })
+        ...(statusFilter && { status: statusFilter }),
       });
-
       const response = await api.get<ClientsResponse>(`/admin/clients?${params}`);
-
       setClients(response.data.clients);
       setTotalPages(response.data.pages);
       setTotalClients(response.data.total);
-    } catch (error) {
-      console.error('Error fetching clients:', error);
+    } catch {
       setError('Failed to load clients');
     } finally {
       setLoading(false);
@@ -98,101 +163,83 @@ export default function ClientManagement() {
   }, [currentPage, searchTerm, statusFilter]);
 
   useEffect(() => {
-    if (!authLoading && !user) {
-      navigate('/auth/login');
-      return;
-    }
-
-    if (!authLoading && user && !isSuperAdmin()) {
-      navigate('/dashboard');
-      return;
-    }
-
-    if (user && isSuperAdmin()) {
-      fetchClients();
-    }
+    if (!authLoading && !user) { navigate('/auth/login'); return; }
+    if (!authLoading && user && !isSuperAdmin()) { navigate('/dashboard'); return; }
+    if (user && isSuperAdmin()) fetchClients();
   }, [user, authLoading, isSuperAdmin, navigate, currentPage, searchTerm, statusFilter, fetchClients]);
+
+  const toggleClientSelection = (id: string) => {
+    setSelectedClients((prev) => prev.includes(id) ? prev.filter((c) => c !== id) : [...prev, id]);
+  };
+  const selectAllClients = () => {
+    setSelectedClients((prev) => prev.length === clients.length ? [] : clients.map((c) => c.client_id));
+  };
+  const handleBulkOperation = async () => {
+    if (selectedClients.length === 0) return;
+    setBulkProcessing(true);
+    try {
+      for (const id of selectedClients) {
+        if (bulkConfirm.op === 'activate' || bulkConfirm.op === 'deactivate') {
+          await api.post(`/admin/clients/${id}/toggle-status`, {});
+        } else if (bulkConfirm.op === 'delete') {
+          await api.delete(`/admin/clients/${id}`);
+        }
+      }
+      showSuccess('Bulk Action Complete', `${bulkConfirm.op} applied to ${selectedClients.length} client(s).`);
+      setSelectedClients([]);
+      setBulkConfirm({ op: '', open: false });
+      fetchClients();
+    } catch (err: any) {
+      showError('Bulk Action Failed', err.response?.data?.error || 'Some operations may have failed.');
+    } finally {
+      setBulkProcessing(false);
+    }
+  };
 
   const handleToggleStatus = async (clientId: string) => {
     try {
       await api.post(`/admin/clients/${clientId}/toggle-status`, {});
       fetchClients();
-    } catch (error) {
-      console.error('Error toggling client status:', error);
-    }
-  };
-
-  const handleViewUsers = (clientId: string) => {
-    navigate(`/admin/users?client_id=${clientId}`);
-  };
-
-  const handleDeleteClick = (client: Client) => {
-    setClientToDelete(client);
-    setDeleteConfirmOpen(true);
+    } catch { /* swallow */ }
   };
 
   const handleDeleteConfirm = async () => {
     if (!clientToDelete) return;
-
     try {
       setDeleting(true);
       const response = await api.delete(`/admin/clients/${clientToDelete.client_id}`);
-
-      // Show success message with deletion summary
-      const summary = response.data.summary;
-      const summaryMessage = `Summary:
-• Users: ${summary.users}
-• Total Bills: ${summary.total_bills} (GST: ${summary.gst_bills}, Non-GST: ${summary.non_gst_bills})
-• Stock Entries: ${summary.stock_entries}
-• Customers: ${summary.customers}
-• Payment Types: ${summary.payment_types}
-• Reports: ${summary.reports}
-• Audit Logs: ${summary.audit_logs}`;
-
+      const s = response.data.summary;
       showSuccess(
-        'Client Deleted Successfully!',
-        summaryMessage
+        'Client Deleted',
+        `Users: ${s.users} | Bills: ${s.total_bills} | Stock: ${s.stock_entries} | Customers: ${s.customers}`
       );
-
       setDeleteConfirmOpen(false);
       setClientToDelete(null);
       fetchClients();
-    } catch (error: any) {
-      console.error('Error deleting client:', error);
-      showError(
-        'Delete Failed',
-        error.response?.data?.error || 'Failed to delete client. Please try again.'
-      );
+    } catch (err: any) {
+      showError('Delete Failed', err.response?.data?.error || 'Please try again.');
     } finally {
       setDeleting(false);
     }
   };
 
-  const handleDeleteCancel = () => {
-    setDeleteConfirmOpen(false);
-    setClientToDelete(null);
-  };
-
   if (authLoading || loading) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <LoadingState message="Loading clients..." size="lg" />
       </div>
     );
   }
 
   if (error) {
     return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <p className="text-red-600 mb-4">{error}</p>
-          <button
-            onClick={fetchClients}
-            className="px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700"
-          >
-            Retry
-          </button>
-        </div>
+      <div className="flex items-center justify-center min-h-[60vh]">
+        <EmptyState
+          icon={AlertTriangle}
+          title="Failed to load clients"
+          description={error}
+          action={<Button onClick={fetchClients}>Retry</Button>}
+        />
       </div>
     );
   }
@@ -200,436 +247,392 @@ export default function ClientManagement() {
   return (
     <>
       <NotificationContainer />
-      <div className="p-6 max-w-7xl mx-auto">
+      <div className="max-w-7xl mx-auto space-y-5">
         {/* Header */}
-        <div className="mb-6">
-        <div className="flex justify-between items-center">
-          <div>
-            <h1 className="text-3xl font-bold text-gray-900">Client Management</h1>
-            <p className="text-gray-600 mt-1">Manage all clients in the system</p>
-          </div>
-          <div className="flex gap-3">
-            <button
-              onClick={() => navigate('/admin/clients/create')}
-              className="flex items-center gap-2 px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition"
-            >
-              <Plus className="h-5 w-5" />
-              Create Client
-            </button>
-            <button
-              onClick={fetchClients}
-              className="flex items-center gap-2 px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition"
-            >
-              <RefreshCw className="h-5 w-5" />
-            </button>
-          </div>
-        </div>
-      </div>
+        <PageHeader
+          title="Client Management"
+          description="Manage all clients in the system"
+          actions={
+            <>
+              <Button variant="outline" onClick={fetchClients} icon={RefreshCw} size="sm">
+                <span className="hidden sm:inline">Refresh</span>
+              </Button>
+              <Button onClick={() => navigate('/admin/clients/create')} icon={Plus} size="sm">
+                Create Client
+              </Button>
+            </>
+          }
+        />
 
-      {/* Filters */}
-      <div className="bg-white rounded-lg shadow mb-6 p-4">
-        <div className="flex flex-col md:flex-row gap-4">
-          <div className="flex-1">
-            <div className="relative">
-              <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-5 w-5 text-gray-400" />
-              <input
-                type="text"
-                placeholder="Search by name, email, phone, or GST number..."
-                value={searchTerm}
-                onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-              />
+        {/* Filters */}
+        <Card noPadding>
+          <div className="flex flex-col md:flex-row gap-3 p-4">
+            <SearchInput
+              value={searchTerm}
+              onChange={(v) => { setSearchTerm(v); setCurrentPage(1); }}
+              placeholder="Search by name, email, phone, or GST number..."
+              className="flex-1"
+            />
+            <Select
+              value={statusFilter}
+              onChange={(v) => { setStatusFilter(v); setCurrentPage(1); }}
+              options={STATUS_OPTIONS}
+              placeholder="All Status"
+            />
+          </div>
+          {/* Bulk Actions Bar */}
+          {selectedClients.length > 0 && (
+            <div className="flex items-center gap-3 px-4 py-3 border-t border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/60">
+              <span className="text-xs font-medium text-slate-600 dark:text-slate-400">
+                {selectedClients.length} selected
+              </span>
+              <div className="flex gap-2 ml-auto">
+                <Button size="sm" variant="outline" onClick={() => setBulkConfirm({ op: 'activate', open: true })}>
+                  Activate
+                </Button>
+                <Button size="sm" variant="outline" onClick={() => setBulkConfirm({ op: 'deactivate', open: true })}>
+                  Deactivate
+                </Button>
+                <Button size="sm" variant="danger" onClick={() => setBulkConfirm({ op: 'delete', open: true })}>
+                  Delete
+                </Button>
+                <Button size="sm" variant="ghost" onClick={() => setSelectedClients([])}>
+                  Cancel
+                </Button>
+              </div>
             </div>
-          </div>
-          <select
-            value={statusFilter}
-            onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-          >
-            <option value="">All Status</option>
-            <option value="active">Active</option>
-            <option value="inactive">Inactive</option>
-          </select>
-        </div>
-      </div>
+          )}
+        </Card>
 
-      {/* Clients Table */}
-      <div className="hidden md:block bg-white rounded-lg shadow overflow-hidden">
-        <div className="overflow-x-auto">
-          <table className="min-w-full divide-y divide-gray-200">
-            <thead className="bg-gray-50">
-              <tr>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Client
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Contact
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  GST Number
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Users
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Subscription
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Status
-                </th>
-                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Created
-                </th>
-                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Actions
-                </th>
-              </tr>
-            </thead>
-            <tbody className="bg-white divide-y divide-gray-200">
-              {clients.map((client) => (
-                <tr key={client.client_id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4">
-                    <div className="flex items-center">
-                      {client.logo_url ? (
-                        <img
-                          src={client.logo_url}
-                          alt={client.client_name}
-                          width={40}
-                          height={40}
-                          className="h-10 w-10 rounded-full mr-3 object-cover"
-                        />
-                      ) : (
-                        <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center mr-3">
-                          <Building2 className="h-5 w-5 text-blue-600" />
-                        </div>
-                      )}
-                      <div>
-                        <div className="text-sm font-medium text-gray-900">
-                          {client.client_name}
-                        </div>
-                        {client.admin_email && (
-                          <div className="text-xs text-gray-500">
-                            Admin: {client.admin_email}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <div className="text-sm text-gray-900">
-                      <div className="flex items-center gap-1 mb-1">
-                        <Mail className="h-3 w-3 text-gray-400" />
-                        {client.email}
-                      </div>
-                      <div className="flex items-center gap-1">
-                        <Phone className="h-3 w-3 text-gray-400" />
-                        {client.phone}
-                      </div>
-                      {client.address && (
-                        <div className="flex items-start gap-1 mt-1">
-                          <MapPin className="h-3 w-3 text-gray-400 mt-0.5" />
-                          <span className="text-xs text-gray-500">{client.address}</span>
-                        </div>
-                      )}
-                    </div>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="text-sm text-gray-900">
-                      {client.gst_number || '-'}
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
-                      {client.user_count} users
-                    </span>
-                  </td>
-                  <td className="px-6 py-4">
-                    {client.subscription_status === 'active' ? (
-                      <div>
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-100 text-emerald-800">
-                          <Crown className="h-3 w-3" />
-                          Active
-                        </span>
-                        {client.subscription_end_date && (
-                          <div className="text-xs text-gray-500 mt-1">
-                            Expires {new Date(client.subscription_end_date).toLocaleDateString()}
-                          </div>
-                        )}
-                      </div>
-                    ) : client.subscription_status === 'trial' ? (
-                      <div>
-                        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-amber-100 text-amber-800">
-                          <Clock className="h-3 w-3" />
-                          Trial
-                        </span>
-                        {client.trial_end_date && (
-                          <div className="text-xs text-gray-500 mt-1">
-                            Ends {new Date(client.trial_end_date).toLocaleDateString()}
-                          </div>
-                        )}
-                      </div>
-                    ) : client.subscription_status === 'expired' ? (
-                      <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                        <X className="h-3 w-3" />
-                        Expired
-                      </span>
-                    ) : (
-                      <span className="text-xs text-gray-400">—</span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4">
-                    {client.is_active ? (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">
-                        <Check className="h-3 w-3 mr-1" />
-                        Active
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">
-                        <X className="h-3 w-3 mr-1" />
-                        Inactive
-                      </span>
-                    )}
-                  </td>
-                  <td className="px-6 py-4 text-sm text-gray-500">
-                    {new Date(client.created_at).toLocaleDateString()}
-                  </td>
-                  <td className="px-6 py-4 text-right">
-                    <div className="flex items-center justify-end gap-2">
-                      <button
-                        onClick={() => navigate(`/admin/clients/${client.client_id}`)}
-                        className="text-blue-600 hover:text-blue-900"
-                        title="View Details"
-                      >
-                        <Edit className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => handleViewUsers(client.client_id)}
-                        className="text-indigo-600 hover:text-indigo-900"
-                        title="View Users"
-                      >
-                        <Users className="h-4 w-4" />
-                      </button>
-                      <button
-                        onClick={() => handleToggleStatus(client.client_id)}
-                        className={`${
-                          client.is_active
-                            ? 'text-yellow-600 hover:text-yellow-900'
-                            : 'text-green-600 hover:text-green-900'
+        {/* Desktop Table */}
+        <Card noPadding className="hidden md:block overflow-hidden">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-700 bg-slate-50/80 dark:bg-slate-800/60">
+                  <th className="px-5 py-3 text-left w-10">
+                    <input
+                      type="checkbox"
+                      checked={selectedClients.length === clients.length && clients.length > 0}
+                      onChange={selectAllClients}
+                      className="rounded border-slate-300 dark:border-slate-600 text-violet-600 focus:ring-violet-500 dark:bg-slate-700"
+                    />
+                  </th>
+                  {['Client', 'Contact', 'GST Number', 'Users', 'Subscription', 'Status', 'Created', 'Actions'].map(
+                    (h, i) => (
+                      <th
+                        key={h}
+                        className={`px-5 py-3 text-xs font-semibold uppercase tracking-wider text-slate-500 dark:text-slate-400 ${
+                          i === 7 ? 'text-right' : 'text-left'
                         }`}
-                        title={client.is_active ? 'Deactivate' : 'Activate'}
                       >
-                        {client.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
-                      </button>
-                      <button
-                        onClick={() => handleDeleteClick(client)}
-                        className="text-red-600 hover:text-red-900"
-                        title="Delete Client"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </button>
-                    </div>
-                  </td>
+                        {h}
+                      </th>
+                    )
+                  )}
                 </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-
-        {/* Pagination */}
-        <div className="bg-gray-50 px-6 py-3 flex items-center justify-between">
-          <div className="text-sm text-gray-700">
-            Showing {(currentPage - 1) * 10 + 1} to {Math.min(currentPage * 10, totalClients)} of {totalClients} clients
-          </div>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-              disabled={currentPage === 1}
-              className="px-3 py-1 border border-gray-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <span className="text-sm text-gray-700">
-              Page {currentPage} of {totalPages}
-            </span>
-            <button
-              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-              disabled={currentPage === totalPages}
-              className="px-3 py-1 border border-gray-300 rounded-md disabled:opacity-50 disabled:cursor-not-allowed hover:bg-white"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </div>
-
-      {/* Mobile Cards - visible only on small screens */}
-      <div className="md:hidden space-y-3">
-        {clients.map((client) => (
-          <div key={client.client_id} className="bg-white rounded-lg shadow p-4">
-            <div className="flex items-start justify-between mb-3">
-              <div className="flex items-center gap-2">
-                {client.logo_url ? (
-                  <img src={client.logo_url} alt={client.client_name} width={32} height={32} className="h-8 w-8 rounded-full object-cover" />
-                ) : (
-                  <div className="h-8 w-8 rounded-full bg-blue-100 flex items-center justify-center">
-                    <Building2 className="h-4 w-4 text-blue-600" />
-                  </div>
+              </thead>
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-700/50">
+                {clients.map((client) => (
+                  <tr
+                    key={client.client_id}
+                    className={`hover:bg-slate-50/60 dark:hover:bg-slate-700/30 transition-colors ${
+                      selectedClients.includes(client.client_id) ? 'bg-violet-50/40 dark:bg-violet-900/10' : ''
+                    }`}
+                  >
+                    <td className="px-5 py-3.5">
+                      <input
+                        type="checkbox"
+                        checked={selectedClients.includes(client.client_id)}
+                        onChange={() => toggleClientSelection(client.client_id)}
+                        className="rounded border-slate-300 dark:border-slate-600 text-violet-600 focus:ring-violet-500 dark:bg-slate-700"
+                      />
+                    </td>
+                    {/* Client */}
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center gap-3">
+                        {client.logo_url ? (
+                          <img
+                            src={client.logo_url}
+                            alt={client.client_name}
+                            width={36}
+                            height={36}
+                            className="h-9 w-9 rounded-lg object-cover ring-1 ring-slate-200 dark:ring-slate-700"
+                          />
+                        ) : (
+                          <div className="h-9 w-9 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
+                            <Building2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
+                          </div>
+                        )}
+                        <div className="min-w-0">
+                          <p className="font-medium text-slate-900 dark:text-white truncate">
+                            {client.client_name}
+                          </p>
+                          {client.admin_email && (
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">
+                              Admin: {client.admin_email}
+                            </p>
+                          )}
+                        </div>
+                      </div>
+                    </td>
+                    {/* Contact */}
+                    <td className="px-5 py-3.5">
+                      <div className="space-y-1 text-slate-700 dark:text-slate-300">
+                        <div className="flex items-center gap-1.5">
+                          <Mail className="h-3 w-3 text-slate-400 dark:text-slate-500 flex-shrink-0" />
+                          <span className="truncate max-w-[180px]">{client.email}</span>
+                        </div>
+                        {client.phone && (
+                          <div className="flex items-center gap-1.5">
+                            <Phone className="h-3 w-3 text-slate-400 dark:text-slate-500 flex-shrink-0" />
+                            <span>{client.phone}</span>
+                          </div>
+                        )}
+                        {client.address && (
+                          <div className="flex items-start gap-1.5 text-[11px] text-slate-500 dark:text-slate-400">
+                            <MapPin className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                            <span className="truncate max-w-[180px]">{client.address}</span>
+                          </div>
+                        )}
+                      </div>
+                    </td>
+                    {/* GST */}
+                    <td className="px-5 py-3.5">
+                      <span className="text-slate-700 dark:text-slate-300 font-mono text-xs">
+                        {client.gst_number || <span className="text-slate-400 dark:text-slate-500">-</span>}
+                      </span>
+                    </td>
+                    {/* Users */}
+                    <td className="px-5 py-3.5">
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-xs font-medium bg-blue-50 dark:bg-blue-900/20 text-blue-700 dark:text-blue-400 ring-1 ring-blue-200/60 dark:ring-blue-800/40">
+                        {client.user_count} users
+                      </span>
+                    </td>
+                    {/* Subscription */}
+                    <td className="px-5 py-3.5">
+                      <SubscriptionBadge client={client} />
+                    </td>
+                    {/* Status */}
+                    <td className="px-5 py-3.5">
+                      <ActiveBadge active={client.is_active} />
+                    </td>
+                    {/* Created */}
+                    <td className="px-5 py-3.5 text-slate-500 dark:text-slate-400 text-xs">
+                      {new Date(client.created_at).toLocaleDateString()}
+                    </td>
+                    {/* Actions */}
+                    <td className="px-5 py-3.5">
+                      <div className="flex items-center justify-end gap-1">
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/admin/clients/${client.client_id}`)}
+                          className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20 transition-colors"
+                          title="Edit"
+                        >
+                          <Edit className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => navigate(`/admin/users?client_id=${client.client_id}`)}
+                          disabled={client.user_count < 1}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            client.user_count < 1
+                              ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed'
+                              : 'text-slate-500 dark:text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20'
+                          }`}
+                          title={client.user_count < 1 ? 'No users' : 'View Users'}
+                        >
+                          <Users className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => handleToggleStatus(client.client_id)}
+                          className={`p-1.5 rounded-lg transition-colors ${
+                            client.is_active
+                              ? 'text-slate-500 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20'
+                              : 'text-slate-500 dark:text-slate-400 hover:text-emerald-600 dark:hover:text-emerald-400 hover:bg-emerald-50 dark:hover:bg-emerald-900/20'
+                          }`}
+                          title={client.is_active ? 'Deactivate' : 'Activate'}
+                        >
+                          {client.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setClientToDelete(client);
+                            setDeleteConfirmOpen(true);
+                          }}
+                          className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors"
+                          title="Delete"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+                {clients.length === 0 && (
+                  <tr>
+                    <td colSpan={9} className="py-12">
+                      <EmptyState
+                        icon={Building2}
+                        title="No clients found"
+                        description={searchTerm ? 'Try adjusting your search.' : 'Create your first client to get started.'}
+                        action={
+                          !searchTerm ? (
+                            <Button onClick={() => navigate('/admin/clients/create')} icon={Plus} size="sm">
+                              Create Client
+                            </Button>
+                          ) : undefined
+                        }
+                      />
+                    </td>
+                  </tr>
                 )}
-                <div>
-                  <div className="text-sm font-semibold text-gray-900">{client.client_name}</div>
-                  {client.admin_email && <div className="text-xs text-gray-400">Admin: {client.admin_email}</div>}
-                </div>
-              </div>
-              <div className="flex items-center gap-1 ml-2">
-                <button onClick={() => navigate(`/admin/clients/${client.client_id}`)} className="text-blue-600 hover:text-blue-900 p-1" title="View Details">
-                  <Edit className="h-4 w-4" />
-                </button>
-                <button onClick={() => handleViewUsers(client.client_id)} className="text-indigo-600 hover:text-indigo-900 p-1" title="View Users">
-                  <Users className="h-4 w-4" />
-                </button>
-                <button onClick={() => handleToggleStatus(client.client_id)} className={`p-1 ${client.is_active ? 'text-yellow-600 hover:text-yellow-900' : 'text-green-600 hover:text-green-900'}`} title={client.is_active ? 'Deactivate' : 'Activate'}>
-                  {client.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
-                </button>
-                <button onClick={() => handleDeleteClick(client)} className="text-red-600 hover:text-red-900 p-1" title="Delete">
-                  <Trash2 className="h-4 w-4" />
-                </button>
-              </div>
-            </div>
-            <div className="grid grid-cols-2 gap-2 text-xs">
-              <div>
-                <span className="text-gray-500 font-medium">Email: </span>
-                <span className="text-gray-900 break-all">{client.email}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 font-medium">Phone: </span>
-                <span className="text-gray-900">{client.phone}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 font-medium">Status: </span>
-                {client.is_active ? (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">Active</span>
-                ) : (
-                  <span className="inline-flex items-center px-1.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">Inactive</span>
-                )}
-              </div>
-              <div>
-                <span className="text-gray-500 font-medium">Users: </span>
-                <span className="text-gray-900">{client.user_count}</span>
-              </div>
-              <div>
-                <span className="text-gray-500 font-medium">Created: </span>
-                <span className="text-gray-900">{new Date(client.created_at).toLocaleDateString()}</span>
-              </div>
-              {client.gst_number && (
-                <div>
-                  <span className="text-gray-500 font-medium">GST: </span>
-                  <span className="text-gray-900">{client.gst_number}</span>
-                </div>
-              )}
-            </div>
+              </tbody>
+            </table>
           </div>
-        ))}
-        {/* Mobile Pagination */}
-        <div className="flex items-center justify-between py-3 px-1">
-          <div className="text-xs text-gray-600">
-            Page {currentPage} of {totalPages} ({totalClients} clients)
-          </div>
-          <div className="flex gap-2">
-            <button
-              onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
-              disabled={currentPage === 1}
-              className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 hover:bg-gray-50"
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </button>
-            <button
-              onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
-              disabled={currentPage === totalPages}
-              className="px-3 py-1 border border-gray-300 rounded disabled:opacity-50 hover:bg-gray-50"
-            >
-              <ChevronRight className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
-      </div>
+          {totalClients > 0 && (
+            <Pagination
+              page={currentPage}
+              limit={10}
+              total={totalClients}
+              onPageChange={setCurrentPage}
+            />
+          )}
+        </Card>
 
-      {/* Delete Confirmation Modal */}
-      {deleteConfirmOpen && clientToDelete && (
-        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
-          <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
-            <div className="flex items-center gap-3 mb-4">
-              <div className="flex-shrink-0 w-12 h-12 rounded-full bg-red-100 flex items-center justify-center">
-                <AlertTriangle className="h-6 w-6 text-red-600" />
-              </div>
-              <div>
-                <h3 className="text-lg font-semibold text-gray-900">Delete Client</h3>
-                <p className="text-sm text-gray-500">This action cannot be undone</p>
-              </div>
-            </div>
-
-            <div className="mb-6">
-              <p className="text-sm text-gray-700 mb-2">
-                Are you sure you want to delete the following client?
-              </p>
-              <div className="bg-gray-50 rounded-lg p-4 border border-gray-200">
-                <div className="flex items-center gap-3 mb-2">
-                  {clientToDelete.logo_url ? (
+        {/* Mobile Cards */}
+        <div className="md:hidden space-y-3">
+          {clients.map((client) => (
+            <Card key={client.client_id} className="!p-4">
+              <div className="flex items-start justify-between mb-3">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  {client.logo_url ? (
                     <img
-                      src={clientToDelete.logo_url}
-                      alt={clientToDelete.client_name}
-                      width={40}
-                      height={40}
-                      className="h-10 w-10 rounded-full object-cover"
+                      src={client.logo_url}
+                      alt={client.client_name}
+                      width={32}
+                      height={32}
+                      className="h-8 w-8 rounded-lg object-cover ring-1 ring-slate-200 dark:ring-slate-700"
                     />
                   ) : (
-                    <div className="h-10 w-10 rounded-full bg-blue-100 flex items-center justify-center">
-                      <Building2 className="h-5 w-5 text-blue-600" />
+                    <div className="h-8 w-8 rounded-lg bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
+                      <Building2 className="h-4 w-4 text-blue-600 dark:text-blue-400" />
                     </div>
                   )}
-                  <div>
-                    <p className="font-semibold text-gray-900">{clientToDelete.client_name}</p>
-                    <p className="text-xs text-gray-500">{clientToDelete.email}</p>
+                  <div className="min-w-0">
+                    <p className="text-sm font-semibold text-slate-900 dark:text-white truncate">{client.client_name}</p>
+                    {client.admin_email && (
+                      <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate">Admin: {client.admin_email}</p>
+                    )}
                   </div>
                 </div>
-                {clientToDelete.user_count > 0 && (
-                  <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded">
-                    <p className="text-xs text-yellow-800">
-                      <strong>Warning:</strong> This client has {clientToDelete.user_count} user(s). All associated data will be permanently deleted.
-                    </p>
+                <div className="flex items-center gap-0.5 ml-2 flex-shrink-0">
+                  <button type="button" onClick={() => navigate(`/admin/clients/${client.client_id}`)} className="p-1.5 rounded-lg text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/20">
+                    <Edit className="h-4 w-4" />
+                  </button>
+                  <button type="button" onClick={() => navigate(`/admin/users?client_id=${client.client_id}`)} disabled={client.user_count < 1} className={`p-1.5 rounded-lg ${client.user_count < 1 ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed' : 'text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20'}`}>
+                    <Users className="h-4 w-4" />
+                  </button>
+                  <button type="button" onClick={() => handleToggleStatus(client.client_id)} className={`p-1.5 rounded-lg ${client.is_active ? 'text-slate-400 hover:text-amber-600' : 'text-slate-400 hover:text-emerald-600'}`}>
+                    {client.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+                  </button>
+                  <button type="button" onClick={() => { setClientToDelete(client); setDeleteConfirmOpen(true); }} className="p-1.5 rounded-lg text-slate-400 hover:text-red-600">
+                    <Trash2 className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
+              <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400">Email </span>
+                  <span className="text-slate-800 dark:text-slate-200 break-all">{client.email}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400">Phone </span>
+                  <span className="text-slate-800 dark:text-slate-200">{client.phone || '-'}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400">Status </span>
+                  <ActiveBadge active={client.is_active} />
+                </div>
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400">Users </span>
+                  <span className="text-slate-800 dark:text-slate-200">{client.user_count}</span>
+                </div>
+                <div>
+                  <span className="text-slate-500 dark:text-slate-400">Created </span>
+                  <span className="text-slate-800 dark:text-slate-200">{new Date(client.created_at).toLocaleDateString()}</span>
+                </div>
+                {client.gst_number && (
+                  <div>
+                    <span className="text-slate-500 dark:text-slate-400">GST </span>
+                    <span className="text-slate-800 dark:text-slate-200 font-mono">{client.gst_number}</span>
                   </div>
                 )}
               </div>
+            </Card>
+          ))}
+          {clients.length === 0 && (
+            <EmptyState
+              icon={Building2}
+              title="No clients found"
+              description="Try adjusting your search."
+            />
+          )}
+          {totalClients > 0 && (
+            <div className="flex items-center justify-between py-3 px-1">
+              <span className="text-xs text-slate-500 dark:text-slate-400">
+                Page {currentPage} of {totalPages} ({totalClients} clients)
+              </span>
+              <div className="flex gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.max(1, p - 1))}
+                  disabled={currentPage === 1}
+                >
+                  Prev
+                </Button>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={() => setCurrentPage((p) => Math.min(totalPages, p + 1))}
+                  disabled={currentPage === totalPages}
+                >
+                  Next
+                </Button>
+              </div>
             </div>
-
-            <div className="flex justify-end gap-3">
-              <button
-                onClick={handleDeleteCancel}
-                disabled={deleting}
-                className="px-4 py-2 border border-gray-300 rounded-lg hover:bg-gray-50 transition disabled:opacity-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleDeleteConfirm}
-                disabled={deleting}
-                className="px-4 py-2 bg-red-600 text-white rounded-lg hover:bg-red-700 transition disabled:opacity-50 flex items-center gap-2"
-              >
-                {deleting ? (
-                  <>
-                    <div className="animate-spin rounded-full h-4 w-4 border-b-2 border-white"></div>
-                    Deleting...
-                  </>
-                ) : (
-                  <>
-                    <Trash2 className="h-4 w-4" />
-                    Delete Client
-                  </>
-                )}
-              </button>
-            </div>
-          </div>
+          )}
         </div>
-      )}
+
+        {/* Delete Confirmation */}
+        {clientToDelete && (
+          <ConfirmDialog
+            isOpen={deleteConfirmOpen}
+            onClose={() => { setDeleteConfirmOpen(false); setClientToDelete(null); }}
+            onConfirm={handleDeleteConfirm}
+            title="Delete Client"
+            message={`Are you sure you want to permanently delete "${clientToDelete.client_name}"? This will remove all ${clientToDelete.user_count} user(s) and associated data.`}
+            confirmText={deleting ? 'Deleting...' : 'Delete Client'}
+            variant="danger"
+            loading={deleting}
+          />
+        )}
+
+        {/* Bulk Confirm */}
+        <ConfirmDialog
+          isOpen={bulkConfirm.open}
+          onClose={() => { if (!bulkProcessing) setBulkConfirm({ op: '', open: false }); }}
+          onConfirm={handleBulkOperation}
+          title={`Bulk ${bulkConfirm.op}`}
+          message={`Are you sure you want to ${bulkConfirm.op} ${selectedClients.length} client(s)?${bulkConfirm.op === 'delete' ? ' This cannot be undone.' : ''}`}
+          confirmText={bulkProcessing ? `Processing ${selectedClients.length} client(s)...` : bulkConfirm.op.charAt(0).toUpperCase() + bulkConfirm.op.slice(1)}
+          variant={bulkConfirm.op === 'delete' ? 'danger' : 'warning'}
+          loading={bulkProcessing}
+        />
       </div>
     </>
   );

@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, useCallback } from 'react'
 import { X } from 'lucide-react'
 import { cameraScannerService } from '@/services/cameraScannerService'
 
@@ -13,6 +13,12 @@ export default function BarcodeScannerOverlay({ onScan, onClose }: Props) {
   const [scanned, setScanned] = useState<string | null>(null)
   const [flashOn, setFlashOn] = useState(false)
 
+  // Stable refs so the effect doesn't re-run when parent re-renders
+  const onScanRef = useRef(onScan)
+  const onCloseRef = useRef(onClose)
+  onScanRef.current = onScan
+  onCloseRef.current = onClose
+
   useEffect(() => {
     const video = videoRef.current
     if (!video) return
@@ -20,11 +26,10 @@ export default function BarcodeScannerOverlay({ onScan, onClose }: Props) {
     cameraScannerService.start(video, {
       onScan: (result) => {
         setScanned(result.barcode)
-        // Brief success flash, then pass value up and close
         setTimeout(() => {
           cameraScannerService.stop()
-          onScan(result.barcode)
-          onClose()
+          onScanRef.current(result.barcode)
+          onCloseRef.current()
         }, 600)
       },
       onError: (msg) => setError(msg),
@@ -34,7 +39,7 @@ export default function BarcodeScannerOverlay({ onScan, onClose }: Props) {
     return () => {
       cameraScannerService.stop()
     }
-  }, [onScan, onClose])
+  }, []) // Run once on mount — refs keep callbacks fresh
 
   const handleFlash = async () => {
     const next = await cameraScannerService.toggleFlash()

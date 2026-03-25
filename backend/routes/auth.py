@@ -11,7 +11,7 @@ from extensions import db
 from models.user_model import User
 from models.client_model import ClientEntry
 from models.branch_model import Branch
-from models.permission_model import get_user_permissions
+from models.permission_model import get_user_permissions, Permission, UserPermission
 from models.session_model import UserSession
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
@@ -378,7 +378,7 @@ def register():
         email = data.get('email')
         password = data.get('password')
         client_id = data.get('client_id')
-        role = data.get('role', 'staff')
+        role = 'owner'  # Self-registration always creates an owner
 
         if not email or not password or not client_id:
             return jsonify({'error': 'Email, password, and client_id required'}), 400
@@ -402,12 +402,31 @@ def register():
             email=email,
             password_hash=password_hash,
             client_id=client_id,
-            role=role,
+            role='owner',
             created_at=datetime.utcnow(),
             is_active=True
         )
 
         db.session.add(new_user)
+        db.session.flush()
+
+        # Assign default owner permissions (same set as Google OAuth)
+        default_perms = [
+            'view_dashboard', 'gst_billing', 'non_gst_billing',
+            'view_all_bills', 'view_own_bills', 'view_customers',
+            'view_stock', 'add_product', 'edit_product_details',
+            'view_sales_reports', 'export_reports', 'view_audit_logs',
+            'edit_bill_details', 'print_bills',
+        ]
+        perms = Permission.query.filter(Permission.permission_name.in_(default_perms)).all()
+        for perm in perms:
+            db.session.add(UserPermission(
+                id=str(uuid.uuid4()),
+                user_id=new_user.user_id,
+                permission_id=perm.permission_id,
+                granted_by=new_user.user_id,
+            ))
+
         db.session.commit()
 
         return jsonify({

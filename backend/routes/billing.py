@@ -551,21 +551,8 @@ def get_bills():
                     pass
             return s  # UUID or plain name (e.g. "Cash", "UPI")
 
-        # Only fetch payment type map if there are any UUID payment types
-        any_uuid = any(_UUID_PAT.match(str(b.get('payment_type', '') or '')) for b in bills_data)
-        if any_uuid:
-            from utils.query_cache import get_payment_type_map
-            pt_map = get_payment_type_map(client_id)
-            for b in bills_data:
-                raw = b.get('payment_type') or ''
-                resolved = _resolve_pt(raw)
-                if _UUID_PAT.match(resolved):
-                    b['payment_type'] = pt_map.get(resolved, 'Custom')
-                else:
-                    b['payment_type'] = _norm_pt_label(resolved)
-        else:
-            for b in bills_data:
-                b['payment_type'] = _norm_pt_label(_resolve_pt(b.get('payment_type') or ''))
+        for b in bills_data:
+            b['payment_type'] = _norm_pt_label(_resolve_pt(b.get('payment_type') or ''))
 
         result = {
             'success': True,

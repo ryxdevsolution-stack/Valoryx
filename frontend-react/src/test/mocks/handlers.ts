@@ -78,10 +78,4 @@ export const handlers = [
     })
   ),
 
-  http.get(`${BASE}/payment`, () =>
-    HttpResponse.json([
-      { payment_type_id: 'pt1', payment_name: 'Cash' },
-      { payment_type_id: 'pt2', payment_name: 'Card' },
-    ])
-  ),
 ]

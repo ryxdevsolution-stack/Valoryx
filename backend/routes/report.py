@@ -7,7 +7,6 @@ from sqlalchemy import func
 from extensions import db
 from models.report_model import Report
 from models.billing_model import GSTBilling, NonGSTBilling
-from models.payment_model import PaymentType
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
 from utils.rate_limiter import rate_limit
@@ -86,10 +85,7 @@ def generate_report():
         total_non_gst_amount = float(nongst_agg.total)
         total_revenue = total_gst_amount + total_non_gst_amount
 
-        # OPTIMIZED: Payment breakdown via SQL GROUP BY instead of loading all bills
-        from utils.query_cache import get_payment_type_map
-        payment_map = get_payment_type_map(client_id)
-
+        # Payment breakdown via SQL GROUP BY
         payment_breakdown = {}
 
         gst_pay_query = _apply_date_user_filter(
@@ -100,7 +96,7 @@ def generate_report():
         ).group_by(GSTBilling.payment_type)
 
         for row in gst_pay_query.all():
-            name = payment_map.get(str(row.payment_type) if row.payment_type else '', 'Unknown')
+            name = str(row.payment_type).strip() if row.payment_type else 'Unknown'
             payment_breakdown[name] = payment_breakdown.get(name, 0) + float(row.total or 0)
 
         nongst_pay_query = _apply_date_user_filter(
@@ -111,7 +107,7 @@ def generate_report():
         ).group_by(NonGSTBilling.payment_type)
 
         for row in nongst_pay_query.all():
-            name = payment_map.get(str(row.payment_type) if row.payment_type else '', 'Unknown')
+            name = str(row.payment_type).strip() if row.payment_type else 'Unknown'
             payment_breakdown[name] = payment_breakdown.get(name, 0) + float(row.total or 0)
 
         # Create report entry

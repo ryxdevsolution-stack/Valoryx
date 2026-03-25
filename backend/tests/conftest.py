@@ -106,8 +106,7 @@ def create_test_app():
         import models.permission_model  # noqa: F401
 
         for optional in [
-            "models.payment_model",
-            "models.customer_model",
+"models.customer_model",
             "models.report_model",
             "models.audit_model",
         ]:
@@ -221,8 +220,7 @@ def create_online_app():
         import models.permission_model  # noqa: F401
 
         for optional in [
-            "models.payment_model",
-            "models.customer_model",
+"models.customer_model",
             "models.report_model",
             "models.audit_model",
         ]:

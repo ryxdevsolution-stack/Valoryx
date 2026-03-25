@@ -764,13 +764,7 @@ export default function StockManagementPage() {
           <p className="mt-1 text-gray-600 dark:text-gray-400">Manage your inventory and track stock levels</p>
         </div>
         <div className="flex flex-wrap gap-2 sm:flex-nowrap sm:gap-3">
-          <button
-            onClick={() => setShowBulkOrderList(true)}
-            className="flex-1 sm:flex-none px-3 sm:px-6 py-2.5 sm:py-3 bg-purple-600 dark:bg-purple-700 text-white rounded-lg hover:bg-purple-800 dark:hover:bg-purple-600 transition font-medium text-sm sm:text-base whitespace-nowrap"
-          >
-            📦 <span className="hidden sm:inline">View </span>Orders
-          </button>
-          <button
+<button
             onClick={() => setShowBulkOrderModal(true)}
             className="flex-1 sm:flex-none px-3 sm:px-6 py-2.5 sm:py-3 bg-orange-600 dark:bg-orange-700 text-white rounded-lg hover:bg-orange-800 dark:hover:bg-orange-600 transition font-medium text-sm sm:text-base whitespace-nowrap"
           >

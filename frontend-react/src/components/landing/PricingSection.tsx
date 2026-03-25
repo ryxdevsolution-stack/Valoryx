@@ -21,14 +21,51 @@ const planIcons: Record<string, any> = {
   Enterprise: Crown,
 }
 
+// Static fallback so pricing is always visible even when the API is unreachable
+const fallbackPlans: Plan[] = [
+  {
+    plan_id: 'starter',
+    name: 'Starter',
+    description: 'Perfect for small businesses just getting started',
+    monthly_price: 99900,
+    yearly_price: 999900,
+    features: ['Basic invoicing', 'Customer management', 'Email support', 'Basic reports'],
+    limits: { users: 3, bills_per_month: 100, storage_gb: 5 },
+    is_popular: false,
+  },
+  {
+    plan_id: 'professional',
+    name: 'Professional',
+    description: 'For growing businesses with advanced needs',
+    monthly_price: 249900,
+    yearly_price: 2499900,
+    features: ['Everything in Starter', 'GST billing', 'Inventory management', 'Priority support', 'Advanced reports', 'Multi-user access'],
+    limits: { users: 10, bills_per_month: 500, storage_gb: 25 },
+    is_popular: true,
+  },
+  {
+    plan_id: 'enterprise',
+    name: 'Enterprise',
+    description: 'For large organizations with custom requirements',
+    monthly_price: 799900,
+    yearly_price: 7999900,
+    features: ['Everything in Professional', 'Unlimited users', 'Custom integrations', '24/7 phone support', 'Dedicated account manager', 'SLA guarantee', 'White-label options'],
+    limits: { users: -1, bills_per_month: -1, storage_gb: 100 },
+    is_popular: false,
+  },
+]
+
 export default function PricingSection() {
-  const [plans, setPlans] = useState<Plan[]>([])
+  const [plans, setPlans] = useState<Plan[]>(fallbackPlans)
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly')
 
   useEffect(() => {
     api.get('/subscription/plans')
-      .then(res => setPlans(res.data.plans || []))
-      .catch(() => {})
+      .then(res => {
+        const live = res.data.plans
+        if (Array.isArray(live) && live.length > 0) setPlans(live)
+      })
+      .catch(() => {}) // keep fallback plans on failure
   }, [])
 
   function formatPrice(paise: number) {
