@@ -16,6 +16,22 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
+      - name: Extract version from git tag
+        id: version
+        shell: bash
+        env:
+          GIT_REF: ${{ github.ref }}
+        run: |
+          TAG="${GIT_REF#refs/tags/v}"
+          echo "VERSION=$TAG" >> "$GITHUB_OUTPUT"
+          echo "Extracted version: $TAG"
+
+      - name: Sync package.json version with git tag
+        shell: bash
+        run: |
+          npm version "${{ steps.version.outputs.VERSION }}" --no-git-tag-version --allow-same-version
+          echo "package.json version is now: $(node -p "require('./package.json').version")"
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -52,3 +68,19 @@ jobs:
             dist/latest.yml
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Commit updated version back to main
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git checkout main
+          git add package.json
+          if git diff --cached --quiet; then
+            echo "package.json already has correct version, nothing to commit"
+          else
+            git commit -m "chore: bump version to ${{ steps.version.outputs.VERSION }} [skip ci]"
+            git push origin main
+          fi
