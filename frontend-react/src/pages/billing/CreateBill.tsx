@@ -130,7 +130,7 @@ export default function UnifiedBillingPage() {
   const searchBarcodeTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Payment types fetched from API (with fallback)
-  const [paymentTypes, setPaymentTypes] = useState<string[]>(['Cash', 'Card', 'UPI'])
+  const [paymentTypes, setPaymentTypes] = useState<string[]>(['Cash', 'Card', 'UPI', 'Credit Card'])
 
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(false)
@@ -221,11 +221,11 @@ export default function UnifiedBillingPage() {
   const [showDraftRestored, setShowDraftRestored] = useState(false)
 
   // Customer search states
+  const [allCustomers, setAllCustomers] = useState<CustomerData[]>([])
   const [customerSuggestions, setCustomerSuggestions] = useState<CustomerData[]>([])
   const [showCustomerDropdown, setShowCustomerDropdown] = useState(false)
   const [customerSearchField, setCustomerSearchField] = useState<'code' | 'name' | 'phone' | null>(null)
   const [selectedCustomerIndex, setSelectedCustomerIndex] = useState(0)
-  const customerSearchTimeout = useRef<ReturnType<typeof setTimeout> | null>(null)
 
 
   // Show draft restored notification
@@ -260,12 +260,14 @@ export default function UnifiedBillingPage() {
     try {
       setProductsLoading(true)
       // Single parallel load — no retries, no recursive loops
-      const [productsData, billNumberResponse] = await Promise.all([
+      const [productsData, billNumberResponse, customersResponse] = await Promise.all([
         fetchProducts(false),
         api.get('/billing/next-number'),
+        api.get('/customer/all').catch(() => ({ data: { customers: [] } })),
       ])
       setProducts(productsData)
       setNextBillNumber(billNumberResponse.data.next_bill_number || 1)
+      setAllCustomers(customersResponse.data.customers || [])
     } catch (error) {
       console.error('Failed to load initial data:', error)
       setNextBillNumber(1)
@@ -540,37 +542,37 @@ export default function UnifiedBillingPage() {
     )
   }
 
-  // Customer search function
-  const searchCustomers = async (query: string) => {
-    if (!query || query.length < 1) {
-      setCustomerSuggestions([])
-      setShowCustomerDropdown(false)
+  // Close customer dropdown only if focus moves outside customer fields
+  const handleCustomerBlur = (e: React.FocusEvent) => {
+    const related = e.relatedTarget as HTMLElement | null
+    // If focus is moving to another element inside a customer-search-container, don't close
+    if (related?.closest('.customer-search-container')) return
+    setTimeout(() => setShowCustomerDropdown(false), 150)
+  }
+
+  // Filter customers locally from pre-loaded list
+  const filterCustomers = (query: string, field: 'code' | 'name' | 'phone') => {
+    if (!query) {
+      // Show all customers on focus with empty field
+      setCustomerSuggestions(allCustomers.slice(0, 20))
+      setShowCustomerDropdown(allCustomers.length > 0)
       setSelectedCustomerIndex(0)
       return
     }
-
-    try {
-      const response = await api.get(`/customer/search?q=${encodeURIComponent(query)}`)
-      if (response.data.success && response.data.customers.length > 0) {
-        setCustomerSuggestions(response.data.customers)
-        setShowCustomerDropdown(true)
-        setSelectedCustomerIndex(0)
-      } else {
-        setCustomerSuggestions([])
-        setShowCustomerDropdown(false)
-        setSelectedCustomerIndex(0)
-      }
-    } catch (error) {
-      console.error('Customer search failed:', error)
-      setCustomerSuggestions([])
-      setShowCustomerDropdown(false)
-      setSelectedCustomerIndex(0)
-    }
+    const q = query.toLowerCase()
+    const filtered = allCustomers.filter(c => {
+      if (field === 'code') return c.customer_code?.toString().startsWith(q)
+      if (field === 'name') return c.customer_name?.toLowerCase().includes(q)
+      if (field === 'phone') return c.customer_phone?.includes(q)
+      return false
+    }).slice(0, 20)
+    setCustomerSuggestions(filtered)
+    setShowCustomerDropdown(filtered.length > 0)
+    setSelectedCustomerIndex(0)
   }
 
-  // Handle customer field change with debounced search
+  // Handle customer field change with local filtering
   const handleCustomerFieldChange = (field: 'code' | 'name' | 'phone', value: string) => {
-    // Update the field value
     if (field === 'code') {
       updateActiveTab({ customer_code: value })
     } else if (field === 'name') {
@@ -578,19 +580,8 @@ export default function UnifiedBillingPage() {
     } else if (field === 'phone') {
       updateActiveTab({ customer_phone: value })
     }
-
-    // Clear previous timeout
-    if (customerSearchTimeout.current) {
-      clearTimeout(customerSearchTimeout.current)
-    }
-
-    // Set field being searched
     setCustomerSearchField(field)
-
-    // Debounced search (optimized from 300ms)
-    customerSearchTimeout.current = setTimeout(() => {
-      searchCustomers(value)
-    }, 150)
+    filterCustomers(value, field)
   }
 
   // Lookup customer by exact code and auto-fill
@@ -1210,20 +1201,7 @@ export default function UnifiedBillingPage() {
       setLoading(true)
       console.log('[BILLING] Starting bill creation process...')
 
-      // Auto-save new customer if phone is provided but no customer code (new customer)
-      if (activeTab.customer_phone && !activeTab.customer_code && activeTab.customer_name) {
-        try {
-          await api.post('/customer/create', {
-            customer_name: activeTab.customer_name,
-            customer_phone: activeTab.customer_phone,
-            customer_gstin: activeTab.customer_gstin || '',
-          })
-          console.log('[BILLING] New customer saved automatically')
-        } catch (customerError: any) {
-          // Don't fail the bill if customer creation fails (customer might already exist)
-          console.log('[BILLING] Customer save skipped:', customerError.response?.data?.message || 'Already exists or error')
-        }
-      }
+      // Customer auto-save is handled by the backend during bill creation (no permission needed)
 
       // Clean items - remove UI-only fields, keep nosave- prefix (no stock saving for quick products)
       const cleanedItems = activeTab.items.map(({ limitedByStock, requestedQuantity, saveToStock, ...item }) => item)
@@ -1371,6 +1349,11 @@ export default function UnifiedBillingPage() {
 
       // Invalidate product cache after successful bill creation (stock quantities changed)
       invalidateDataCache('products')
+
+      // Refresh customer list (new customer may have been auto-saved by backend)
+      api.get('/customer/all').then(res => {
+        if (res.data.customers) setAllCustomers(res.data.customers)
+      }).catch(() => {})
 
       // Set next bill number directly from response (avoid extra API call)
       const createdBillNumber = response.data.bill?.bill_number || response.data.bill_number
@@ -1557,13 +1540,13 @@ export default function UnifiedBillingPage() {
                   placeholder="100+"
                   value={activeTab.customer_code}
                   onChange={(e) => handleCustomerFieldChange('code', e.target.value)}
-                  onFocus={() => activeTab.customer_code && searchCustomers(activeTab.customer_code)}
-                  onBlur={async () => {
+                  onFocus={() => { setCustomerSearchField('code'); filterCustomers(activeTab.customer_code, 'code') }}
+                  onBlur={async (e) => {
                     // Auto-lookup by exact code when leaving field
                     if (activeTab.customer_code && !activeTab.customer_name) {
                       await lookupCustomerByCode(activeTab.customer_code)
                     }
-                    setTimeout(() => setShowCustomerDropdown(false), 100)
+                    handleCustomerBlur(e)
                   }}
                   onKeyDown={async (e) => {
                     // First check if dropdown navigation should handle it
@@ -1620,8 +1603,8 @@ export default function UnifiedBillingPage() {
                   placeholder="Optional"
                   value={activeTab.customer_name}
                   onChange={(e) => handleCustomerFieldChange('name', e.target.value)}
-                  onFocus={() => activeTab.customer_name && searchCustomers(activeTab.customer_name)}
-                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 100)}
+                  onFocus={() => { setCustomerSearchField('name'); filterCustomers(activeTab.customer_name, 'name') }}
+                  onBlur={handleCustomerBlur}
                   onKeyDown={(e) => {
                     if (!handleCustomerKeyDown(e, 'name')) {
                       handleEnterNavigation(e, customerPhoneRef)
@@ -1666,8 +1649,8 @@ export default function UnifiedBillingPage() {
                   placeholder="Optional"
                   value={activeTab.customer_phone}
                   onChange={(e) => handleCustomerFieldChange('phone', e.target.value)}
-                  onFocus={() => activeTab.customer_phone && searchCustomers(activeTab.customer_phone)}
-                  onBlur={() => setTimeout(() => setShowCustomerDropdown(false), 100)}
+                  onFocus={() => { setCustomerSearchField('phone'); filterCustomers(activeTab.customer_phone, 'phone') }}
+                  onBlur={handleCustomerBlur}
                   onKeyDown={(e) => {
                     if (!handleCustomerKeyDown(e, 'phone')) {
                       handleEnterNavigation(e, customerGstinRef)

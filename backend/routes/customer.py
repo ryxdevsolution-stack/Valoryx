@@ -305,7 +305,7 @@ def get_next_customer_code():
         client_id = g.user['client_id']
 
         # Get the maximum customer code for this client
-        max_code = db.session.query(func.max(Customer.customer_code)).filter_by(client_id=client_id).scalar()
+        max_code = db.session.query(func.max(Customer.customer_code)).scalar()
 
         # If no customers exist, start from 100
         next_code = (max_code + 1) if max_code else 100
@@ -371,7 +371,7 @@ def create_customer():
             }), 200
 
         # Get next customer code
-        max_code = db.session.query(func.max(Customer.customer_code)).filter_by(client_id=client_id).scalar()
+        max_code = db.session.query(func.max(Customer.customer_code)).scalar()
         next_code = (max_code + 1) if max_code else 100
 
         # Create new customer (apply title case to name fields)
@@ -428,6 +428,21 @@ def get_customer_by_phone(phone):
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch customer', 'message': str(e)}), 500
+
+
+@customer_bp.route('/all', methods=['GET'])
+@authenticate
+def get_all_customers_for_billing():
+    """Return all registered customers for billing autocomplete (no extra permission needed)."""
+    try:
+        client_id = g.user['client_id']
+        customers = Customer.query.filter_by(client_id=client_id, status='active').order_by(Customer.customer_name).all()
+        return jsonify({
+            'success': True,
+            'customers': [c.to_dict() for c in customers]
+        }), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to fetch customers', 'message': str(e)}), 500
 
 
 @customer_bp.route('/search', methods=['GET'])

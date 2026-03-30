@@ -31,6 +31,55 @@ def get_current_time():
     return aware_dt.replace(tzinfo=None)
 
 
+def _auto_save_customer(client_id, customer_name, customer_phone, customer_gstin=None):
+    """Auto-register customer in Customer table during bill creation.
+    Skips walk-in customers. Updates name/GSTIN if customer already exists."""
+    if not customer_phone or not customer_name:
+        return
+    name_lower = customer_name.lower().strip()
+    if name_lower in ['walk-in customer', 'walk-in', 'walkin', 'walkin customer', 'walk in customer', 'walk in', '']:
+        return
+    try:
+        existing = Customer.query.filter_by(client_id=client_id, customer_phone=customer_phone).first()
+        if existing:
+            changed = False
+            if existing.customer_name != title_case(customer_name):
+                existing.customer_name = title_case(customer_name)
+                changed = True
+            if customer_gstin and existing.customer_gstin != customer_gstin:
+                existing.customer_gstin = customer_gstin
+                changed = True
+            if changed:
+                db.session.commit()
+            return
+        # Retry loop to handle race conditions on customer_code unique constraint
+        for attempt in range(3):
+            try:
+                max_code = db.session.query(func.max(Customer.customer_code)).scalar()
+                next_code = (max_code + 1) if max_code else 100
+                new_customer = Customer(
+                    customer_id=str(uuid.uuid4()),
+                    client_id=client_id,
+                    customer_code=next_code,
+                    customer_name=title_case(customer_name),
+                    customer_phone=customer_phone,
+                    customer_gstin=customer_gstin or '',
+                    customer_email='',
+                    customer_address='',
+                    status='active'
+                )
+                db.session.add(new_customer)
+                db.session.commit()
+                break
+            except Exception:
+                db.session.rollback()
+                if attempt == 2:
+                    raise
+    except Exception as e:
+        print(f"Warning: Auto-save customer failed: {e}")
+        db.session.rollback()
+
+
 def _update_loyalty_points(client_id, customer_phone, bill_amount, subtract=False):
     """Add or subtract loyalty points for a customer after bill creation/cancellation.
     Points = floor(bill_amount / 100) * points_per_100
@@ -529,7 +578,7 @@ def get_bills():
             Handles: UUID strings, JSON arrays (with lower or UPPER keys), plain names, empty arrays.
             """
             if not raw:
-                return 'Unknown'
+                return 'Pending'
             s = str(raw).strip()
             if s.startswith('[') or s.startswith('{'):
                 try:
@@ -543,10 +592,10 @@ def get_bills():
                             label = p.get('payment_type') or p.get('PAYMENT_TYPE') or ''
                             if label:
                                 labels.append(str(label).title())
-                        return '+'.join(labels) if labels else 'Unknown'
+                        return '+'.join(labels) if labels else 'Pending'
                     if isinstance(parsed, dict):
                         label = parsed.get('payment_type') or parsed.get('PAYMENT_TYPE') or ''
-                        return str(label).title() if label else 'Unknown'
+                        return str(label).title() if label else 'Pending'
                 except (ValueError, KeyError):
                     pass
             return s  # UUID or plain name (e.g. "Cash", "UPI")
@@ -892,6 +941,9 @@ def create_unified_bill():
             log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
             db.session.commit()
 
+            # Auto-save customer to Customer table (no permission needed)
+            _auto_save_customer(client_id, data.get('customer_name'), data.get('customer_phone'), data.get('customer_gstin'))
+
             # Award loyalty points
             points_earned = _update_loyalty_points(client_id, data.get('customer_phone'), final_amount)
 
@@ -981,6 +1033,9 @@ def create_unified_bill():
             # Log action BEFORE commit so it's part of the same transaction (performance optimization)
             log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
             db.session.commit()
+
+            # Auto-save customer to Customer table (no permission needed)
+            _auto_save_customer(client_id, data.get('customer_name'), data.get('customer_phone'), data.get('customer_gstin'))
 
             # Award loyalty points
             points_earned = _update_loyalty_points(client_id, data.get('customer_phone'), total_amount)

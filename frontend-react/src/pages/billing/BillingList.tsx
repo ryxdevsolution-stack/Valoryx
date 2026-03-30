@@ -78,13 +78,8 @@ export default function AllBillsPage() {
 
   // Track ongoing request to prevent duplicates (for React Strict Mode)
   const ongoingRequest = useRef<Promise<void> | null>(null)
-  const hasInitialized = useRef(false)
 
   useEffect(() => {
-    // Prevent duplicate initialization in React Strict Mode
-    if (hasInitialized.current) return
-    hasInitialized.current = true
-
     fetchData()
     getShopSettings().then(setShopSettings).catch(() => {/* non-critical */})
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -126,10 +121,7 @@ export default function AllBillsPage() {
   const parsePaymentTypes = (bill: Bill): string[] => parsedPaymentMap.get(bill.bill_id) ?? []
 
   const fetchData = async () => {
-    // If a request is already ongoing, return that promise
-    if (ongoingRequest.current) {
-      return ongoingRequest.current
-    }
+    ongoingRequest.current = null
 
     const request = (async () => {
       try {
@@ -139,16 +131,27 @@ export default function AllBillsPage() {
         const fetchedBills = billsRes.data.bills || []
         setBills(fetchedBills)
 
-        // Extract unique payment types from bills (including split payments)
+        // Extract unique payment types directly from fetched bills (not from stale memoized map)
         if (fetchedBills.length > 0) {
           const uniquePaymentTypes = new Set<string>()
           fetchedBills.forEach((bill: Bill) => {
-            const paymentTypes = parsePaymentTypes(bill)
-            paymentTypes.forEach(pt => uniquePaymentTypes.add(pt))
+            if (!bill.payment_type) return
+            if (typeof bill.payment_type === 'string' && bill.payment_type.trim().startsWith('[')) {
+              try {
+                const parsed = JSON.parse(bill.payment_type)
+                if (Array.isArray(parsed)) {
+                  parsed.forEach((p: any) => {
+                    const pt = p.PAYMENT_TYPE || p.payment_type
+                    if (pt) uniquePaymentTypes.add(pt)
+                  })
+                  return
+                }
+              } catch { /* fall through */ }
+            }
+            uniquePaymentTypes.add(bill.payment_type)
           })
 
-          // Convert to array and sort by common payment methods first
-          const sortOrder = ['CASH', 'UPI', 'CARD', 'NET BANKING', 'CHEQUE', 'CREDIT', 'WALLET']
+          const sortOrder = ['CASH', 'UPI', 'CARD', 'CREDIT CARD', 'NET BANKING', 'CHEQUE', 'CREDIT', 'WALLET']
           const sortedTypes = Array.from(uniquePaymentTypes).sort((a, b) => {
             const indexA = sortOrder.indexOf(a.toUpperCase())
             const indexB = sortOrder.indexOf(b.toUpperCase())
@@ -290,22 +293,25 @@ export default function AllBillsPage() {
   const filteredExpandedBills = useMemo(() => {
     if (selectedPaymentType === 'all') return expandedBills
 
-    if (selectedPaymentType.includes('+')) {
-      // Split payment filter - show bills that have this exact combination
-      return expandedBills.filter(bill => {
-        const billTypes = parsePaymentTypes(bill)
-        if (billTypes.length <= 1) return false
-        const sortedTypes = [...billTypes].sort().join('+')
-        return sortedTypes === selectedPaymentType
-      })
-    }
-
-    // Single payment filter - only show bills with exactly that one payment type (no splits)
     return expandedBills.filter(bill => {
-      const billTypes = parsePaymentTypes(bill)
-      return billTypes.length === 1 && bill.displayPaymentType === selectedPaymentType
+      const billTypes = parsedPaymentMap.get(bill.bill_id) ?? []
+      // Backend may return split payments as a single string "Cash+UPI"
+      // or as separate entries ["Cash", "UPI"] — handle both
+      const resolvedTypes = billTypes.length === 1 && billTypes[0].includes('+')
+        ? billTypes[0].split('+')
+        : billTypes
+
+      if (selectedPaymentType.includes('+')) {
+        // Split payment filter
+        if (resolvedTypes.length <= 1) return false
+        const sortedTypes = [...resolvedTypes].sort().join('+')
+        return sortedTypes === selectedPaymentType
+      }
+
+      // Single payment filter
+      return resolvedTypes.length === 1 && bill.displayPaymentType === selectedPaymentType
     })
-  }, [expandedBills, selectedPaymentType])
+  }, [expandedBills, selectedPaymentType, parsedPaymentMap])
 
   // Pagination
   const totalPages = Math.ceil(filteredExpandedBills.length / itemsPerPage)
@@ -747,7 +753,7 @@ export default function AllBillsPage() {
                 {/* All Bills Card */}
                 <button
                   type="button"
-                  onClick={() => setSelectedPaymentType('all')}
+                  onClick={() => { setSelectedPaymentType('all'); fetchData() }}
                   className={`group flex items-center gap-1.5 px-2 py-1.5 rounded-md border transition-all duration-200 ${
                     selectedPaymentType === 'all'
                       ? 'bg-gradient-to-br from-slate-700 to-slate-600 border-slate-600 shadow-md'
