@@ -56,6 +56,7 @@ export interface GSTBill {
   payment_type: string;
   amount_received?: number;
   status: 'draft' | 'final' | 'cancelled';
+  payment_status: 'paid' | 'pending';
   created_by: string;
   created_at: string;
   updated_at?: string;
@@ -81,6 +82,7 @@ export interface NonGSTBill {
   payment_type: string;
   amount_received?: number;
   status: 'draft' | 'final' | 'cancelled';
+  payment_status: 'paid' | 'pending';
   created_by: string;
   created_at: string;
   updated_at?: string;
@@ -126,6 +128,7 @@ export interface PrintableBill {
   bill_number: number;
   customer_name: string;
   customer_phone?: string;
+  customer_gstin?: string;
   items: BillItem[];
   subtotal: number;
   discount_percentage: number;
@@ -141,6 +144,8 @@ export interface PrintableBill {
   sgst: number;
   igst: number;
   user_name: string;
+  payment_status?: 'paid' | 'pending';
+  points_earned?: number;
 }
 
 // ============================================================================

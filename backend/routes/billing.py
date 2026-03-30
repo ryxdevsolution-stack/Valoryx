@@ -882,6 +882,7 @@ def create_unified_bill():
                 discount_amount=round(discount_amount, 2) if discount_amount > 0 else None,
                 negotiable_amount=round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                 status='final',
+                payment_status=data.get('payment_status', 'paid'),
                 created_by=g.user['user_id'],
                 created_at=bill_date
             )
@@ -932,7 +933,8 @@ def create_unified_bill():
                     'cgst': cgst,
                     'sgst': sgst,
                     'igst': 0,
-                    'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0],  # Use full name if available
+                    'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0],
+                    'payment_status': data.get('payment_status', 'paid'),
                     'points_earned': points_earned
                 }
             }), 201
@@ -970,6 +972,7 @@ def create_unified_bill():
                 discount_amount=round(discount_amount, 2) if discount_amount > 0 else None,
                 negotiable_amount=round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                 status='final',
+                payment_status=data.get('payment_status', 'paid'),
                 created_by=g.user['user_id'],
                 created_at=bill_date
             )
@@ -1014,7 +1017,8 @@ def create_unified_bill():
                     'cgst': 0,
                     'sgst': 0,
                     'igst': 0,
-                    'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0],  # Use full name if available
+                    'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0],
+                    'payment_status': data.get('payment_status', 'paid'),
                     'points_earned': points_earned
                 }
             }), 201
@@ -1022,6 +1026,36 @@ def create_unified_bill():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to create bill', 'message': str(e)}), 500
+
+
+@billing_bp.route('/<bill_id>/mark-paid', methods=['PUT'])
+@authenticate
+@require_permission('edit_bill_details')
+def mark_bill_paid(bill_id):
+    """Mark a pending bill as paid."""
+    try:
+        client_id = g.user['client_id']
+
+        gst_bill = GSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
+        non_gst_bill = NonGSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
+
+        bill = gst_bill or non_gst_bill
+        if not bill:
+            return jsonify({'error': 'Bill not found'}), 404
+
+        if bill.status == 'cancelled':
+            return jsonify({'error': 'Cannot update a cancelled bill'}), 400
+
+        old_data = bill.to_dict()
+        bill.payment_status = 'paid'
+        log_action('UPDATE', 'gst_billing' if gst_bill else 'non_gst_billing', bill_id, old_data, bill.to_dict())
+        db.session.commit()
+
+        _invalidate_billing(client_id)
+        return jsonify({'success': True, 'message': 'Bill marked as paid'}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update payment status', 'message': str(e)}), 500
 
 
 @billing_bp.route('/<bill_id>', methods=['PUT'])

@@ -5,8 +5,11 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { useClient } from '@/contexts/ClientContext'
-import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle, Calendar, X, Package, User, Clock, Hash } from 'lucide-react'
+import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle, Calendar, X, Package, User, Clock, Hash, CheckCircle } from 'lucide-react'
 import { useNavigate, useLocation } from 'react-router-dom'
+import { generateBillPDF } from '@/lib/pdfService'
+import { getShopSettings } from '@/services/shopSettingsService'
+import type { ShopSettings } from '@/services/shopSettingsService'
 
 interface BillItem {
   product_name: string
@@ -39,6 +42,7 @@ interface Bill {
   sgst?: number
   igst?: number
   status?: string
+  payment_status?: 'paid' | 'pending'
   user_name?: string
   created_by?: string
 }
@@ -69,6 +73,9 @@ export default function AllBillsPage() {
   // Cancel confirmation modal state
   const [cancelConfirm, setCancelConfirm] = useState<{ billId: string; billNumber: number } | null>(null)
 
+  // Shop settings (for logo + address in PDF)
+  const [shopSettings, setShopSettings] = useState<ShopSettings | null>(null)
+
   // Track ongoing request to prevent duplicates (for React Strict Mode)
   const ongoingRequest = useRef<Promise<void> | null>(null)
   const hasInitialized = useRef(false)
@@ -79,6 +86,7 @@ export default function AllBillsPage() {
     hasInitialized.current = true
 
     fetchData()
+    getShopSettings().then(setShopSettings).catch(() => {/* non-critical */})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
@@ -534,6 +542,65 @@ export default function AllBillsPage() {
     }
   }
 
+  const handleMarkPaid = async (billId: string, billNumber: number) => {
+    if (!window.confirm(`Mark Bill #${billNumber} as Paid?`)) return
+    try {
+      await api.put(`/billing/${billId}/mark-paid`)
+      setBills(prev => prev.map(b => b.bill_id === billId ? { ...b, payment_status: 'paid' } : b))
+      if (selectedBill?.bill_id === billId) setSelectedBill(prev => prev ? { ...prev, payment_status: 'paid' } : prev)
+    } catch (err: any) {
+      alert(err.response?.data?.error || 'Failed to mark as paid')
+    }
+  }
+
+  const handleDownloadPDF = async (bill: Bill) => {
+    const clientInfo = {
+      client_name: shopSettings?.shop_name || client?.client_name || 'Business',
+      address: shopSettings?.address1 || client?.address || '',
+      address2: shopSettings?.address2 || '',
+      phone: shopSettings?.phone || client?.phone || '',
+      gstin: shopSettings?.gst_number || client?.gstin || '',
+      logo_url: client?.logo_url || '',
+      receipt_footer: shopSettings?.receipt_footer || '',
+    }
+    const isGST = bill.type === 'gst'
+    const grandTotal = isGST ? (bill.final_amount ?? 0) : (bill.total_amount ?? 0)
+    const pdfBill = {
+      bill_number: bill.bill_number,
+      customer_name: bill.customer_name || 'Walk-in Customer',
+      customer_phone: bill.customer_phone || '',
+      items: (bill.items || []).map(item => ({
+        product_id: '',
+        product_name: item.product_name,
+        item_code: item.item_code || '',
+        hsn_code: '',
+        unit: 'pcs',
+        quantity: item.quantity,
+        rate: item.rate,
+        mrp: item.mrp,
+        gst_percentage: item.gst_percentage ?? 0,
+        gst_amount: ((item.quantity * item.rate) * (item.gst_percentage ?? 0)) / 100,
+        amount: item.amount,
+      })),
+      subtotal: bill.subtotal ?? grandTotal,
+      discount_percentage: bill.discount_percentage ?? 0,
+      discount_amount: bill.discount_amount ?? 0,
+      negotiable_amount: bill.negotiable_amount,
+      gst_amount: bill.gst_amount ?? 0,
+      final_amount: bill.final_amount ?? grandTotal,
+      total_amount: bill.total_amount ?? grandTotal,
+      payment_type: bill.payment_type || '[]',
+      created_at: bill.created_at,
+      type: (isGST ? 'gst' : 'non-gst') as 'gst' | 'non-gst',
+      cgst: bill.cgst ?? 0,
+      sgst: bill.sgst ?? 0,
+      igst: bill.igst ?? 0,
+      user_name: bill.user_name || '',
+      payment_status: (bill.payment_status || 'paid') as 'paid' | 'pending',
+    }
+    await generateBillPDF(pdfBill, clientInfo)
+  }
+
   // Get icon for payment type
   const getPaymentIcon = (paymentType: string) => {
     const type = paymentType.toUpperCase()
@@ -852,10 +919,13 @@ export default function AllBillsPage() {
                           onClick={() => bill.isFirstPayment && handleViewBill(bill)}>
                         <td className="px-2 py-1.5 whitespace-nowrap">
                           {bill.isFirstPayment ? (
-                            <div className="flex items-center gap-1">
+                            <div className="flex items-center gap-1 flex-wrap">
                               <span className={`text-xs font-semibold ${bill.status === 'cancelled' ? 'text-gray-400 line-through' : 'text-gray-700 dark:text-gray-300'}`}>{displayNumber}</span>
                               {bill.status === 'cancelled' && (
                                 <span className="px-1.5 py-0.5 text-[8px] font-bold text-red-600 bg-red-100 dark:bg-red-900/30 dark:text-red-400 rounded uppercase">Cancelled</span>
+                              )}
+                              {bill.payment_status === 'pending' && bill.status !== 'cancelled' && (
+                                <span className="px-1.5 py-0.5 text-[8px] font-bold text-amber-700 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 rounded uppercase">Pending</span>
                               )}
                             </div>
                           ) : (
@@ -904,7 +974,19 @@ export default function AllBillsPage() {
                           {bill.status === 'cancelled' ? (
                             <span className="text-[10px] text-gray-400">No actions</span>
                           ) : (
-                            <div className="flex items-center justify-center gap-1">
+                            <div className="flex items-center justify-center gap-1 flex-wrap">
+                              {/* Mark Paid — only for pending bills */}
+                              {bill.payment_status === 'pending' && (
+                                <button
+                                  type="button"
+                                  onClick={(e) => { e.stopPropagation(); handleMarkPaid(bill.bill_id, bill.bill_number) }}
+                                  className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-bold text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40 rounded transition-all border border-green-300 dark:border-green-700"
+                                  title="Mark as Paid"
+                                >
+                                  <CheckCircle className="w-3 h-3" />
+                                  Mark Paid
+                                </button>
+                              )}
                               <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); handleExchangeBill(bill.bill_id) }}
@@ -925,6 +1007,18 @@ export default function AllBillsPage() {
                                   <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
                                 </svg>
                                 Print
+                              </button>
+                              {/* PDF download */}
+                              <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleDownloadPDF(bill) }}
+                                className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 dark:hover:bg-purple-900/40 rounded transition-all"
+                                title="Download PDF"
+                              >
+                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" />
+                                </svg>
+                                PDF
                               </button>
                               <button
                                 type="button"
@@ -958,7 +1052,12 @@ export default function AllBillsPage() {
                   >
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div>
-                        <p className="text-sm font-semibold text-gray-900 dark:text-white">#{bill.bill_number}</p>
+                        <div className="flex items-center gap-1.5">
+                          <p className="text-sm font-semibold text-gray-900 dark:text-white">#{bill.bill_number}</p>
+                          {bill.payment_status === 'pending' && bill.status !== 'cancelled' && (
+                            <span className="px-1.5 py-0.5 text-[9px] font-bold text-amber-700 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 rounded uppercase">Payment Pending</span>
+                          )}
+                        </div>
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{bill.customer_name || 'Walk-in'}</p>
                       </div>
                       <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${
@@ -973,6 +1072,25 @@ export default function AllBillsPage() {
                       <span>{bill.created_at ? new Date(bill.created_at).toLocaleDateString() : ''}</span>
                       <span className="text-sm font-bold text-gray-900 dark:text-white">₹{bill.displayAmount?.toLocaleString()}</span>
                     </div>
+                    {bill.payment_status === 'pending' && bill.status !== 'cancelled' && (
+                      <div className="mt-2 flex gap-2">
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleMarkPaid(bill.bill_id, bill.bill_number) }}
+                          className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-bold text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 rounded border border-green-300 dark:border-green-700"
+                        >
+                          <CheckCircle className="w-3.5 h-3.5" /> Mark Paid
+                        </button>
+                        <button
+                          type="button"
+                          onClick={(e) => { e.stopPropagation(); handleDownloadPDF(bill) }}
+                          className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-medium text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 rounded"
+                        >
+                          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                          PDF
+                        </button>
+                      </div>
+                    )}
                   </div>
                 ))}
             </div>
@@ -1189,6 +1307,36 @@ export default function AllBillsPage() {
               <div className="flex justify-between text-base font-bold text-gray-900 dark:text-white pt-2 border-t border-gray-200 dark:border-gray-700">
                 <span>Total</span>
                 <span>₹{((selectedBill.final_amount ?? selectedBill.total_amount) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+              </div>
+
+              {/* Payment status row */}
+              {selectedBill.payment_status === 'pending' && selectedBill.status !== 'cancelled' && (
+                <div className="mt-3 flex items-center justify-between p-2.5 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-700">
+                  <div className="flex items-center gap-2">
+                    <span className="text-amber-600 dark:text-amber-400 text-sm">⏳</span>
+                    <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">Payment Pending</span>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => handleMarkPaid(selectedBill.bill_id, selectedBill.bill_number)}
+                    className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg transition"
+                  >
+                    <CheckCircle className="w-3.5 h-3.5" />
+                    Mark Paid
+                  </button>
+                </div>
+              )}
+
+              {/* Detail panel actions */}
+              <div className="mt-3 flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => handleDownloadPDF(selectedBill)}
+                  className="flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2 text-sm font-semibold text-purple-700 dark:text-purple-400 bg-purple-50 dark:bg-purple-900/20 hover:bg-purple-100 rounded-lg border border-purple-200 dark:border-purple-700 transition"
+                >
+                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 21h10a2 2 0 002-2V9.414a1 1 0 00-.293-.707l-5.414-5.414A1 1 0 0012.586 3H7a2 2 0 00-2 2v14a2 2 0 002 2z" /></svg>
+                  Download PDF
+                </button>
               </div>
             </div>
           </div>

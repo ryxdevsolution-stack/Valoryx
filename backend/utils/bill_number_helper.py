@@ -11,10 +11,14 @@ import os
 from sqlalchemy import text
 from extensions import db
 
-# Hard-coded mapping — column_name can never be user-controlled input
+# Hard-coded mappings — values can never come from user-controlled input
 _BILL_COUNTER_COLS = {
     'gst':     'current_gst_bill_number',
     'non_gst': 'current_non_gst_bill_number',
+}
+_BILL_TABLE_NAMES = {
+    'gst':     'gst_billing',
+    'non_gst': 'non_gst_billing',
 }
 
 
@@ -47,45 +51,87 @@ def get_next_bill_number(client_id, bill_type='gst'):
     if bill_type not in _BILL_COUNTER_COLS:
         raise ValueError("bill_type must be 'gst' or 'non_gst'")
 
-    # Resolved from a hard-coded dict — never from user input
+    # Resolved from hard-coded dicts — never from user input
     column_name = _BILL_COUNTER_COLS[bill_type]
-    is_offline = os.getenv('DB_MODE', 'offline').lower() != 'online'
+    table_name  = _BILL_TABLE_NAMES[bill_type]
+    is_offline  = os.getenv('DB_MODE', 'offline').lower() != 'online'
 
     try:
         if is_offline:
-            # SQLite: no CAST AS UUID, no RETURNING — use two-step upsert + select
-            # Both statements run in the same transaction so reads see the updated value
-            upsert_sql = text(f"""
+            # SQLite: three-step self-healing approach (no RETURNING, no UUID cast)
+            # Step 1: Ensure the counter row exists (noop if already present)
+            db.session.execute(text(f"""
                 INSERT INTO bill_number_counters (client_id, {column_name})
-                VALUES (:client_id, 1)
-                ON CONFLICT (client_id)
-                DO UPDATE SET
-                    {column_name} = {column_name} + 1,
-                    updated_at = CURRENT_TIMESTAMP
-            """)
-            select_sql = text(f"""
-                SELECT {column_name}
-                FROM bill_number_counters
-                WHERE client_id = :client_id
-            """)
-            db.session.execute(upsert_sql, {"client_id": client_id})
-            result = db.session.execute(select_sql, {"client_id": client_id})
+                VALUES (:client_id, 0)
+                ON CONFLICT (client_id) DO NOTHING
+            """), {"client_id": client_id})
+
+            # Step 2: Sync counter up to actual max if it has drifted behind
+            # (handles cases where bills were inserted outside the counter system)
+            db.session.execute(text(f"""
+                UPDATE bill_number_counters
+                SET    {column_name} = (
+                           SELECT COALESCE(MAX(bill_number), 0)
+                           FROM   {table_name}
+                           WHERE  client_id = :client_id
+                       ),
+                       updated_at = CURRENT_TIMESTAMP
+                WHERE  client_id = :client_id
+                AND    {column_name} < (
+                           SELECT COALESCE(MAX(bill_number), 0)
+                           FROM   {table_name}
+                           WHERE  client_id = :client_id
+                       )
+            """), {"client_id": client_id})
+
+            # Step 3: Increment and read
+            db.session.execute(text(f"""
+                UPDATE bill_number_counters
+                SET    {column_name} = {column_name} + 1,
+                       updated_at = CURRENT_TIMESTAMP
+                WHERE  client_id = :client_id
+            """), {"client_id": client_id})
+
+            result = db.session.execute(text(f"""
+                SELECT {column_name} FROM bill_number_counters WHERE client_id = :client_id
+            """), {"client_id": client_id})
             bill_number = result.scalar()
         else:
-            # PostgreSQL: RETURNING is available and CAST AS UUID is required
-            # Use CAST(:client_id AS UUID) — the ::UUID shorthand confuses
-            # SQLAlchemy's text() parameter parser because :: immediately
-            # follows the bind-parameter colon.
-            sql = text(f"""
+            # PostgreSQL:
+            # - bill_number_counters.client_id is TEXT  → use plain :client_id
+            # - gst_billing.client_id / non_gst_billing.client_id are UUID → CAST
+            # Step 1: Ensure counter row exists
+            db.session.execute(text(f"""
                 INSERT INTO bill_number_counters (client_id, {column_name})
-                VALUES (CAST(:client_id AS UUID), 1)
-                ON CONFLICT (client_id)
-                DO UPDATE SET
-                    {column_name} = bill_number_counters.{column_name} + 1,
-                    updated_at = CURRENT_TIMESTAMP
+                VALUES (:client_id, 0)
+                ON CONFLICT (client_id) DO NOTHING
+            """), {"client_id": client_id})
+
+            # Step 2: Sync counter up if it has drifted behind the actual max
+            db.session.execute(text(f"""
+                UPDATE bill_number_counters
+                SET    {column_name} = (
+                           SELECT COALESCE(MAX(bill_number), 0)
+                           FROM   {table_name}
+                           WHERE  client_id = CAST(:client_id AS UUID)
+                       ),
+                       updated_at = CURRENT_TIMESTAMP
+                WHERE  client_id = :client_id
+                AND    {column_name} < (
+                           SELECT COALESCE(MAX(bill_number), 0)
+                           FROM   {table_name}
+                           WHERE  client_id = CAST(:client_id AS UUID)
+                       )
+            """), {"client_id": client_id})
+
+            # Step 3: Increment and return atomically
+            result = db.session.execute(text(f"""
+                UPDATE bill_number_counters
+                SET    {column_name} = {column_name} + 1,
+                       updated_at = CURRENT_TIMESTAMP
+                WHERE  client_id = :client_id
                 RETURNING {column_name}
-            """)
-            result = db.session.execute(sql, {"client_id": client_id})
+            """), {"client_id": client_id})
             bill_number = result.scalar()
 
         db.session.commit()

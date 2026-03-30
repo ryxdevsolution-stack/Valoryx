@@ -16,6 +16,7 @@ import UpiQrCode from '@/components/billing/UpiQrCode'
 import bluetoothPrinterService from '@/services/bluetoothPrinterService'
 import { getShopSettings } from '@/services/shopSettingsService'
 import type { ShopSettings } from '@/services/shopSettingsService'
+import { generateBillPDF } from '@/lib/pdfService'
 
 interface Product {
   product_id: string
@@ -1181,7 +1182,7 @@ export default function UnifiedBillingPage() {
     return true
   }
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent, isPending = false) => {
     e.preventDefault()
 
     if (activeTab.items.length === 0) {
@@ -1189,23 +1190,25 @@ export default function UnifiedBillingPage() {
       return
     }
 
-    if (activeTab.payment_splits.length === 0) {
-      alert('Please add at least one payment method')
-      return
-    }
+    if (!isPending) {
+      if (activeTab.payment_splits.length === 0) {
+        alert('Please add at least one payment method')
+        return
+      }
 
-    const totalSplits = getTotalPaymentSplits()
-    const grandTotal = billTotals.grandTotal
+      const totalSplits = getTotalPaymentSplits()
+      const grandTotal = billTotals.grandTotal
 
-    if (Math.abs(totalSplits - grandTotal) > 0.01) {
-      alert(`Payment splits total (₹${totalSplits.toFixed(2)}) must equal bill total (₹${grandTotal.toFixed(2)})`)
-      return
+      if (Math.abs(totalSplits - grandTotal) > 0.01) {
+        alert(`Payment splits total (₹${totalSplits.toFixed(2)}) must equal bill total (₹${grandTotal.toFixed(2)})`)
+        return
+      }
     }
 
     // Directly create and print the bill
     try {
       setLoading(true)
-      console.log('[BILLING] Starting bill creation and print process...')
+      console.log('[BILLING] Starting bill creation process...')
 
       // Auto-save new customer if phone is provided but no customer code (new customer)
       if (activeTab.customer_phone && !activeTab.customer_code && activeTab.customer_name) {
@@ -1238,8 +1241,15 @@ export default function UnifiedBillingPage() {
       })
       */
 
-      // Format payment_type as JSON string of splits
-      const paymentData = JSON.stringify(activeTab.payment_splits)
+      // For pending bills, use a placeholder payment split (backend requires payment_type)
+      const pendingPaymentSplit = [{
+        payment_type_id: 'pending',
+        payment_name: 'Pending',
+        amount: billTotals.grandTotal,
+      }]
+      const paymentData = isPending
+        ? JSON.stringify(pendingPaymentSplit)
+        : JSON.stringify(activeTab.payment_splits)
 
       console.log('[BILLING] Creating bill...')
       const response = await api.post('/billing/create', {
@@ -1248,10 +1258,11 @@ export default function UnifiedBillingPage() {
         customer_gstin: activeTab.customer_gstin || '',
         items: cleanedItems,
         payment_type: paymentData,
-        amount_received: activeTab.amountReceived,
+        amount_received: isPending ? 0 : activeTab.amountReceived,
         discount_percentage: activeTab.useNegotiablePrice ? 0 : activeTab.discountPercentage,
         negotiable_amount: activeTab.useNegotiablePrice ? activeTab.negotiableAmount : null,
         bill_date: billDate.toISOString(),
+        payment_status: isPending ? 'pending' : 'paid',
       })
       console.log('[BILLING] Bill created successfully:', response.data.bill?.bill_number)
 
@@ -1284,6 +1295,21 @@ export default function UnifiedBillingPage() {
         logo_url: '',
         upi_id: shopSettings?.upi_id || '',
         receipt_footer: shopSettings?.receipt_footer || '',
+      }
+
+      // Pending bills: skip printing, just confirm and clear
+      if (isPending) {
+        const billNum = response.data.bill?.bill_number || response.data.bill_number
+        await SystemNotification.show?.({
+          title: 'Bill Saved as Pending',
+          body: `Bill #${billNum} saved. Payment is pending.`,
+        }).catch(() => {/* optional notification */})
+        invalidateDataCache('products')
+        if (billNum) setNextBillNumber(billNum + 1)
+        clearDraftFromStorage(activeTabId)
+        closeTabWithoutReload(activeTabId)
+        setLoading(false)
+        return
       }
 
       // Check if running in Electron desktop app
@@ -2673,6 +2699,19 @@ export default function UnifiedBillingPage() {
                   className="flex-1 px-4 py-2 bg-green-600 dark:bg-green-700 text-white rounded hover:bg-green-700 dark:hover:bg-green-800 transition disabled:bg-gray-400 dark:disabled:bg-gray-600 font-bold text-sm shadow-md hover:shadow-lg focus:ring-2 focus:ring-green-500 focus:outline-none"
                 >
                   {loading ? 'Processing...' : 'Print Bill'}
+                </button>
+                {/* Save as Pending */}
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={(e) => handleSubmit(e as any, true)}
+                  title="Save bill without payment — mark as Payment Pending"
+                  className="flex-1 px-4 py-2 bg-amber-500 dark:bg-amber-600 text-white rounded hover:bg-amber-600 dark:hover:bg-amber-700 transition disabled:bg-gray-400 dark:disabled:bg-gray-600 font-bold text-sm shadow-md hover:shadow-lg focus:ring-2 focus:ring-amber-400 focus:outline-none flex items-center justify-center gap-1.5"
+                >
+                  <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                  </svg>
+                  {loading ? 'Saving...' : 'Pending'}
                 </button>
                 {isMobile && supportsWebBluetooth && (
                   <button

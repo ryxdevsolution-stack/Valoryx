@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 9
+CURRENT_SCHEMA_VERSION = 11
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -592,6 +592,114 @@ def _m009_role_quotas(db):
     logging.info("[Migration] v9: role_quotas migration done")
 
 
+def _m010_billing_payment_status(db):
+    """
+    Add payment_status column to gst_billing and non_gst_billing.
+    Values: 'paid' (default) | 'pending'
+    Existing rows are backfilled to 'paid'.
+    """
+    inspector = sa_inspect(db.engine)
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            db.session.execute(text(f"UPDATE {table} SET {col} = 'paid' WHERE {col} IS NULL"))
+            logging.info(f"[Migration] {table}.{col} added and backfilled")
+
+    for tbl in ('gst_billing', 'non_gst_billing'):
+        _add_col(tbl, 'payment_status', "VARCHAR(20) NOT NULL DEFAULT 'paid'")
+
+    db.session.commit()
+    logging.info("[Migration] v10: billing payment_status column added")
+
+
+def _m011_sync_bill_number_counters(db):
+    """
+    Sync bill_number_counters to the actual MAX(bill_number) in gst_billing
+    and non_gst_billing tables.
+
+    Fixes: UniqueViolation on idx_gst_billing_number when the counter drifts
+    behind real data (bills inserted before counter system was introduced).
+
+    Two-step: UPDATE existing rows, then INSERT for any clients missing a row.
+    Avoids EXCLUDED.client_id type mismatch (UUID vs TEXT) in ON CONFLICT.
+    """
+    dialect = db.engine.dialect.name
+
+    if dialect == 'postgresql':
+        # Step 1: Update rows that already exist in bill_number_counters
+        db.session.execute(text("""
+            UPDATE bill_number_counters bc
+            SET
+                current_gst_bill_number = GREATEST(
+                    bc.current_gst_bill_number,
+                    COALESCE((
+                        SELECT MAX(bill_number) FROM gst_billing
+                        WHERE client_id = bc.client_id::UUID
+                    ), 0)
+                ),
+                current_non_gst_bill_number = GREATEST(
+                    bc.current_non_gst_bill_number,
+                    COALESCE((
+                        SELECT MAX(bill_number) FROM non_gst_billing
+                        WHERE client_id = bc.client_id::UUID
+                    ), 0)
+                ),
+                updated_at = CURRENT_TIMESTAMP
+        """))
+
+        # Step 2: Insert rows for clients that have no counter row yet
+        db.session.execute(text("""
+            INSERT INTO bill_number_counters (client_id, current_gst_bill_number, current_non_gst_bill_number)
+            SELECT
+                c.client_id::TEXT,
+                COALESCE((SELECT MAX(bill_number) FROM gst_billing     WHERE client_id = c.client_id), 0),
+                COALESCE((SELECT MAX(bill_number) FROM non_gst_billing WHERE client_id = c.client_id), 0)
+            FROM client_entry c
+            WHERE NOT EXISTS (
+                SELECT 1 FROM bill_number_counters WHERE client_id = c.client_id::TEXT
+            )
+        """))
+    else:
+        # SQLite: same two-step, no UUID casts needed
+        db.session.execute(text("""
+            UPDATE bill_number_counters
+            SET
+                current_gst_bill_number = MAX(
+                    current_gst_bill_number,
+                    COALESCE((SELECT MAX(bill_number) FROM gst_billing     WHERE client_id = bill_number_counters.client_id), 0)
+                ),
+                current_non_gst_bill_number = MAX(
+                    current_non_gst_bill_number,
+                    COALESCE((SELECT MAX(bill_number) FROM non_gst_billing WHERE client_id = bill_number_counters.client_id), 0)
+                ),
+                updated_at = CURRENT_TIMESTAMP
+        """))
+
+        db.session.execute(text("""
+            INSERT INTO bill_number_counters (client_id, current_gst_bill_number, current_non_gst_bill_number)
+            SELECT
+                c.client_id,
+                COALESCE((SELECT MAX(bill_number) FROM gst_billing     WHERE client_id = c.client_id), 0),
+                COALESCE((SELECT MAX(bill_number) FROM non_gst_billing WHERE client_id = c.client_id), 0)
+            FROM client_entry c
+            WHERE NOT EXISTS (
+                SELECT 1 FROM bill_number_counters WHERE client_id = c.client_id
+            )
+        """))
+
+    db.session.commit()
+    logging.info("[Migration] v11: bill_number_counters synced to actual max bill numbers")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -604,6 +712,8 @@ MIGRATIONS = [
     (7, _m007_fix_permission_sections),
     (8, _m008_supplier_tables),
     (9, _m009_role_quotas),
+    (10, _m010_billing_payment_status),
+    (11, _m011_sync_bill_number_counters),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

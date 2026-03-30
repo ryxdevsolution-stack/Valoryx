@@ -40,6 +40,7 @@ class GSTBilling(db.Model):
     discount_amount = db.Column(FlexibleNumeric)
     negotiable_amount = db.Column(FlexibleNumeric)
     status = db.Column(db.String(20), default='final')
+    payment_status = db.Column(db.String(20), default='paid')  # 'paid' | 'pending'
     created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=get_current_time)
     updated_at = db.Column(db.DateTime, default=get_current_time, onupdate=get_current_time)
@@ -67,6 +68,7 @@ class GSTBilling(db.Model):
             'discount_amount': str(self.discount_amount) if self.discount_amount else None,
             'negotiable_amount': str(self.negotiable_amount) if self.negotiable_amount else None,
             'status': self.status,
+            'payment_status': self.payment_status or 'paid',
             'created_by': str(self.created_by) if self.created_by else None,
             'created_by_name': self.creator.full_name if self.creator and self.creator.full_name else (self.creator.email if self.creator else None),
             'created_at': self.created_at.isoformat() if self.created_at else None,
@@ -102,6 +104,7 @@ class NonGSTBilling(db.Model):
     discount_amount = db.Column(FlexibleNumeric)
     negotiable_amount = db.Column(FlexibleNumeric)
     status = db.Column(db.String(20), default='final')
+    payment_status = db.Column(db.String(20), default='paid')  # 'paid' | 'pending'
     created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=get_current_time)
     updated_at = db.Column(db.DateTime, default=get_current_time, onupdate=get_current_time)
@@ -126,6 +129,7 @@ class NonGSTBilling(db.Model):
             'discount_amount': str(self.discount_amount) if self.discount_amount else None,
             'negotiable_amount': str(self.negotiable_amount) if self.negotiable_amount else None,
             'status': self.status,
+            'payment_status': self.payment_status or 'paid',
             'created_by': str(self.created_by) if self.created_by else None,
             'created_by_name': self.creator.full_name if self.creator and self.creator.full_name else (self.creator.email if self.creator else None),
             'created_at': self.created_at.isoformat() if self.created_at else None,
