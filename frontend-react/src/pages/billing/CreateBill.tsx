@@ -1219,14 +1219,11 @@ export default function UnifiedBillingPage() {
       })
       */
 
-      // For pending bills, use a placeholder payment split (backend requires payment_type)
-      const pendingPaymentSplit = [{
-        payment_type_id: 'pending',
-        payment_name: 'Pending',
-        amount: billTotals.grandTotal,
-      }]
+      // For pending bills: use selected payment splits if the user already picked one,
+      // otherwise default to Cash so the Payment Type column displays correctly.
+      const pendingPaymentSplit = [{ payment_type: 'Cash', amount: billTotals.grandTotal }]
       const paymentData = isPending
-        ? JSON.stringify(pendingPaymentSplit)
+        ? JSON.stringify(activeTab.payment_splits.length > 0 ? activeTab.payment_splits : pendingPaymentSplit)
         : JSON.stringify(activeTab.payment_splits)
 
       console.log('[BILLING] Creating bill...')

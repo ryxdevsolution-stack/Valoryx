@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 11
+CURRENT_SCHEMA_VERSION = 12
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -624,6 +624,7 @@ def _m010_billing_payment_status(db):
 def _m011_sync_bill_number_counters(db):
     """
     Sync bill_number_counters to the actual MAX(bill_number) in gst_billing
+    Skip gracefully if the table doesn't exist yet (db.create_all() will create it).
     and non_gst_billing tables.
 
     Fixes: UniqueViolation on idx_gst_billing_number when the counter drifts
@@ -632,6 +633,11 @@ def _m011_sync_bill_number_counters(db):
     Two-step: UPDATE existing rows, then INSERT for any clients missing a row.
     Avoids EXCLUDED.client_id type mismatch (UUID vs TEXT) in ON CONFLICT.
     """
+    inspector = sa_inspect(db.engine)
+    if 'bill_number_counters' not in inspector.get_table_names():
+        logging.info("[Migration] v11: bill_number_counters not found, skipping (db.create_all will create it)")
+        return
+
     dialect = db.engine.dialect.name
 
     if dialect == 'postgresql':
@@ -700,6 +706,48 @@ def _m011_sync_bill_number_counters(db):
     logging.info("[Migration] v11: bill_number_counters synced to actual max bill numbers")
 
 
+def _m012_create_customer_table(db):
+    """Create the customer table for offline SQLite mode."""
+    inspector = sa_inspect(db.engine)
+    if 'customer' in inspector.get_table_names():
+        logging.info("[Migration] v12: customer table already exists, skipping")
+        return
+
+    db.session.execute(text("""
+        CREATE TABLE customer (
+            customer_id   TEXT PRIMARY KEY,
+            client_id     TEXT NOT NULL,
+            customer_code INTEGER UNIQUE,
+            customer_name TEXT NOT NULL,
+            customer_phone TEXT NOT NULL,
+            customer_email TEXT,
+            customer_address TEXT,
+            customer_gstin TEXT,
+            customer_city TEXT,
+            customer_state TEXT,
+            customer_pincode TEXT,
+            total_bills   INTEGER DEFAULT 0,
+            total_spent   NUMERIC DEFAULT 0.00,
+            loyalty_points INTEGER DEFAULT 0,
+            last_purchase_date DATETIME,
+            first_purchase_date DATETIME,
+            status        TEXT DEFAULT 'active',
+            notes         TEXT,
+            created_at    DATETIME,
+            updated_at    DATETIME,
+            synced_at     DATETIME
+        )
+    """))
+    db.session.execute(text(
+        "CREATE INDEX IF NOT EXISTS idx_customer_client_phone ON customer (client_id, customer_phone)"
+    ))
+    db.session.execute(text(
+        "CREATE INDEX IF NOT EXISTS idx_customer_client_status ON customer (client_id, status)"
+    ))
+    db.session.commit()
+    logging.info("[Migration] v12: customer table created")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -714,6 +762,7 @@ MIGRATIONS = [
     (9, _m009_role_quotas),
     (10, _m010_billing_payment_status),
     (11, _m011_sync_bill_number_counters),
+    (12, _m012_create_customer_table),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

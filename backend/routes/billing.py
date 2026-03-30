@@ -588,14 +588,16 @@ def get_bills():
                         for p in parsed:
                             if not isinstance(p, dict):
                                 continue
-                            # Keys may be 'payment_type' or 'PAYMENT_TYPE'
-                            label = p.get('payment_type') or p.get('PAYMENT_TYPE') or ''
-                            if label:
+                            # Keys may be 'payment_type', 'PAYMENT_TYPE', or 'payment_name'
+                            label = (p.get('payment_type') or p.get('PAYMENT_TYPE')
+                                     or p.get('payment_name') or '')
+                            if label and label.lower() != 'pending':
                                 labels.append(str(label).title())
                         return '+'.join(labels) if labels else 'Pending'
                     if isinstance(parsed, dict):
-                        label = parsed.get('payment_type') or parsed.get('PAYMENT_TYPE') or ''
-                        return str(label).title() if label else 'Pending'
+                        label = (parsed.get('payment_type') or parsed.get('PAYMENT_TYPE')
+                                 or parsed.get('payment_name') or '')
+                        return str(label).title() if label and label.lower() != 'pending' else 'Pending'
                 except (ValueError, KeyError):
                     pass
             return s  # UUID or plain name (e.g. "Cash", "UPI")
@@ -617,7 +619,9 @@ def get_bills():
         # Cache for 2 minutes (Redis — shared across all workers)
         _rcache.set(cache_key, result, 120)
 
-        return jsonify(result), 200
+        resp = jsonify(result)
+        resp.headers['Cache-Control'] = 'no-store'
+        return resp, 200
 
     except Exception as e:
         return jsonify({'error': 'Failed to fetch bills', 'message': str(e)}), 500

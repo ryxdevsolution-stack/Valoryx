@@ -137,10 +137,8 @@ def validate_billing_items_stock(
                 return False, f"Product '{item.get('product_name', 'Unknown')}' not found for your account", {}
         return False, f"Products not found: {', '.join(not_found_ids[:3])}", {}
 
-    # Check for insufficient stock
-    if insufficient_stock:
-        item = insufficient_stock[0]
-        return False, f"Insufficient stock for {item['product_name']}. Available: {item['available']}, Requested: {item['requested']}", products_dict
+    # Stock quantity is NOT a billing blocker — shops bill first, reconcile stock later.
+    # Deducting more than available simply results in negative stock, which is valid.
 
     return True, None, products_dict
 

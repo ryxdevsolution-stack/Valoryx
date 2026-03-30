@@ -79,19 +79,27 @@ export default function AllBillsPage() {
   // Track ongoing request to prevent duplicates (for React Strict Mode)
   const ongoingRequest = useRef<Promise<void> | null>(null)
 
+  const isFirstMount = useRef(true)
+
   useEffect(() => {
     fetchData()
     getShopSettings().then(setShopSettings).catch(() => {/* non-critical */})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Re-fetch whenever the user navigates to this page (e.g. after creating a bill)
+  useEffect(() => {
+    if (isFirstMount.current) { isFirstMount.current = false; return }
+    ongoingRequest.current = null
+    fetchData()
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [location.key])
+
   // Force-refresh when coming back from exchange (or cancel that updated data)
   useEffect(() => {
     const state = location.state as { refreshAfterExchange?: boolean } | null
     if (state?.refreshAfterExchange) {
-      // Clear the state so refresh doesn't repeat on re-renders
       navigate(location.pathname, { replace: true, state: {} })
-      // Force fresh fetch by clearing the guard and ongoing request
       ongoingRequest.current = null
       fetchData()
     }
@@ -104,16 +112,26 @@ export default function AllBillsPage() {
     const map = new Map<string, string[]>()
     bills.forEach(bill => {
       if (!bill.payment_type) { map.set(bill.bill_id, []); return }
-      if (typeof bill.payment_type === 'string' && bill.payment_type.trim().startsWith('[')) {
+      const rawPt = String(bill.payment_type).trim()
+      // Old format: bare UUID stored as payment_type — name is unrecoverable, treat as unknown
+      if (/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(rawPt)) {
+        map.set(bill.bill_id, [])
+        return
+      }
+      if (rawPt.startsWith('[')) {
         try {
-          const parsed = JSON.parse(bill.payment_type)
+          const parsed = JSON.parse(rawPt)
           if (Array.isArray(parsed)) {
-            map.set(bill.bill_id, parsed.map((p: any) => p.PAYMENT_TYPE || p.payment_type).filter(Boolean))
+            // Handles all stored formats:
+            //   {PAYMENT_TYPE: "Cash"}     — old uppercase key
+            //   {payment_type: "Cash"}     — current key
+            //   {payment_name: "Pending"}  — pending-bill key
+            map.set(bill.bill_id, parsed.map((p: any) => p.PAYMENT_TYPE || p.payment_type || p.payment_name).filter(Boolean))
             return
           }
         } catch { /* fall through */ }
       }
-      map.set(bill.bill_id, [bill.payment_type])
+      map.set(bill.bill_id, [rawPt])
     })
     return map
   }, [bills])
@@ -133,22 +151,26 @@ export default function AllBillsPage() {
 
         // Extract unique payment types directly from fetched bills (not from stale memoized map)
         if (fetchedBills.length > 0) {
+          const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
           const uniquePaymentTypes = new Set<string>()
           fetchedBills.forEach((bill: Bill) => {
             if (!bill.payment_type) return
-            if (typeof bill.payment_type === 'string' && bill.payment_type.trim().startsWith('[')) {
+            const rawPt = String(bill.payment_type).trim()
+            // Old UUID-only format — name is unrecoverable, skip it
+            if (UUID_RE.test(rawPt)) return
+            if (rawPt.startsWith('[')) {
               try {
-                const parsed = JSON.parse(bill.payment_type)
+                const parsed = JSON.parse(rawPt)
                 if (Array.isArray(parsed)) {
                   parsed.forEach((p: any) => {
-                    const pt = p.PAYMENT_TYPE || p.payment_type
+                    const pt = p.PAYMENT_TYPE || p.payment_type || p.payment_name
                     if (pt) uniquePaymentTypes.add(pt)
                   })
                   return
                 }
               } catch { /* fall through */ }
             }
-            uniquePaymentTypes.add(bill.payment_type)
+            uniquePaymentTypes.add(rawPt)
           })
 
           const sortOrder = ['CASH', 'UPI', 'CARD', 'CREDIT CARD', 'NET BANKING', 'CHEQUE', 'CREDIT', 'WALLET']
@@ -628,6 +650,7 @@ export default function AllBillsPage() {
     if (type.includes('BANK') || type.includes('NET')) return { bg: 'from-indigo-500 to-indigo-600', text: 'text-indigo-600', border: 'border-indigo-500' }
     if (type.includes('WALLET')) return { bg: 'from-orange-500 to-orange-600', text: 'text-orange-600', border: 'border-orange-500' }
     if (type.includes('CHEQUE') || type.includes('CHECK')) return { bg: 'from-teal-500 to-teal-600', text: 'text-teal-600', border: 'border-teal-500' }
+    if (type.includes('PENDING')) return { bg: 'from-amber-500 to-amber-600', text: 'text-amber-600', border: 'border-amber-500' }
     return { bg: 'from-gray-500 to-gray-600', text: 'text-gray-600', border: 'border-gray-500' }
   }
 
