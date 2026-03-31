@@ -46,11 +46,18 @@ _state_store: dict = {}
 
 def _get_redirect_uri() -> str | None:
     """
-    Derive the OAuth redirect URI from the incoming request's Origin header.
+    Derive the OAuth redirect URI from the incoming request's Origin or Referer header.
     Validated against CORS_ORIGINS so only known frontends are accepted.
     Works on any port — no hardcoded URLs.
     """
     origin = (request.headers.get('Origin') or '').rstrip('/')
+    # Browsers don't send Origin on same-origin GET requests — fall back to Referer
+    if not origin:
+        referer = request.headers.get('Referer') or ''
+        if referer:
+            from urllib.parse import urlparse
+            parsed = urlparse(referer)
+            origin = f"{parsed.scheme}://{parsed.netloc}".rstrip('/')
     if not origin:
         return None
     allowed = [o.strip().rstrip('/') for o in os.getenv('CORS_ORIGINS', '').split(',') if o.strip()]
