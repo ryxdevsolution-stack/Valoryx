@@ -14,7 +14,6 @@ from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission, require_any_permission
 from utils.audit_logger import log_action
 from utils.helpers import calculate_gst_amount, calculate_final_amount, validate_items, title_case
-from utils.cache import cache, invalidate_cache  # in-memory cache (legacy — kept for other uses)
 from utils.cache_helper import get_cache_manager, invalidate_billing_cache as _invalidate_billing, invalidate_stock_cache as _invalidate_stock
 from utils.bill_number_helper import get_next_bill_number
 from utils.rate_limiter import rate_limit
@@ -210,7 +209,8 @@ def create_gst_bill():
         db.session.commit()
 
         # Invalidate cache for this client's billing data
-        invalidate_cache(f"billing:{client_id}")
+        _invalidate_billing(client_id)
+        _invalidate_stock(client_id)
 
         # Log action
         log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
@@ -327,7 +327,8 @@ def create_non_gst_bill():
         db.session.commit()
 
         # Invalidate cache for this client's billing data
-        invalidate_cache(f"billing:{client_id}")
+        _invalidate_billing(client_id)
+        _invalidate_stock(client_id)
 
         # Log action
         log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
@@ -421,20 +422,13 @@ def get_bills():
 
         # Get query parameters
         bill_type = request.args.get('type', 'all')  # gst, non-gst, all
+        # Default: exclude cancelled. Pass status=all to include them (billing list page only)
+        status_param = request.args.get('status', 'final')
+        status_filter = None if status_param == 'all' else status_param
         date_from = request.args.get('date_from')
         date_to = request.args.get('date_to')
         page = int(request.args.get('page', 1))
         limit = min(int(request.args.get('limit', 50)), 100)  # Cap at 100 for performance
-
-        # Generate cache key - include user context to prevent cache leaks
-        user_context = 'all' if has_view_all else user_id
-        cache_key = f"billing:list:{client_id}:{user_context}:{bill_type}:{date_from}:{date_to}:{page}:{limit}"
-
-        # Try Redis cache first (replaces in-memory SimpleCache which wasn't shared across workers)
-        _rcache = get_cache_manager()
-        cached_result = _rcache.get(cache_key)
-        if cached_result is not None:
-            return jsonify(cached_result), 200
 
         # Calculate offset
         offset = (page - 1) * limit
@@ -445,6 +439,9 @@ def get_bills():
         # For single type queries, use direct SQL pagination
         if bill_type == 'gst':
             query = GSTBilling.query.filter_by(client_id=client_id)
+
+            if status_filter:
+                query = query.filter(GSTBilling.status == status_filter)
 
             # Apply user-level filtering for view_own_bills permission
             if not has_view_all:
@@ -462,6 +459,9 @@ def get_bills():
 
         elif bill_type == 'non-gst':
             query = NonGSTBilling.query.filter_by(client_id=client_id)
+
+            if status_filter:
+                query = query.filter(NonGSTBilling.status == status_filter)
 
             # Apply user-level filtering for view_own_bills permission
             if not has_view_all:
@@ -485,6 +485,10 @@ def get_bills():
                 NonGSTBilling.client_id == client_id
             )
 
+            if status_filter:
+                gst_count_query = gst_count_query.filter(GSTBilling.status == status_filter)
+                non_gst_count_query = non_gst_count_query.filter(NonGSTBilling.status == status_filter)
+
             # Apply user-level filtering for view_own_bills permission
             if not has_view_all:
                 gst_count_query = gst_count_query.filter(GSTBilling.created_by == user_id)
@@ -506,6 +510,8 @@ def get_bills():
             from sqlalchemy import select, union_all, literal
 
             def _apply_filters_gst(q):
+                if status_filter:
+                    q = q.where(GSTBilling.status == status_filter)
                 if not has_view_all:
                     q = q.where(GSTBilling.created_by == user_id)
                 if date_from:
@@ -515,6 +521,8 @@ def get_bills():
                 return q
 
             def _apply_filters_non(q):
+                if status_filter:
+                    q = q.where(NonGSTBilling.status == status_filter)
                 if not has_view_all:
                     q = q.where(NonGSTBilling.created_by == user_id)
                 if date_from:
@@ -615,9 +623,6 @@ def get_bills():
                 'total_pages': (total_records + limit - 1) // limit
             }
         }
-
-        # Cache for 2 minutes (Redis — shared across all workers)
-        _rcache.set(cache_key, result, 120)
 
         resp = jsonify(result)
         resp.headers['Cache-Control'] = 'no-store'
@@ -1220,9 +1225,8 @@ def update_bill(bill_id):
         db.session.commit()
 
         # Invalidate caches after bill update - for real-time data consistency
-        invalidate_cache(f"billing:{client_id}")
-        invalidate_cache(f"stock:{client_id}")
-        invalidate_cache(f"analytics:{client_id}")
+        _invalidate_billing(client_id)
+        _invalidate_stock(client_id)
 
         # Log the update action
         log_action('UPDATE',
@@ -1396,9 +1400,8 @@ def exchange_bill(bill_id):
         db.session.commit()
 
         # Invalidate caches after bill exchange - for real-time data consistency
-        invalidate_cache(f"billing:{client_id}")
-        invalidate_cache(f"stock:{client_id}")
-        invalidate_cache(f"analytics:{client_id}")
+        _invalidate_billing(client_id)
+        _invalidate_stock(client_id)
 
         # Log the exchange
         log_action(
@@ -1491,9 +1494,9 @@ def cancel_bill(bill_id):
         # These operations are non-critical - don't fail the cancellation if they error
         try:
             # Invalidate caches after bill cancellation - for real-time data consistency
-            invalidate_cache(f"billing:{client_id}")
-            invalidate_cache(f"stock:{client_id}")
-            invalidate_cache(f"analytics:{client_id}")
+            # Use Redis-backed cache helpers (not legacy SimpleCache)
+            _invalidate_billing(client_id)
+            _invalidate_stock(client_id)
 
             # Log the cancellation
             log_action(

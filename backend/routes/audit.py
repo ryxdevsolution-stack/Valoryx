@@ -40,13 +40,6 @@ def get_audit_logs():
         page = int(request.args.get('page', 1))
         limit = int(request.args.get('limit', 50))
 
-        # Cache key includes all filter params to avoid stale results
-        cache = get_cache_manager()
-        cache_key = f"audit:logs:{client_id}:{user_id}:{action}:{date_from}:{date_to}:{page}:{limit}"
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return jsonify(cached), 200
-
         # Build query - ALWAYS filter by client_id first (mandatory)
         query = AuditLog.query.filter_by(client_id=client_id)
 
@@ -120,7 +113,6 @@ def get_audit_logs():
             'logs': log_list,
             'total_pages': (total_records + limit - 1) // limit
         }
-        cache.set(cache_key, result, 30)
         return jsonify(result), 200
 
     except Exception as e:

@@ -246,6 +246,37 @@ export default function SuppliersPage() {
     setCurrentDeliveryId(null)
   }
 
+  function continueDraft(delivery: Delivery) {
+    setCurrentDeliveryId(delivery.delivery_id)
+    setDelForm({
+      supplier_id:    delivery.supplier_id,
+      branch_id:      delivery.branch_id || '',
+      invoice_number: delivery.invoice_number || '',
+      delivery_date:  delivery.delivery_date || '',
+      transport_fee:  delivery.transport_fee ? String(delivery.transport_fee) : '',
+      notes:          delivery.notes || '',
+    })
+    const hasItems = delivery.items && delivery.items.length > 0
+    setDelItems(hasItems
+      ? delivery.items.map(i => ({
+          ...EMPTY_ITEM,
+          ...i,
+          cost_price:    i.cost_price    ? String(i.cost_price)    : '',
+          selling_price: i.selling_price ? String(i.selling_price) : '',
+          mrp:           i.mrp           ? String(i.mrp)           : '',
+          gst_percentage: i.gst_percentage ? String(i.gst_percentage) : '',
+        }))
+      : [{ ...EMPTY_ITEM }]
+    )
+    setProductsConfirmed(delivery.products_confirmed || false)
+    setUploadedFile(null)
+    setUploadPreview(null)
+    // Resume at the right step: has items → step 3, else → step 2
+    setStep(hasItems ? 3 : 2)
+    setActiveDelivery(null)
+    setShowNewDelivery(true)
+  }
+
   function addItem() {
     setDelItems(prev => [...prev, { ...EMPTY_ITEM }])
   }
@@ -269,13 +300,18 @@ export default function SuppliersPage() {
         delivery_date:  delForm.delivery_date || null,
         transport_fee:  parseFloat(delForm.transport_fee) || 0,
         notes:          delForm.notes || null,
-        items: [],
       }
-      const res = await api.post('/suppliers/deliveries', payload)
-      setCurrentDeliveryId(res.data.data.delivery_id)
+      if (currentDeliveryId) {
+        // Updating an existing draft
+        await api.put(`/suppliers/deliveries/${currentDeliveryId}`, payload)
+      } else {
+        // Creating a new draft
+        const res = await api.post('/suppliers/deliveries', { ...payload, items: [] })
+        setCurrentDeliveryId(res.data.data.delivery_id)
+      }
       setStep(2)
     } catch (e: any) {
-      showToast(e?.response?.data?.error || 'Failed to create delivery', 'error')
+      showToast(e?.response?.data?.error || 'Failed to save delivery', 'error')
     } finally {
       setSavingDraft(false)
     }
@@ -1333,6 +1369,16 @@ export default function SuppliersPage() {
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
                       </svg>
                       Download Note
+                    </button>
+                  )}
+                  {activeDelivery.status === 'draft' && (
+                    <button type="button"
+                      onClick={() => continueDraft(activeDelivery)}
+                      className="flex items-center gap-1.5 px-4 py-1.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-xs font-medium transition-colors">
+                      <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182M2.985 19.644l3.181-3.182" />
+                      </svg>
+                      Continue
                     </button>
                   )}
                   <button onClick={() => setActiveDelivery(null)}

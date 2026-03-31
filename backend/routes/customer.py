@@ -46,12 +46,7 @@ def get_customers():
     try:
         client_id = g.user['client_id']
 
-        from utils.cache_helper import get_cache_manager
-        _cache = get_cache_manager()
-        _cache_key = f"customers:list:{client_id}"
-        _cached = _cache.get(_cache_key)
-        if _cached is not None:
-            return jsonify(_cached), 200
+        # No caching — always return fresh data
 
         # ── REGULAR CUSTOMERS: single UNION ALL query instead of 2 separate queries ──
         gst_sub = db.session.query(
@@ -64,6 +59,7 @@ def get_customers():
             literal('gst').label('bill_type')
         ).filter(
             GSTBilling.client_id == client_id,
+            GSTBilling.status == 'final',
             _not_walkin_filter(GSTBilling)
         ).group_by(
             GSTBilling.customer_phone, GSTBilling.customer_name
@@ -79,6 +75,7 @@ def get_customers():
             literal('non_gst').label('bill_type')
         ).filter(
             NonGSTBilling.client_id == client_id,
+            NonGSTBilling.status == 'final',
             _not_walkin_filter(NonGSTBilling)
         ).group_by(
             NonGSTBilling.customer_phone, NonGSTBilling.customer_name
@@ -131,14 +128,14 @@ def get_customers():
             GSTBilling.customer_name, GSTBilling.customer_phone,
             GSTBilling.final_amount, GSTBilling.created_at, GSTBilling.bill_number
         ).filter(
-            GSTBilling.client_id == client_id, _walkin_filter(GSTBilling)
+            GSTBilling.client_id == client_id, GSTBilling.status == 'final', _walkin_filter(GSTBilling)
         ).order_by(desc(GSTBilling.created_at)).limit(MAX_WALKIN_DISPLAY).all()
 
         walkin_nongst = db.session.query(
             NonGSTBilling.customer_name, NonGSTBilling.customer_phone,
             NonGSTBilling.total_amount, NonGSTBilling.created_at, NonGSTBilling.bill_number
         ).filter(
-            NonGSTBilling.client_id == client_id, _walkin_filter(NonGSTBilling)
+            NonGSTBilling.client_id == client_id, NonGSTBilling.status == 'final', _walkin_filter(NonGSTBilling)
         ).order_by(desc(NonGSTBilling.created_at)).limit(MAX_WALKIN_DISPLAY).all()
 
         # ── REGISTERED CUSTOMERS: single query, build two dicts ──
@@ -209,7 +206,6 @@ def get_customers():
                 'top_customer': customers_list[0] if customers_list else None
             }
         }
-        _cache.set(_cache_key, response, 180)  # 3-min cache — busted on new bill
         return jsonify(response), 200
 
     except Exception as e:
@@ -229,20 +225,25 @@ def get_customer_details(phone):
         client_id = g.user['client_id']
 
         # Partial column loading — skip heavy 'items' JSON for list view
+        # Exclude cancelled bills — they shouldn't appear in customer history
         gst_cols = db.session.query(
             GSTBilling.bill_id, GSTBilling.bill_number, GSTBilling.customer_name,
             GSTBilling.customer_phone, GSTBilling.final_amount, GSTBilling.created_at,
             GSTBilling.payment_type, GSTBilling.status, GSTBilling.items
-        ).filter_by(
-            client_id=client_id, customer_phone=phone
+        ).filter(
+            GSTBilling.client_id == client_id,
+            GSTBilling.customer_phone == phone,
+            GSTBilling.status == 'final'
         ).order_by(desc(GSTBilling.created_at)).all()
 
         nongst_cols = db.session.query(
             NonGSTBilling.bill_id, NonGSTBilling.bill_number, NonGSTBilling.customer_name,
             NonGSTBilling.customer_phone, NonGSTBilling.total_amount, NonGSTBilling.created_at,
             NonGSTBilling.payment_type, NonGSTBilling.status, NonGSTBilling.items
-        ).filter_by(
-            client_id=client_id, customer_phone=phone
+        ).filter(
+            NonGSTBilling.client_id == client_id,
+            NonGSTBilling.customer_phone == phone,
+            NonGSTBilling.status == 'final'
         ).order_by(desc(NonGSTBilling.created_at)).all()
 
         if not gst_cols and not nongst_cols:
@@ -277,8 +278,9 @@ def get_customer_details(phone):
 
         all_bills.sort(key=lambda x: x['created_at'], reverse=True)
 
-        total_spent = sum(b['amount'] for b in all_bills)
-        total_bills_count = len(all_bills)
+        active_bills = [b for b in all_bills if b['status'] == 'final']
+        total_spent = sum(b['amount'] for b in active_bills)
+        total_bills_count = len(active_bills)
 
         return jsonify({
             'success': True,
@@ -288,8 +290,8 @@ def get_customer_details(phone):
                 'total_bills': total_bills_count,
                 'total_spent': round(total_spent, 2),
                 'average_bill_value': round(total_spent / total_bills_count, 2) if total_bills_count else 0,
-                'gst_bills_count': len(gst_cols),
-                'non_gst_bills_count': len(nongst_cols)
+                'gst_bills_count': sum(1 for b in all_bills if b['type'] == 'GST' and b['status'] == 'final'),
+                'non_gst_bills_count': sum(1 for b in all_bills if b['type'] == 'Non-GST' and b['status'] == 'final')
             }
         }), 200
 
@@ -305,7 +307,7 @@ def get_next_customer_code():
         client_id = g.user['client_id']
 
         # Get the maximum customer code for this client
-        max_code = db.session.query(func.max(Customer.customer_code)).scalar()
+        max_code = db.session.query(func.max(Customer.customer_code)).filter_by(client_id=client_id).scalar()
 
         # If no customers exist, start from 100
         next_code = (max_code + 1) if max_code else 100
@@ -370,8 +372,8 @@ def create_customer():
                 'message': 'Customer already exists'
             }), 200
 
-        # Get next customer code
-        max_code = db.session.query(func.max(Customer.customer_code)).scalar()
+        # Get next customer code (scoped to this client)
+        max_code = db.session.query(func.max(Customer.customer_code)).filter_by(client_id=client_id).scalar()
         next_code = (max_code + 1) if max_code else 100
 
         # Create new customer (apply title case to name fields)
@@ -393,6 +395,10 @@ def create_customer():
 
         db.session.add(new_customer)
         db.session.commit()
+
+        # Bust customer list cache so the UI reflects the new customer immediately
+        from utils.cache_helper import get_cache_manager
+        get_cache_manager().delete(f"customers:list:{client_id}")
 
         return jsonify({
             'success': True,

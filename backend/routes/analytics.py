@@ -44,14 +44,7 @@ def get_dashboard_analytics():
         is_super_admin = g.user.get('is_super_admin', False)
         has_view_all = is_super_admin or 'view_all_bills' in user_permissions
 
-        # Try to get from cache first - include user context in cache key
-        cache = get_cache_manager()
-        user_context = 'all' if has_view_all else user_id
-        cache_key = f"analytics:dashboard:{client_id}:{user_context}:{time_range}"
-        cache_timeout = ANALYTICS_CACHE_TIMEOUTS.get(time_range, ANALYTICS_CACHE_TIMEOUT)
-        cached_data = cache.get(cache_key)
-        if cached_data is not None:
-            return jsonify(cached_data), 200
+        # No caching — always return fresh data
 
         # Calculate date range
         # Bills are stored as IST naive datetimes; use local time so "today_start" etc.
@@ -84,7 +77,7 @@ def get_dashboard_analytics():
                 func.coalesce(func.sum(case(((GSTBilling.created_at >= prev_month_start) & (GSTBilling.created_at < month_start), GSTBilling.final_amount))), 0).label('prev_rev'),
                 func.count(GSTBilling.bill_id).label('total_count'),
                 func.count(case((GSTBilling.created_at >= today_start, GSTBilling.bill_id))).label('today_count'),
-            ).filter(GSTBilling.client_id == client_id)
+            ).filter(GSTBilling.client_id == client_id, GSTBilling.status == 'final')
             if extra_filter is not None:
                 q = q.filter(extra_filter)
             return q.one()
@@ -97,7 +90,7 @@ def get_dashboard_analytics():
                 func.coalesce(func.sum(case(((NonGSTBilling.created_at >= prev_month_start) & (NonGSTBilling.created_at < month_start), NonGSTBilling.total_amount))), 0).label('prev_rev'),
                 func.count(NonGSTBilling.bill_id).label('total_count'),
                 func.count(case((NonGSTBilling.created_at >= today_start, NonGSTBilling.bill_id))).label('today_count'),
-            ).filter(NonGSTBilling.client_id == client_id)
+            ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.status == 'final')
             if extra_filter is not None:
                 q = q.filter(extra_filter)
             return q.one()
@@ -133,6 +126,7 @@ def get_dashboard_analytics():
             GSTBilling.final_amount, GSTBilling.items, GSTBilling.created_at
         ).filter(
             GSTBilling.client_id == client_id,
+            GSTBilling.status == 'final',
             GSTBilling.created_at >= prev_month_start
         )
         if not has_view_all:
@@ -143,6 +137,7 @@ def get_dashboard_analytics():
             NonGSTBilling.total_amount, NonGSTBilling.items, NonGSTBilling.created_at
         ).filter(
             NonGSTBilling.client_id == client_id,
+            NonGSTBilling.status == 'final',
             NonGSTBilling.created_at >= prev_month_start
         )
         if not has_view_all:
@@ -192,14 +187,14 @@ def get_dashboard_analytics():
             func.extract('hour', GSTBilling.created_at).cast(db.Integer).label('hour'),
             func.sum(GSTBilling.final_amount).label('sales'),
             func.count(GSTBilling.bill_id).label('cnt'),
-        ).filter(GSTBilling.client_id == client_id, GSTBilling.created_at >= prev_month_start)
+        ).filter(GSTBilling.client_id == client_id, GSTBilling.status == 'final', GSTBilling.created_at >= prev_month_start)
         ).group_by(func.extract('hour', GSTBilling.created_at)).all()
 
         _non_ph = _apply_user_filter_non(db.session.query(
             func.extract('hour', NonGSTBilling.created_at).cast(db.Integer).label('hour'),
             func.sum(NonGSTBilling.total_amount).label('sales'),
             func.count(NonGSTBilling.bill_id).label('cnt'),
-        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.created_at >= prev_month_start)
+        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.status == 'final', NonGSTBilling.created_at >= prev_month_start)
         ).group_by(func.extract('hour', NonGSTBilling.created_at)).all()
 
         _ph_agg = defaultdict(lambda: {'sales': 0.0, 'count': 0})
@@ -219,14 +214,14 @@ def get_dashboard_analytics():
             func.date(GSTBilling.created_at).label('dt'),
             func.sum(GSTBilling.final_amount).label('revenue'),
             func.count(GSTBilling.bill_id).label('bills'),
-        ).filter(GSTBilling.client_id == client_id, GSTBilling.created_at >= start_date)
+        ).filter(GSTBilling.client_id == client_id, GSTBilling.status == 'final', GSTBilling.created_at >= start_date)
         ).group_by(func.date(GSTBilling.created_at)).all()
 
         _non_tr = _apply_user_filter_non(db.session.query(
             func.date(NonGSTBilling.created_at).label('dt'),
             func.sum(NonGSTBilling.total_amount).label('revenue'),
             func.count(NonGSTBilling.bill_id).label('bills'),
-        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.created_at >= start_date)
+        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.status == 'final', NonGSTBilling.created_at >= start_date)
         ).group_by(func.date(NonGSTBilling.created_at)).all()
 
         _tr_agg = defaultdict(lambda: {'revenue': 0.0, 'bills': 0})
@@ -246,14 +241,14 @@ def get_dashboard_analytics():
             func.coalesce(GSTBilling.customer_name, 'Walk-in').label('customer'),
             func.sum(GSTBilling.final_amount).label('spend'),
             func.count(GSTBilling.bill_id).label('visits'),
-        ).filter(GSTBilling.client_id == client_id, GSTBilling.created_at >= prev_month_start)
+        ).filter(GSTBilling.client_id == client_id, GSTBilling.status == 'final', GSTBilling.created_at >= prev_month_start)
         ).group_by(func.coalesce(GSTBilling.customer_name, 'Walk-in')).all()
 
         _non_cu = _apply_user_filter_non(db.session.query(
             func.coalesce(NonGSTBilling.customer_name, 'Walk-in').label('customer'),
             func.sum(NonGSTBilling.total_amount).label('spend'),
             func.count(NonGSTBilling.bill_id).label('visits'),
-        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.created_at >= prev_month_start)
+        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.status == 'final', NonGSTBilling.created_at >= prev_month_start)
         ).group_by(func.coalesce(NonGSTBilling.customer_name, 'Walk-in')).all()
 
         _cu_agg = defaultdict(lambda: {'spend': 0.0, 'visits': 0})
@@ -275,14 +270,14 @@ def get_dashboard_analytics():
             GSTBilling.payment_type,
             func.count(GSTBilling.bill_id).label('cnt'),
             func.sum(GSTBilling.final_amount).label('amount'),
-        ).filter(GSTBilling.client_id == client_id, GSTBilling.created_at >= prev_month_start)
+        ).filter(GSTBilling.client_id == client_id, GSTBilling.status == 'final', GSTBilling.created_at >= prev_month_start)
         ).group_by(GSTBilling.payment_type).all()
 
         _non_py = _apply_user_filter_non(db.session.query(
             NonGSTBilling.payment_type,
             func.count(NonGSTBilling.bill_id).label('cnt'),
             func.sum(NonGSTBilling.total_amount).label('amount'),
-        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.created_at >= prev_month_start)
+        ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.status == 'final', NonGSTBilling.created_at >= prev_month_start)
         ).group_by(NonGSTBilling.payment_type).all()
 
         _py_agg = defaultdict(lambda: {'count': 0, 'amount': 0.0})
@@ -556,9 +551,6 @@ def get_dashboard_analytics():
                 'totalProfit': round(total_revenue_for_margin - total_cost, 2)
             }
         }
-
-        # Cache the response for faster subsequent requests with dynamic timeout
-        cache.set(cache_key, response_data, cache_timeout)
 
         return jsonify(response_data), 200
 

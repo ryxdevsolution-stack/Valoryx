@@ -15,6 +15,7 @@ interface GSTBill {
   final_amount: number
   payment_type: string
   created_at: string
+  status?: string
 }
 
 export default function AuditorReportsPage() {
@@ -24,7 +25,7 @@ export default function AuditorReportsPage() {
   const [showPreview, setShowPreview] = useState(false)
   const [exporting, setExporting] = useState(false)
 
-  // Email modal state
+  // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
   const [totalPages, setTotalPages] = useState(1)
   const [totalRecords, setTotalRecords] = useState(0)
@@ -79,7 +80,7 @@ export default function AuditorReportsPage() {
       try {
         setLoading(true)
         const response = await api.get('/billing/list', {
-          params: { type: 'gst', date_from: startDate, date_to: endDate, limit: 50, page }
+          params: { type: 'gst', status: 'final', date_from: startDate, date_to: endDate, limit: 50, page }
         })
         const bills = response.data.bills || []
         setGstBills(bills.filter((b: any) => b.type === 'gst'))

@@ -145,7 +145,7 @@ export default function AllBillsPage() {
       try {
         setLoading(true)
 
-        const billsRes = await api.get('/billing/list?limit=100')
+        const billsRes = await api.get('/billing/list?limit=100&status=all')
         const fetchedBills = billsRes.data.bills || []
         setBills(fetchedBills)
 
@@ -422,10 +422,6 @@ export default function AllBillsPage() {
         throw new Error('Bill data not found')
       }
 
-      console.log('[BILLING] Bill data received:', billData)
-      console.log('[BILLING] negotiable_amount:', billData.negotiable_amount)
-      console.log('[BILLING] discount_amount:', billData.discount_amount)
-
       const billForPrint = {
         bill_number: billData.bill_number,
         customer_name: billData.customer_name,
@@ -447,8 +443,6 @@ export default function AllBillsPage() {
         igst: billData.igst || 0,
         user_name: billData.user_name || (billData as any).created_by_name || (billData as any).created_by || 'Admin'
       }
-
-      console.log('[BILLING] Bill for print:', billForPrint)
 
       const clientInfo = client ? {
         client_name: client.client_name,
@@ -476,16 +470,13 @@ export default function AllBillsPage() {
 
       if (hasElectronPrint) {
         // Use Electron's silent print for desktop app
-        console.log('[BILLING] Electron detected - using Electron print API...')
         try {
           const { generateReceiptHtml, generateUpiQrDataUrl } = await import('@/lib/webPrintService')
           const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '') : undefined
           const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo, true, qrDataUrl)
           const printResult = await electronAPI.silentPrint(receiptHtml, null)
 
-          if (printResult.success) {
-            console.log('Print successful!')
-          } else {
+          if (!printResult.success) {
             throw new Error(printResult.error || 'Print failed')
           }
         } catch (electronPrintError: any) {
@@ -494,13 +485,10 @@ export default function AllBillsPage() {
         }
       } else {
         // Use browser print dialog for web deployment
-        console.log('[BILLING] Web mode - using browser print dialog...')
         const { printBill } = await import('@/lib/webPrintService')
         const printResult = await printBill(billForPrint as any, clientInfo, true)
 
-        if (printResult.success) {
-          console.log('Print dialog opened successfully!')
-        } else {
+        if (!printResult.success) {
           throw new Error(printResult.message || 'Print failed')
         }
       }
@@ -547,26 +535,23 @@ export default function AllBillsPage() {
     try {
       const response = await api.post(`/billing/${billId}/cancel`)
       if (response.data.success) {
-        // Immediately update UI - set status to cancelled
         setBills(prevBills =>
           prevBills.map(bill =>
             bill.bill_id === billId ? { ...bill, status: 'cancelled' } : bill
           )
         )
-        alert(`Bill #${billNumber} cancelled successfully. Stock has been restored.`)
       }
     } catch (error: any) {
       const errorMsg = error.response?.data?.error || 'Failed to cancel bill'
-      // Check if it's already cancelled (means previous attempt succeeded)
       if (errorMsg.includes('already cancelled')) {
-        // Update UI to reflect the cancelled status
         setBills(prevBills =>
           prevBills.map(bill =>
             bill.bill_id === billId ? { ...bill, status: 'cancelled' } : bill
           )
         )
+      } else {
+        alert(errorMsg)
       }
-      alert(errorMsg)
     }
   }
 

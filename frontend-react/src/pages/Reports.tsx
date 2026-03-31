@@ -211,7 +211,8 @@ export default function ReportsPage() {
             params: {
               date_from: startDate,
               date_to: endDate,
-              limit: 500  // Reduced from 1000 for faster response
+              status: 'final',  // Exclude cancelled bills from reports
+              limit: 500
             }
           }),
           api.get('/expense/summary', {
