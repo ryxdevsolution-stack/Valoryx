@@ -176,7 +176,7 @@ export default function RestoreBills() {
         <div className="flex-1 overflow-hidden px-4 md:px-6 pb-4">
           {loading ? (
             <>
-              <div className="hidden md:block"><TableSkeleton rows={8} columns={5} /></div>
+              <div className="hidden md:block"><TableSkeleton rows={8} /></div>
               <div className="md:hidden"><CardSkeleton count={4} /></div>
             </>
           ) : dateFilteredBills.length === 0 ? (
