@@ -173,7 +173,8 @@
       "Bash(sed 's/\\\\.tsx//')",
       "Bash(sed 's/\\\\.py//')",
       "WebFetch(domain:til.simonwillison.net)",
-      "WebFetch(domain:github.com)"
+      "WebFetch(domain:github.com)",
+      "Bash(claude mcp:*)"
     ],
     "deny": [],
     "ask": [],

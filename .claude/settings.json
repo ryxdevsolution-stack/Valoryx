@@ -2,13 +2,16 @@
   "permissions": {
     "allow": [
       "Bash(/home/development1/Desktop/Valoryx/backend/migrations/020_create_branches_and_transfers.sql:*)",
-      "Bash(/home/development1/Desktop/Valoryx/backend/routes/branches.py:*)"
+      "Bash(/home/development1/Desktop/Valoryx/backend/routes/branches.py:*)",
+      "Read(//c/Users/loges/Documents/GitHub/mj-billing/$HOME/**)"
     ]
   },
   "mcpServers": {
     "playwright": {
       "command": "npx",
-      "args": ["@playwright/mcp@latest"]
+      "args": [
+        "@playwright/mcp@latest"
+      ]
     }
   }
 }

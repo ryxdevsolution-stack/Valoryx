@@ -80,7 +80,14 @@ export default function CustomersPage() {
           setFetchError(response.data.error || 'Failed to load customers')
           return
         }
-        setCustomers(response.data.customers || [])
+        setCustomers((response.data.customers || []).map((c: any) => ({
+          ...c,
+          total_amount: c.total_amount ?? c.total_spent ?? 0,
+          gst_bills: c.gst_bills ?? 0,
+          non_gst_bills: c.non_gst_bills ?? 0,
+          last_purchase: c.last_purchase ?? c.last_purchase_date ?? null,
+          first_purchase: c.first_purchase ?? c.first_purchase_date ?? null,
+        })))
         setStatistics(response.data.statistics)
       } catch (error: any) {
         console.error('Failed to fetch customers:', error)
