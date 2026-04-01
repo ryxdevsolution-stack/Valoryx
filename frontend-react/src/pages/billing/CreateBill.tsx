@@ -1181,6 +1181,12 @@ export default function UnifiedBillingPage() {
       return
     }
 
+    if (activeTab.customer_name && activeTab.customer_name.trim() && !activeTab.customer_phone?.trim()) {
+      alert('Phone number is required when customer name is filled')
+      customerPhoneRef.current?.focus()
+      return
+    }
+
     if (!isPending) {
       if (activeTab.payment_splits.length === 0) {
         alert('Please add at least one payment method')
@@ -1638,12 +1644,12 @@ export default function UnifiedBillingPage() {
               {/* Phone */}
               <div className="md:col-span-2 relative customer-search-container">
                 <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
-                  Phone
+                  Phone {activeTab.customer_name?.trim() && <span className="text-red-500">*</span>}
                 </label>
                 <input
                   ref={customerPhoneRef}
                   type="tel"
-                  placeholder="Optional"
+                  placeholder={activeTab.customer_name?.trim() ? "Required" : "Optional"}
                   value={activeTab.customer_phone}
                   onChange={(e) => handleCustomerFieldChange('phone', e.target.value)}
                   onFocus={() => { setCustomerSearchField('phone'); filterCustomers(activeTab.customer_phone, 'phone') }}

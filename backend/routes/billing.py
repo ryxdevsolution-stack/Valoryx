@@ -1523,6 +1523,7 @@ def cancel_bill(bill_id):
         return jsonify({'error': 'Failed to cancel bill', 'message': str(e)}), 500
 
 
+
 @billing_bp.route('/print', methods=['POST'])
 @authenticate
 @require_permission('print_bills')

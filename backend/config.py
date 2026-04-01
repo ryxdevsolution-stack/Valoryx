@@ -107,30 +107,14 @@ class OptimizedConfig:
     SQLALCHEMY_NATIVE_UNICODE = True
 
     # -------------------------------
-    # Cache Configuration (Redis optional for desktop mode)
+    # Cache Configuration (disabled — no Redis)
     # -------------------------------
-    REDIS_URL = os.getenv("REDIS_URL", "")
-    REDIS_AVAILABLE = bool(REDIS_URL) and os.getenv("USE_REDIS", "false").lower() == "true"
-
-    # Use SimpleCache for desktop/standalone mode, Redis for server mode
-    if REDIS_AVAILABLE:
-        CACHE_TYPE = "RedisCache"
-        CACHE_REDIS_URL = REDIS_URL
-    else:
-        CACHE_TYPE = "SimpleCache"  # In-memory cache, no Redis needed
-        CACHE_REDIS_URL = None
-
-    CACHE_DEFAULT_TIMEOUT = 300  # 5 minutes default
+    REDIS_URL = ""
+    REDIS_AVAILABLE = False
+    CACHE_TYPE = "SimpleCache"
+    CACHE_REDIS_URL = None
+    CACHE_DEFAULT_TIMEOUT = 300
     CACHE_KEY_PREFIX = "mj-billing:"
-
-    # Cache timeouts for different data types
-    CACHE_TIMEOUTS = {
-        "stock_list": 60,  # 1 minute for stock lists
-        "product_lookup": 300,  # 5 minutes for product lookups
-        "analytics": 120,  # 2 minutes for analytics
-        "bill_list": 30,  # 30 seconds for bill lists
-        "client_info": 600,  # 10 minutes for client info
-    }
 
     # -------------------------------
     # Performance Features
@@ -165,20 +149,12 @@ class OptimizedConfig:
     CELERY_TASK_TIME_LIMIT = 30  # 30 seconds max per task
 
     # -------------------------------
-    # API Rate Limiting
+    # API Rate Limiting (disabled)
     # -------------------------------
-    RATELIMIT_ENABLED = REDIS_AVAILABLE  # Only enable if Redis available
-    RATELIMIT_STORAGE_URL = REDIS_URL if REDIS_AVAILABLE else "memory://"
-    RATELIMIT_DEFAULT = "1000/hour"  # Default rate limit
+    RATELIMIT_ENABLED = False
+    RATELIMIT_STORAGE_URL = "memory://"
+    RATELIMIT_DEFAULT = "1000/hour"
     RATELIMIT_HEADERS_ENABLED = True
-
-    # Specific rate limits
-    RATE_LIMITS = {
-        "analytics": "100/minute",
-        "bulk_upload": "10/minute",
-        "bill_create": "300/minute",
-        "stock_update": "500/minute",
-    }
 
     # -------------------------------
     # Request/Response Optimization
@@ -190,8 +166,8 @@ class OptimizedConfig:
     # -------------------------------
     # Session Configuration
     # -------------------------------
-    SESSION_TYPE = 'redis' if REDIS_AVAILABLE else 'filesystem'
-    SESSION_REDIS_URL = REDIS_URL if REDIS_AVAILABLE else None
+    SESSION_TYPE = 'filesystem'
+    SESSION_REDIS_URL = None
     SESSION_FILE_DIR = os.path.join(os.path.dirname(__file__), '.sessions')
     SESSION_PERMANENT = False
     SESSION_USE_SIGNER = True
@@ -308,9 +284,7 @@ class OptimizedConfig:
                 "statement_timeout": "10s",
             },
             "cache": {
-                "enabled": bool(cls.REDIS_URL),
-                "default_timeout": cls.CACHE_DEFAULT_TIMEOUT,
-                "key_prefix": cls.CACHE_KEY_PREFIX,
+                "enabled": False,
             },
             "batch_processing": {
                 "batch_size": cls.BATCH_SIZE,
@@ -326,8 +300,7 @@ class OptimizedConfig:
                 "min_size": cls.COMPRESS_MIN_SIZE,
             },
             "rate_limiting": {
-                "enabled": cls.RATELIMIT_ENABLED,
-                "default": cls.RATELIMIT_DEFAULT,
+                "enabled": False,
             }
         }
 # Create alias for backward compatibility

@@ -15,6 +15,7 @@ const Dashboard = React.lazy(() => import('@/pages/Dashboard'))
 const BillingList = React.lazy(() => import('@/pages/billing/BillingList'))
 const CreateBill = React.lazy(() => import('@/pages/billing/CreateBill'))
 const Exchange = React.lazy(() => import('@/pages/billing/Exchange'))
+const RestoreBills = React.lazy(() => import('@/pages/billing/RestoreBills'))
 const Stock = React.lazy(() => import('@/pages/Stock'))
 const Customers = React.lazy(() => import('@/pages/Customers'))
 const Reports = React.lazy(() => import('@/pages/Reports'))
@@ -174,6 +175,7 @@ export function AppRoutes() {
         <Route path="/billing" element={<ProtectedRoute><BillingList /></ProtectedRoute>} />
         <Route path="/billing/create" element={<ProtectedRoute><CreateBill /></ProtectedRoute>} />
         <Route path="/billing/exchange/:billId" element={<ProtectedRoute><Exchange /></ProtectedRoute>} />
+        <Route path="/billing/restore" element={<ProtectedRoute><RestoreBills /></ProtectedRoute>} />
         <Route path="/stock" element={<ProtectedRoute><Stock /></ProtectedRoute>} />
         <Route path="/suppliers" element={<ProtectedRoute><Suppliers /></ProtectedRoute>} />
         <Route path="/stock-transfer" element={<ProtectedRoute><StockTransfer /></ProtectedRoute>} />

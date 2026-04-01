@@ -18,6 +18,7 @@ import {
   Store,
   Download,
   Truck,
+  RotateCcw,
 } from 'lucide-react'
 import { usePWA } from '@/hooks/usePWA'
 
@@ -26,6 +27,7 @@ const allNavigation = [
   { name: 'Dashboard', href: '/dashboard', icon: LayoutDashboard, permission: 'view_dashboard' },
   { name: 'Create Bill', href: '/billing/create', icon: PlusSquare, permissions: ['gst_billing', 'non_gst_billing'] }, // Need either GST or Non-GST
   { name: 'Bills', href: '/billing', icon: FileText, permissions: ['view_all_bills', 'view_own_bills'] },
+  { name: 'Restore', href: '/billing/restore', icon: RotateCcw, permissions: ['view_all_bills', 'view_own_bills'] },
   { name: 'Customers', href: '/customers', icon: Users, permission: 'view_customers' },
   { name: 'Stock Management', href: '/stock', icon: Package, permission: 'view_stock' },
   { name: 'Suppliers', href: '/suppliers', icon: Truck, permission: 'view_stock' },

@@ -145,7 +145,7 @@ export default function AllBillsPage() {
       try {
         setLoading(true)
 
-        const billsRes = await api.get('/billing/list?limit=100&status=all')
+        const billsRes = await api.get('/billing/list?limit=100&status=final')
         const fetchedBills = billsRes.data.bills || []
         setBills(fetchedBills)
 
@@ -985,10 +985,7 @@ export default function AllBillsPage() {
                       </td>
                       {showActions ? (
                         <td className="px-2 py-1.5 text-center whitespace-nowrap" rowSpan={bill.paymentCount}>
-                          {bill.status === 'cancelled' ? (
-                            <span className="text-[10px] text-gray-400">No actions</span>
-                          ) : (
-                            <div className="flex items-center justify-center gap-1 flex-wrap">
+                          <div className="flex items-center justify-center gap-1 flex-wrap">
                               {/* Mark Paid — only for pending bills */}
                               {bill.payment_status === 'pending' && (
                                 <button
@@ -1044,7 +1041,6 @@ export default function AllBillsPage() {
                                 Cancel
                               </button>
                             </div>
-                          )}
                         </td>
                       ) : null}
                     </tr>

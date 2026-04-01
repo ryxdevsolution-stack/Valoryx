@@ -1,398 +1,96 @@
 """
-Cache helper utilities for performance optimization
-Provides caching decorators and functions for Redis-based caching
+Cache helper utilities — no-op implementation.
+All caching and Redis functionality has been removed.
+Functions are kept as stubs so existing imports across all routes continue to work.
 """
-import json
-import hashlib
 import functools
 import logging
 from typing import Any, Optional, Callable
-from flask import g, request
-import redis
-from datetime import datetime, timedelta
 
 logger = logging.getLogger(__name__)
 
 
-class _SimpleMemoryCache:
-    """In-process memory cache used when Redis is unavailable.
-    Thread-safe for read-heavy workloads (GIL protects dict operations).
-    Evicts expired entries lazily on get()."""
-    import time as _time
-
-    def __init__(self):
-        self._store = {}  # key -> (value, expires_at)
-
-    def get(self, key: str):
-        entry = self._store.get(key)
-        if entry is None:
-            return None
-        value, expires_at = entry
-        if _SimpleMemoryCache._time.time() > expires_at:
-            self._store.pop(key, None)
-            return None
-        return value
-
-    def set(self, key: str, value, timeout: int = 300) -> bool:
-        self._store[key] = (value, _SimpleMemoryCache._time.time() + timeout)
-        return True
-
-    def delete(self, key: str) -> bool:
-        return self._store.pop(key, None) is not None
-
-    def delete_pattern(self, pattern: str) -> int:
-        import fnmatch
-        keys = [k for k in list(self._store) if fnmatch.fnmatch(k, pattern)]
-        for k in keys:
-            self._store.pop(k, None)
-        return len(keys)
-
-
 class CacheManager:
-    """Centralized cache management with Redis or in-memory fallback"""
+    """No-op cache manager — all operations are pass-through"""
 
-    def __init__(self, redis_url: str = "redis://localhost:6379/0"):
-        """Initialize Redis connection with in-memory fallback"""
-        self.redis_client = None
-        self.enabled = True  # Always enabled — falls back to memory if Redis unavailable
-        self._memory_cache = _SimpleMemoryCache()
-        self._use_redis = False
-
-        if redis_url:
-            try:
-                self.redis_client = redis.from_url(
-                    redis_url,
-                    decode_responses=True,
-                    socket_connect_timeout=1,
-                    socket_timeout=1,
-                    retry_on_timeout=False,
-                    health_check_interval=30
-                )
-                self.redis_client.ping()
-                self._use_redis = True
-                logger.info("Redis cache connected successfully")
-            except Exception as e:
-                logger.warning(f"Redis unavailable: {e}. Using in-memory cache.")
+    def __init__(self, redis_url: str = ""):
+        pass
 
     def _make_cache_key(self, prefix: str, *args, **kwargs) -> str:
-        """Generate a unique cache key"""
-        # Include client_id from g.user if available
-        client_id = ""
-        if hasattr(g, 'user') and g.user and 'client_id' in g.user:
-            client_id = g.user['client_id']
-
-        # Create a unique key from arguments
-        key_parts = [prefix, client_id]
-        key_parts.extend(str(arg) for arg in args)
-        key_parts.extend(f"{k}:{v}" for k, v in sorted(kwargs.items()))
-
-        key_string = ":".join(key_parts)
-
-        # Hash long keys to avoid Redis key length limits
-        if len(key_string) > 200:
-            key_hash = hashlib.md5(key_string.encode()).hexdigest()
-            return f"{prefix}:{client_id}:{key_hash}"
-
-        return key_string
+        return ""
 
     def get(self, key: str) -> Optional[Any]:
-        """Get value from cache (Redis or memory fallback)"""
-        if self._use_redis:
-            try:
-                value = self.redis_client.get(key)
-                if value:
-                    return json.loads(value)
-                return None
-            except Exception as e:
-                logger.error(f"Cache get error: {e}")
-                return None
-        return self._memory_cache.get(key)
+        return None
 
     def set(self, key: str, value: Any, timeout: int = 300) -> bool:
-        """Set value in cache with timeout in seconds"""
-        if self._use_redis:
-            try:
-                json_value = json.dumps(value, default=str)
-                return bool(self.redis_client.setex(key, timeout, json_value))
-            except Exception as e:
-                logger.error(f"Cache set error: {e}")
-                return False
-        return self._memory_cache.set(key, value, timeout)
+        return False
 
     def delete(self, key: str) -> bool:
-        """Delete key from cache"""
-        if self._use_redis:
-            try:
-                return bool(self.redis_client.delete(key))
-            except Exception as e:
-                logger.error(f"Cache delete error: {e}")
-                return False
-        return self._memory_cache.delete(key)
+        return False
 
     def delete_pattern(self, pattern: str) -> int:
-        """Delete all keys matching pattern.
-        Uses SCAN cursor (non-blocking) instead of KEYS (O(N) blocking)."""
-        if self._use_redis:
-            try:
-                deleted = 0
-                cursor = 0
-                while True:
-                    cursor, keys = self.redis_client.scan(cursor, match=pattern, count=200)
-                    if keys:
-                        deleted += self.redis_client.delete(*keys)
-                    if cursor == 0:
-                        break
-                return deleted
-            except Exception as e:
-                logger.error(f"Cache delete pattern error: {e}")
-                return 0
-        return self._memory_cache.delete_pattern(pattern)
+        return 0
 
     def invalidate_client_cache(self, client_id: str):
-        """Invalidate all cache for a specific client"""
-        if not self.enabled:
-            return
-
-        try:
-            # Delete all keys for this client
-            pattern = f"*:{client_id}:*"
-            deleted = self.delete_pattern(pattern)
-            logger.info(f"Invalidated {deleted} cache keys for client {client_id}")
-        except Exception as e:
-            logger.error(f"Cache invalidation error: {e}")
+        pass
 
 
-# Global cache instance
 _cache_manager = None
 
 
 def get_cache_manager() -> CacheManager:
-    """Get or create cache manager instance"""
     global _cache_manager
     if _cache_manager is None:
-        from config import Config
-        redis_url = getattr(Config, 'REDIS_URL', '')
-        # Only try Redis if URL is set and USE_REDIS is enabled
-        if redis_url and getattr(Config, 'REDIS_AVAILABLE', False):
-            _cache_manager = CacheManager(redis_url)
-        else:
-            # No Redis — CacheManager uses in-memory fallback automatically
-            _cache_manager = CacheManager("")
+        _cache_manager = CacheManager()
     return _cache_manager
 
 
 def cache_result(timeout: int = 300, key_prefix: str = ""):
-    """
-    Decorator to cache function results
-
-    Usage:
-        @cache_result(timeout=600, key_prefix="stock_list")
-        def get_stock_list(client_id):
-            # ... expensive database query
-            return results
-    """
+    """No-op decorator — executes the function directly without caching"""
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            cache = get_cache_manager()
-
-            # Generate cache key
-            if key_prefix:
-                cache_key = cache._make_cache_key(key_prefix, *args, **kwargs)
-            else:
-                cache_key = cache._make_cache_key(func.__name__, *args, **kwargs)
-
-            # Try to get from cache
-            cached_value = cache.get(cache_key)
-            if cached_value is not None:
-                logger.debug(f"Cache hit: {cache_key}")
-                return cached_value
-
-            # Execute function and cache result
-            logger.debug(f"Cache miss: {cache_key}")
-            result = func(*args, **kwargs)
-
-            # Cache the result
-            cache.set(cache_key, result, timeout)
-
-            return result
-
+            return func(*args, **kwargs)
         return wrapper
     return decorator
 
 
 def cache_route(timeout: int = 60):
-    """
-    Decorator specifically for Flask routes.
-    Caches based on URL, query params, and client_id.
-
-    Stores the extracted JSON dict (not the Flask Response object) so the
-    cache is Redis-serializable. Reconstructs the Response on a cache hit.
-
-    Usage:
-        @stock_bp.route('', methods=['GET'])
-        @authenticate
-        @cache_route(timeout=120)
-        def get_stock():
-            # ... route logic
-    """
-    from flask import jsonify as _jsonify
-
+    """No-op decorator — executes the route directly without caching"""
     def decorator(func: Callable) -> Callable:
         @functools.wraps(func)
         def wrapper(*args, **kwargs):
-            cache = get_cache_manager()
-
-            # Build cache key from request
-            client_id = g.user.get('client_id', '') if hasattr(g, 'user') and g.user else ''
-            url_path = request.path
-            query_string = request.query_string.decode('utf-8')
-
-            cache_key = f"route:{client_id}:{url_path}:{query_string}"
-
-            # Try to get from cache — stored as plain dict, reconstruct Response here.
-            cached_data = cache.get(cache_key)
-            if cached_data is not None:
-                logger.debug(f"Route cache hit: {url_path}")
-                return _jsonify(cached_data), 200
-
-            # Execute route
-            logger.debug(f"Route cache miss: {url_path}")
-            result = func(*args, **kwargs)
-
-            # Only cache successful 200 responses.
-            # Extract the JSON-serializable dict from the Response before storing —
-            # Flask Response objects are not JSON-serializable so we never store them directly.
-            if isinstance(result, tuple) and len(result) == 2:
-                response_obj, status_code = result
-                if status_code == 200 and hasattr(response_obj, 'get_json'):
-                    try:
-                        data = response_obj.get_json(silent=True)
-                        if data is not None:
-                            cache.set(cache_key, data, timeout)
-                    except Exception:
-                        pass  # Caching is best-effort; never break the response
-
-            return result
-
+            return func(*args, **kwargs)
         return wrapper
     return decorator
 
 
 def invalidate_stock_cache(client_id: str):
-    """Invalidate all stock-related cache for a client"""
-    cache = get_cache_manager()
-    cache.delete(f"stock:list:{client_id}")
-    cache.delete(f"stock:alerts:{client_id}")
-    cache.delete_pattern(f"*stock*{client_id}*")
-    cache.delete_pattern(f"route:{client_id}:/api/stock*")
-    logger.info(f"Invalidated stock cache for client {client_id}")
+    pass
 
 
 def invalidate_billing_cache(client_id: str):
-    """Invalidate all billing-related cache for a client"""
-    cache = get_cache_manager()
-    cache.delete_pattern(f"*bill*:{client_id}:*")
-    cache.delete_pattern(f"route:{client_id}:/api/billing*")
-    cache.delete_pattern(f"*analytics*:{client_id}:*")
-    cache.delete(f"billing:next_number:{client_id}")
-    # Customer stats are derived from billing data — bust together
-    cache.delete(f"customers:list:{client_id}")
-    logger.info(f"Invalidated billing+customer cache for client {client_id}")
+    pass
 
 
 def invalidate_analytics_cache(client_id: str):
-    """Invalidate all analytics-related cache for a client - for real-time updates"""
-    cache = get_cache_manager()
-    cache.delete_pattern(f"analytics:dashboard:{client_id}:*")
-    cache.delete_pattern(f"*analytics*:{client_id}:*")
-    logger.info(f"Invalidated analytics cache for client {client_id}")
+    pass
 
 
 def warm_cache(client_id: str):
-    """Pre-warm cache with frequently accessed data"""
-    try:
-        from models.stock_model import StockEntry
-        from models.billing_model import GSTBilling, NonGSTBilling
-
-        cache = get_cache_manager()
-
-        # Pre-cache stock list — key must match the format used in stock.py get_stock()
-        # MED-1: old keys "stock_list:{id}:all" and "stock_alerts:{id}" never hit the read path.
-        MAX_STOCK_LIMIT = 5000
-        stock_entries = StockEntry.query.filter_by(client_id=client_id).order_by(
-            StockEntry.product_name
-        ).limit(MAX_STOCK_LIMIT).all()
-        stock_data = [entry.to_dict() for entry in stock_entries]
-        stock_response = {'success': True, 'stock': stock_data}
-        cache.set(f"stock:list:{client_id}:::{MAX_STOCK_LIMIT}", stock_response, 300)
-
-        # Pre-cache low stock items — key must match get_low_stock_alerts()
-        low_stock_dicts = [d for d in stock_data if d.get('quantity', 0) <= d.get('low_stock_alert', 0)]
-        alerts = [{'product_id': d['product_id'], 'product_name': d['product_name'],
-                   'current_quantity': d['quantity'], 'alert_threshold': d['low_stock_alert'],
-                   'unit': d['unit']} for d in low_stock_dicts]
-        low_stock_response = {'success': True, 'alerts': alerts,
-                              'low_stock_products': low_stock_dicts, 'alert_count': len(low_stock_dicts)}
-        cache.set(f"stock:alerts:{client_id}", low_stock_response, 600)
-
-        logger.info(f"Cache warmed for client {client_id}")
-
-    except Exception as e:
-        logger.error(f"Cache warming error: {e}")
+    pass
 
 
 class QueryCache:
-    """Cache for database query results"""
-
     @staticmethod
     def get_cached_query(query, cache_key: str, timeout: int = 60):
-        """
-        Execute query with caching
-
-        Usage:
-            results = QueryCache.get_cached_query(
-                StockEntry.query.filter_by(client_id=client_id),
-                f"stock:{client_id}",
-                timeout=300
-            )
-        """
-        cache = get_cache_manager()
-
-        # Try cache first
-        cached = cache.get(cache_key)
-        if cached is not None:
-            return cached
-
-        # Execute query
         results = query.all()
-        result_data = [r.to_dict() if hasattr(r, 'to_dict') else r for r in results]
-
-        # Cache results
-        cache.set(cache_key, result_data, timeout)
-
-        return result_data
+        return [r.to_dict() if hasattr(r, 'to_dict') else r for r in results]
 
 
 class BatchProcessor:
-    """Utilities for batch processing to improve performance"""
-
     @staticmethod
     def process_in_batches(items, batch_size: int = 100, processor: Callable = None):
-        """
-        Process items in batches to avoid memory issues
-
-        Usage:
-            def process_batch(batch):
-                # Process batch of items
-                return processed_batch
-
-            results = BatchProcessor.process_in_batches(
-                large_list,
-                batch_size=50,
-                processor=process_batch
-            )
-        """
         results = []
         for i in range(0, len(items), batch_size):
             batch = items[i:i + batch_size]
@@ -405,24 +103,11 @@ class BatchProcessor:
 
     @staticmethod
     def bulk_insert(db_session, model_class, records, batch_size: int = 500):
-        """
-        Bulk insert records in batches
-
-        Usage:
-            BatchProcessor.bulk_insert(
-                db.session,
-                StockEntry,
-                new_stock_records,
-                batch_size=100
-            )
-        """
         try:
             for i in range(0, len(records), batch_size):
                 batch = records[i:i + batch_size]
                 db_session.bulk_insert_mappings(model_class, batch)
                 db_session.commit()
-                logger.info(f"Inserted batch {i//batch_size + 1} ({len(batch)} records)")
-
             return True
         except Exception as e:
             db_session.rollback()
@@ -430,34 +115,9 @@ class BatchProcessor:
             return False
 
 
-# Performance monitoring decorator
 def monitor_performance(func: Callable) -> Callable:
-    """
-    Decorator to monitor function performance
-
-    Usage:
-        @monitor_performance
-        def slow_function():
-            # ... some slow operation
-    """
+    """No-op decorator — executes the function directly"""
     @functools.wraps(func)
     def wrapper(*args, **kwargs):
-        import time
-        start_time = time.time()
-
-        try:
-            result = func(*args, **kwargs)
-            elapsed = (time.time() - start_time) * 1000  # Convert to ms
-
-            if elapsed > 1000:  # Log if slower than 1 second
-                logger.warning(f"Slow function: {func.__name__} took {elapsed:.2f}ms")
-            else:
-                logger.debug(f"Function {func.__name__} took {elapsed:.2f}ms")
-
-            return result
-        except Exception as e:
-            elapsed = (time.time() - start_time) * 1000
-            logger.error(f"Function {func.__name__} failed after {elapsed:.2f}ms: {e}")
-            raise
-
+        return func(*args, **kwargs)
     return wrapper
