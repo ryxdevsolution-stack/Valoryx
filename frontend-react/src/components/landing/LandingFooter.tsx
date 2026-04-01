@@ -58,6 +58,13 @@ export default function LandingFooter() {
                 <Phone className="w-5 h-5" />
                 {siteConfig.contact.phone}
               </a>
+              <a
+                href={`tel:${siteConfig.contact.altPhone.replace(/\s/g, '')}`}
+                className="flex items-center gap-3 hover:text-primary-400 transition-colors"
+              >
+                <Phone className="w-5 h-5" />
+                {siteConfig.contact.altPhone}
+              </a>
               <div className="flex items-start gap-3">
                 <MapPin className="w-5 h-5 mt-1 flex-shrink-0" />
                 <span>{siteConfig.contact.address}</span>

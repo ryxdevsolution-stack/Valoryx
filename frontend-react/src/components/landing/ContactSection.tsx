@@ -1,7 +1,9 @@
+import { useState } from 'react'
 import { motion } from 'framer-motion'
-import { Mail, Phone, MapPin, MessageCircle, Clock, ArrowRight, Building2, ShieldCheck, Users } from 'lucide-react'
+import { Mail, Phone, MapPin, Clock, Send, CheckCircle, Loader2, Building2, ShieldCheck, Users } from 'lucide-react'
 import { siteConfig } from '@/config/landing.config'
 import { viewportOnce } from '@/lib/landing/animations'
+import api from '@/lib/api'
 
 const highlights = [
   {
@@ -32,7 +34,7 @@ const contactChannels = [
   {
     icon: Phone,
     label: 'Call Us',
-    value: siteConfig.contact.phone,
+    value: `${siteConfig.contact.phone} / ${siteConfig.contact.altPhone}`,
     href: `tel:${siteConfig.contact.phone.replace(/\s/g, '')}`,
     description: 'Speak directly with our team',
   },
@@ -52,7 +54,50 @@ const contactChannels = [
   },
 ]
 
+interface FormState {
+  name: string
+  email: string
+  phone: string
+  business: string
+  message: string
+}
+
 export default function ContactSection() {
+  const [form, setForm] = useState<FormState>({
+    name: '',
+    email: '',
+    phone: '',
+    business: '',
+    message: '',
+  })
+  const [status, setStatus] = useState<'idle' | 'sending' | 'sent' | 'error'>('idle')
+  const [errorMsg, setErrorMsg] = useState('')
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement>) => {
+    setForm(prev => ({ ...prev, [e.target.name]: e.target.value }))
+  }
+
+  const handleSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    setStatus('sending')
+    setErrorMsg('')
+
+    try {
+      const res = await api.post('/contact', form)
+      if (res.data.success) {
+        setStatus('sent')
+        setForm({ name: '', email: '', phone: '', business: '', message: '' })
+      } else {
+        setErrorMsg(res.data.error || 'Something went wrong.')
+        setStatus('error')
+      }
+    } catch (err: any) {
+      const msg = err?.response?.data?.error || 'Failed to send message. Please try again.'
+      setErrorMsg(msg)
+      setStatus('error')
+    }
+  }
+
   return (
     <section id="contact" className="py-20 lg:py-28 bg-gray-50 dark:bg-gray-950 relative overflow-hidden">
       <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
@@ -95,10 +140,10 @@ export default function ContactSection() {
           ))}
         </div>
 
-        {/* Contact Cards + CTA */}
+        {/* Contact Cards + Form */}
         <div className="grid grid-cols-1 lg:grid-cols-5 gap-8">
           {/* Contact Channels */}
-          <div className="lg:col-span-3 grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="lg:col-span-2 grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-1 gap-4">
             {contactChannels.map((channel, index) => (
               <motion.div
                 key={channel.label}
@@ -133,43 +178,139 @@ export default function ContactSection() {
             ))}
           </div>
 
-          {/* CTA Card */}
+          {/* Contact Form */}
           <motion.div
             initial={{ opacity: 0, y: 20 }}
             whileInView={{ opacity: 1, y: 0 }}
             viewport={viewportOnce}
-            transition={{ delay: 0.3 }}
-            className="lg:col-span-2 rounded-2xl bg-gradient-to-br from-primary-600 to-primary-700 dark:from-primary-600 dark:to-primary-900 p-8 flex flex-col justify-between text-white shadow-lg dark:shadow-primary-900/20"
+            transition={{ delay: 0.2 }}
+            className="lg:col-span-3 rounded-2xl border border-gray-200/50 dark:border-gray-700/50 bg-white dark:bg-gray-800/50 p-6 sm:p-8"
           >
-            <div>
-              <MessageCircle className="w-10 h-10 mb-4 opacity-80" />
-              <h3 className="text-xl font-bold mb-3">Request a Free Demo</h3>
-              <p className="text-primary-100 text-sm leading-relaxed mb-6">
-                See Valoryx in action with a live, personalized demo tailored to your business type.
-                No commitment, no credit card — just a conversation about what you need.
-              </p>
-              <ul className="space-y-2 text-sm text-primary-100 mb-8">
-                <li className="flex items-center gap-2">
-                  <ArrowRight className="w-4 h-4 flex-shrink-0" />
-                  Personalized setup for your industry
-                </li>
-                <li className="flex items-center gap-2">
-                  <ArrowRight className="w-4 h-4 flex-shrink-0" />
-                  Data migration assistance included
-                </li>
-                <li className="flex items-center gap-2">
-                  <ArrowRight className="w-4 h-4 flex-shrink-0" />
-                  Custom pricing based on your needs
-                </li>
-              </ul>
-            </div>
-            <a
-              href={`mailto:${siteConfig.contact.email}?subject=Demo%20Request%20-%20${siteConfig.name}&body=Hi%20Valoryx%20Team%2C%0A%0AI'd%20like%20to%20schedule%20a%20demo.%0A%0ABusiness%20Name%3A%20%0AIndustry%3A%20%0ANumber%20of%20Locations%3A%20%0A%0AThanks!`}
-              className="inline-flex items-center justify-center gap-2 w-full py-3 px-6 rounded-xl bg-white text-primary-700 font-bold text-sm hover:bg-primary-50 dark:hover:bg-gray-100 transition-colors"
-            >
-              <Mail className="w-4 h-4" />
-              Request Demo
-            </a>
+            <h3 className="text-xl font-bold text-gray-900 dark:text-white mb-2">Send Us a Message</h3>
+            <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+              Fill in the form and our team will get back to you within 24 hours.
+            </p>
+
+            {status === 'sent' ? (
+              <div className="flex flex-col items-center justify-center py-12 text-center">
+                <CheckCircle className="w-16 h-16 text-green-500 mb-4" />
+                <h4 className="text-lg font-bold text-gray-900 dark:text-white mb-2">Message Sent!</h4>
+                <p className="text-sm text-gray-500 dark:text-gray-400 mb-6">
+                  We've received your inquiry and sent a confirmation to your email. Our team will get back to you within 24 hours.
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setStatus('idle')}
+                  className="text-sm font-medium text-primary-600 dark:text-primary-400 hover:underline"
+                >
+                  Send another message
+                </button>
+              </div>
+            ) : (
+              <form onSubmit={handleSubmit} className="space-y-4">
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="contact-name" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Name <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      id="contact-name"
+                      name="name"
+                      type="text"
+                      required
+                      value={form.name}
+                      onChange={handleChange}
+                      placeholder="Your full name"
+                      className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="contact-email" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Email <span className="text-red-500">*</span>
+                    </label>
+                    <input
+                      id="contact-email"
+                      name="email"
+                      type="email"
+                      required
+                      value={form.email}
+                      onChange={handleChange}
+                      placeholder="you@example.com"
+                      className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="contact-phone" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Phone
+                    </label>
+                    <input
+                      id="contact-phone"
+                      name="phone"
+                      type="tel"
+                      value={form.phone}
+                      onChange={handleChange}
+                      placeholder="+91 98765 43210"
+                      className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="contact-business" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                      Business Name
+                    </label>
+                    <input
+                      id="contact-business"
+                      name="business"
+                      type="text"
+                      value={form.business}
+                      onChange={handleChange}
+                      placeholder="Your business name"
+                      className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all"
+                    />
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="contact-message" className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
+                    Message <span className="text-red-500">*</span>
+                  </label>
+                  <textarea
+                    id="contact-message"
+                    name="message"
+                    required
+                    rows={4}
+                    value={form.message}
+                    onChange={handleChange}
+                    placeholder="Tell us about your business and what you're looking for..."
+                    className="w-full px-4 py-2.5 rounded-lg border border-gray-300 dark:border-gray-600 bg-gray-50 dark:bg-gray-700/50 text-gray-900 dark:text-white text-sm focus:ring-2 focus:ring-primary-500 focus:border-transparent outline-none transition-all resize-none"
+                  />
+                </div>
+
+                {status === 'error' && (
+                  <p className="text-sm text-red-500 dark:text-red-400">{errorMsg}</p>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={status === 'sending'}
+                  className="w-full sm:w-auto inline-flex items-center justify-center gap-2 px-8 py-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white font-semibold text-sm shadow-lg shadow-primary-500/25 hover:shadow-xl hover:shadow-primary-500/30 transition-all duration-300 disabled:opacity-60 disabled:cursor-not-allowed"
+                >
+                  {status === 'sending' ? (
+                    <>
+                      <Loader2 className="w-4 h-4 animate-spin" />
+                      Sending...
+                    </>
+                  ) : (
+                    <>
+                      <Send className="w-4 h-4" />
+                      Send Message
+                    </>
+                  )}
+                </button>
+              </form>
+            )}
           </motion.div>
         </div>
       </div>

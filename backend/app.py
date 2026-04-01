@@ -442,6 +442,13 @@ def create_app():
         import_errors.append(f"suppliers: {str(e)}")
         logging.error(f"Failed to import suppliers blueprint: {e}")
 
+    contact_bp = None
+    try:
+        from routes.contact import contact_bp
+    except Exception as e:
+        import_errors.append(f"contact: {str(e)}")
+        logging.error(f"Failed to import contact blueprint: {e}")
+
     # Store import errors for debugging
     app.config['IMPORT_ERRORS'] = import_errors
     if import_errors:
@@ -635,6 +642,13 @@ def create_app():
             blueprints_registered.append('suppliers')
         except Exception as e:
             print(f"Warning: Could not register suppliers blueprint: {e}")
+
+    if contact_bp:
+        try:
+            app.register_blueprint(contact_bp, url_prefix='/api/contact')
+            blueprints_registered.append('contact')
+        except Exception as e:
+            print(f"Warning: Could not register contact blueprint: {e}")
 
     # Store blueprint registration status
     app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered

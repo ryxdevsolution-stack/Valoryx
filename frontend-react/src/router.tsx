@@ -185,7 +185,7 @@ export function AppRoutes() {
         <Route path="/audit" element={<ProtectedRoute><Audit /></ProtectedRoute>} />
         <Route path="/profile" element={<ProtectedRoute><Profile /></ProtectedRoute>} />
         <Route path="/shop-settings" element={<ProtectedRoute><ShopSettings /></ProtectedRoute>} />
-<Route path="/docs" element={<ProtectedRoute><Docs /></ProtectedRoute>} />
+<Route path="/docs" element={<Docs />} />
 
         {/* Admin routes - wrapped in AdminLayout */}
         <Route path="/admin" element={<AdminLayout />}>

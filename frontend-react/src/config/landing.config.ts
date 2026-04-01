@@ -61,9 +61,10 @@ export const siteConfig = {
 
   // Contact Information
   contact: {
-    email: 'support@ryxbilling.com',
-    phone: '+91 12345 67890',
-    address: 'Bangalore, Karnataka, India',
+    email: 'ryxtechie@gmail.com',
+    phone: '+91 86672 58008',
+    altPhone: '+91 63748 53277',
+    address: 'Coimbatore, Tamil Nadu, India',
   },
 
   // Social Media Links
@@ -512,6 +513,7 @@ export const footerSections: FooterSection[] = [
   {
     title: 'Resources',
     links: [
+      { label: 'Documentation', href: '/docs' },
       { label: 'Benefits', href: '#benefits' },
       { label: 'Testimonials', href: '#testimonials' },
       { label: 'Watch Demo', href: '#features' },
@@ -521,7 +523,7 @@ export const footerSections: FooterSection[] = [
     title: 'Company',
     links: [
       { label: 'About Valoryx', href: '#benefits' },
-      { label: 'Contact Us', href: `mailto:${siteConfig.contact.email}` },
+      { label: 'Contact Us', href: '#contact' },
     ],
   },
   {
