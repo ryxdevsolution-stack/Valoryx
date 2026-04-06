@@ -125,16 +125,12 @@ def google_authorize():
     state = secrets.token_urlsafe(16)
     cache = get_cache_manager()
 
-    if cache.enabled:
-        cache.set(f'oauth_state:{state}', 1, OAUTH_STATE_TTL)
-    else:
-        # Redis unavailable — use in-memory fallback (dev / single-process)
-        _state_store[state] = datetime.utcnow()
-        # Evict states older than 10 minutes
-        cutoff = datetime.utcnow() - timedelta(seconds=OAUTH_STATE_TTL)
-        expired = [k for k, v in _state_store.items() if v < cutoff]
-        for k in expired:
-            _state_store.pop(k, None)
+    _state_store[state] = datetime.utcnow()
+    # Evict states older than 10 minutes
+    cutoff = datetime.utcnow() - timedelta(seconds=OAUTH_STATE_TTL)
+    expired = [k for k, v in _state_store.items() if v < cutoff]
+    for k in expired:
+        _state_store.pop(k, None)
 
     redirect_uri = _get_redirect_uri()
     if not redirect_uri:
@@ -183,17 +179,11 @@ def google_callback():
         return jsonify({'success': False, 'error': 'Invalid or expired state (CSRF check failed)'}), 400
 
     state_key = f'oauth_state:{state}'
-    if cache.enabled:
-        if not cache.get(state_key):
-            return jsonify({'success': False, 'error': 'Invalid or expired state (CSRF check failed)'}), 400
-        cache.delete(state_key)
-    else:
-        # In-memory fallback
-        ts = _state_store.pop(state, None)
-        if not ts:
-            return jsonify({'success': False, 'error': 'Invalid or expired state (CSRF check failed)'}), 400
-        if (datetime.utcnow() - ts).total_seconds() > OAUTH_STATE_TTL:
-            return jsonify({'success': False, 'error': 'State expired. Please try again.'}), 400
+    ts = _state_store.pop(state, None)
+    if not ts:
+        return jsonify({'success': False, 'error': 'Invalid or expired state (CSRF check failed)'}), 400
+    if (datetime.utcnow() - ts).total_seconds() > OAUTH_STATE_TTL:
+        return jsonify({'success': False, 'error': 'State expired. Please try again.'}), 400
 
     # ------------------------------------------------------------------
     # Exchange code for Google access token
