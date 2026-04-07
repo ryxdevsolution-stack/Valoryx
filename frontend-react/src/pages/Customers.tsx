@@ -309,9 +309,6 @@ export default function CustomersPage() {
                       <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase tracking-wider">No</th>
                       <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase tracking-wider">Customer</th>
                       <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase tracking-wider">Contact</th>
-                      <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase tracking-wider">Bills</th>
-                      <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase tracking-wider">Total Spent</th>
-                      <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase tracking-wider">Last Purchase</th>
                       <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase tracking-wider">Status</th>
                     </tr>
                   </thead>
@@ -347,21 +344,6 @@ export default function CustomersPage() {
                             <div className="text-[10px] text-gray-500 dark:text-gray-400">{customer.customer_email}</div>
                           )}
                         </td>
-                        <td className="px-3 py-2.5">
-                          <div className="text-xs font-medium text-gray-900 dark:text-white">{customer.total_bills}</div>
-                          {!customer.is_walkin && (
-                            <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                              {customer.gst_bills} GST, {customer.non_gst_bills} Non-GST
-                            </div>
-                          )}
-                        </td>
-                        <td className="px-3 py-2.5">
-                          <div className="text-xs font-bold text-green-600 dark:text-green-400">{formatCurrency(customer.total_amount)}</div>
-                          <div className="text-[10px] text-gray-500 dark:text-gray-400">
-                            Avg: {customer.total_bills > 0 ? formatCurrency(customer.total_amount / customer.total_bills) : '—'}
-                          </div>
-                        </td>
-                        <td className="px-3 py-2.5 text-xs text-gray-900 dark:text-white">{formatDate(customer.last_purchase)}</td>
                         <td className="px-3 py-2.5">
                           <span className={`px-2 py-0.5 inline-flex text-[10px] font-semibold rounded-full ${
                             customer.status === 'Active'
@@ -412,20 +394,6 @@ export default function CustomersPage() {
                       }`}>
                         {customer.status}
                       </span>
-                    </div>
-                    <div className="grid grid-cols-2 gap-3 pt-3 border-t border-gray-100 dark:border-gray-700">
-                      <div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">Total Bills</p>
-                        <p className="text-base font-bold text-gray-900 dark:text-white">{customer.total_bills}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500 dark:text-gray-400">Total Spent</p>
-                        <p className="text-base font-bold text-green-600 dark:text-green-400">{formatCurrency(customer.total_amount)}</p>
-                      </div>
-                      <div className="col-span-2">
-                        <p className="text-xs text-gray-500 dark:text-gray-400">Last Purchase</p>
-                        <p className="text-sm text-gray-900 dark:text-white">{formatDate(customer.last_purchase)}</p>
-                      </div>
                     </div>
                   </div>
                 )
@@ -519,14 +487,14 @@ export default function CustomersPage() {
                 <ShoppingBag className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
                 <div>
                   <p className="text-[10px] text-gray-400 uppercase font-medium">Total Bills</p>
-                  <p className="text-sm text-gray-800 dark:text-gray-200">{selectedCustomer.total_bills}</p>
+                  <p className="text-sm text-gray-800 dark:text-gray-200">{customerStats?.total_bills ?? selectedCustomer.total_bills}</p>
                 </div>
               </div>
               <div className="flex items-start gap-2">
                 <TrendingUp className="w-4 h-4 text-gray-400 mt-0.5 shrink-0" />
                 <div>
                   <p className="text-[10px] text-gray-400 uppercase font-medium">Total Spent</p>
-                  <p className="text-sm font-semibold text-green-600 dark:text-green-400">{formatCurrency(selectedCustomer.total_amount)}</p>
+                  <p className="text-sm font-semibold text-green-600 dark:text-green-400">{formatCurrency(customerStats?.total_spent ?? selectedCustomer.total_amount)}</p>
                 </div>
               </div>
               {!selectedCustomer.is_walkin && (selectedCustomer.loyalty_points ?? 0) > 0 && (

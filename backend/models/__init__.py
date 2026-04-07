@@ -25,3 +25,5 @@ from models.expense_model import Expense, ExpenseSummary                 # noqa:
 from models.webhook_model import WebhookEndpoint, WebhookDelivery        # noqa: F401
 from models.sync_metadata_model import SyncMetadata, SyncLog             # noqa: F401
 from models.supplier_model import Supplier, SupplierDelivery, SupplierDeliveryItem  # noqa: F401
+from models.payment_type_model import PaymentType                          # noqa: F401
+from models.bill_number_counter_model import BillNumberCounter             # noqa: F401

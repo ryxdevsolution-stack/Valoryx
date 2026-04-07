@@ -33,7 +33,7 @@ export default function ElectronSplash({ status }: ElectronSplashProps) {
         <img
           src="./valoryx-logo.svg"
           alt="Valoryx"
-          style={{ width: 90, height: 90, objectFit: 'contain', marginBottom: 24, borderRadius: 18 }}
+          style={{ width: 90, height: 90, objectFit: 'contain', marginBottom: 24, borderRadius: 18, display: 'block', margin: '0 auto 24px' }}
         />
 
         {/* Progress bar — only when loading */}

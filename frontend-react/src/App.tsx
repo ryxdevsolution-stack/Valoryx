@@ -13,6 +13,7 @@ import ElectronSetup from '@/pages/ElectronSetup'
 import UpdateNotification from '@/components/UpdateNotification'
 import { InstallBanner } from '@/components/pwa/InstallBanner'
 import { ApiPerformanceBar } from '@/components/ApiPerformanceBar'
+import ToastContainer from '@/components/ToastContainer'
 
 function LoadingFallback() {
   return (
@@ -87,6 +88,7 @@ export default function App() {
                 <AppRoutes />
               </Suspense>
               <ApiPerformanceBar />
+              <ToastContainer />
             </DataProvider>
           </ClientProvider>
         </LoadingInitializer>

@@ -25,6 +25,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
   const [selectedNote, setSelectedNote] = useState<Note | null>(null)
   const [isEditing, setIsEditing] = useState(false)
   const [isCreating, setIsCreating] = useState(false)
+  const [showDetail, setShowDetail] = useState(false) // mobile: toggle between list and detail
   const [formData, setFormData] = useState({
     title: '',
     content: '',
@@ -130,6 +131,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
     })
     setIsCreating(false)
     setIsEditing(false)
+    setShowDetail(true)
   }
 
   const startCreating = () => {
@@ -138,6 +140,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
     setSelectedNote(null)
     setFormData({ title: '', content: '', days_to_keep: 5 })
     setError('')
+    setShowDetail(true)
   }
 
   const startEditing = () => {
@@ -158,6 +161,15 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
     setIsCreating(false)
     setSelectedNote(null)
     setFormData({ title: '', content: '', days_to_keep: 5 })
+    setError('')
+    setShowDetail(false)
+  }
+
+  const goBackToList = () => {
+    setShowDetail(false)
+    setIsEditing(false)
+    setIsCreating(false)
+    setSelectedNote(null)
     setError('')
   }
 
@@ -190,21 +202,32 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
             animate={{ opacity: 1, scale: 1, y: 0 }}
             exit={{ opacity: 0, scale: 0.96, y: 20 }}
             transition={{ type: "spring", duration: 0.5, bounce: 0.3 }}
-            className="fixed inset-0 z-50 flex items-center justify-center p-4"
+            className="fixed inset-0 z-50 flex items-center justify-center p-2 md:p-4"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="bg-white dark:bg-gray-900 rounded-3xl shadow-2xl w-full max-w-6xl max-h-[90vh] overflow-hidden border border-gray-200/50 dark:border-gray-700/50">
+            <div className="bg-white dark:bg-gray-900 rounded-2xl md:rounded-3xl shadow-2xl w-full max-w-full md:max-w-6xl max-h-[95vh] md:max-h-[90vh] overflow-hidden border border-gray-200/50 dark:border-gray-700/50">
               {/* Header */}
-              <div className="flex items-center justify-between px-8 py-5 border-b border-gray-100 dark:border-gray-800 bg-gradient-to-r from-gray-50 to-white dark:from-gray-800 dark:to-gray-900">
+              <div className="flex items-center justify-between px-4 md:px-8 py-4 md:py-5 border-b border-gray-100 dark:border-gray-800 bg-gradient-to-r from-gray-50 to-white dark:from-gray-800 dark:to-gray-900">
                 <div className="flex items-center gap-3">
+                  {/* Mobile back button when viewing detail */}
+                  {showDetail && (
+                    <button
+                      onClick={goBackToList}
+                      className="md:hidden p-2 text-gray-500 hover:text-gray-700 dark:text-gray-400 dark:hover:text-gray-200 rounded-xl hover:bg-gray-100 dark:hover:bg-gray-800 transition-all mr-1"
+                    >
+                      <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+                      </svg>
+                    </button>
+                  )}
                   <div className="p-2 bg-indigo-100 dark:bg-indigo-900/30 rounded-xl">
-                    <svg className="w-6 h-6 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <svg className="w-5 h-5 md:w-6 md:h-6 text-indigo-600 dark:text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
                     </svg>
                   </div>
                   <div>
-                    <h2 className="text-2xl font-bold text-gray-900 dark:text-white">Notes</h2>
-                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">Manage your personal notes</p>
+                    <h2 className="text-xl md:text-2xl font-bold text-gray-900 dark:text-white">Notes</h2>
+                    <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 hidden md:block">Manage your personal notes</p>
                   </div>
                 </div>
                 <button
@@ -218,9 +241,9 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
               </div>
 
               {/* Content */}
-              <div className="flex h-[calc(90vh-120px)]">
-                {/* Notes List */}
-                <div className="w-[380px] border-r border-gray-100 dark:border-gray-800 overflow-y-auto bg-gray-50/50 dark:bg-gray-800/30">
+              <div className="flex flex-col md:flex-row h-[calc(95vh-100px)] md:h-[calc(90vh-120px)]">
+                {/* Notes List — hidden on mobile when viewing detail */}
+                <div className={`${showDetail ? 'hidden md:block' : 'block'} w-full md:w-[380px] border-b md:border-b-0 md:border-r border-gray-100 dark:border-gray-800 overflow-y-auto bg-gray-50/50 dark:bg-gray-800/30`}>
                   <div className="p-5">
                     <button
                       onClick={startCreating}
@@ -294,8 +317,8 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                   </div>
                 </div>
 
-                {/* Note Content/Editor */}
-                <div className="flex-1 overflow-y-auto">
+                {/* Note Content/Editor — hidden on mobile when viewing list */}
+                <div className={`${showDetail ? 'block' : 'hidden md:block'} flex-1 overflow-y-auto`}>
                   {error && (
                     <motion.div
                       initial={{ opacity: 0, y: -10 }}
@@ -313,7 +336,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                     <motion.div
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      className="p-6 space-y-5"
+                      className="p-4 md:p-6 space-y-4 md:space-y-5"
                     >
                       <div>
                         <label className="block text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2 uppercase tracking-wide">
@@ -324,7 +347,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                           placeholder="Enter note title..."
                           value={formData.title}
                           onChange={(e) => setFormData({ ...formData, title: e.target.value })}
-                          className="w-full px-4 py-3.5 text-xl font-bold border-2 border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 transition-all"
+                          className="w-full px-4 py-3 md:py-3.5 text-lg md:text-xl font-bold border-2 border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 transition-all"
                         />
                       </div>
 
@@ -336,7 +359,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                           placeholder="Write your note here..."
                           value={formData.content}
                           onChange={(e) => setFormData({ ...formData, content: e.target.value })}
-                          rows={15}
+                          rows={8}
                           className="w-full px-4 py-3.5 border-2 border-gray-200 dark:border-gray-700 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:border-indigo-500 bg-white dark:bg-gray-800 text-gray-900 dark:text-white placeholder-gray-400 dark:placeholder-gray-500 resize-none transition-all leading-relaxed"
                         />
                       </div>
@@ -368,7 +391,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                         <button
                           onClick={isCreating ? handleCreateNote : handleUpdateNote}
                           disabled={loading || !formData.content.trim()}
-                          className="px-8 py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-semibold rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40 hover:-translate-y-0.5 flex items-center gap-2"
+                          className="flex-1 md:flex-none px-6 md:px-8 py-3 bg-gradient-to-r from-indigo-600 to-indigo-700 hover:from-indigo-700 hover:to-indigo-800 text-white font-semibold rounded-xl transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-lg shadow-indigo-500/30 hover:shadow-xl hover:shadow-indigo-500/40 hover:-translate-y-0.5 flex items-center justify-center gap-2"
                         >
                           {loading ? (
                             <>
@@ -387,7 +410,7 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                         <button
                           onClick={cancelEdit}
                           disabled={loading}
-                          className="px-8 py-3 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 font-semibold rounded-xl transition-all duration-200 border-2 border-gray-200 dark:border-gray-700"
+                          className="flex-1 md:flex-none px-6 md:px-8 py-3 bg-gray-100 dark:bg-gray-800 hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-700 dark:text-gray-300 font-semibold rounded-xl transition-all duration-200 border-2 border-gray-200 dark:border-gray-700 text-center"
                         >
                           Cancel
                         </button>
@@ -397,14 +420,14 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
                     <motion.div
                       initial={{ opacity: 0 }}
                       animate={{ opacity: 1 }}
-                      className="p-6"
+                      className="p-4 md:p-6"
                     >
-                      <div className="flex items-start justify-between mb-6">
-                        <div className="flex-1">
-                          <h1 className="text-4xl font-bold text-gray-900 dark:text-white mb-2 leading-tight">
+                      <div className="flex items-start justify-between mb-4 md:mb-6">
+                        <div className="flex-1 min-w-0">
+                          <h1 className="text-2xl md:text-4xl font-bold text-gray-900 dark:text-white mb-2 leading-tight break-words">
                             {selectedNote.title || 'Untitled Note'}
                           </h1>
-                          <div className="flex items-center gap-4 text-xs text-gray-500 dark:text-gray-400">
+                          <div className="flex flex-wrap items-center gap-2 md:gap-4 text-xs text-gray-500 dark:text-gray-400">
                             <div className="flex items-center gap-1.5">
                               <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />

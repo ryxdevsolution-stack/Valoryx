@@ -63,8 +63,8 @@ def create_app():
         from sqlalchemy.orm import configure_mappers
         configure_mappers()
 
-    # Phase 1: Background sync scheduler (disabled)
-    logging.info("[INFO] Background sync scheduler disabled")
+    # Sync: lazy-initialized on first button click (no background thread)
+    logging.info("[INFO] Sync available on demand (manual trigger only)")
 
     # Run versioned migrations — skips entirely on daily open if schema is up to date
     if db_initialized:
@@ -795,165 +795,144 @@ def create_app():
         return status, 200
 
     # Sync endpoints - Bidirectional sync between SQLite and Supabase
+    # Lazy-initialized: connects to Supabase on first use (same pattern as /api/electron/setup)
+
+    # Stores the real error so endpoints can return it
+    _sync_init_error = [None]
+
+    def _get_or_init_scheduler():
+        """Lazy-init sync scheduler on first use.
+        Uses os.environ.get('DB_URL') exactly like /api/electron/setup."""
+        scheduler = app.config.get('SYNC_SCHEDULER')
+        if scheduler:
+            return scheduler
+
+        db_url = os.environ.get('DB_URL')
+        if not db_url:
+            _sync_init_error[0] = 'DB_URL not found in environment or .env file'
+            logging.warning(f"[Sync] {_sync_init_error[0]}")
+            return None
+
+        try:
+            from sqlalchemy import create_engine, text as sa_text
+            from services.sync_service import sync_service
+            from services.sync_scheduler import SyncScheduler
+
+            sqlite_path = os.environ.get('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
+            pg_engine = create_engine(db_url, pool_pre_ping=True, connect_args={'connect_timeout': 30})
+
+            with pg_engine.connect() as conn:
+                conn.execute(sa_text("SELECT 1"))
+
+            sync_service.sqlite_engine = create_engine(f'sqlite:///{sqlite_path}')
+            sync_service.postgres_engine = pg_engine
+
+            scheduler = SyncScheduler(sync_service)
+            scheduler.running = True
+            app.config['SYNC_SCHEDULER'] = scheduler
+            _sync_init_error[0] = None
+            logging.info("[Sync] Ready")
+            return scheduler
+        except Exception as e:
+            _sync_init_error[0] = str(e)
+            logging.error(f"[Sync] Init failed: {e}")
+            return None
 
     @app.route('/api/sync/trigger', methods=['POST'])
     def trigger_sync():
-        """
-        Manually trigger a sync.
-
-        Query params:
-            type: 'upload' (default), 'download', or 'full' (bidirectional)
-        """
+        """Manually trigger a sync. Query param: type=upload|download|full"""
         from flask import request
-        sync_scheduler = app.config.get('SYNC_SCHEDULER')
-
-        if not sync_scheduler:
-            return {
-                'error': 'Sync not available',
-                'message': 'Sync scheduler is not running (DB_URL not configured)'
-            }, 400
+        scheduler = _get_or_init_scheduler()
+        if not scheduler:
+            return {'error': 'Sync not available', 'message': _sync_init_error[0] or 'Unknown error'}, 400
 
         sync_type = request.args.get('type', 'upload')
-        result = sync_scheduler.trigger_sync_now(sync_type)
+        result = scheduler.trigger_sync_now(sync_type)
         return result, 200
 
     @app.route('/api/sync/download', methods=['POST'])
     def trigger_download():
-        """
-        Trigger download sync from Supabase to SQLite.
-
-        Body:
-            client_id: The client UUID to download data for
-        """
+        """Trigger download sync from Supabase to SQLite."""
         from flask import request
-        sync_scheduler = app.config.get('SYNC_SCHEDULER')
-
-        if not sync_scheduler:
-            return {
-                'error': 'Sync not available',
-                'message': 'Sync scheduler is not running (DB_URL not configured)'
-            }, 400
+        scheduler = _get_or_init_scheduler()
+        if not scheduler:
+            return {'error': 'Sync not available', 'message': _sync_init_error[0] or 'Unknown error'}, 400
 
         data = request.get_json() or {}
         client_id = data.get('client_id')
-
         if not client_id:
             return {'error': 'client_id is required'}, 400
 
-        sync_scheduler.set_client_id(client_id)
-        result = sync_scheduler.trigger_sync_now('download')
+        scheduler.set_client_id(client_id)
+        result = scheduler.trigger_sync_now('download')
         return result, 200
 
     @app.route('/api/sync/initial', methods=['POST'])
     def trigger_initial_load():
-        """
-        Trigger initial data load from Supabase to SQLite.
-        Use this when setting up a new device.
-
-        Body:
-            client_id: The client UUID to load data for
-        """
+        """Trigger initial data load from Supabase to SQLite."""
         from flask import request
-        sync_scheduler = app.config.get('SYNC_SCHEDULER')
-
-        if not sync_scheduler:
-            return {
-                'error': 'Sync not available',
-                'message': 'Sync scheduler is not running (DB_URL not configured)'
-            }, 400
+        scheduler = _get_or_init_scheduler()
+        if not scheduler:
+            return {'error': 'Sync not available', 'message': _sync_init_error[0] or 'Unknown error'}, 400
 
         data = request.get_json() or {}
         client_id = data.get('client_id')
-
         if not client_id:
             return {'error': 'client_id is required'}, 400
 
-        result = sync_scheduler.trigger_initial_load(client_id)
+        result = scheduler.trigger_initial_load(client_id)
         return result, 200
 
     @app.route('/api/sync/full', methods=['POST'])
     def trigger_full_sync():
-        """
-        Trigger full bidirectional sync (upload then download).
-
-        Body:
-            client_id: The client UUID
-        """
+        """Trigger full bidirectional sync (upload then download)."""
         from flask import request
-        sync_scheduler = app.config.get('SYNC_SCHEDULER')
-
-        if not sync_scheduler:
-            return {
-                'error': 'Sync not available',
-                'message': 'Sync scheduler is not running (DB_URL not configured)'
-            }, 400
+        scheduler = _get_or_init_scheduler()
+        if not scheduler:
+            return {'error': 'Sync not available', 'message': _sync_init_error[0] or 'Unknown error'}, 400
 
         data = request.get_json() or {}
         client_id = data.get('client_id')
-
         if not client_id:
             return {'error': 'client_id is required'}, 400
 
-        sync_scheduler.set_client_id(client_id)
-        result = sync_scheduler.trigger_sync_now('full')
+        scheduler.set_client_id(client_id)
+        result = scheduler.trigger_sync_now('full')
         return result, 200
 
     @app.route('/api/sync/status', methods=['GET'])
     def sync_status():
         """Get current sync status"""
-        sync_scheduler = app.config.get('SYNC_SCHEDULER')
-
-        if not sync_scheduler:
-            return {
-                'enabled': False,
-                'reason': 'DB_URL not configured'
-            }, 200
-
-        return sync_scheduler.get_status(), 200
+        scheduler = _get_or_init_scheduler()
+        if not scheduler:
+            return {'running': False, 'reason': 'DB_URL not configured in .env'}, 200
+        return scheduler.get_status(), 200
 
     @app.route('/api/sync/check-initial', methods=['GET'])
     def check_initial_load():
-        """
-        Check if initial data load is needed for a client.
-
-        Query params:
-            client_id: The client UUID to check
-        """
+        """Check if initial data load is needed for a client."""
         from flask import request
-        sync_scheduler = app.config.get('SYNC_SCHEDULER')
-
-        if not sync_scheduler:
-            return {
-                'needed': False,
-                'reason': 'Sync not available'
-            }, 200
+        scheduler = _get_or_init_scheduler()
+        if not scheduler:
+            return {'needed': False, 'reason': 'Sync not available'}, 200
 
         client_id = request.args.get('client_id')
         if not client_id:
             return {'error': 'client_id is required'}, 400
 
-        needed = sync_scheduler.check_initial_load_needed(client_id)
-        return {
-            'client_id': client_id,
-            'initial_load_needed': needed
-        }, 200
+        needed = scheduler.check_initial_load_needed(client_id)
+        return {'client_id': client_id, 'initial_load_needed': needed}, 200
 
     @app.route('/api/sync/set-client', methods=['POST'])
     def set_sync_client():
-        """
-        Set the current client ID for sync operations.
-        Call this after user login.
-
-        Body:
-            client_id: The client UUID
-        """
+        """Set the current client ID for sync operations."""
         from flask import request
-        sync_scheduler = app.config.get('SYNC_SCHEDULER')
+        sync_scheduler = _get_or_init_scheduler()
 
         if not sync_scheduler:
             return {
                 'error': 'Sync not available',
-                'message': 'Sync scheduler is not running'
+                'message': _sync_init_error[0] or 'Unknown error'
             }, 400
 
         data = request.get_json() or {}

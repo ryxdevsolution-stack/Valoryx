@@ -44,15 +44,42 @@ function spawnFlask() {
     pythonPath = 'python';
     backendPath = path.join(__dirname, '..', 'backend');
   } else {
-    pythonPath = 'python';
+    // Use bundled embedded Python in production — no system Python required
+    const bundledPython = path.join(process.resourcesPath, 'python', 'python.exe');
+    pythonPath = fs.existsSync(bundledPython) ? bundledPython : 'python';
     backendPath = app.isPackaged
       ? path.join(process.resourcesPath, 'backend')
       : path.join(__dirname, '..', 'backend');
   }
 
+  console.log(`[Backend] Python: ${pythonPath}`);
+  console.log(`[Backend] Backend: ${backendPath}`);
+
+  // Read DB_URL from backend/.env so sync can connect to Supabase
+  let dbUrl = '';
+  try {
+    const envPath = path.join(backendPath, '.env');
+    if (fs.existsSync(envPath)) {
+      const envContent = fs.readFileSync(envPath, 'utf-8');
+      const match = envContent.match(/^DB_URL=(.+)$/m);
+      if (match) dbUrl = match[1].trim();
+    }
+  } catch (e) {
+    console.warn('[Backend] Could not read .env for DB_URL:', e.message);
+  }
+
   const proc = spawn(pythonPath, ['app.py'], {
     cwd: backendPath,
-    env: { ...process.env, DB_MODE: 'offline', PYTHONUNBUFFERED: '1', TELEGRAM_BOT_TOKEN: '', PYTHONIOENCODING: 'utf-8', PYTHONUTF8: '1' },
+    env: {
+      ...process.env,
+      DB_MODE: 'offline',
+      DB_URL: dbUrl,
+      PYTHONUNBUFFERED: '1',
+      TELEGRAM_BOT_TOKEN: '',
+      PYTHONIOENCODING: 'utf-8',
+      PYTHONUTF8: '1',
+      PYTHONPATH: backendPath,
+    },
     stdio: ['ignore', 'pipe', 'pipe']
   });
 

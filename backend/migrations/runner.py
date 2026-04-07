@@ -635,8 +635,17 @@ def _m011_sync_bill_number_counters(db):
     """
     inspector = sa_inspect(db.engine)
     if 'bill_number_counters' not in inspector.get_table_names():
-        logging.info("[Migration] v11: bill_number_counters not found, skipping (db.create_all will create it)")
-        return
+        logging.info("[Migration] v11: creating bill_number_counters table")
+        db.session.execute(text("""
+            CREATE TABLE bill_number_counters (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                client_id VARCHAR(50) NOT NULL UNIQUE,
+                current_gst_bill_number INTEGER NOT NULL DEFAULT 0,
+                current_non_gst_bill_number INTEGER NOT NULL DEFAULT 0,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        db.session.commit()
 
     dialect = db.engine.dialect.name
 

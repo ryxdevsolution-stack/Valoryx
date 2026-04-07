@@ -3,7 +3,7 @@ import re
 from datetime import datetime
 import pytz
 from dateutil import parser as date_parser
-from flask import Blueprint, request, jsonify, g
+from flask import Blueprint, request, jsonify, g, Response
 from sqlalchemy import func
 from extensions import db
 from models.billing_model import GSTBilling, NonGSTBilling
@@ -1721,5 +1721,41 @@ def print_labels():
         return jsonify({
             'success': False,
             'error': 'Label print failed',
+            'message': str(e)
+        }), 500
+
+
+@billing_bp.route('/preview-labels', methods=['POST'])
+@authenticate
+@require_permission('print_bills')
+def preview_labels():
+    """
+    Return barcode label HTML for browser preview (no printer needed).
+    Same payload as /print-labels.
+    """
+    try:
+        from utils.barcode_label import generate_labels_html
+
+        data = request.get_json()
+
+        if 'items' not in data or not isinstance(data['items'], list) or len(data['items']) == 0:
+            return jsonify({'error': 'Missing or empty items array'}), 400
+
+        items = data['items']
+        for i, item in enumerate(items):
+            if not item.get('item_code'):
+                return jsonify({'error': f'Item {i+1} missing item_code'}), 400
+            if not item.get('product_name'):
+                return jsonify({'error': f'Item {i+1} missing product_name'}), 400
+            if 'quantity' not in item or int(item.get('quantity', 0)) < 1:
+                items[i]['quantity'] = 1
+
+        html = generate_labels_html(items)
+        return Response(html, mimetype='text/html')
+
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': 'Label preview failed',
             'message': str(e)
         }), 500

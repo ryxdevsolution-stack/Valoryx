@@ -207,6 +207,7 @@ export default function StockManagementPage() {
 
   // Barcode printing state
   const [printingLabels, setPrintingLabels] = useState<string | null>(null)
+  const [labelPreviewHtml, setLabelPreviewHtml] = useState<string | null>(null)
 
   // Camera barcode scanner overlay
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
@@ -665,20 +666,29 @@ export default function StockManagementPage() {
         fetchStocks()
       }
 
-      const response = await api.post('/billing/print-labels', {
-        items: [{
-          item_code: itemCode,
-          product_name: stock.product_name,
-          rate: Number(stock.rate),
-          mrp: stock.mrp ? Number(stock.mrp) : Number(stock.rate),
-          quantity: stock.quantity // Print labels based on stock quantity
-        }]
-      })
+      const labelItems = [{
+        item_code: itemCode,
+        product_name: stock.product_name,
+        rate: Number(stock.rate),
+        mrp: stock.mrp ? Number(stock.mrp) : Number(stock.rate),
+        quantity: stock.quantity
+      }]
 
-      if (response.data.success) {
-        showToast(`${response.data.total_labels} barcode labels printed!`, 'success')
+      const isElectron = !!(window as any).electronAPI?.isElectron
+
+      if (isElectron) {
+        // Electron: use backend thermal printer
+        const response = await api.post('/billing/print-labels', { items: labelItems })
+        if (response.data.success) {
+          showToast(`${response.data.total_labels} barcode labels printed!`, 'success')
+        } else {
+          throw new Error(response.data.error || 'Failed to print labels')
+        }
       } else {
-        throw new Error(response.data.error || 'Failed to print labels')
+        // Web: show preview modal with browser print
+        const previewRes = await api.post('/billing/preview-labels', { items: labelItems }, { responseType: 'text' })
+        setLabelPreviewHtml(previewRes.data)
+        showToast('Label preview ready — click Print to print from browser.', 'success')
       }
     } catch (error: any) {
       console.error('Failed to print barcode labels:', error)
@@ -1575,6 +1585,41 @@ export default function StockManagementPage() {
           onScan={(barcode) => setFormData(prev => ({ ...prev, barcode }))}
           onClose={() => setShowBarcodeScanner(false)}
         />
+      )}
+      {/* Barcode Label Preview Modal */}
+      {labelPreviewHtml && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50" onClick={() => setLabelPreviewHtml(null)}>
+          <div className="bg-white dark:bg-gray-800 rounded-lg shadow-2xl w-[500px] max-h-[80vh] flex flex-col" onClick={e => e.stopPropagation()}>
+            <div className="flex items-center justify-between p-4 border-b dark:border-gray-700">
+              <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Barcode Label Preview</h3>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => {
+                    const iframe = document.getElementById('label-preview-frame') as HTMLIFrameElement
+                    iframe?.contentWindow?.print()
+                  }}
+                  className="px-3 py-1.5 bg-indigo-600 text-white text-sm rounded hover:bg-indigo-700"
+                >
+                  Print
+                </button>
+                <button
+                  onClick={() => setLabelPreviewHtml(null)}
+                  className="px-3 py-1.5 bg-gray-200 dark:bg-gray-600 text-gray-700 dark:text-gray-200 text-sm rounded hover:bg-gray-300 dark:hover:bg-gray-500"
+                >
+                  Close
+                </button>
+              </div>
+            </div>
+            <div className="flex-1 overflow-auto p-4">
+              <iframe
+                id="label-preview-frame"
+                srcDoc={labelPreviewHtml}
+                className="w-full min-h-[300px] border rounded"
+                title="Label Preview"
+              />
+            </div>
+          </div>
+        </div>
       )}
     </DashboardLayout>
   )

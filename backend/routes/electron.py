@@ -152,6 +152,15 @@ def _fetch_from_supabase(engine, client_id: str) -> dict:
             rows = conn.execute(sa_text(sql), {'cid': client_id}).mappings().all()
             return [_serialize_row(dict(r)) for r in rows]
 
+    def fetch_join(child_table, parent_table, parent_fk, parent_pk='client_id'):
+        """Fetch child rows that belong to client via a parent table join."""
+        sql = f"""SELECT c.* FROM {child_table} c
+                  JOIN {parent_table} p ON c.{parent_fk} = p.{parent_fk}
+                  WHERE p.{parent_pk} = :cid"""
+        with engine.connect() as conn:
+            rows = conn.execute(sa_text(sql), {'cid': client_id}).mappings().all()
+            return [_serialize_row(dict(r)) for r in rows]
+
     with engine.connect() as conn:
         user_permissions = [
             _serialize_row(dict(r)) for r in conn.execute(sa_text("""
@@ -174,20 +183,49 @@ def _fetch_from_supabase(engine, client_id: str) -> dict:
             rows = conn.execute(sa_text(f"SELECT * FROM {table}")).mappings().all()
             return [_serialize_row(dict(r)) for r in rows]
 
+    # notes: no client_id, filter via users table
+    def fetch_notes():
+        with engine.connect() as conn:
+            rows = conn.execute(sa_text("""
+                SELECT n.* FROM notes n
+                JOIN users u ON n.user_id = u.user_id
+                WHERE u.client_id = :cid
+            """), {'cid': client_id}).mappings().all()
+            return [_serialize_row(dict(r)) for r in rows]
+
     data = {
-        'client_entry':         client_entry,
-        'permission_sections':  fetch_global('permission_sections'),
-        'permissions':          fetch_global('permissions'),
-        'users':                fetch_table('users', extra_filter='AND deleted_at IS NULL'),
-        'gst_billing':          fetch_table('gst_billing'),
-        'non_gst_billing':      fetch_table('non_gst_billing'),
-        'stock_entry':          fetch_table('stock_entry'),
-        'customer':             fetch_table('customer'),
-        'payment_type':         fetch_table('payment_type'),
-        'expense':              fetch_table('expense'),
-        'branches':             fetch_table('branches'),
-        'branch_inventory':     fetch_table('branch_inventory'),
-        'user_permissions':     user_permissions,
+        # Global tables (no client_id filter)
+        'client_entry':             client_entry,
+        'permission_sections':      fetch_global('permission_sections'),
+        'permissions':              fetch_global('permissions'),
+        'subscription_plan':        fetch_global('subscription_plan'),
+        # Client-scoped tables
+        'users':                    fetch_table('users', extra_filter='AND deleted_at IS NULL'),
+        'user_permissions':         user_permissions,
+        'user_sessions':            fetch_table('user_sessions'),
+        'gst_billing':              fetch_table('gst_billing'),
+        'non_gst_billing':          fetch_table('non_gst_billing'),
+        'stock_entry':              fetch_table('stock_entry'),
+        'customer':                 fetch_table('customer'),
+        'payment_type':             fetch_table('payment_type'),
+        'expense':                  fetch_table('expense'),
+        'expense_summary':          fetch_table('expense_summary'),
+        'branches':                 fetch_table('branches'),
+        'branch_inventory':         fetch_table('branch_inventory'),
+        'bulk_stock_order':         fetch_table('bulk_stock_order'),
+        'bulk_stock_order_item':    fetch_join('bulk_stock_order_item', 'bulk_stock_order', 'order_id'),
+        'stock_transfers':          fetch_table('stock_transfers'),
+        'stock_transfer_items':     fetch_join('stock_transfer_items', 'stock_transfers', 'transfer_id'),
+        'suppliers':                fetch_table('suppliers'),
+        'supplier_deliveries':      fetch_table('supplier_deliveries'),
+        'supplier_delivery_items':  fetch_join('supplier_delivery_items', 'supplier_deliveries', 'delivery_id'),
+        'notes':                    fetch_notes(),
+        'report':                   fetch_table('report'),
+        'audit_log':                fetch_table('audit_log'),
+        'payment_transaction':      fetch_table('payment_transaction'),
+        'permission_presets':       fetch_table('permission_presets'),
+        'webhook_endpoints':        fetch_table('webhook_endpoints'),
+        'webhook_deliveries':       fetch_table('webhook_deliveries'),
     }
 
     logging.info(f'[Electron] Fetched Supabase data for client {client_id}')
@@ -197,19 +235,36 @@ def _fetch_from_supabase(engine, client_id: str) -> dict:
 def _import_data(data: dict):
     """Upsert all rows into local SQLite."""
     tables = {
-        'client_entry':         'client_id',
-        'permission_sections':  'section_id',
-        'permissions':          'permission_id',
-        'users':                'user_id',
-        'gst_billing':      'bill_id',
-        'non_gst_billing':  'bill_id',
-        'stock_entry':      'product_id',
-        'customer':         'customer_id',
-        'payment_type':     'payment_type_id',
-        'expense':          'expense_id',
-        'branches':         'branch_id',
-        'branch_inventory': 'id',
-        'user_permissions': 'id',
+        'client_entry':             'client_id',
+        'permission_sections':      'section_id',
+        'permissions':              'permission_id',
+        'subscription_plan':        'plan_id',
+        'users':                    'user_id',
+        'user_permissions':         'id',
+        'user_sessions':            'id',
+        'gst_billing':              'bill_id',
+        'non_gst_billing':          'bill_id',
+        'stock_entry':              'product_id',
+        'customer':                 'customer_id',
+        'payment_type':             'payment_type_id',
+        'expense':                  'expense_id',
+        'expense_summary':          'summary_id',
+        'branches':                 'branch_id',
+        'branch_inventory':         'id',
+        'bulk_stock_order':         'order_id',
+        'bulk_stock_order_item':    'item_id',
+        'stock_transfers':          'transfer_id',
+        'stock_transfer_items':     'id',
+        'suppliers':                'supplier_id',
+        'supplier_deliveries':      'delivery_id',
+        'supplier_delivery_items':  'id',
+        'notes':                    'note_id',
+        'report':                   'report_id',
+        'audit_log':                'log_id',
+        'payment_transaction':      'transaction_id',
+        'permission_presets':       'preset_id',
+        'webhook_endpoints':        'endpoint_id',
+        'webhook_deliveries':       'delivery_id',
     }
 
     for key, pk in tables.items():

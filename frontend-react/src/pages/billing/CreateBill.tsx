@@ -17,6 +17,7 @@ import bluetoothPrinterService from '@/services/bluetoothPrinterService'
 import { getShopSettings } from '@/services/shopSettingsService'
 import type { ShopSettings } from '@/services/shopSettingsService'
 import { generateBillPDF } from '@/lib/pdfService'
+import { toast } from '@/utils/toast'
 
 interface Product {
   product_id: string
@@ -706,7 +707,7 @@ export default function UnifiedBillingPage() {
         setBarcodeInput('')
         barcodeInputRef.current?.focus()
       } catch (error: any) {
-        alert(error.response?.data?.error || 'Product not found')
+        toast.error(error.response?.data?.error || 'Product not found')
         setBarcodeInput('')
         // Move to product search on error
         productSearchRef.current?.focus()
@@ -820,7 +821,7 @@ export default function UnifiedBillingPage() {
 
       // Check stock availability
       if (newQuantity > availableQty) {
-        alert(`⚠️ Stock limit reached! Only ${availableQty} available for ${existingItem.product_name}`)
+        toast.warning(`Stock limit reached! Only ${availableQty} available for ${existingItem.product_name}`)
         return
       }
 
@@ -945,17 +946,17 @@ export default function UnifiedBillingPage() {
     }
 
     if (!productNameToUse || !currentItem.quantity || Number(currentItem.quantity) <= 0) {
-      alert('Please enter product name and valid quantity')
+      toast.warning('Please enter product name and valid quantity')
       return
     }
 
     if (!currentItem.rate || currentItem.rate <= 0) {
-      alert('Please enter a valid rate')
+      toast.warning('Please enter a valid rate')
       return
     }
 
     if (!isNewProductToUse && availableStock === 0) {
-      alert('⚠️ This product is out of stock! Cannot add to bill.')
+      toast.warning('This product is out of stock! Cannot add to bill.')
       return
     }
 
@@ -1177,19 +1178,19 @@ export default function UnifiedBillingPage() {
     e.preventDefault()
 
     if (activeTab.items.length === 0) {
-      alert('Please add at least one item')
+      toast.warning('Please add at least one item')
       return
     }
 
     if (activeTab.customer_name && activeTab.customer_name.trim() && !activeTab.customer_phone?.trim()) {
-      alert('Phone number is required when customer name is filled')
+      toast.warning('Phone number is required when customer name is filled')
       customerPhoneRef.current?.focus()
       return
     }
 
     if (!isPending) {
       if (activeTab.payment_splits.length === 0) {
-        alert('Please add at least one payment method')
+        toast.warning('Please add at least one payment method')
         return
       }
 
@@ -1197,7 +1198,7 @@ export default function UnifiedBillingPage() {
       const grandTotal = billTotals.grandTotal
 
       if (Math.abs(totalSplits - grandTotal) > 0.01) {
-        alert(`Payment splits total (₹${totalSplits.toFixed(2)}) must equal bill total (₹${grandTotal.toFixed(2)})`)
+        toast.error(`Payment splits total (₹${totalSplits.toFixed(2)}) must equal bill total (₹${grandTotal.toFixed(2)})`)
         return
       }
     }
@@ -1323,11 +1324,11 @@ export default function UnifiedBillingPage() {
             console.log('[BILLING] Electron print successful!')
           } else {
             console.error('[BILLING] Electron print failed:', printResult.error)
-            alert('Bill created but print failed: ' + (printResult.error || 'Unknown error'))
+            toast.error('Bill created but print failed: ' + (printResult.error || 'Unknown error'))
           }
         } catch (electronPrintError: any) {
           console.error('[BILLING] Electron print exception:', electronPrintError)
-          alert('Bill created but print failed: ' + (electronPrintError.message || 'Unknown error'))
+          toast.error('Bill created but print failed: ' + (electronPrintError.message || 'Unknown error'))
         }
       } else {
         // Use browser print dialog for web deployment
@@ -1340,13 +1341,13 @@ export default function UnifiedBillingPage() {
             console.log('[BILLING] Browser print dialog opened successfully!')
           } else {
             console.error('[BILLING] Browser print failed:', printResult.message)
-            alert('Bill created but print failed: ' + (printResult.message || 'Print error'))
+            toast.error('Bill created but print failed: ' + (printResult.message || 'Print error'))
           }
         } catch (webPrintError: unknown) {
           console.error('[BILLING] Web print exception:', webPrintError)
           // Don't throw - bill was created successfully
           const errorMessage = webPrintError instanceof Error ? webPrintError.message : 'Print error'
-          alert('Bill created but print failed: ' + errorMessage)
+          toast.error('Bill created but print failed: ' + errorMessage)
         }
       }
 
@@ -1369,7 +1370,7 @@ export default function UnifiedBillingPage() {
       closeTabWithoutReload(activeTabId)
     } catch (error: any) {
       console.error('[BILLING] Error:', error)
-      alert(error.response?.data?.error || error.message || 'Failed to create bill')
+      toast.error(error.response?.data?.error || error.message || 'Failed to create bill')
     } finally {
       setLoading(false)
     }
@@ -2710,11 +2711,11 @@ export default function UnifiedBillingPage() {
                           if (!device) return
                           const connected = await bluetoothPrinterService.connect(device)
                           if (!connected) {
-                            alert('Failed to connect to printer. Please try again.')
+                            toast.error('Failed to connect to printer. Please try again.')
                             return
                           }
                         } catch (err) {
-                          alert('Bluetooth pairing failed: ' + (err as Error).message)
+                          toast.error('Bluetooth pairing failed: ' + (err as Error).message)
                           return
                         }
                       }
@@ -2743,7 +2744,7 @@ export default function UnifiedBillingPage() {
                       try {
                         await bluetoothPrinterService.printReceipt(receiptData)
                       } catch (err) {
-                        alert('Print failed: ' + (err as Error).message)
+                        toast.error('Print failed: ' + (err as Error).message)
                       }
                     }}
                     className="flex-1 px-4 py-2 bg-indigo-600 text-white rounded hover:bg-indigo-700 transition font-semibold text-sm flex items-center justify-center gap-2"
@@ -2805,7 +2806,7 @@ export default function UnifiedBillingPage() {
               const product = response.data.product
               addProductToItems(product)
             } catch (error: any) {
-              alert(error.response?.data?.error || 'Product not found for scanned barcode')
+              toast.error(error.response?.data?.error || 'Product not found for scanned barcode')
             }
           }}
         />

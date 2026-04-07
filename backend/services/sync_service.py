@@ -494,7 +494,7 @@ class SyncService:
         self._mark_as_synced('customer', 'customer_id', synced_ids)
         return len(synced_ids)
 
-def _sync_expenses(self):
+    def _sync_expenses(self):
         """Sync expenses from SQLite to PostgreSQL"""
         with self.sqlite_engine.connect() as sqlite_conn:
             result = sqlite_conn.execute(text("""
@@ -536,7 +536,7 @@ def _sync_expenses(self):
                             extra_data = EXCLUDED.extra_data,
                             updated_at = EXCLUDED.updated_at,
                             synced_at = CURRENT_TIMESTAMP
-                    """), converted)
+                        """), converted)
                     pg_conn.commit()
                     synced_ids.append(expense['expense_id'])
                 except Exception as e:
@@ -1319,7 +1319,7 @@ def _sync_expenses(self):
 
         return self._upsert_to_sqlite('customer', converted_records, 'customer_id', columns)
 
-def _download_expenses(self, client_id, last_download):
+    def _download_expenses(self, client_id, last_download):
         """Download expenses from Supabase to SQLite"""
         query = """
             SELECT * FROM expense

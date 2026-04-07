@@ -44,6 +44,9 @@ class GSTBilling(db.Model):
     created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=get_current_time)
     updated_at = db.Column(db.DateTime, default=get_current_time, onupdate=get_current_time)
+    customer_id = db.Column(db.String(36), nullable=True)
+    customer_email = db.Column(db.String(255), nullable=True)
+    customer_address = db.Column(db.Text, nullable=True)
     synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
 
     # lazy='select' — prevents silent JOIN on every COUNT/SUM/aggregate query
@@ -108,6 +111,9 @@ class NonGSTBilling(db.Model):
     created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=get_current_time)
     updated_at = db.Column(db.DateTime, default=get_current_time, onupdate=get_current_time)
+    customer_id = db.Column(db.String(36), nullable=True)
+    customer_email = db.Column(db.String(255), nullable=True)
+    customer_address = db.Column(db.Text, nullable=True)
     synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
 
     # lazy='select' — prevents silent JOIN on every COUNT/SUM/aggregate query
