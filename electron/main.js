@@ -162,7 +162,14 @@ async function startBackendWithSupervision() {
 function stopBackend() {
   if (backendProcess && !backendProcess.killed) {
     console.log('[Backend] Stopping Flask…');
-    backendProcess.kill('SIGTERM');
+    // SIGTERM doesn't work on Windows — use taskkill to force-kill the process tree
+    if (process.platform === 'win32') {
+      try {
+        require('child_process').execSync(`taskkill /PID ${backendProcess.pid} /T /F`, { stdio: 'ignore' });
+      } catch (e) { /* already dead */ }
+    } else {
+      backendProcess.kill('SIGTERM');
+    }
     backendProcess = null;
   }
 }
@@ -427,6 +434,7 @@ function sendUpdateStatus(status, data) {
 ipcMain.handle('install-update', () => {
   console.log('[Updater] User requested install — quitting and installing…');
   app.isQuitting = true;
+  stopBackend();
   autoUpdater.quitAndInstall(false, true);
 });
 
