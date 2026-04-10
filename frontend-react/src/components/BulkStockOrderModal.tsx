@@ -6,6 +6,7 @@ import { X, Upload, Plus, Trash2, FileSpreadsheet, Package, ChevronDown, Chevron
 import Tesseract from 'tesseract.js'
 import BarcodeScannerOverlay from '@/components/BarcodeScannerOverlay'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
+import { toast } from '@/utils/toast'
 
 interface OrderItem {
   item_id?: string
@@ -156,7 +157,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
 
       const lines = text.split('\n').map(line => line.trim()).filter(Boolean)
       if (lines.length < 2) {
-        alert('CSV file must have at least a header row and one data row')
+        toast.error('CSV file must have at least a header row and one data row')
         return
       }
 
@@ -167,7 +168,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
       const priceIdx = header.findIndex(h => h.includes('price') || h.includes('cost') || h.includes('rate') || h.includes('amount'))
 
       if (nameIdx === -1) {
-        alert('CSV must have a column with "name", "product", or "item" in the header')
+        toast.error('CSV must have a column with "name", "product", or "item" in the header')
         return
       }
 
@@ -195,7 +196,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
       }
 
       if (newItems.length === 0) {
-        alert('No valid items found in the CSV file')
+        toast.error('No valid items found in the CSV file')
         return
       }
 
@@ -204,7 +205,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
         items: [...prev.items, ...newItems]
       }))
 
-      alert(`${newItems.length} items imported successfully!`)
+      toast.success(`${newItems.length} items imported successfully!`)
     }
 
     reader.readAsText(file)
@@ -266,7 +267,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
         })
         processOcrText(result.data.text)
       } catch {
-        alert('Failed to process the captured image. Try again with better lighting.')
+        toast.error('Failed to process the captured image. Try again with better lighting.')
       } finally {
         setOcrProcessing(false)
         setOcrProgress(0)
@@ -282,7 +283,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
 
   const processOcrText = (text: string) => {
     if (!text.trim()) {
-      alert('Could not extract any text from the image. Try a clearer photo.')
+      toast.error('Could not extract any text from the image. Try a clearer photo.')
       return
     }
     const lines = text.split('\n').map(l => l.trim()).filter(l => l.length > 3)
@@ -324,10 +325,10 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
       })
     }
     if (newItems.length === 0) {
-      alert('Could not identify product items from the image. Try a clearer photo or use CSV import.')
+      toast.error('Could not identify product items from the image. Try a clearer photo or use CSV import.')
     } else {
       setFormData(prev => ({ ...prev, items: [...prev.items, ...newItems] }))
-      alert(`${newItems.length} items extracted from bill image! Please review the names, quantities and prices.`)
+      toast.success(`${newItems.length} items extracted from bill image! Please review the names, quantities and prices.`)
     }
   }
 
@@ -336,7 +337,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
     if (!file) return
 
     if (file.type === 'application/pdf') {
-      alert('PDF support: For best results, take a photo/screenshot of the bill and upload the image instead.')
+      toast.warning('PDF support: For best results, take a photo/screenshot of the bill and upload the image instead.')
       if (imageInputRef.current) imageInputRef.current.value = ''
       return
     }
@@ -353,7 +354,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
       })
       processOcrText(result.data.text)
     } catch {
-      alert('Failed to process the image. Try a clearer photo.')
+      toast.error('Failed to process the image. Try a clearer photo.')
     } finally {
       setOcrProcessing(false)
       setOcrProgress(0)
@@ -365,14 +366,14 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
     e.preventDefault()
 
     if (formData.items.length === 0) {
-      alert('Please add at least one item to the order')
+      toast.error('Please add at least one item to the order')
       return
     }
 
     // Validate items have names
     const invalidItems = formData.items.filter(item => !item.product_name.trim())
     if (invalidItems.length > 0) {
-      alert('All items must have a product name')
+      toast.error('All items must have a product name')
       return
     }
 
@@ -396,7 +397,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
         items: []
       })
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to save order')
+      toast.error(error.response?.data?.error || 'Failed to save order')
     } finally {
       setSubmitting(false)
     }
@@ -408,7 +409,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
       await api.delete(`/bulk-orders/${orderId}`)
       fetchOrders()
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to delete order')
+      toast.error(error.response?.data?.error || 'Failed to delete order')
     }
   }
 

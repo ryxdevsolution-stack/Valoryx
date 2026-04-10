@@ -7,6 +7,7 @@ import api from '@/lib/api'
 import { useData } from '@/contexts/DataContext'
 import { useClient } from '@/contexts/ClientContext'
 import { RefreshCw, ArrowRight, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
+import { toast } from '@/utils/toast'
 
 interface Product {
   product_id: string
@@ -109,7 +110,7 @@ export default function ExchangeBillPage() {
 
       // Check if bill is cancelled
       if (billData.status === 'cancelled') {
-        alert('Cannot exchange a cancelled bill')
+        toast.error('Cannot exchange a cancelled bill')
         navigate('/billing')
         return
       }
@@ -125,7 +126,7 @@ export default function ExchangeBillPage() {
       setReturnItems(items)
     } catch (error: any) {
       console.error('Failed to load bill:', error)
-      alert('Failed to load bill details')
+      toast.error('Failed to load bill details')
       navigate('/billing')
     } finally {
       setLoading(false)
@@ -205,14 +206,14 @@ export default function ExchangeBillPage() {
 
   const handleAddNewItem = () => {
     if (!currentItem.product_id) {
-      alert('Please select a product from the dropdown')
+      toast.error('Please select a product from the dropdown')
       return
     }
 
     // Verify product still exists in products list
     const productExists = products.find(p => p.product_id === currentItem.product_id)
     if (!productExists) {
-      alert('Selected product not found. Please refresh and try again.')
+      toast.error('Selected product not found. Please refresh and try again.')
       setCurrentItem({
         product_id: '',
         product_name: '',
@@ -231,12 +232,12 @@ export default function ExchangeBillPage() {
     }
 
     if (currentItem.quantity <= 0) {
-      alert('Quantity must be greater than 0')
+      toast.error('Quantity must be greater than 0')
       return
     }
 
     if (currentItem.rate < 0) {
-      alert('Rate cannot be negative')
+      toast.error('Rate cannot be negative')
       return
     }
 
@@ -252,7 +253,7 @@ export default function ExchangeBillPage() {
 
     const availableStock = productExists.quantity + returnedQty - alreadyAddedQty
     if (currentItem.quantity > availableStock) {
-      alert(`Insufficient stock for ${currentItem.product_name}. Available: ${availableStock}`)
+      toast.error(`Insufficient stock for ${currentItem.product_name}. Available: ${availableStock}`)
       return
     }
 
@@ -289,11 +290,11 @@ export default function ExchangeBillPage() {
 
   const handleAddPaymentSplit = () => {
     if (!paymentType) {
-      alert('Please select a payment type')
+      toast.error('Please select a payment type')
       return
     }
     if (!paymentAmount || Number(paymentAmount) <= 0) {
-      alert('Please enter a valid amount')
+      toast.error('Please enter a valid amount')
       return
     }
 
@@ -332,12 +333,12 @@ export default function ExchangeBillPage() {
     const selectedItems = getSelectedReturnItems()
 
     if (selectedItems.length === 0) {
-      alert('Please select at least one item to return')
+      toast.error('Please select at least one item to return')
       return
     }
 
     if (newItems.length === 0) {
-      alert('Please add at least one new item for exchange')
+      toast.error('Please add at least one new item for exchange')
       return
     }
 
@@ -345,12 +346,12 @@ export default function ExchangeBillPage() {
 
     // Only require payment if customer owes money
     if (difference > 0 && paymentSplits.length === 0) {
-      alert('Please add payment method for the balance amount')
+      toast.error('Please add payment method for the balance amount')
       return
     }
 
     if (difference > 0 && Math.abs(getTotalPaymentSplits() - difference) > 0.01) {
-      alert(`Payment amount (₹${getTotalPaymentSplits().toFixed(2)}) must equal balance due (₹${difference.toFixed(2)})`)
+      toast.error(`Payment amount (₹${getTotalPaymentSplits().toFixed(2)}) must equal balance due (₹${difference.toFixed(2)})`)
       return
     }
 
@@ -420,7 +421,7 @@ export default function ExchangeBillPage() {
 
       const response = await api.post(`/billing/exchange/${billId}`, requestBody)
 
-      alert('Bill updated successfully!')
+      toast.success('Bill updated successfully!')
 
       // OPTIMIZED: Fetch bill only once for printing (response doesn't include full bill data)
       // Only fetch if we need to print, otherwise skip
@@ -497,7 +498,7 @@ export default function ExchangeBillPage() {
                           error.message ||
                           'Failed to process exchange. Please check the console for details.'
 
-      alert(errorMessage)
+      toast.error(errorMessage)
     } finally {
       setProcessing(false)
     }

@@ -10,6 +10,7 @@ import { useNavigate, useLocation } from 'react-router-dom'
 import { generateBillPDF } from '@/lib/pdfService'
 import { getShopSettings } from '@/services/shopSettingsService'
 import type { ShopSettings } from '@/services/shopSettingsService'
+import { toast } from '@/utils/toast'
 
 interface BillItem {
   product_name: string
@@ -481,7 +482,7 @@ export default function AllBillsPage() {
           }
         } catch (electronPrintError: any) {
           console.error('Electron print failed:', electronPrintError)
-          alert('Print failed: ' + (electronPrintError.message || 'Unknown error'))
+          toast.error('Print failed: ' + (electronPrintError.message || 'Unknown error'))
         }
       } else {
         // Use browser print dialog for web deployment
@@ -494,7 +495,7 @@ export default function AllBillsPage() {
       }
     } catch (error: any) {
       console.error('Failed to print bill:', error)
-      alert(error.message || 'Print failed. Please try again.')
+      toast.error(error.message || 'Print failed. Please try again.')
     } finally {
       setLoadingBillDetails(false)
     }
@@ -550,7 +551,7 @@ export default function AllBillsPage() {
           )
         )
       } else {
-        alert(errorMsg)
+        toast.error(errorMsg)
       }
     }
   }
@@ -562,7 +563,7 @@ export default function AllBillsPage() {
       setBills(prev => prev.map(b => b.bill_id === billId ? { ...b, payment_status: 'paid' } : b))
       if (selectedBill?.bill_id === billId) setSelectedBill(prev => prev ? { ...prev, payment_status: 'paid' } : prev)
     } catch (err: any) {
-      alert(err.response?.data?.error || 'Failed to mark as paid')
+      toast.error(err.response?.data?.error || 'Failed to mark as paid')
     }
   }
 

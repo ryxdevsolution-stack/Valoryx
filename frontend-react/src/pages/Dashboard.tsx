@@ -10,6 +10,7 @@ import api from '@/lib/api'
 import { DashboardSkeleton } from '@/components/SkeletonLoader'
 import { motion } from 'framer-motion'
 import SyncButton from '@/components/SyncButton'
+import { toast } from '@/utils/toast'
 
 const RevenueAreaChart = lazy(() => import('@/components/charts/RevenueAreaChart'))
 const PeakHoursChart = lazy(() => import('@/components/charts/PeakHoursChart'))
@@ -164,7 +165,7 @@ export default function DashboardPage() {
       a.click()
       document.body.removeChild(a)
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to export')
+      toast.error(error.response?.data?.error || 'Failed to export')
     } finally {
       // Always cleanup Object URL to prevent memory leak
       if (url) window.URL.revokeObjectURL(url)

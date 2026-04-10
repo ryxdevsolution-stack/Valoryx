@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import api from '@/lib/api'
+import { toast } from '@/utils/toast'
 
 interface OrderItem {
   item_id: string
@@ -63,7 +64,7 @@ export default function BulkStockOrderList({ isOpen, onClose, onReceive }: Props
       await api.delete(`/bulk-orders/${orderId}`)
       fetchOrders()
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to delete order')
+      toast.error(error.response?.data?.error || 'Failed to delete order')
     }
   }
 

@@ -2,6 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
 import api from '@/lib/api';
+import { toast } from '@/utils/toast';
 import {
   PageHeader,
   SearchInput,
@@ -185,7 +186,9 @@ export default function UserManagement() {
     try {
       const response = await api.post(`/admin/users/${userId}/password`, {});
       if (response.data.generated_password) {
-        alert(`New password: ${response.data.generated_password}`);
+        const pwd = response.data.generated_password;
+        try { await navigator.clipboard.writeText(pwd); } catch { /* ignore */ }
+        toast.success(`New password copied to clipboard: ${pwd}`);
       }
     } catch { /* swallow */ }
   };

@@ -271,6 +271,79 @@ def create_customer():
         return jsonify({'error': 'Failed to create customer', 'message': str(e)}), 500
 
 
+@customer_bp.route('/<customer_id>', methods=['PUT'])
+@authenticate
+@require_permission('add_customer')
+def update_customer(customer_id):
+    """Update an existing customer's details."""
+    try:
+        client_id = g.user['client_id']
+        data = request.get_json() or {}
+
+        customer = Customer.query.filter_by(
+            customer_id=customer_id,
+            client_id=client_id
+        ).first()
+
+        if not customer:
+            return jsonify({'error': 'Customer not found'}), 404
+
+        # Updatable fields
+        if 'customer_name' in data:
+            name = (data.get('customer_name') or '').strip()
+            if not name:
+                return jsonify({'error': 'Customer name cannot be empty'}), 400
+            customer.customer_name = title_case(name)
+
+        if 'customer_phone' in data:
+            phone = (data.get('customer_phone') or '').strip()
+            if not phone:
+                return jsonify({'error': 'Customer phone cannot be empty'}), 400
+            # Ensure no other customer in this client uses the new phone
+            if phone != customer.customer_phone:
+                duplicate = Customer.query.filter(
+                    Customer.client_id == client_id,
+                    Customer.customer_phone == phone,
+                    Customer.customer_id != customer_id
+                ).first()
+                if duplicate:
+                    return jsonify({'error': 'Another customer already uses this phone number'}), 400
+            customer.customer_phone = phone
+
+        if 'customer_email' in data:
+            customer.customer_email = data.get('customer_email', '') or ''
+        if 'customer_address' in data:
+            customer.customer_address = data.get('customer_address', '') or ''
+        if 'customer_gstin' in data:
+            customer.customer_gstin = data.get('customer_gstin', '') or ''
+        if 'customer_city' in data:
+            customer.customer_city = title_case(data.get('customer_city', '') or '')
+        if 'customer_state' in data:
+            customer.customer_state = title_case(data.get('customer_state', '') or '')
+        if 'customer_pincode' in data:
+            customer.customer_pincode = data.get('customer_pincode', '') or ''
+        if 'notes' in data:
+            customer.notes = data.get('notes', '') or ''
+        if 'status' in data and data.get('status') in ('active', 'inactive'):
+            customer.status = data.get('status')
+
+        db.session.commit()
+
+        # Bust customer list cache
+        from utils.cache_helper import get_cache_manager
+        get_cache_manager().delete(f"customers:list:{client_id}")
+
+        return jsonify({
+            'success': True,
+            'customer': customer.to_dict(),
+            'message': 'Customer updated successfully'
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to update customer', 'message': str(e)}), 500
+
+
 @customer_bp.route('/phone/<phone>', methods=['GET'])
 @authenticate
 def get_customer_by_phone(phone):

@@ -12,6 +12,7 @@
  */
 
 import { PrintableBill } from '@/types/billing'
+import { toast } from '@/utils/toast'
 
 export interface ClientInfoForPDF {
   client_name: string
@@ -595,7 +596,7 @@ ${pointsPanel}
   const url = URL.createObjectURL(blob)
   const win = window.open(url, '_blank', 'width=580,height=900,scrollbars=yes')
   if (!win) {
-    alert('Popup blocked — please allow popups for this site to generate PDFs.')
+    toast.error('Popup blocked — please allow popups for this site to generate PDFs.')
   }
   setTimeout(() => URL.revokeObjectURL(url), 30_000)
 }

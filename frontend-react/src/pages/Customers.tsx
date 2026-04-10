@@ -5,14 +5,21 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { Link } from 'react-router-dom'
 import { CustomerCardSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
-import { X, User, Phone, Mail, MapPin, ShoppingBag, TrendingUp, Clock, ChevronDown, ChevronUp, Package } from 'lucide-react'
+import { X, User, Phone, Mail, MapPin, ShoppingBag, TrendingUp, Clock, ChevronDown, ChevronUp, Package, Pencil } from 'lucide-react'
+import { toast } from '@/utils/toast'
 
 interface Customer {
+  customer_id?: string
   customer_code: number | null
   customer_name: string
   customer_phone: string
   customer_email: string
   customer_address: string
+  customer_gstin?: string
+  customer_city?: string
+  customer_state?: string
+  customer_pincode?: string
+  notes?: string
   total_bills: number
   total_amount: number
   last_purchase: string
@@ -53,6 +60,74 @@ export default function CustomersPage() {
   const [expandedBillId, setExpandedBillId] = useState<string | null>(null)
   const [currentPage, setCurrentPage] = useState(1)
   const ITEMS_PER_PAGE = 25
+
+  // Edit customer modal state
+  const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
+  const [editForm, setEditForm] = useState({
+    customer_name: '',
+    customer_phone: '',
+    customer_email: '',
+    customer_address: '',
+    customer_gstin: '',
+    customer_city: '',
+    customer_state: '',
+    customer_pincode: '',
+    notes: '',
+  })
+  const [savingEdit, setSavingEdit] = useState(false)
+
+  const openEditCustomer = useCallback((customer: Customer) => {
+    setEditingCustomer(customer)
+    setEditForm({
+      customer_name: customer.customer_name || '',
+      customer_phone: customer.customer_phone || '',
+      customer_email: customer.customer_email || '',
+      customer_address: customer.customer_address || '',
+      customer_gstin: customer.customer_gstin || '',
+      customer_city: customer.customer_city || '',
+      customer_state: customer.customer_state || '',
+      customer_pincode: customer.customer_pincode || '',
+      notes: customer.notes || '',
+    })
+  }, [])
+
+  const closeEditCustomer = useCallback(() => {
+    setEditingCustomer(null)
+  }, [])
+
+  const handleSaveCustomer = useCallback(async () => {
+    if (!editingCustomer?.customer_id) {
+      toast.error('Cannot edit this customer')
+      return
+    }
+    if (!editForm.customer_name.trim() || !editForm.customer_phone.trim()) {
+      toast.error('Name and phone are required')
+      return
+    }
+    try {
+      setSavingEdit(true)
+      const response = await api.put(`/customer/${editingCustomer.customer_id}`, editForm)
+      if (response.data.success) {
+        const updated = response.data.customer
+        setCustomers(prev => prev.map(c =>
+          c.customer_id === updated.customer_id
+            ? { ...c, ...updated, total_amount: updated.total_amount ?? updated.total_spent ?? c.total_amount }
+            : c
+        ))
+        if (selectedCustomer?.customer_id === updated.customer_id) {
+          setSelectedCustomer(prev => prev ? { ...prev, ...updated } : prev)
+        }
+        toast.success('Customer updated')
+        closeEditCustomer()
+      } else {
+        toast.error(response.data.error || 'Failed to update customer')
+      }
+    } catch (error: any) {
+      toast.error(error?.response?.data?.error || 'Failed to update customer')
+    } finally {
+      setSavingEdit(false)
+    }
+  }, [editingCustomer, editForm, selectedCustomer, closeEditCustomer])
 
   // Track ongoing request to prevent duplicates (for React Strict Mode)
   const ongoingRequest = useRef<Promise<void> | null>(null)
@@ -456,13 +531,25 @@ export default function CustomersPage() {
                   )}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={closeDrawer}
-                className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors"
-              >
-                <X className="w-5 h-5" />
-              </button>
+              <div className="flex items-center gap-1">
+                {!selectedCustomer.is_walkin && selectedCustomer.customer_id && (
+                  <button
+                    type="button"
+                    onClick={() => openEditCustomer(selectedCustomer)}
+                    className="p-1.5 rounded-lg hover:bg-blue-100 dark:hover:bg-blue-900/30 text-blue-600 dark:text-blue-400 transition-colors"
+                    title="Edit customer"
+                  >
+                    <Pencil className="w-4 h-4" />
+                  </button>
+                )}
+                <button
+                  type="button"
+                  onClick={closeDrawer}
+                  className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
+              </div>
             </div>
 
             {/* Customer Info */}
@@ -647,6 +734,143 @@ export default function CustomersPage() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Edit Customer Modal */}
+      {editingCustomer && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" onClick={closeEditCustomer}>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div
+            className="relative bg-white dark:bg-gray-900 rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700 sticky top-0 bg-white dark:bg-gray-900 z-10">
+              <h3 className="text-base font-semibold text-gray-900 dark:text-white">Edit Customer</h3>
+              <button
+                type="button"
+                onClick={closeEditCustomer}
+                className="p-1.5 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-500 dark:text-gray-400"
+              >
+                <X className="w-5 h-5" />
+              </button>
+            </div>
+
+            <form
+              onSubmit={(e) => { e.preventDefault(); handleSaveCustomer() }}
+              className="p-5 space-y-3"
+            >
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Name <span className="text-red-500">*</span></label>
+                <input
+                  type="text"
+                  value={editForm.customer_name}
+                  onChange={e => setEditForm(f => ({ ...f, customer_name: e.target.value }))}
+                  required
+                  className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Phone <span className="text-red-500">*</span></label>
+                  <input
+                    type="text"
+                    value={editForm.customer_phone}
+                    onChange={e => setEditForm(f => ({ ...f, customer_phone: e.target.value }))}
+                    required
+                    className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={editForm.customer_email}
+                    onChange={e => setEditForm(f => ({ ...f, customer_email: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Address</label>
+                <textarea
+                  value={editForm.customer_address}
+                  onChange={e => setEditForm(f => ({ ...f, customer_address: e.target.value }))}
+                  rows={2}
+                  className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">City</label>
+                  <input
+                    type="text"
+                    value={editForm.customer_city}
+                    onChange={e => setEditForm(f => ({ ...f, customer_city: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">State</label>
+                  <input
+                    type="text"
+                    value={editForm.customer_state}
+                    onChange={e => setEditForm(f => ({ ...f, customer_state: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Pincode</label>
+                  <input
+                    type="text"
+                    value={editForm.customer_pincode}
+                    onChange={e => setEditForm(f => ({ ...f, customer_pincode: e.target.value }))}
+                    className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-1 focus:ring-blue-500"
+                  />
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">GSTIN</label>
+                <input
+                  type="text"
+                  value={editForm.customer_gstin}
+                  onChange={e => setEditForm(f => ({ ...f, customer_gstin: e.target.value }))}
+                  className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Notes</label>
+                <textarea
+                  value={editForm.notes}
+                  onChange={e => setEditForm(f => ({ ...f, notes: e.target.value }))}
+                  rows={2}
+                  className="w-full px-3 py-2 text-sm bg-white dark:bg-gray-800 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-1 focus:ring-blue-500"
+                />
+              </div>
+
+              <div className="flex items-center justify-end gap-2 pt-2">
+                <button
+                  type="button"
+                  onClick={closeEditCustomer}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={savingEdit}
+                  className="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-700 text-white disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  {savingEdit ? 'Saving...' : 'Save Changes'}
+                </button>
+              </div>
+            </form>
           </div>
         </div>
       )}

@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import api from '@/lib/api'
+import { toast } from '@/utils/toast'
 
 interface OrderItem {
   item_id: string
@@ -62,7 +63,7 @@ export default function ReceiveStockModal({ isOpen, onClose, order, onSuccess }:
       }))
 
     if (items.length === 0) {
-      alert('Please enter quantities to receive')
+      toast.error('Please enter quantities to receive')
       return
     }
 
@@ -72,7 +73,7 @@ export default function ReceiveStockModal({ isOpen, onClose, order, onSuccess }:
       onSuccess()
       onClose()
     } catch (error: any) {
-      alert(error.response?.data?.error || 'Failed to receive items')
+      toast.error(error.response?.data?.error || 'Failed to receive items')
     } finally {
       setSubmitting(false)
     }

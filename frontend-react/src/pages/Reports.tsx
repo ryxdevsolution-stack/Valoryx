@@ -5,6 +5,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import NotesModal from '@/components/NotesModal'
 import api from '@/lib/api'
 import { motion } from 'framer-motion'
+import { toast } from '@/utils/toast'
 
 interface Bill {
   bill_id: string
@@ -376,7 +377,7 @@ export default function ReportsPage() {
       }
     } catch (error: any) {
       console.error('Failed to delete expense:', error)
-      alert(error.response?.data?.error || 'Failed to delete expense')
+      toast.error(error.response?.data?.error || 'Failed to delete expense')
     } finally {
       setLoading(false)
     }
@@ -402,7 +403,7 @@ export default function ReportsPage() {
       }
     } catch (error: any) {
       console.error('Failed to save expense:', error)
-      alert(error.response?.data?.error || 'Failed to save expense')
+      toast.error(error.response?.data?.error || 'Failed to save expense')
     } finally {
       setLoading(false)
     }

@@ -3,6 +3,7 @@ import { useEffect, useState, useRef, useCallback, useMemo } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
+import { toast } from '@/utils/toast'
 
 interface GSTBill {
   bill_id: string
@@ -70,7 +71,7 @@ export default function AuditorReportsPage() {
     page = 1
   ) => {
     if (!startDate || !endDate) {
-      if (showAlert) alert('Please select date range')
+      if (showAlert) toast.error('Please select date range')
       return
     }
 
@@ -90,7 +91,7 @@ export default function AuditorReportsPage() {
         setCurrentPage(pag.page || page)
         setShowPreview(true)
       } catch (error: any) {
-        if (showAlert) alert(error.response?.data?.error || 'Failed to fetch GST bills')
+        if (showAlert) toast.error(error.response?.data?.error || 'Failed to fetch GST bills')
         else console.error('Failed to fetch GST bills:', error)
       } finally {
         setLoading(false)
@@ -123,7 +124,7 @@ export default function AuditorReportsPage() {
       link.click()
       link.remove()
     } catch {
-      alert('Failed to export PDF')
+      toast.error('Failed to export PDF')
     } finally {
       setExporting(false)
     }
@@ -160,7 +161,7 @@ export default function AuditorReportsPage() {
       link.click()
       link.remove()
     } catch {
-      alert('Failed to export CSV')
+      toast.error('Failed to export CSV')
     } finally {
       setExporting(false)
     }
