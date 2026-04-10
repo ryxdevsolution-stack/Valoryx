@@ -60,9 +60,9 @@ def get_next_bill_number(client_id, bill_type='gst'):
         if is_offline:
             # SQLite: three-step self-healing approach (no RETURNING, no UUID cast)
             # Step 1: Ensure the counter row exists (noop if already present)
-            db.session.execute(text(f"""
-                INSERT INTO bill_number_counters (client_id, {column_name})
-                VALUES (:client_id, 0)
+            db.session.execute(text("""
+                INSERT INTO bill_number_counters (client_id, current_gst_bill_number, current_non_gst_bill_number)
+                VALUES (:client_id, 0, 0)
                 ON CONFLICT (client_id) DO NOTHING
             """), {"client_id": client_id})
 
@@ -101,9 +101,9 @@ def get_next_bill_number(client_id, bill_type='gst'):
             # - bill_number_counters.client_id is TEXT  → use plain :client_id
             # - gst_billing.client_id / non_gst_billing.client_id are UUID → CAST
             # Step 1: Ensure counter row exists
-            db.session.execute(text(f"""
-                INSERT INTO bill_number_counters (client_id, {column_name})
-                VALUES (:client_id, 0)
+            db.session.execute(text("""
+                INSERT INTO bill_number_counters (client_id, current_gst_bill_number, current_non_gst_bill_number)
+                VALUES (:client_id, 0, 0)
                 ON CONFLICT (client_id) DO NOTHING
             """), {"client_id": client_id})
 
@@ -207,9 +207,10 @@ def reset_bill_number(client_id, bill_type='gst', new_value=0):
     client_id_expr = ':client_id' if is_offline else 'CAST(:client_id AS UUID)'
 
     try:
+        other_column = 'current_non_gst_bill_number' if column_name == 'current_gst_bill_number' else 'current_gst_bill_number'
         sql = text(f"""
-            INSERT INTO bill_number_counters (client_id, {column_name})
-            VALUES ({client_id_expr}, :new_value)
+            INSERT INTO bill_number_counters (client_id, {column_name}, {other_column})
+            VALUES ({client_id_expr}, :new_value, 0)
             ON CONFLICT (client_id)
             DO UPDATE SET
                 {column_name} = :new_value,
