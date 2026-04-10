@@ -1,9 +1,11 @@
 import os
 import socket
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env file
-load_dotenv()
+# Load .env file from the backend directory (where config.py lives) —
+# reliable regardless of cwd (dev, packaged exe, or system Python).
+load_dotenv(Path(__file__).parent / '.env')
 
 # Force IPv4 resolution for better performance
 def force_ipv4_dns():
