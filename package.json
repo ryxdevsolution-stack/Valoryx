@@ -1,6 +1,6 @@
 {
   "name": "valoryx",
-  "version": "1.1.4",
+  "version": "1.1.5",
   "description": "Professional Billing and Inventory Management System",
   "author": {
     "name": "RYX Tech",
@@ -49,6 +49,7 @@
         "to": "backend",
         "filter": [
           "**/*",
+          ".env",
           "!__pycache__/**",
           "!*.pyc",
           "!venv/**"

@@ -95,3 +95,4 @@ simple-test.js
 
 # Explicit backend env
 backend/.env
+backend/env.local

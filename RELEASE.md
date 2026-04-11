@@ -18,7 +18,7 @@ Standard steps to build, tag, and publish a new version.
    git tag v1.1.4
    git push origin main
    git push origin v1.1.4
-   gh release create v1.1.4 --title "v1.1.3" --notes "Release notes here" dist/Valoryx-Setup-1.1.4.exe dist/latest.yml
+   gh release create v1.1.4 --title "v1.1.4" --notes "Release notes here" dist/Valoryx-Setup-1.1.4.exe dist/latest.yml
    ```
 
 4. **Client auto-update** — clients on older versions will get the update automatically next time they open the app.

@@ -3,9 +3,16 @@ import socket
 from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env file from the backend directory (where config.py lives) —
-# reliable regardless of cwd (dev, packaged exe, or system Python).
-load_dotenv(Path(__file__).parent / '.env')
+# Load env file from the backend directory (where config.py lives).
+# Try env.local first (used in packaged exe — NSIS strips dotfiles),
+# then fall back to .env (used in dev).
+_backend_dir = Path(__file__).parent
+_env_local = _backend_dir / 'env.local'
+_env_dot = _backend_dir / '.env'
+if _env_local.exists():
+    load_dotenv(_env_local)
+else:
+    load_dotenv(_env_dot)
 
 # Force IPv4 resolution for better performance
 def force_ipv4_dns():
