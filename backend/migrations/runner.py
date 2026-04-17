@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 12
+CURRENT_SCHEMA_VERSION = 13
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -757,6 +757,57 @@ def _m012_create_customer_table(db):
     logging.info("[Migration] v12: customer table created")
 
 
+def _m013_apparel_label_fields(db):
+    """
+    Add fields for retail apparel hang-tag labels.
+    - stock_entry: brand_name, size_variant, colour, country_of_origin,
+                   manufacture_date (YYYY-MM text), importer_name, importer_address,
+                   consumer_care_phone, consumer_care_email
+    - client_entry: label_importer_name, label_importer_address,
+                    label_origin_country, label_care_phone, label_care_email
+                    (client-wide defaults so users don't retype per-SKU)
+    All columns are nullable — zero-risk to existing rows.
+    """
+    inspector = sa_inspect(db.engine)
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    # stock_entry — per-SKU legal metrology fields
+    _add_col('stock_entry', 'brand_name',           'VARCHAR(120) NULL')
+    _add_col('stock_entry', 'size_variant',         'VARCHAR(20) NULL')
+    _add_col('stock_entry', 'colour',               'VARCHAR(40) NULL')
+    _add_col('stock_entry', 'country_of_origin',    'VARCHAR(60) NULL')
+    _add_col('stock_entry', 'manufacture_date',     'VARCHAR(7) NULL')  # YYYY-MM
+    _add_col('stock_entry', 'importer_name',        'VARCHAR(160) NULL')
+    _add_col('stock_entry', 'importer_address',     'TEXT NULL')
+    _add_col('stock_entry', 'consumer_care_phone',  'VARCHAR(20) NULL')
+    _add_col('stock_entry', 'consumer_care_email',  'VARCHAR(120) NULL')
+
+    # client_entry — client-wide label defaults
+    _add_col('client_entry', 'label_importer_name',    'VARCHAR(160) NULL')
+    _add_col('client_entry', 'label_importer_address', 'TEXT NULL')
+    # No SQL DEFAULT: Postgres would backfill every existing row with 'India'
+    # which may be wrong for importers. The Python layer supplies 'India' as
+    # runtime fallback via _client_label_defaults() when the column is NULL.
+    _add_col('client_entry', 'label_origin_country',   'VARCHAR(60) NULL')
+    _add_col('client_entry', 'label_care_phone',       'VARCHAR(20) NULL')
+    _add_col('client_entry', 'label_care_email',       'VARCHAR(120) NULL')
+
+    db.session.commit()
+    logging.info("[Migration] v13: apparel label fields added")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -772,6 +823,7 @@ MIGRATIONS = [
     (10, _m010_billing_payment_status),
     (11, _m011_sync_bill_number_counters),
     (12, _m012_create_customer_table),
+    (13, _m013_apparel_label_fields),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

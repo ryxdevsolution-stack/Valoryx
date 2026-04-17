@@ -20,7 +20,8 @@
     "build": "npm run build:frontend",
     "electron:dev": "electron . --dev",
     "electron:start": "npm run build:frontend && electron .",
-    "electron:build": "cd frontend-react && npm run build:electron && cd .. && electron-builder",
+    "build:python": "node scripts/build-embedded-python.js",
+    "electron:build": "npm run build:python && cd frontend-react && npm run build:electron && cd .. && electron-builder",
     "electron:build:win": "electron-builder --win",
     "electron:pack": "electron-builder --dir",
     "build:icon": "electron-icon-builder --input=./build/icon.png --output=./electron/resources/ && cp ./electron/resources/icons/win/icon.ico ./electron/resources/icon.ico",
@@ -53,6 +54,16 @@
           "!__pycache__/**",
           "!*.pyc",
           "!venv/**"
+        ]
+      },
+      {
+        "from": "python",
+        "to": "python",
+        "filter": [
+          "**/*",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
+          "!**/*.pyo"
         ]
       }
     ],

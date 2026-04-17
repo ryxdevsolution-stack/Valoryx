@@ -77,12 +77,17 @@ class OptimizedConfig:
 
         if mode == 'online':
             # PostgreSQL connection pool settings
+            # Supabase Session Mode pooler (port 5432) caps concurrent clients per project.
+            # Keep per-process pool small so multiple Gunicorn workers fit inside the quota.
+            # If traffic grows, move DB_URL to port 6543 (Transaction Mode) and set
+            # prepared_statement_cache_size=0 below.
             return {
                 "pool_pre_ping": True,
-                "pool_recycle": 3600,
-                "pool_size": 50,
-                "max_overflow": 100,
-                "pool_timeout": 5,
+                "pool_recycle": 1800,
+                "pool_size": 10,
+                "max_overflow": 20,
+                "pool_timeout": 10,
+                "pool_use_lifo": True,
                 "echo": False,
                 "execution_options": {
                     "compiled_cache": {},

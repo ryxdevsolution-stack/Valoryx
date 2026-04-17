@@ -141,10 +141,23 @@ function escapeHtml(text: string): string {
 // ============================================================================
 // RECEIPT HTML GENERATOR - UNIFIED FORMAT
 // ============================================================================
-export async function generateUpiQrDataUrl(upiId: string, shopName: string): Promise<string> {
+export async function generateUpiQrDataUrl(
+  upiId: string,
+  shopName: string,
+  amount?: number,
+  billNumber?: number | string,
+): Promise<string> {
   if (!upiId) return ''
   try {
-    const upiUrl = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(shopName || 'Shop')}`
+    const params = [`pa=${upiId}`, `pn=${encodeURIComponent(shopName || 'Shop')}`]
+    if (amount !== undefined && Number.isFinite(Number(amount)) && Number(amount) > 0) {
+      params.push(`am=${Number(amount).toFixed(2)}`)
+      params.push('cu=INR')
+    }
+    if (billNumber !== undefined && billNumber !== null && String(billNumber).trim() !== '') {
+      params.push(`tn=${encodeURIComponent(`Bill ${billNumber}`)}`)
+    }
+    const upiUrl = `upi://pay?${params.join('&')}`
     return await QRCode.toDataURL(upiUrl, { width: 150, margin: 1, errorCorrectionLevel: 'M' })
   } catch {
     return ''
@@ -353,9 +366,9 @@ export function generateReceiptHtml(
   <!-- UPI QR Code -->
   ${qrDataUrl ? `
   <div style="text-align: center; margin: 2mm 0;">
-    <div style="font-size: ${FONT_SIZE_SMALL}; font-weight: bold; margin-bottom: 1mm;">Scan to Pay</div>
-    <img src="${qrDataUrl}" style="width: 25mm; height: 25mm;" />
-    <div style="font-size: ${FONT_SIZE_SMALL}; margin-top: 1mm;">UPI: ${escapeHtml(clientInfo.upi_id || '')}</div>
+    <div style="font-size: ${FONT_SIZE_SMALL}; font-weight: bold;">Scan to Pay &#8377;${grandTotal}</div>
+    <img src="${qrDataUrl}" style="width: 18mm; height: 18mm; margin: 0.5mm 0;" />
+    <div style="font-size: 6pt;">UPI: ${escapeHtml(clientInfo.upi_id || '')}</div>
   </div>
   ` : (clientInfo.upi_id ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL}; margin-top: 1mm;">UPI: ${escapeHtml(clientInfo.upi_id)}</div>` : '')}
 
@@ -378,8 +391,11 @@ export async function printBill(
   showNoExchange: boolean = true
 ): Promise<PrintResult> {
   try {
-    // Generate UPI QR code data URL if UPI ID is set
-    const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '') : undefined
+    // Generate UPI QR code data URL if UPI ID is set (with prefilled amount + bill no)
+    const payAmount = bill.type === 'gst' ? Number(bill.final_amount) : Number(bill.total_amount)
+    const qrDataUrl = clientInfo.upi_id
+      ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '', payAmount, bill.bill_number)
+      : undefined
     const html = generateReceiptHtml(bill, clientInfo, showNoExchange, qrDataUrl);
 
     // Remove any existing print iframe

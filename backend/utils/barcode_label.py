@@ -7,7 +7,7 @@ import barcode
 from barcode.writer import SVGWriter, ImageWriter
 import io
 import base64
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 from PIL import Image
 
 # Configuration - Label size 50mm x 25mm
@@ -248,6 +248,256 @@ def generate_labels_html(items: List[Dict[str, Any]], config: dict = None) -> st
 """
 
     return html
+
+
+# ──────────────────────────────────────────────────────────────────────────
+# Apparel hang-tag label (50×100mm landscape) — hybrid CODE128 + QR
+# Includes Legal Metrology fields: brand, size, MRP phrase, MFG, origin,
+# importer, consumer care. Designed per UI spec at 203 DPI.
+# ──────────────────────────────────────────────────────────────────────────
+
+APPAREL_LABEL_CONFIG = {
+    'width_mm': 100,
+    'height_mm': 50,
+}
+
+
+def _format_inr(value) -> str:
+    try:
+        num = float(value or 0)
+    except (TypeError, ValueError):
+        num = 0.0
+    if num == int(num):
+        return f"{int(num):,}"
+    return f"{num:,.2f}"
+
+
+def _escape(s) -> str:
+    if s is None:
+        return ''
+    return (
+        str(s)
+        .replace('&', '&amp;')
+        .replace('<', '&lt;')
+        .replace('>', '&gt;')
+        .replace('"', '&quot;')
+    )
+
+
+def generate_qr_svg_data_uri(data: str, box_size: int = 6, border: int = 2) -> str:
+    """Generate a QR code as a base64-encoded SVG data URI."""
+    if not data:
+        return ''
+    try:
+        import qrcode
+        import qrcode.image.svg as qrsvg
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=box_size,
+            border=border,
+        )
+        qr.add_data(data)
+        qr.make(fit=True)
+        img = qr.make_image(image_factory=qrsvg.SvgImage)
+        buf = io.BytesIO()
+        img.save(buf)
+        svg = buf.getvalue().decode('utf-8')
+        b64 = base64.b64encode(svg.encode('utf-8')).decode('utf-8')
+        return f"data:image/svg+xml;base64,{b64}"
+    except Exception as e:
+        print(f"[APPAREL_LABEL] QR generation failed for {data!r}: {e}")
+        return ''
+
+
+def _resolve_label_field(item: Dict[str, Any], client_defaults: Dict[str, Any],
+                        item_key: str, default_key: str) -> str:
+    """Per-SKU value falls back to client-wide default if blank."""
+    val = item.get(item_key)
+    if val is None or (isinstance(val, str) and not val.strip()):
+        val = client_defaults.get(default_key)
+    return '' if val is None else str(val).strip()
+
+
+def generate_apparel_label_html(item: Dict[str, Any],
+                                 client_defaults: Optional[Dict[str, Any]] = None,
+                                 qr_url_template: Optional[str] = None) -> str:
+    """
+    Generate HTML for a single 50×100mm apparel hang-tag label.
+
+    item: expects brand_name, product_name, size_variant, colour, item_code,
+          rate, mrp, manufacture_date, country_of_origin, importer_name,
+          importer_address, consumer_care_phone, consumer_care_email
+    client_defaults: fallback dict (label_importer_name, label_importer_address,
+          label_origin_country, label_care_phone, label_care_email)
+    qr_url_template: e.g. "https://valoryx.in/p/{sku}" — payload for QR code.
+          If None, QR payload = item_code.
+    """
+    defaults = client_defaults or {}
+
+    brand = _escape(item.get('brand_name') or '')
+    product_name = _escape(item.get('product_name') or '')
+    sku = str(item.get('item_code') or '')
+    size_v = _escape(item.get('size_variant') or '')
+    colour = _escape(item.get('colour') or '')
+    mrp = item.get('mrp') or item.get('rate') or 0
+
+    mfg = _resolve_label_field(item, defaults, 'manufacture_date', '')
+    origin = _resolve_label_field(item, defaults, 'country_of_origin', 'label_origin_country') or 'India'
+    imp_name = _resolve_label_field(item, defaults, 'importer_name', 'label_importer_name')
+    imp_addr = _resolve_label_field(item, defaults, 'importer_address', 'label_importer_address')
+    care_phone = _resolve_label_field(item, defaults, 'consumer_care_phone', 'label_care_phone')
+    care_email = _resolve_label_field(item, defaults, 'consumer_care_email', 'label_care_email')
+
+    # Meta row
+    meta_parts = []
+    if size_v:
+        meta_parts.append(f"SIZE: {size_v}")
+    if colour:
+        meta_parts.append(f"COLOUR: {colour}")
+    if sku:
+        meta_parts.append(f"SKU: {_escape(sku)}")
+    meta_row = '  |  '.join(meta_parts) or '&nbsp;'
+
+    # Legal fine print (3 compact lines per design spec)
+    line1_bits = []
+    if mfg:
+        line1_bits.append(f"Mfg: {_escape(mfg)}")
+    if origin:
+        line1_bits.append(f"Origin: {_escape(origin)}")
+    line1_bits.append("Net Qty: 1 N")
+    legal_line_1 = '  •  '.join(line1_bits)
+
+    if imp_name:
+        mkt_body = _escape(imp_name)
+        if imp_addr:
+            mkt_body += f", {_escape(imp_addr)}"
+        legal_line_2 = f"Mkt by: {mkt_body}"
+    else:
+        legal_line_2 = ''
+
+    care_bits = []
+    if care_phone:
+        care_bits.append(f"Care: {_escape(care_phone)}")
+    if care_email:
+        care_bits.append(_escape(care_email))
+    care_bits.append("MRP incl. of all taxes")
+    legal_line_3 = '  •  '.join(care_bits)
+
+    # Barcode (CODE128) — existing generator
+    barcode_svg = generate_barcode_svg(sku) if sku else ''
+
+    # QR payload
+    if qr_url_template:
+        qr_payload = qr_url_template.replace('{sku}', sku)
+    else:
+        qr_payload = sku
+    qr_svg = generate_qr_svg_data_uri(qr_payload) if qr_payload else ''
+
+    # Hide legal line 2 entirely if no importer
+    legal_line_2_html = (
+        f'<div class="legal-line">{legal_line_2}</div>' if legal_line_2 else ''
+    )
+
+    return f"""
+    <section class="apparel-label">
+      <header class="al-head">
+        <div class="al-brand">{brand}</div>
+        <div class="al-mrp">MRP ₹{_format_inr(mrp)}</div>
+      </header>
+      <div class="al-product">{product_name}</div>
+      <div class="al-meta">{meta_row}</div>
+      <div class="al-body">
+        <div class="al-body-left">
+          <div class="al-legal">
+            <div class="legal-line">{legal_line_1}</div>
+            {legal_line_2_html}
+            <div class="legal-line">{legal_line_3}</div>
+          </div>
+          <div class="al-barcode">
+            {f'<img src="{barcode_svg}" alt="{_escape(sku)}" />' if barcode_svg else ''}
+            <div class="al-barcode-digits">{_escape(sku)}</div>
+          </div>
+        </div>
+        <div class="al-qr">
+          {f'<img src="{qr_svg}" alt="QR" />' if qr_svg else ''}
+          <div class="al-qr-caption">scan for details</div>
+        </div>
+      </div>
+    </section>
+    """
+
+
+def generate_apparel_labels_html(items: List[Dict[str, Any]],
+                                  client_defaults: Optional[Dict[str, Any]] = None,
+                                  qr_url_template: Optional[str] = None) -> str:
+    """
+    Generate complete HTML document for 50×100mm apparel hang-tag printing.
+    Each item's `quantity` controls how many labels are printed for that SKU.
+    """
+    cfg = APPAREL_LABEL_CONFIG
+    W, H = cfg['width_mm'], cfg['height_mm']
+
+    css = f"""
+        @page {{ size: {W}mm {H}mm; margin: 0; }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
+        body {{ font-family: 'Inter', 'IBM Plex Sans', 'Helvetica Neue', Arial, sans-serif;
+                background: white; color: #000; -webkit-print-color-adjust: exact; }}
+        .apparel-label {{
+            width: {W}mm; height: {H}mm;
+            padding: 2mm;
+            display: flex; flex-direction: column; gap: 0.8mm;
+            page-break-after: always;
+            overflow: hidden;
+        }}
+        .apparel-label:last-child {{ page-break-after: avoid; }}
+        .al-head {{ display: flex; justify-content: space-between; align-items: baseline;
+                    border-bottom: 0.25mm solid #000; padding-bottom: 0.6mm; }}
+        .al-brand {{ font-size: 9pt; font-weight: 800; letter-spacing: 0.5pt;
+                     text-transform: uppercase; }}
+        .al-mrp   {{ font-size: 14pt; font-weight: 900; }}
+        .al-product {{ font-size: 16pt; font-weight: 800; line-height: 1.05;
+                       text-transform: uppercase;
+                       display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+                       overflow: hidden; text-overflow: ellipsis; max-height: 10mm; }}
+        .al-meta {{ font-size: 7pt; font-weight: 600; letter-spacing: 0.3pt;
+                    text-transform: uppercase; color: #111; }}
+        .al-body {{ display: flex; flex: 1; gap: 2mm; align-items: stretch; min-height: 0; }}
+        .al-body-left {{ flex: 1; display: flex; flex-direction: column;
+                          justify-content: space-between; min-width: 0; }}
+        .al-legal {{ font-size: 5.5pt; font-weight: 400; line-height: 1.25; color: #000; }}
+        .legal-line {{ white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }}
+        .al-barcode {{ margin-top: 0.8mm; }}
+        .al-barcode img {{ width: 100%; height: 8mm; object-fit: fill;
+                            image-rendering: pixelated; image-rendering: crisp-edges; }}
+        .al-barcode-digits {{ font-family: 'Courier New', monospace; font-size: 7pt;
+                               font-weight: 700; text-align: center; margin-top: 0.3mm;
+                               letter-spacing: 0.5pt; }}
+        .al-qr {{ width: 22mm; display: flex; flex-direction: column;
+                   align-items: center; justify-content: flex-end; flex-shrink: 0; }}
+        .al-qr img {{ width: 20mm; height: 20mm; }}
+        .al-qr-caption {{ font-size: 5pt; font-weight: 500; margin-top: 0.4mm;
+                           text-align: center; color: #333; }}
+        @media print {{
+            body {{ margin: 0; }}
+            .apparel-label {{ border: none; }}
+        }}
+    """
+
+    body_html = ''
+    for item in items:
+        quantity = max(1, int(item.get('quantity', 1) or 1))
+        label = generate_apparel_label_html(item, client_defaults, qr_url_template)
+        for _ in range(quantity):
+            body_html += label
+
+    return f"""<!DOCTYPE html>
+<html>
+<head><meta charset="UTF-8"><style>{css}</style></head>
+<body>
+{body_html}
+</body>
+</html>"""
 
 
 def generate_barcode_image(code: str, width: int = 384, height: int = 60) -> Image.Image:

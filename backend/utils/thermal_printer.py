@@ -842,27 +842,76 @@ class ThermalPrinter:
         else:
             subprocess.run(['lp', '-o', 'media=Custom.80x297mm', html_file], timeout=10)
 
-    def print_labels(self, items: List[Dict[str, Any]]) -> bool:
+    def print_labels(self, items: List[Dict[str, Any]],
+                     template: str = 'default',
+                     client_defaults: Optional[Dict[str, Any]] = None) -> bool:
         """
-        Print barcode labels for items (50mm x 25mm labels)
+        Print barcode labels for items.
 
         Args:
             items: List of items with item_code, product_name, rate, mrp, quantity
                    quantity determines how many labels to print for each item
+            template: 'default' (50×25mm legacy) or 'apparel_50x100' (50×100mm hang-tag)
+            client_defaults: optional dict of client-level label defaults (used only for
+                             apparel templates to fall back when per-SKU fields are blank)
 
         Returns:
             True if print successful, False otherwise
         """
         try:
-            from utils.barcode_label import generate_labels_html, generate_text_labels
+            from utils.barcode_label import (
+                generate_labels_html,
+                generate_text_labels,
+                generate_apparel_labels_html,
+                APPAREL_LABEL_CONFIG,
+            )
 
-            # Check if printer is available
             if not self.printer_name:
                 print("[THERMAL_PRINTER] ERROR: No printer configured for labels")
                 return False
 
             total_labels = sum(int(item.get('quantity', 1)) for item in items)
-            print(f"[THERMAL_PRINTER] Starting label print job - {total_labels} labels for {len(items)} items")
+            is_apparel = template == 'apparel_50x100'
+            print(f"[THERMAL_PRINTER] Starting label print job - template={template}, "
+                  f"{total_labels} labels for {len(items)} items")
+
+            # ── Apparel template: always render as HTML (no ESC/POS raster for v1)
+            # ESC/POS thermal receipt printers can't render a 100mm-wide apparel tag
+            # reliably, so we hand the HTML to the OS print pipeline regardless of platform.
+            if is_apparel:
+                html_content = generate_apparel_labels_html(
+                    items,
+                    client_defaults=client_defaults,
+                    qr_url_template='https://valoryx.in/p/{sku}',
+                )
+                W = APPAREL_LABEL_CONFIG['width_mm']
+                H = APPAREL_LABEL_CONFIG['height_mm']
+                with tempfile.NamedTemporaryFile(mode='w', suffix='.html',
+                                                  delete=False, encoding='utf-8') as f:
+                    f.write(html_content)
+                    temp_file = f.name
+                try:
+                    if self.system == "Windows":
+                        self._print_windows(temp_file)
+                    elif self.system == "Darwin":
+                        media = f'Custom.{W}x{H}mm'
+                        if self.printer_name and self.printer_name != "default":
+                            subprocess.run(['lp', '-d', self.printer_name, '-o', f'media={media}', temp_file], timeout=30)
+                        else:
+                            subprocess.run(['lp', '-o', f'media={media}', temp_file], timeout=30)
+                    else:  # Linux
+                        media = f'Custom.{W}x{H}mm'
+                        if self.printer_name and self.printer_name != "default":
+                            subprocess.run(['lp', '-d', self.printer_name, '-o', f'media={media}', temp_file], timeout=30)
+                        else:
+                            subprocess.run(['lp', '-o', f'media={media}', temp_file], timeout=30)
+                    print(f"[THERMAL_PRINTER] SUCCESS: {total_labels} apparel labels sent")
+                    return True
+                finally:
+                    try:
+                        os.unlink(temp_file)
+                    except Exception:
+                        pass
 
             # For Linux thermal printers, use ESC/POS commands for barcode printing
             if self.system == "Linux":
@@ -919,11 +968,13 @@ class ThermalPrinter:
                 if self.system == "Windows":
                     self._print_windows(temp_file)
                 elif self.system == "Darwin":
-                    # Use custom size for 40mm x 30mm labels
+                    # Legacy labels are 50×25mm per LABEL_CONFIG — was previously hardcoded to 40×30.
+                    from utils.barcode_label import LABEL_CONFIG
+                    media = f"Custom.{LABEL_CONFIG.get('width_mm', 50)}x{LABEL_CONFIG.get('height_mm', 25)}mm"
                     if self.printer_name and self.printer_name != "default":
-                        subprocess.run(['lp', '-d', self.printer_name, '-o', 'media=Custom.40x30mm', temp_file], timeout=30)
+                        subprocess.run(['lp', '-d', self.printer_name, '-o', f'media={media}', temp_file], timeout=30)
                     else:
-                        subprocess.run(['lp', '-o', 'media=Custom.40x30mm', temp_file], timeout=30)
+                        subprocess.run(['lp', '-o', f'media={media}', temp_file], timeout=30)
 
                 print(f"[THERMAL_PRINTER] SUCCESS: {total_labels} labels printed")
                 return True
