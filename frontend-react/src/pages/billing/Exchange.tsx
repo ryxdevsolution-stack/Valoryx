@@ -477,7 +477,9 @@ export default function ExchangeBillPage() {
       if (hasElectronPrint) {
         // Use Electron's silent print for desktop app
         const { generateReceiptHtml, generateUpiQrDataUrl } = await import('@/lib/webPrintService')
-        const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '') : undefined
+        const qrAmount = Number((billForPrint as any).final_amount ?? (billForPrint as any).total_amount) || 0
+        const qrBillNo = (billForPrint as any).bill_number
+        const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '', qrAmount, qrBillNo) : undefined
         const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo, false, qrDataUrl)
         await electronAPI.silentPrint(receiptHtml, null)
       } else {

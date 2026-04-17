@@ -273,38 +273,40 @@ ipcMain.handle('silent-print', async (event, html, printerName) => {
   try {
     console.log('[Print] Starting silent print...');
 
-    // Create a hidden window for printing
+    // 80mm ≈ 302px at 96 DPI — match the receipt width so the render viewport
+    // doesn't force extra layout that differs from the print output.
     const printWindow = new BrowserWindow({
-      width: 800,
-      height: 600,
+      width: 302,
+      height: 800,
       show: false,
       webPreferences: {
         nodeIntegration: false,
-        contextIsolation: true
+        contextIsolation: true,
+        offscreen: false,
       }
     });
 
-    // Load the HTML content
+    // Load HTML and wait for the document to fully paint (fonts, QR data URI)
     await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
+    await new Promise((resolve) => {
+      if (printWindow.webContents.isLoading()) {
+        printWindow.webContents.once('did-finish-load', () => setTimeout(resolve, 150));
+      } else {
+        setTimeout(resolve, 150);
+      }
+    });
 
-    // Wait for content to load
-    await new Promise(resolve => setTimeout(resolve, 500));
-
-    // Print silently to default printer
+    // Silent print. IMPORTANT: do NOT pass `pageSize` — let the HTML's
+    // `@page { size: 80mm auto }` rule drive width and auto height.
+    // Passing pageSize here overrides CSS and caused the paper to cut at a
+    // fixed height instead of at content end.
     const printOptions = {
       silent: true,
       printBackground: true,
-      deviceName: printerName || '', // Empty string uses default printer
-      margins: {
-        marginType: 'none'
-      },
-      pageSize: {
-        width: 80000, // 80mm in microns
-        height: 297000 // Auto height
-      }
+      deviceName: printerName || '',
+      margins: { marginType: 'none' },
     };
 
-    // Use promise to handle print callback
     return new Promise((resolve) => {
       printWindow.webContents.print(printOptions, (success, failureReason) => {
         if (!success) {

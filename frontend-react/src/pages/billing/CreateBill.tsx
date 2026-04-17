@@ -1314,7 +1314,9 @@ export default function UnifiedBillingPage() {
         try {
           // Import and generate receipt HTML
           const { generateReceiptHtml, generateUpiQrDataUrl } = await import('@/lib/webPrintService')
-          const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '') : undefined
+          const billAmount = Number(billData.final_amount ?? billData.total_amount) || 0
+          const billNumber = billData.bill_number
+          const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '', billAmount, billNumber) : undefined
           const receiptHtml = generateReceiptHtml(billData, clientInfo, true, qrDataUrl)
 
           console.log('[BILLING] Sending to Electron printer...')

@@ -473,7 +473,9 @@ export default function AllBillsPage() {
         // Use Electron's silent print for desktop app
         try {
           const { generateReceiptHtml, generateUpiQrDataUrl } = await import('@/lib/webPrintService')
-          const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '') : undefined
+          const qrBillAmount = Number((billForPrint as any).final_amount ?? (billForPrint as any).total_amount) || 0
+          const qrBillNumber = (billForPrint as any).bill_number
+          const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '', qrBillAmount, qrBillNumber) : undefined
           const receiptHtml = generateReceiptHtml(billForPrint as any, clientInfo, true, qrDataUrl)
           const printResult = await electronAPI.silentPrint(receiptHtml, null)
 

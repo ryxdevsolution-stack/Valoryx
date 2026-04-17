@@ -141,10 +141,22 @@ function escapeHtml(text: string): string {
 // ============================================================================
 // RECEIPT HTML GENERATOR - UNIFIED FORMAT
 // ============================================================================
-export async function generateUpiQrDataUrl(upiId: string, shopName: string): Promise<string> {
+export async function generateUpiQrDataUrl(
+  upiId: string,
+  shopName: string,
+  amount?: number,
+  billNumber?: string | number
+): Promise<string> {
   if (!upiId) return ''
   try {
-    const upiUrl = `upi://pay?pa=${upiId}&pn=${encodeURIComponent(shopName || 'Shop')}`
+    const parts = [
+      `pa=${upiId}`,
+      `pn=${encodeURIComponent(shopName || 'Shop')}`,
+      `cu=INR`,
+    ]
+    if (amount && amount > 0) parts.push(`am=${amount.toFixed(2)}`)
+    if (billNumber) parts.push(`tn=${encodeURIComponent(`Bill ${billNumber}`)}`)
+    const upiUrl = `upi://pay?${parts.join('&')}`
     return await QRCode.toDataURL(upiUrl, { width: 150, margin: 1, errorCorrectionLevel: 'M' })
   } catch {
     return ''
@@ -378,8 +390,11 @@ export async function printBill(
   showNoExchange: boolean = true
 ): Promise<PrintResult> {
   try {
-    // Generate UPI QR code data URL if UPI ID is set
-    const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '') : undefined
+    // Generate UPI QR code data URL if UPI ID is set (with amount + bill no pre-filled)
+    const qrAmount = Number(bill.final_amount ?? bill.total_amount) || 0
+    const qrDataUrl = clientInfo.upi_id
+      ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '', qrAmount, bill.bill_number)
+      : undefined
     const html = generateReceiptHtml(bill, clientInfo, showNoExchange, qrDataUrl);
 
     // Remove any existing print iframe
