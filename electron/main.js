@@ -55,17 +55,17 @@ function spawnFlask() {
   console.log(`[Backend] Python: ${pythonPath}`);
   console.log(`[Backend] Backend: ${backendPath}`);
 
-  // Read DB_URL from backend/.env so sync can connect to Supabase
+  // Read DB_URL from backend/env.local (renamed from .env so NSIS doesn't strip dotfiles)
   let dbUrl = '';
   try {
-    const envPath = path.join(backendPath, '.env');
+    const envPath = path.join(backendPath, 'env.local');
     if (fs.existsSync(envPath)) {
       const envContent = fs.readFileSync(envPath, 'utf-8');
       const match = envContent.match(/^DB_URL=(.+)$/m);
       if (match) dbUrl = match[1].trim();
     }
   } catch (e) {
-    console.warn('[Backend] Could not read .env for DB_URL:', e.message);
+    console.warn('[Backend] Could not read env.local for DB_URL:', e.message);
   }
 
   const proc = spawn(pythonPath, ['app.py'], {
