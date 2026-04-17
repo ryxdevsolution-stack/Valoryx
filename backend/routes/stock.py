@@ -1,6 +1,7 @@
 import uuid
 import io
 import csv
+import logging
 from datetime import datetime
 from flask import Blueprint, request, jsonify, g, send_file
 from werkzeug.utils import secure_filename
@@ -14,11 +15,59 @@ from utils.cache_helper import get_cache_manager, invalidate_stock_cache
 from utils.helpers import title_case
 from utils.rate_limiter import rate_limit
 
+logger = logging.getLogger(__name__)
+
 stock_bp = Blueprint('stock', __name__)
 
 # Cache timeout for stock list (5 minutes - cache is invalidated on stock changes anyway)
 # OPTIMIZED: Increased from 2 min to 5 min since we have proper cache invalidation
 STOCK_CACHE_TIMEOUT = 300
+
+
+def _to_num(value, default=None):
+    """Parse form input to float. Empty / whitespace / invalid → default (usually None)."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped == '':
+            return default
+        try:
+            return float(stripped)
+        except ValueError:
+            return default
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_int(value, default=None):
+    """Parse form input to int. Empty / whitespace / invalid → default."""
+    if value is None:
+        return default
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped == '':
+            return default
+        try:
+            return int(float(stripped))  # tolerate "10.0" etc.
+        except ValueError:
+            return default
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return default
+
+
+def _to_str_or_none(value):
+    """Strip string; empty → None. Non-string values pass through."""
+    if value is None:
+        return None
+    if isinstance(value, str):
+        stripped = value.strip()
+        return stripped if stripped else None
+    return value
 
 
 def generate_item_code(client_id, product_name):
@@ -78,66 +127,92 @@ def add_stock():
     Auto-sum if product already exists for this client
     """
     try:
-        data = request.get_json()
+        data = request.get_json() or {}
         client_id = g.user['client_id']
 
-        # Validate required fields
-        required_fields = ['product_name', 'quantity', 'rate']
-        for field in required_fields:
-            if field not in data:
-                return jsonify({'error': f'Missing required field: {field}'}), 400
+        # ── Required fields ──────────────────────────────────────────────────
+        product_name_raw = data.get('product_name')
+        if not product_name_raw or not str(product_name_raw).strip():
+            return jsonify({'error': 'Missing required field: product_name'}), 400
 
-        # Apply title case to name fields
-        product_name = title_case(data['product_name'])
-        category = title_case(data.get('category', 'Other'))
+        quantity = _to_int(data.get('quantity'))
+        if quantity is None:
+            return jsonify({'error': 'Missing or invalid required field: quantity'}), 400
+        if quantity < 0:
+            return jsonify({'error': 'quantity must be zero or positive'}), 400
 
-        # Check if product already exists for this client
+        rate = _to_num(data.get('rate'))
+        if rate is None:
+            return jsonify({'error': 'Missing or invalid required field: rate'}), 400
+        if rate < 0:
+            return jsonify({'error': 'rate must be zero or positive'}), 400
+
+        product_name = title_case(str(product_name_raw).strip())
+        category = title_case(str(data.get('category') or 'Other').strip() or 'Other')
+
+        # ── Optional numeric fields (empty/blank → None) ─────────────────────
+        cost_price      = _to_num(data.get('cost_price'))
+        mrp             = _to_num(data.get('mrp'))
+        pricing         = _to_num(data.get('pricing'))
+        gst_percentage  = _to_num(data.get('gst_percentage'), default=0)
+        low_stock_alert = _to_int(data.get('low_stock_alert'), default=10)
+
+        # ── Optional string fields (empty → None) ────────────────────────────
+        unit     = _to_str_or_none(data.get('unit')) or 'pcs'
+        hsn_code = _to_str_or_none(data.get('hsn_code'))
+        barcode  = _to_str_or_none(data.get('barcode'))   # optional — no auto-gen
+        item_code_in = _to_str_or_none(data.get('item_code'))
+
+        # Apparel / Legal Metrology (v13) — all optional
+        apparel = {
+            'brand_name':          _to_str_or_none(data.get('brand_name')),
+            'size_variant':        _to_str_or_none(data.get('size_variant')),
+            'colour':              _to_str_or_none(data.get('colour')),
+            'country_of_origin':   _to_str_or_none(data.get('country_of_origin')),
+            'manufacture_date':    _to_str_or_none(data.get('manufacture_date')),
+            'importer_name':       _to_str_or_none(data.get('importer_name')),
+            'importer_address':    _to_str_or_none(data.get('importer_address')),
+            'consumer_care_phone': _to_str_or_none(data.get('consumer_care_phone')),
+            'consumer_care_email': _to_str_or_none(data.get('consumer_care_email')),
+        }
+
+        # ── Find existing product for auto-sum ───────────────────────────────
         existing_product = StockEntry.query.filter_by(
             client_id=client_id,
             product_name=product_name
         ).first()
 
         if existing_product:
-            # Auto-sum: Update existing product quantity
             old_data = existing_product.to_dict()
-            existing_product.quantity += data['quantity']
-            existing_product.rate = data.get('rate', existing_product.rate)
-            existing_product.cost_price = data.get('cost_price', existing_product.cost_price)
-            existing_product.mrp = data.get('mrp', existing_product.mrp)
-            existing_product.pricing = data.get('pricing', existing_product.pricing)
+            existing_product.quantity += quantity
+            existing_product.rate = rate
+            if cost_price is not None:      existing_product.cost_price = cost_price
+            if mrp is not None:             existing_product.mrp = mrp
+            if pricing is not None:         existing_product.pricing = pricing
             existing_product.category = category
-            existing_product.unit = data.get('unit', existing_product.unit)
-            existing_product.low_stock_alert = data.get('low_stock_alert', existing_product.low_stock_alert)
+            existing_product.unit = unit
+            existing_product.low_stock_alert = low_stock_alert
+            existing_product.gst_percentage = gst_percentage
+            if hsn_code is not None:        existing_product.hsn_code = hsn_code
 
-            # Handle item_code - auto-generate if empty/None
-            item_code_value = data.get('item_code', existing_product.item_code)
-            if isinstance(item_code_value, str):
-                item_code_value = item_code_value.strip()
-                item_code_value = item_code_value if item_code_value else None
+            # item_code: explicit > existing > auto-generated
+            if item_code_in:
+                existing_product.item_code = item_code_in
+            elif not existing_product.item_code:
+                existing_product.item_code = generate_item_code(client_id, existing_product.product_name)
 
-            # If no item_code exists, auto-generate one
-            if not item_code_value and not existing_product.item_code:
-                item_code_value = generate_item_code(client_id, existing_product.product_name)
+            # barcode: set to new value if provided, else preserve existing (don't clear)
+            if barcode is not None:
+                existing_product.barcode = barcode
 
-            existing_product.item_code = item_code_value
+            # apparel: overwrite only when a non-null value is supplied
+            for field, value in apparel.items():
+                if value is not None:
+                    setattr(existing_product, field, value)
 
-            # Handle barcode - set to None if empty to avoid unique constraint issues
-            barcode_value = data.get('barcode', existing_product.barcode)
-            if isinstance(barcode_value, str):
-                barcode_value = barcode_value.strip()
-                barcode_value = barcode_value if barcode_value else None
-            existing_product.barcode = barcode_value
-
-            existing_product.gst_percentage = data.get('gst_percentage', existing_product.gst_percentage)
-            existing_product.hsn_code = data.get('hsn_code', existing_product.hsn_code)
             existing_product.updated_at = datetime.utcnow()
-
             db.session.commit()
-
-            # Invalidate stock cache
             invalidate_stock_cache(client_id)
-
-            # Log action
             log_action('UPDATE', 'stock_entry', existing_product.product_id, old_data, existing_product.to_dict())
 
             return jsonify({
@@ -147,57 +222,45 @@ def add_stock():
                 'product': existing_product.to_dict()
             }), 200
 
-        else:
-            # Create new product entry
-            # Handle barcode uniqueness - set to None if empty to avoid unique constraint issues
-            barcode_value = data.get('barcode', '').strip()
-            barcode_value = barcode_value if barcode_value else None
+        # ── New product ──────────────────────────────────────────────────────
+        item_code = item_code_in or generate_item_code(client_id, product_name)
 
-            # Handle item_code - auto-generate if empty
-            item_code_value = data.get('item_code', '').strip()
-            if not item_code_value:
-                # Auto-generate item code
-                item_code_value = generate_item_code(client_id, product_name)
-            # else: user provided item_code, use it
+        new_product = StockEntry(
+            product_id=str(uuid.uuid4()),
+            client_id=client_id,
+            product_name=product_name,
+            category=category,
+            quantity=quantity,
+            rate=rate,
+            cost_price=cost_price,
+            mrp=mrp,
+            pricing=pricing,
+            unit=unit,
+            low_stock_alert=low_stock_alert,
+            item_code=item_code,
+            barcode=barcode,
+            gst_percentage=gst_percentage,
+            hsn_code=hsn_code,
+            created_at=datetime.utcnow(),
+            **apparel,
+        )
 
-            new_product = StockEntry(
-                product_id=str(uuid.uuid4()),
-                client_id=client_id,
-                product_name=product_name,
-                category=category,
-                quantity=data['quantity'],
-                rate=data['rate'],
-                cost_price=data.get('cost_price'),
-                mrp=data.get('mrp'),
-                pricing=data.get('pricing'),
-                unit=data.get('unit', 'pcs'),
-                low_stock_alert=data.get('low_stock_alert', 10),
-                item_code=item_code_value,
-                barcode=barcode_value,
-                gst_percentage=data.get('gst_percentage', 0),
-                hsn_code=data.get('hsn_code', ''),
-                created_at=datetime.utcnow()
-            )
+        db.session.add(new_product)
+        db.session.commit()
+        invalidate_stock_cache(client_id)
+        log_action('CREATE', 'stock_entry', new_product.product_id, None, new_product.to_dict())
 
-            db.session.add(new_product)
-            db.session.commit()
+        return jsonify({
+            'success': True,
+            'product_id': new_product.product_id,
+            'message': 'Stock added successfully',
+            'product': new_product.to_dict()
+        }), 201
 
-            # Invalidate stock cache
-            invalidate_stock_cache(client_id)
-
-            # Log action
-            log_action('CREATE', 'stock_entry', new_product.product_id, None, new_product.to_dict())
-
-            return jsonify({
-                'success': True,
-                'product_id': new_product.product_id,
-                'message': 'Stock added successfully',
-                'product': new_product.to_dict()
-            }), 201
-
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({'error': 'Failed to add stock', 'message': str(e)}), 500
+        logger.exception(f"[Stock POST] Failed for client {g.user.get('client_id')}")
+        return jsonify({'error': 'Failed to add stock'}), 500
 
 
 @stock_bp.route('', methods=['GET'])
@@ -304,40 +367,66 @@ def update_stock(product_id):
         # Store old data for audit
         old_data = product.to_dict()
 
-        # Update fields (apply title case to name fields)
+        # Text fields
         if 'product_name' in data:
-            product.product_name = title_case(data['product_name'])
+            new_name = _to_str_or_none(data['product_name'])
+            if new_name:
+                product.product_name = title_case(new_name)
         if 'category' in data:
-            product.category = title_case(data['category'])
-        if 'quantity' in data:
-            product.quantity = data['quantity']
-        if 'rate' in data:
-            product.rate = data['rate']
-        if 'cost_price' in data:
-            product.cost_price = data['cost_price']
-        if 'mrp' in data:
-            product.mrp = data['mrp']
-        if 'pricing' in data:
-            product.pricing = data['pricing']
+            new_cat = _to_str_or_none(data['category'])
+            product.category = title_case(new_cat) if new_cat else product.category
         if 'unit' in data:
-            product.unit = data['unit']
-        if 'low_stock_alert' in data:
-            product.low_stock_alert = data['low_stock_alert']
-        if 'item_code' in data:
-            item_code_value = data['item_code'].strip() if isinstance(data['item_code'], str) else data['item_code']
-            product.item_code = item_code_value if item_code_value else product.item_code
+            new_unit = _to_str_or_none(data['unit'])
+            if new_unit:
+                product.unit = new_unit
+        if 'hsn_code' in data:
+            product.hsn_code = _to_str_or_none(data['hsn_code'])
 
-        # Auto-generate item_code if still missing
+        # Numeric fields:
+        #  - Required (quantity, rate): reject empty/invalid with 400.
+        #  - Optional (cost_price, mrp, pricing): empty → leave unchanged
+        #    (avoids silent data loss when the form re-POSTs blank optional fields).
+        if 'quantity' in data:
+            qty = _to_int(data['quantity'])
+            if qty is None or qty < 0:
+                return jsonify({'error': 'Invalid quantity'}), 400
+            product.quantity = qty
+        if 'rate' in data:
+            rate = _to_num(data['rate'])
+            if rate is None or rate < 0:
+                return jsonify({'error': 'Invalid rate'}), 400
+            product.rate = rate
+        if 'cost_price' in data and data['cost_price'] not in (None, ''):
+            product.cost_price = _to_num(data['cost_price'])
+        if 'mrp' in data and data['mrp'] not in (None, ''):
+            product.mrp = _to_num(data['mrp'])
+        if 'pricing' in data and data['pricing'] not in (None, ''):
+            product.pricing = _to_num(data['pricing'])
+        if 'low_stock_alert' in data:
+            product.low_stock_alert = _to_int(data['low_stock_alert'], default=product.low_stock_alert)
+        if 'gst_percentage' in data:
+            product.gst_percentage = _to_num(data['gst_percentage'], default=0)
+
+        # item_code: keep old if empty, auto-generate if still missing
+        if 'item_code' in data:
+            new_code = _to_str_or_none(data['item_code'])
+            if new_code:
+                product.item_code = new_code
         if not product.item_code:
             product.item_code = generate_item_code(client_id, product.product_name)
 
+        # barcode: optional — empty string clears it to NULL
         if 'barcode' in data:
-            barcode_value = data['barcode'].strip() if isinstance(data['barcode'], str) else data['barcode']
-            product.barcode = barcode_value if barcode_value else None
-        if 'gst_percentage' in data:
-            product.gst_percentage = data['gst_percentage']
-        if 'hsn_code' in data:
-            product.hsn_code = data['hsn_code']
+            product.barcode = _to_str_or_none(data['barcode'])
+
+        # Apparel / Legal Metrology fields (all optional strings)
+        for apparel_field in (
+            'brand_name', 'size_variant', 'colour', 'country_of_origin',
+            'manufacture_date', 'importer_name', 'importer_address',
+            'consumer_care_phone', 'consumer_care_email',
+        ):
+            if apparel_field in data:
+                setattr(product, apparel_field, _to_str_or_none(data[apparel_field]))
 
         product.updated_at = datetime.utcnow()
 
@@ -355,9 +444,10 @@ def update_stock(product_id):
             'product': product.to_dict()
         }), 200
 
-    except Exception as e:
+    except Exception:
         db.session.rollback()
-        return jsonify({'error': 'Failed to update stock', 'message': str(e)}), 500
+        logger.exception(f"[Stock PUT] Failed for product {product_id}")
+        return jsonify({'error': 'Failed to update stock'}), 500
 
 
 @stock_bp.route('/<product_id>', methods=['DELETE'])
@@ -680,8 +770,6 @@ def download_template():
         import os
         data = request.get_json() or {}
         file_format = data.get('format', 'csv')
-
-        print(file_format)
 
         # Get the path to template files
         template_dir = os.path.join(os.path.dirname(os.path.dirname(__file__)), 'templates')

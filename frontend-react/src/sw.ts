@@ -14,7 +14,13 @@ precacheAndRoute(self.__WB_MANIFEST)
 // ─── Offline fallback for navigation requests ───
 const OFFLINE_PAGE = '/offline.html'
 
-// Navigation: try network first, fall back to cache
+// Paths that must always hit the network and never touch the SW cache.
+// OAuth callbacks carry a one-time `code` param — caching them is both a
+// security problem and causes silent login failures on the next attempt.
+const NEVER_CACHE_PATHS = ['/oauth/callback', '/auth/callback']
+
+// Navigation: try network first, fall back to cache — except for OAuth
+// callbacks which bypass the SW entirely.
 registerRoute(
   new NavigationRoute(
     new NetworkFirst({
@@ -24,6 +30,9 @@ registerRoute(
         new ExpirationPlugin({ maxEntries: 50, maxAgeSeconds: 24 * 60 * 60 }),
       ],
     }),
+    {
+      denylist: NEVER_CACHE_PATHS.map(p => new RegExp(p)),
+    },
   ),
 )
 

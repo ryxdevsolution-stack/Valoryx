@@ -111,11 +111,22 @@ class FlexibleNumeric(TypeDecorator):
             return dialect.type_descriptor(Numeric(10, 2))
 
     def process_bind_param(self, value, dialect):
+        # HTML number inputs post '' for blank fields; Postgres NUMERIC cannot
+        # coerce '' so it raised ValueError. SQLite silently accepted it, which
+        # masked this bug in dev. Treat empty/whitespace/invalid as NULL.
         if value is None:
-            return value
-        return float(value) if value is not None else None
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped == '':
+                return None
+            try:
+                return float(stripped)
+            except ValueError:
+                return None
+        return float(value)
 
     def process_result_value(self, value, dialect):
         if value is None:
-            return value
-        return float(value) if value is not None else None
+            return None
+        return float(value)

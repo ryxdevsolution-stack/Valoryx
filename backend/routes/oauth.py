@@ -2,9 +2,11 @@
 OAuth Blueprint
 ---------------
 Google OAuth2 Authorization Code flow for signup and login.
-Uses Redis (via CacheManager) for CSRF state storage — multi-process safe.
-Falls back gracefully when Redis is unavailable (state check will fail-open is
-avoided: if cache is disabled the state is always treated as invalid).
+
+CSRF state is carried in a short-lived, HMAC-signed JWT — stateless, so any
+gunicorn worker can verify a state issued by any other worker without Redis
+or a shared database. Replay protection is enforced by Google's own
+single-use authorization code.
 """
 import os
 import uuid
@@ -22,7 +24,6 @@ from models.branch_model import Branch
 from models.permission_model import get_user_permissions, Permission, UserPermission
 from models.session_model import UserSession
 from config import Config
-from utils.cache_helper import get_cache_manager
 import requests as http_requests
 
 logger = logging.getLogger(__name__)
@@ -35,9 +36,40 @@ GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo'
 GOOGLE_SCOPES = 'openid email profile'
 OAUTH_STATE_TTL = 600  # 10 minutes
 
-# In-memory fallback CSRF state store (used when Redis is unavailable).
-# Safe for single-process deployments (dev / desktop app).
-_state_store: dict = {}
+
+def _issue_state_token() -> str:
+    """
+    Issue a stateless, short-lived, HMAC-signed OAuth state token.
+    Multi-process safe: any worker can verify a token issued by any other
+    worker using only the shared JWT_SECRET. No Redis/DB required.
+    The returned token acts as the `state` param sent to Google.
+
+    Replay protection is delegated to Google's single-use authorization
+    code — Google rejects a code reused after first exchange.
+    """
+    now = datetime.utcnow()
+    payload = {
+        'purpose': 'oauth_state',
+        'nonce': secrets.token_urlsafe(8),
+        'iat': now,
+        'exp': now + timedelta(seconds=OAUTH_STATE_TTL),
+    }
+    return jwt.encode(payload, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
+
+
+def _verify_state_token(token: str) -> bool:
+    """Verify an OAuth state token. Returns True only for our signed tokens."""
+    if not token:
+        return False
+    try:
+        payload = jwt.decode(token, Config.JWT_SECRET, algorithms=[Config.JWT_ALGORITHM])
+    except jwt.ExpiredSignatureError:
+        logger.info('OAuth state token expired')
+        return False
+    except jwt.InvalidTokenError as e:
+        logger.warning('OAuth state token invalid: %s', e)
+        return False
+    return payload.get('purpose') == 'oauth_state'
 
 
 # ---------------------------------------------------------------------------
@@ -122,15 +154,8 @@ def google_authorize():
     if not Config.GOOGLE_CLIENT_ID:
         return jsonify({'success': False, 'error': 'Google OAuth is not configured'}), 501
 
-    state = secrets.token_urlsafe(16)
-    cache = get_cache_manager()
-
-    _state_store[state] = datetime.utcnow()
-    # Evict states older than 10 minutes
-    cutoff = datetime.utcnow() - timedelta(seconds=OAUTH_STATE_TTL)
-    expired = [k for k, v in _state_store.items() if v < cutoff]
-    for k in expired:
-        _state_store.pop(k, None)
+    # Stateless JWT-signed state token — multi-process safe without Redis/DB.
+    state = _issue_state_token()
 
     redirect_uri = _get_redirect_uri()
     if not redirect_uri:
@@ -156,15 +181,6 @@ def google_callback():
     POST /api/oauth/google/callback
     Body: { "code": "...", "state": "..." }
     """
-    # Rate limit per IP to prevent code brute-force
-    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
-    cache = get_cache_manager()
-    rate_key = f'oauth_rate:{client_ip}'
-    attempts = cache.get(rate_key) or 0
-    if attempts >= 20:  # 20 attempts per 5 minutes per IP
-        return jsonify({'success': False, 'error': 'Too many requests. Try again later.'}), 429
-    cache.set(rate_key, attempts + 1, 300)  # 5 min TTL
-
     data = request.get_json() or {}
     code = (data.get('code') or '').strip()
     state = (data.get('state') or '').strip()
@@ -173,17 +189,12 @@ def google_callback():
         return jsonify({'success': False, 'error': 'Authorization code is required'}), 400
 
     # ------------------------------------------------------------------
-    # CSRF state validation (Redis or in-memory fallback)
+    # CSRF state validation — stateless JWT verification (multi-process safe).
+    # Replay protection is enforced by Google: authorization codes are
+    # single-use and invalidated after the first exchange attempt.
     # ------------------------------------------------------------------
-    if not state:
+    if not _verify_state_token(state):
         return jsonify({'success': False, 'error': 'Invalid or expired state (CSRF check failed)'}), 400
-
-    state_key = f'oauth_state:{state}'
-    ts = _state_store.pop(state, None)
-    if not ts:
-        return jsonify({'success': False, 'error': 'Invalid or expired state (CSRF check failed)'}), 400
-    if (datetime.utcnow() - ts).total_seconds() > OAUTH_STATE_TTL:
-        return jsonify({'success': False, 'error': 'State expired. Please try again.'}), 400
 
     # ------------------------------------------------------------------
     # Exchange code for Google access token

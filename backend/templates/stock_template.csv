@@ -1,4 +1,6 @@
 product_name,category,quantity,rate,unit,low_stock_alert,item_code,barcode,gst_percentage,hsn_code,purchase_price,mrp
+Sample Minimal Item,,10,100.00,,,,,,,,
+Sample No Barcode Item,Accessories,5,250.00,pcs,2,,,,,,
 Laptop Dell Inspiron,Electronics,52,34882.56,pcs,4,ITEM-3493,BAR-857762,28.0,3587,28000.00,39999.00
 HP Desktop,Electronics,181,19466.00,pcs,6,ITEM-2205,BAR-839428,12.0,8003,15000.00,22999.00
 Wireless Mouse,Electronics,427,500.00,pcs,6,ITEM-3957,BAR-172056,18.0,6370,350.00,599.00
