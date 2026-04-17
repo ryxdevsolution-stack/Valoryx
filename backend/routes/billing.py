@@ -1627,67 +1627,131 @@ def list_printers():
         }), 500
 
 
+_LABEL_TEMPLATES = ('default', 'apparel_50x100')
+_QR_URL_TEMPLATE_DEFAULT = 'https://valoryx.in/p/{sku}'
+
+
+def _client_label_defaults(client_id):
+    """Load a client's label default fields (importer / origin / care) for fallback."""
+    client = ClientEntry.query.filter_by(client_id=client_id).first()
+    if not client:
+        return {}
+    return {
+        'label_importer_name': client.label_importer_name,
+        'label_importer_address': client.label_importer_address,
+        'label_origin_country': client.label_origin_country or 'India',
+        'label_care_phone': client.label_care_phone or client.phone,
+        'label_care_email': client.label_care_email or client.email,
+    }
+
+
+def _hydrate_label_items(client_id, items):
+    """
+    For each item, load matching StockEntry (by item_code within client) and
+    merge its label fields (brand_name, size_variant, colour, mrp, manufacture_date,
+    origin, importer, care) into the item dict when the caller didn't provide them.
+    Returns a new list of item dicts — original order preserved.
+    """
+    codes = [it.get('item_code') for it in items if it.get('item_code')]
+    by_code = {}
+    if codes:
+        rows = StockEntry.query.filter(
+            StockEntry.client_id == client_id,
+            StockEntry.item_code.in_(codes),
+        ).all()
+        for row in rows:
+            by_code[row.item_code] = row
+
+    # mrp intentionally NOT in this list — it's a price, not label metadata,
+    # and caller may legitimately send mrp=0 (free sample); we must not silently
+    # overwrite it from the DB. The caller's label items already carry mrp/rate.
+    label_field_names = (
+        'brand_name', 'size_variant', 'colour',
+        'country_of_origin', 'manufacture_date',
+        'importer_name', 'importer_address',
+        'consumer_care_phone', 'consumer_care_email',
+    )
+    hydrated = []
+    for it in items:
+        row = by_code.get(it.get('item_code'))
+        merged = dict(it)
+        if row is not None:
+            for name in label_field_names:
+                # Only hydrate when the caller truly omitted or left blank —
+                # treat empty string as absent, but keep 0 / False if provided.
+                val = merged.get(name)
+                if val is None or (isinstance(val, str) and not val.strip()):
+                    db_val = getattr(row, name, None)
+                    if db_val is not None:
+                        merged[name] = db_val
+        hydrated.append(merged)
+    return hydrated
+
+
 @billing_bp.route('/print-labels', methods=['POST'])
 @authenticate
 @require_permission('print_bills')
 def print_labels():
     """
-    Print barcode labels for items (50mm x 25mm labels)
+    Print barcode labels for items.
 
     Request body:
     {
         "items": [
-            {
-                "item_code": "LAP-550-001",
-                "product_name": "Laptop Dell",
-                "rate": 45000,
-                "mrp": 50000,
-                "quantity": 10  # Print 10 labels (one per item in stock)
-            }
+            { "item_code": "TSH-0421", "product_name": "...", "rate": 899, "mrp": 999,
+              "quantity": 10,
+              # Optional overrides (otherwise hydrated from StockEntry):
+              "brand_name": "...", "size_variant": "M", "colour": "Red",
+              "manufacture_date": "2026-03", "country_of_origin": "India",
+              "importer_name": "...", "importer_address": "...",
+              "consumer_care_phone": "...", "consumer_care_email": "..." }
         ],
+        "template": "default" | "apparel_50x100",     # default = legacy 50x25
         "printerName": "optional_printer_name"
     }
-
-    Prints labels based on quantity - if quantity=10, prints 10 labels
     """
     try:
         from utils.thermal_printer import ThermalPrinter
 
         data = request.get_json()
 
-        # Validate required data
         if 'items' not in data or not isinstance(data['items'], list) or len(data['items']) == 0:
-            return jsonify({'error': 'Missing or empty items array'}), 400
+            return jsonify({'success': False, 'error': 'Missing or empty items array'}), 400
+
+        template = (data.get('template') or 'default').strip()
+        if template not in _LABEL_TEMPLATES:
+            return jsonify({'success': False, 'error': f'Unknown template. Allowed: {", ".join(_LABEL_TEMPLATES)}'}), 400
 
         items = data['items']
 
-        # Validate each item has required fields
         for i, item in enumerate(items):
             if not item.get('item_code'):
-                return jsonify({'error': f'Item {i+1} missing item_code'}), 400
+                return jsonify({'success': False, 'error': f'Item {i+1} missing item_code'}), 400
             if not item.get('product_name'):
-                return jsonify({'error': f'Item {i+1} missing product_name'}), 400
-
-            # Ensure quantity is at least 1
+                return jsonify({'success': False, 'error': f'Item {i+1} missing product_name'}), 400
             if 'quantity' not in item or int(item.get('quantity', 0)) < 1:
                 items[i]['quantity'] = 1
 
-        # Get printer name from request or use default
         printer_name = data.get('printerName', None)
-
-        # Validate printer name to prevent lp argument injection
         if printer_name is not None:
-            if not re.match(r'^[a-zA-Z0-9_\-\.]{1,64}$', printer_name):
+            # Allow spaces + parens — real printer names like "HP LaserJet 1020" or
+            # "Canon MF4600 (Copy 1)". subprocess.run([...]) uses argv, no shell
+            # interpolation, so this check is defence-in-depth not critical.
+            if not re.match(r'^[\w\s\-\.\(\)]{1,64}$', printer_name):
                 return jsonify({'success': False, 'error': 'Invalid printer name'}), 400
 
-        # Calculate total labels
+        # For apparel template: hydrate label fields from StockEntry + resolve client defaults
+        if template == 'apparel_50x100':
+            items = _hydrate_label_items(g.user['client_id'], items)
+
         total_labels = sum(int(item.get('quantity', 1)) for item in items)
 
-        # Initialize thermal printer
         printer = ThermalPrinter(printer_name=printer_name)
-
-        # Print the labels
-        success = printer.print_labels(items)
+        success = printer.print_labels(
+            items,
+            template=template,
+            client_defaults=_client_label_defaults(g.user['client_id']) if template == 'apparel_50x100' else None,
+        )
 
         if success:
             # Log the print action
@@ -1731,26 +1795,39 @@ def print_labels():
 def preview_labels():
     """
     Return barcode label HTML for browser preview (no printer needed).
-    Same payload as /print-labels.
+    Same payload as /print-labels. Supports template = 'default' | 'apparel_50x100'.
     """
     try:
-        from utils.barcode_label import generate_labels_html
+        from utils.barcode_label import generate_labels_html, generate_apparel_labels_html
 
         data = request.get_json()
 
         if 'items' not in data or not isinstance(data['items'], list) or len(data['items']) == 0:
-            return jsonify({'error': 'Missing or empty items array'}), 400
+            return jsonify({'success': False, 'error': 'Missing or empty items array'}), 400
+
+        template = (data.get('template') or 'default').strip()
+        if template not in _LABEL_TEMPLATES:
+            return jsonify({'success': False, 'error': f'Unknown template. Allowed: {", ".join(_LABEL_TEMPLATES)}'}), 400
 
         items = data['items']
         for i, item in enumerate(items):
             if not item.get('item_code'):
-                return jsonify({'error': f'Item {i+1} missing item_code'}), 400
+                return jsonify({'success': False, 'error': f'Item {i+1} missing item_code'}), 400
             if not item.get('product_name'):
-                return jsonify({'error': f'Item {i+1} missing product_name'}), 400
+                return jsonify({'success': False, 'error': f'Item {i+1} missing product_name'}), 400
             if 'quantity' not in item or int(item.get('quantity', 0)) < 1:
                 items[i]['quantity'] = 1
 
-        html = generate_labels_html(items)
+        if template == 'apparel_50x100':
+            items = _hydrate_label_items(g.user['client_id'], items)
+            html = generate_apparel_labels_html(
+                items,
+                client_defaults=_client_label_defaults(g.user['client_id']),
+                qr_url_template=_QR_URL_TEMPLATE_DEFAULT,
+            )
+        else:
+            html = generate_labels_html(items)
+
         return Response(html, mimetype='text/html')
 
     except Exception as e:

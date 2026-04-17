@@ -270,58 +270,121 @@ function createTray() {
 // =======================
 
 ipcMain.handle('silent-print', async (event, html, printerName) => {
-  try {
-    console.log('[Print] Starting silent print...');
+  const os = require('os');
+  let printWindow = null;
+  let tempFilePath = null;
 
-    // 80mm ≈ 302px at 96 DPI — match the receipt width so the render viewport
-    // doesn't force extra layout that differs from the print output.
-    const printWindow = new BrowserWindow({
-      width: 302,
-      height: 800,
+  const cleanup = () => {
+    try { if (printWindow && !printWindow.isDestroyed()) printWindow.close(); } catch (_) {}
+    try { if (tempFilePath && fs.existsSync(tempFilePath)) fs.unlinkSync(tempFilePath); } catch (_) {}
+  };
+
+  try {
+    if (!html || typeof html !== 'string') {
+      return { success: false, error: 'No HTML content to print' };
+    }
+
+    const htmlSize = Buffer.byteLength(html, 'utf8');
+    console.log(`[Print] Starting silent print — ${htmlSize} bytes of HTML`);
+
+    // 1) Write to a temp file instead of a data: URL.
+    //    data: URLs fail silently on Windows for large receipts (many items +
+    //    inline QR SVG) — Chromium either truncates or renders blank.
+    //    Also: data: context has no base URL, so any relative assets vanish.
+    tempFilePath = path.join(
+      os.tmpdir(),
+      `valoryx-receipt-${Date.now()}-${Math.floor(Math.random() * 10000)}.html`
+    );
+    fs.writeFileSync(tempFilePath, html, 'utf8');
+    console.log('[Print] Wrote receipt HTML to', tempFilePath);
+
+    printWindow = new BrowserWindow({
+      width: 800,
+      height: 1000,
       show: false,
       webPreferences: {
         nodeIntegration: false,
         contextIsolation: true,
         offscreen: false,
-      }
+      },
     });
 
-    // Load HTML and wait for the document to fully paint (fonts, QR data URI)
-    await printWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(html)}`);
-    await new Promise((resolve) => {
-      if (printWindow.webContents.isLoading()) {
-        printWindow.webContents.once('did-finish-load', () => setTimeout(resolve, 150));
-      } else {
-        setTimeout(resolve, 150);
-      }
+    // 2) Wait for did-finish-load event, not a fixed timeout.
+    //    QR codes, inline fonts, and base64 images need time to decode.
+    //    500ms was racing on cold Windows installs.
+    const loadPromise = new Promise((resolveLoad, rejectLoad) => {
+      const onFail = (_ev, code, desc) => {
+        rejectLoad(new Error(`Failed to load receipt HTML (code ${code}): ${desc}`));
+      };
+      printWindow.webContents.once('did-finish-load', () => {
+        printWindow.webContents.removeListener('did-fail-load', onFail);
+        resolveLoad();
+      });
+      printWindow.webContents.once('did-fail-load', onFail);
     });
 
-    // Silent print. IMPORTANT: do NOT pass `pageSize` — let the HTML's
-    // `@page { size: 80mm auto }` rule drive width and auto height.
-    // Passing pageSize here overrides CSS and caused the paper to cut at a
-    // fixed height instead of at content end.
+    await printWindow.loadFile(tempFilePath);
+    await loadPromise;
+
+    // Small pad for layout stabilization (images decoded, fonts applied).
+    await new Promise(resolve => setTimeout(resolve, 250));
+
+    // 3) Resolve printer: explicit → default → error.
+    //    Empty deviceName silently falls back to whatever Windows thinks is
+    //    the default — often "Microsoft Print to PDF" on fresh installs,
+    //    which just prompts for a file path invisibly and produces no paper output.
+    let resolvedPrinter = (printerName || '').trim();
+    if (!resolvedPrinter) {
+      try {
+        const printers = await printWindow.webContents.getPrintersAsync();
+        const def = printers.find(p => p.isDefault) || printers[0];
+        if (def) {
+          resolvedPrinter = def.name;
+          console.log('[Print] Using default printer:', resolvedPrinter);
+        } else {
+          cleanup();
+          return { success: false, error: 'No printer installed on this system' };
+        }
+      } catch (err) {
+        console.error('[Print] Could not enumerate printers:', err.message);
+        // Fall through — let Chromium try its own default
+      }
+    }
+
     const printOptions = {
       silent: true,
       printBackground: true,
-      deviceName: printerName || '',
+      deviceName: resolvedPrinter,
+      color: false,
       margins: { marginType: 'none' },
+      pageSize: {
+        // 80mm wide × long receipt roll — matches existing thermal config.
+        // Height 297mm is the Chromium "Auto" equivalent; drivers clip to content.
+        width: 80000,
+        height: 297000,
+      },
+      copies: 1,
     };
 
-    return new Promise((resolve) => {
+    console.log('[Print] Printing to', resolvedPrinter || '(OS default)');
+
+    const printResult = await new Promise(resolve => {
       printWindow.webContents.print(printOptions, (success, failureReason) => {
         if (!success) {
           console.error('[Print] Print failed:', failureReason);
-          printWindow.close();
-          resolve({ success: false, error: failureReason });
+          resolve({ success: false, error: failureReason || 'Print job cancelled or failed' });
         } else {
-          console.log('[Print] Print successful');
-          printWindow.close();
-          resolve({ success: true });
+          console.log('[Print] Print job dispatched successfully');
+          resolve({ success: true, printer: resolvedPrinter });
         }
       });
     });
+
+    cleanup();
+    return printResult;
   } catch (error) {
     console.error('[Print] Error:', error);
+    cleanup();
     return { success: false, error: error.message };
   }
 });

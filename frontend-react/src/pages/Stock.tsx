@@ -9,6 +9,7 @@ import BulkStockOrderModal from '@/components/BulkStockOrderModal'
 import BulkStockOrderList from '@/components/BulkStockOrderList'
 import ReceiveStockModal from '@/components/ReceiveStockModal'
 import BarcodeScannerOverlay from '@/components/BarcodeScannerOverlay'
+import LabelPrintDialog, { LabelFields } from '@/components/LabelPrintDialog'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
 
 interface Stock {
@@ -208,6 +209,7 @@ export default function StockManagementPage() {
   // Barcode printing state
   const [printingLabels, setPrintingLabels] = useState<string | null>(null)
   const [labelPreviewHtml, setLabelPreviewHtml] = useState<string | null>(null)
+  const [labelDialogStock, setLabelDialogStock] = useState<Stock | null>(null)
 
   // Camera barcode scanner overlay
   const [showBarcodeScanner, setShowBarcodeScanner] = useState(false)
@@ -642,27 +644,32 @@ export default function StockManagementPage() {
     fetchStocks()
   }, [showToast, fetchStocks])
 
-  const handlePrintBarcode = useCallback(async (stock: Stock) => {
-    if (printingLabels) return // Prevent multiple prints
+  // Opens the dialog — the user picks template (50×25 Price / 50×100 Apparel),
+  // fills missing legal fields if needed, then dialog's onPrint fires.
+  const handleOpenLabelDialog = useCallback((stock: Stock) => {
+    if (printingLabels) return
+    setLabelDialogStock(stock)
+  }, [printingLabels])
 
+  const handlePrintFromDialog = useCallback(async (
+    stock: Stock,
+    template: 'default' | 'apparel_50x100',
+    copies: number,
+    fieldsPatch: LabelFields,
+  ) => {
     setPrintingLabels(stock.product_id)
     try {
       let itemCode = stock.item_code
 
-      // If no item_code, update the product to generate one
       if (!itemCode) {
         showToast('Generating item code...', 'success')
         const updateResponse = await api.put(`/stock/${stock.product_id}`, {
           product_name: stock.product_name,
           quantity: stock.quantity,
           rate: stock.rate,
-          // Don't send item_code - backend will auto-generate
         })
         itemCode = updateResponse.data.product?.item_code
-        if (!itemCode) {
-          throw new Error('Failed to generate item code')
-        }
-        // Refresh stock list to get updated item_code
+        if (!itemCode) throw new Error('Failed to generate item code')
         fetchStocks()
       }
 
@@ -671,32 +678,47 @@ export default function StockManagementPage() {
         product_name: stock.product_name,
         rate: Number(stock.rate),
         mrp: stock.mrp ? Number(stock.mrp) : Number(stock.rate),
-        quantity: stock.quantity
+        quantity: copies,
+        ...fieldsPatch,
       }]
 
       const isElectron = !!(window as any).electronAPI?.isElectron
 
-      if (isElectron) {
-        // Electron: use backend thermal printer
-        const response = await api.post('/billing/print-labels', { items: labelItems })
+      // Apparel 50×100 tags: always preview-then-print (both Electron + web).
+      // The preview iframe's contentWindow.print() hands off to the OS dialog
+      // inside Electron too, which correctly honours the @page 100mm×50mm size
+      // and lets the user verify before spooling a potentially expensive
+      // TT-ribbon label roll.
+      //
+      // Legacy 50×25 price stickers on Electron keep the silent backend-print
+      // path to preserve existing muscle memory for high-volume stocktake use.
+      if (template === 'apparel_50x100') {
+        const previewRes = await api.post('/billing/preview-labels',
+          { items: labelItems, template },
+          { responseType: 'text' })
+        setLabelPreviewHtml(previewRes.data)
+        showToast('Apparel tag preview ready — click Print to send to printer.', 'success')
+      } else if (isElectron) {
+        const response = await api.post('/billing/print-labels', { items: labelItems, template })
         if (response.data.success) {
-          showToast(`${response.data.total_labels} barcode labels printed!`, 'success')
+          showToast(`${response.data.total_labels} labels printed!`, 'success')
         } else {
           throw new Error(response.data.error || 'Failed to print labels')
         }
       } else {
-        // Web: show preview modal with browser print
-        const previewRes = await api.post('/billing/preview-labels', { items: labelItems }, { responseType: 'text' })
+        const previewRes = await api.post('/billing/preview-labels',
+          { items: labelItems, template },
+          { responseType: 'text' })
         setLabelPreviewHtml(previewRes.data)
         showToast('Label preview ready — click Print to print from browser.', 'success')
       }
     } catch (error: any) {
-      console.error('Failed to print barcode labels:', error)
-      showToast(error.response?.data?.error || error.message || 'Failed to print barcode labels', 'error')
+      console.error('Failed to print labels:', error)
+      showToast(error.response?.data?.error || error.message || 'Failed to print labels', 'error')
     } finally {
       setPrintingLabels(null)
     }
-  }, [printingLabels, showToast, fetchStocks])
+  }, [showToast, fetchStocks])
 
   // Memoized low stock count for performance
   const lowStockCount = useMemo(() => stocks.filter(computeIsLowStock).length, [stocks])
@@ -1511,7 +1533,7 @@ export default function StockManagementPage() {
                     printingLabels={printingLabels}
                     onEdit={handleEdit}
                     onDelete={handleDelete}
-                    onPrintBarcode={handlePrintBarcode}
+                    onPrintBarcode={handleOpenLabelDialog}
                   />
               ))}
             </tbody>
@@ -1584,6 +1606,15 @@ export default function StockManagementPage() {
         <BarcodeScannerOverlay
           onScan={(barcode) => setFormData(prev => ({ ...prev, barcode }))}
           onClose={() => setShowBarcodeScanner(false)}
+        />
+      )}
+
+      {/* Label Print Dialog — template picker + apparel legal fields */}
+      {labelDialogStock && (
+        <LabelPrintDialog
+          stock={labelDialogStock}
+          onClose={() => setLabelDialogStock(null)}
+          onPrint={handlePrintFromDialog}
         />
       )}
       {/* Barcode Label Preview Modal */}

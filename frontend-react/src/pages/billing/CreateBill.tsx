@@ -1174,6 +1174,37 @@ export default function UnifiedBillingPage() {
     return true
   }
 
+  const handleClearBill = () => {
+    updateActiveTab({
+      items: [],
+      customer_code: '',
+      customer_name: '',
+      customer_phone: '',
+      customer_gstin: '',
+      discountPercentage: 0,
+      negotiableAmount: 0,
+      useNegotiablePrice: false,
+      amountReceived: 0,
+      payment_splits: [],
+    })
+    setCurrentItem({
+      product_id: '',
+      product_name: '',
+      item_code: '',
+      hsn_code: '',
+      unit: 'pcs',
+      quantity: '' as number | string,
+      rate: 0,
+      gst_percentage: 0,
+      cost_price: undefined,
+      mrp: undefined,
+    })
+    setIsNewProduct(false)
+    setProductSearch('')
+    setCustomerSuggestions([])
+    setShowCustomerDropdown(false)
+  }
+
   const handleSubmit = async (e: React.FormEvent, isPending = false) => {
     e.preventDefault()
 
@@ -1314,9 +1345,10 @@ export default function UnifiedBillingPage() {
         try {
           // Import and generate receipt HTML
           const { generateReceiptHtml, generateUpiQrDataUrl } = await import('@/lib/webPrintService')
-          const billAmount = Number(billData.final_amount ?? billData.total_amount) || 0
-          const billNumber = billData.bill_number
-          const qrDataUrl = clientInfo.upi_id ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '', billAmount, billNumber) : undefined
+          const payAmount = billData.type === 'gst' ? Number(billData.final_amount) : Number(billData.total_amount)
+          const qrDataUrl = clientInfo.upi_id
+            ? await generateUpiQrDataUrl(clientInfo.upi_id, clientInfo.client_name || '', payAmount, billData.bill_number)
+            : undefined
           const receiptHtml = generateReceiptHtml(billData, clientInfo, true, qrDataUrl)
 
           console.log('[BILLING] Sending to Electron printer...')
@@ -2540,7 +2572,7 @@ export default function UnifiedBillingPage() {
                     upiId={shopSettings.upi_id}
                     shopName={shopSettings.shop_name || client?.client_name || ''}
                     amount={billTotals.grandTotal}
-                    size={160}
+                    size={120}
                   />
                 </div>
               )}
@@ -2548,18 +2580,39 @@ export default function UnifiedBillingPage() {
           </div>
 
           {/* Mobile summary strip - visible only on mobile */}
-          <div className="md:hidden flex items-center justify-between gap-3 px-4 py-3 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 sticky bottom-16">
-            <div>
+          <div className="md:hidden flex flex-col gap-2 px-3 py-3 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 sticky bottom-16">
+            <div className="flex items-center justify-between">
               <p className="text-xs text-gray-500 dark:text-gray-400">Total</p>
               <p className="text-lg font-bold text-gray-900 dark:text-white">₹{billTotals.grandTotal?.toLocaleString()}</p>
             </div>
-            <button
-              type="submit"
-              disabled={loading}
-              className="px-6 py-2.5 bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-semibold rounded-xl transition-colors"
-            >
-              {loading ? 'Processing...' : 'Print Bill'}
-            </button>
+            <div className="grid grid-cols-3 gap-2">
+              <button
+                type="submit"
+                disabled={loading}
+                className="px-2 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm"
+              >
+                {loading ? '...' : 'Print'}
+              </button>
+              <button
+                type="button"
+                disabled={loading}
+                onClick={(e) => handleSubmit(e as any, true)}
+                title="Save bill without payment — mark as Payment Pending"
+                className="px-2 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm flex items-center justify-center gap-1"
+              >
+                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                Pending
+              </button>
+              <button
+                type="button"
+                onClick={handleClearBill}
+                className="px-2 py-2.5 bg-gray-500 hover:bg-gray-600 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm"
+              >
+                Clear
+              </button>
+            </div>
           </div>
 
           {/* Bottom Section - Totals & Actions */}
@@ -2756,37 +2809,7 @@ export default function UnifiedBillingPage() {
                 )}
                 <button
                   type="button"
-                  onClick={() => {
-                    // Clear the current bill
-                    updateActiveTab({
-                      items: [],
-                      customer_code: '',
-                      customer_name: '',
-                      customer_phone: '',
-                      customer_gstin: '',
-                      discountPercentage: 0,
-                      negotiableAmount: 0,
-                      useNegotiablePrice: false,
-                      amountReceived: 0,
-                      payment_splits: [],
-                    })
-                    setCurrentItem({
-                      product_id: '',
-                      product_name: '',
-                      item_code: '',
-                      hsn_code: '',
-                      unit: 'pcs',
-                      quantity: '' as number | string,
-                      rate: 0,
-                      gst_percentage: 0,
-                      cost_price: undefined,
-                      mrp: undefined,
-                    })
-                    setIsNewProduct(false)
-                    setProductSearch('')
-                    setCustomerSuggestions([])
-                    setShowCustomerDropdown(false)
-                  }}
+                  onClick={handleClearBill}
                   className="flex-1 px-4 py-2 bg-gray-500 dark:bg-gray-600 text-white rounded hover:bg-gray-600 dark:hover:bg-gray-700 transition font-semibold text-sm"
                 >
                   Clear

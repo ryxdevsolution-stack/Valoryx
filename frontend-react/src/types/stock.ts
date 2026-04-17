@@ -23,6 +23,16 @@ export interface Product {
   barcode?: string;
   gst_percentage: number;
   hsn_code?: string;
+  // Apparel hang-tag / Legal Metrology fields
+  brand_name?: string;
+  size_variant?: string;
+  colour?: string;
+  country_of_origin?: string;
+  manufacture_date?: string;  // YYYY-MM
+  importer_name?: string;
+  importer_address?: string;
+  consumer_care_phone?: string;
+  consumer_care_email?: string;
   created_at: string;
   updated_at?: string;
 }

@@ -34,6 +34,13 @@ class ClientEntry(db.Model):
     receipt_footer = db.Column(db.Text, nullable=True)      # custom footer text on receipts
     points_per_100 = db.Column(db.Integer, nullable=True, default=0)  # loyalty points earned per ₹100 spent
 
+    # Apparel label defaults (v13) — applied when per-SKU fields are empty
+    label_importer_name = db.Column(db.String(160), nullable=True)
+    label_importer_address = db.Column(db.Text, nullable=True)
+    label_origin_country = db.Column(db.String(60), nullable=True)
+    label_care_phone = db.Column(db.String(20), nullable=True)
+    label_care_email = db.Column(db.String(120), nullable=True)
+
     # Email verification
     email_verified = db.Column(db.Boolean, default=False, nullable=False)
     email_verification_token = db.Column(db.String(64), nullable=True, index=True)
@@ -91,6 +98,11 @@ class ClientEntry(db.Model):
             'upi_id': self.upi_id,
             'receipt_footer': self.receipt_footer,
             'points_per_100': self.points_per_100 or 0,
+            'label_importer_name': self.label_importer_name,
+            'label_importer_address': self.label_importer_address,
+            'label_origin_country': self.label_origin_country,
+            'label_care_phone': self.label_care_phone,
+            'label_care_email': self.label_care_email,
             'email_verified': self.email_verified,
             'deletion_scheduled_at': self.deletion_scheduled_at.isoformat() if self.deletion_scheduled_at else None,
             'role_quotas': self.role_quotas or {},

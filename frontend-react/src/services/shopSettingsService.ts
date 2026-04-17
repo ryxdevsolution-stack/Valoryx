@@ -12,6 +12,12 @@ export interface ShopSettings {
   receipt_footer: string
   logo_url: string
   points_per_100: number
+  // Apparel label defaults — filled onto hang-tags when per-SKU fields are blank
+  label_importer_name?: string
+  label_importer_address?: string
+  label_origin_country?: string
+  label_care_phone?: string
+  label_care_email?: string
 }
 
 export interface ShopSettingsResponse {
@@ -28,6 +34,11 @@ export interface ShopSettingsUpdatePayload {
   gst_number?: string
   receipt_footer?: string
   points_per_100?: number
+  label_importer_name?: string
+  label_importer_address?: string
+  label_origin_country?: string
+  label_care_phone?: string
+  label_care_email?: string
 }
 
 export interface ShopSettingsUpdateResponse {

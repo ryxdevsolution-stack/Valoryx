@@ -27,6 +27,12 @@ interface FormState {
   upi_id: string
   receipt_footer: string
   points_per_100: string
+  // Apparel label defaults (v13)
+  label_importer_name: string
+  label_importer_address: string
+  label_origin_country: string
+  label_care_phone: string
+  label_care_email: string
 }
 
 const EMPTY_FORM: FormState = {
@@ -38,6 +44,11 @@ const EMPTY_FORM: FormState = {
   upi_id: '',
   receipt_footer: '',
   points_per_100: '0',
+  label_importer_name: '',
+  label_importer_address: '',
+  label_origin_country: 'India',
+  label_care_phone: '',
+  label_care_email: '',
 }
 
 function settingsToForm(s: ShopSettings): FormState {
@@ -50,6 +61,11 @@ function settingsToForm(s: ShopSettings): FormState {
     upi_id: s.upi_id || '',
     receipt_footer: s.receipt_footer || '',
     points_per_100: String(s.points_per_100 || 0),
+    label_importer_name: s.label_importer_name || '',
+    label_importer_address: s.label_importer_address || '',
+    label_origin_country: s.label_origin_country || 'India',
+    label_care_phone: s.label_care_phone || '',
+    label_care_email: s.label_care_email || '',
   }
 }
 
@@ -266,6 +282,11 @@ export default function ShopSettingsPage() {
         upi_id: form.upi_id.trim(),
         receipt_footer: form.receipt_footer.trim(),
         points_per_100: parseInt(form.points_per_100) || 0,
+        label_importer_name: form.label_importer_name.trim(),
+        label_importer_address: form.label_importer_address.trim(),
+        label_origin_country: form.label_origin_country.trim() || 'India',
+        label_care_phone: form.label_care_phone.trim(),
+        label_care_email: form.label_care_email.trim(),
       })
       setForm(settingsToForm(updated))
       setMessage({ type: 'success', text: 'Shop settings saved successfully' })
@@ -502,6 +523,76 @@ export default function ShopSettingsPage() {
                   <p className="text-xs text-gray-400 dark:text-gray-500 mt-1 text-right">
                     {form.receipt_footer.length}/{RECEIPT_FOOTER_MAX}
                   </p>
+                </div>
+              </div>
+
+              {/* Apparel Label Defaults */}
+              <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+                <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-1">Apparel Label Defaults</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-3">
+                  Used on 50×100mm hang-tags when a product doesn't set its own importer / care details. Legal Metrology compliance is your responsibility — verify these match your import paperwork.
+                </p>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div>
+                    <label htmlFor="label_importer_name" className={labelClasses}>Importer / Marketed By</label>
+                    <input
+                      id="label_importer_name"
+                      type="text"
+                      value={form.label_importer_name}
+                      onChange={handleChange('label_importer_name')}
+                      disabled={!canEdit}
+                      placeholder="e.g. Valoryx Retail Pvt Ltd"
+                      className={inputClasses}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="label_origin_country" className={labelClasses}>Country of Origin</label>
+                    <input
+                      id="label_origin_country"
+                      type="text"
+                      value={form.label_origin_country}
+                      onChange={handleChange('label_origin_country')}
+                      disabled={!canEdit}
+                      placeholder="India"
+                      className={inputClasses}
+                    />
+                  </div>
+                  <div className="md:col-span-2">
+                    <label htmlFor="label_importer_address" className={labelClasses}>Importer Address</label>
+                    <textarea
+                      id="label_importer_address"
+                      value={form.label_importer_address}
+                      onChange={handleChange('label_importer_address')}
+                      disabled={!canEdit}
+                      placeholder="City, PIN code"
+                      rows={2}
+                      className={`${inputClasses} resize-none`}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="label_care_phone" className={labelClasses}>Consumer Care Phone</label>
+                    <input
+                      id="label_care_phone"
+                      type="tel"
+                      value={form.label_care_phone}
+                      onChange={handleChange('label_care_phone')}
+                      disabled={!canEdit}
+                      placeholder="1800-123-456"
+                      className={inputClasses}
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="label_care_email" className={labelClasses}>Consumer Care Email</label>
+                    <input
+                      id="label_care_email"
+                      type="email"
+                      value={form.label_care_email}
+                      onChange={handleChange('label_care_email')}
+                      disabled={!canEdit}
+                      placeholder="care@yourshop.in"
+                      className={inputClasses}
+                    />
+                  </div>
                 </div>
               </div>
 

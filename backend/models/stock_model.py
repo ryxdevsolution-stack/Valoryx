@@ -28,6 +28,18 @@ class StockEntry(db.Model):
     barcode = db.Column(db.String(100), nullable=True, index=True)
     gst_percentage = db.Column(FlexibleNumeric, default=0)
     hsn_code = db.Column(db.String(20))
+
+    # Apparel hang-tag / Legal Metrology fields (v13)
+    brand_name = db.Column(db.String(120), nullable=True)
+    size_variant = db.Column(db.String(20), nullable=True)
+    colour = db.Column(db.String(40), nullable=True)
+    country_of_origin = db.Column(db.String(60), nullable=True)
+    manufacture_date = db.Column(db.String(7), nullable=True)  # YYYY-MM
+    importer_name = db.Column(db.String(160), nullable=True)
+    importer_address = db.Column(db.Text, nullable=True)
+    consumer_care_phone = db.Column(db.String(20), nullable=True)
+    consumer_care_email = db.Column(db.String(120), nullable=True)
+
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
@@ -49,6 +61,15 @@ class StockEntry(db.Model):
             'barcode': self.barcode,
             'gst_percentage': float(self.gst_percentage) if self.gst_percentage else 0,
             'hsn_code': self.hsn_code,
+            'brand_name': self.brand_name,
+            'size_variant': self.size_variant,
+            'colour': self.colour,
+            'country_of_origin': self.country_of_origin,
+            'manufacture_date': self.manufacture_date,
+            'importer_name': self.importer_name,
+            'importer_address': self.importer_address,
+            'consumer_care_phone': self.consumer_care_phone,
+            'consumer_care_email': self.consumer_care_email,
             'is_low_stock': self.quantity <= self.low_stock_alert,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None

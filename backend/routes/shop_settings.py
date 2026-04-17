@@ -24,6 +24,12 @@ _SETTINGS_FIELDS = {
     'receipt_footer': 'receipt_footer',
     'logo_url': 'logo_url',
     'points_per_100': 'points_per_100',
+    # Apparel label defaults (v13)
+    'label_importer_name': 'label_importer_name',
+    'label_importer_address': 'label_importer_address',
+    'label_origin_country': 'label_origin_country',
+    'label_care_phone': 'label_care_phone',
+    'label_care_email': 'label_care_email',
 }
 
 # Fields that are read-only (returned in GET but cannot be set via PUT)
