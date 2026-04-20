@@ -12,13 +12,28 @@ from PIL import Image
 
 # Configuration - Label size 50mm x 25mm
 LABEL_CONFIG = {
-    'width_mm': 50,           # Label width in mm
-    'height_mm': 25,          # Label height in mm
-    'char_width': 40,         # Characters per line (50mm ≈ 40 chars)
-    'barcode_height': 50,     # Barcode height in pixels for image
-    'barcode_width': 2,       # Barcode module width
-    'print_width_dots': 384,  # Thermal printer width in dots (48mm printable @ 8 dots/mm)
+    # Per-label dimensions: 1.6" × 1" (≈40.64mm × 25.4mm).
+    # Stock is a 3-up roll: 3 labels per row, die-cut in a continuous strip.
+    # The printer advances one row (25.4mm) per page, so each printed page
+    # must contain 3 labels side by side.
+    'width_mm': 35,            # single label width
+    'height_mm': 25.4,            # single label height
+    'columns': 3,                 # labels per row on the stock
+    'column_gap_mm': 0,           # gap between labels (usually 0 for die-cut)
+    'char_width': 32,
+    'barcode_height': 50,         # legacy ESC/POS fallback
+    'barcode_width': 2,
+    'print_width_dots': 320,
 }
+
+
+def _page_dimensions(cfg):
+    """Return (page_width_mm, page_height_mm) for a row of `columns` labels."""
+    cols = max(1, int(cfg.get('columns', 1)))
+    gap = float(cfg.get('column_gap_mm', 0))
+    w = float(cfg['width_mm']) * cols + gap * (cols - 1)
+    h = float(cfg['height_mm'])
+    return w, h
 
 
 def generate_barcode_svg(code: str) -> str:
@@ -71,68 +86,93 @@ def generate_barcode_svg(code: str) -> str:
         return ""
 
 
+def generate_qr_data_uri(code: str) -> str:
+    """Generate a QR code PNG as a base64 data URI. Used on product labels."""
+    try:
+        import qrcode
+        from qrcode.image.pil import PilImage
+
+        clean_code = code.strip() if code else 'NOCODE'
+        qr = qrcode.QRCode(
+            version=None,
+            error_correction=qrcode.constants.ERROR_CORRECT_M,
+            box_size=10,
+            border=1,
+        )
+        qr.add_data(clean_code)
+        qr.make(fit=True)
+        img = qr.make_image(image_factory=PilImage, fill_color='black', back_color='white')
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        b64 = base64.b64encode(buf.getvalue()).decode('utf-8')
+        return f"data:image/png;base64,{b64}"
+    except Exception as e:
+        print(f"[BARCODE] QR generation failed for '{code}': {e}")
+        return ""
+
+
 def generate_label_html(item: Dict[str, Any]) -> str:
     """
-    Generate HTML for a single barcode label (40mm x 30mm)
-
-    Args:
-        item: Dictionary containing item_code, product_name, rate, mrp
-
-    Returns:
-        HTML string for the label
+    Generate HTML for a single 1.6"×1.6" (≈40×40mm) product label.
+    Layout: QR code on top, item code as text, product name + unit below.
     """
     item_code = item.get('item_code', 'N/A')
     product_name = item.get('product_name', 'Unknown Product')
-    rate = float(item.get('rate', 0) or 0)
-    mrp = float(item.get('mrp', 0) or item.get('rate', 0) or 0)
+    unit = item.get('unit', '') or item.get('unit_of_measurement', '') or ''
 
-    # Truncate product name if too long
-    if len(product_name) > 20:
-        product_name = product_name[:17] + "..."
+    if len(product_name) > 28:
+        product_name = product_name[:25] + '...'
 
-    # Generate barcode SVG
-    barcode_svg = generate_barcode_svg(item_code)
+    qr_uri = generate_qr_data_uri(item_code)
 
-    # Format prices in Indian number format
-    def format_price(price):
-        return f"{price:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+    unit_html = f' <span class="unit">{unit}</span>' if unit else ''
 
-    label_html = f"""
+    return f"""
     <div class="label">
-        <div class="barcode-container">
-            <img src="{barcode_svg}" alt="{item_code}" class="barcode-img" />
+        <div class="qr-container">
+            <img src="{qr_uri}" alt="{item_code}" class="qr-img" />
         </div>
         <div class="item-code">{item_code}</div>
-        <div class="product-name">{product_name}</div>
-        <div class="price-row">
-            <span class="mrp">MRP: ₹{format_price(mrp)}</span>
-        </div>
-        <div class="price-row">
-            <span class="rate">Rate: ₹{format_price(rate)}</span>
-        </div>
+        <div class="product-name">{product_name}{unit_html}</div>
     </div>
     """
-
-    return label_html
 
 
 def generate_labels_html(items: List[Dict[str, Any]], config: dict = None) -> str:
     """
-    Generate HTML for multiple barcode labels
-    Each item can specify 'quantity' to print multiple copies
+    Generate HTML for a 3-up (or configurable) label roll.
 
-    Args:
-        items: List of items with item_code, product_name, rate, mrp, quantity
-        config: Optional configuration override
-
-    Returns:
-        Complete HTML document ready for printing
+    Each page contains `columns` labels side-by-side. The printer advances
+    one row at a time, so N labels → ceil(N / columns) pages.
+    Partial last row is padded with empty label slots so the printer still
+    advances the full row height (prevents stock misalignment on next job).
     """
     cfg = config or LABEL_CONFIG
-    width_mm = cfg.get('width_mm', 40)
-    height_mm = cfg.get('height_mm', 30)
+    label_w = float(cfg.get('width_mm', 40.64))
+    label_h = float(cfg.get('height_mm', 25.4))
+    columns = max(1, int(cfg.get('columns', 3)))
+    gap = float(cfg.get('column_gap_mm', 0))
 
-    # CSS for labels based on config
+    page_w, page_h = _page_dimensions(cfg)
+
+    # Expand items into a flat list of labels honouring per-item quantity.
+    flat_labels: List[str] = []
+    for item in items:
+        qty = max(1, int(item.get('quantity', 1)))
+        single = generate_label_html(item)
+        for _ in range(qty):
+            flat_labels.append(single)
+
+    # Group into pages of `columns` labels, padding last page with blanks.
+    pages_html = []
+    for i in range(0, len(flat_labels), columns):
+        row = flat_labels[i:i + columns]
+        while len(row) < columns:
+            row.append('<div class="label label-blank"></div>')
+        pages_html.append(f'<div class="page">{"".join(row)}</div>')
+
+    is_last_page_index = len(pages_html) - 1
+
     html = f"""
 <!DOCTYPE html>
 <html>
@@ -140,15 +180,11 @@ def generate_labels_html(items: List[Dict[str, Any]], config: dict = None) -> st
     <meta charset="UTF-8">
     <style>
         @page {{
-            size: {width_mm}mm {height_mm}mm;
+            size: {page_w}mm {page_h}mm;
             margin: 0;
         }}
 
-        * {{
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }}
+        * {{ margin: 0; padding: 0; box-sizing: border-box; }}
 
         body {{
             font-family: Arial, sans-serif;
@@ -156,35 +192,44 @@ def generate_labels_html(items: List[Dict[str, Any]], config: dict = None) -> st
             color: black;
         }}
 
+        .page {{
+            width: {page_w}mm;
+            height: {page_h}mm;
+            display: flex;
+            flex-direction: row;
+            gap: {gap}mm;
+            page-break-after: always;
+        }}
+
+        .page:last-child {{ page-break-after: avoid; }}
+
         .label {{
-            width: {width_mm}mm;
-            height: {height_mm}mm;
-            padding: 1mm;
+            width: {label_w}mm;
+            height: {label_h}mm;
+            padding: 0.8mm;
             display: flex;
             flex-direction: column;
             align-items: center;
             justify-content: center;
-            page-break-after: always;
-            border: 0.5px dotted #ccc;
+            overflow: hidden;
         }}
 
-        .label:last-child {{
-            page-break-after: avoid;
-        }}
+        .label-blank {{ /* spacer for partial last row */ }}
 
-        .barcode-container {{
+        .qr-container {{
             width: 100%;
-            height: 10mm;
+            flex: 1 1 auto;
             display: flex;
             align-items: center;
             justify-content: center;
             overflow: hidden;
         }}
 
-        .barcode-img {{
-            max-width: {width_mm - 4}mm;
-            max-height: 10mm;
+        .qr-img {{
+            height: 14mm;
+            width: 14mm;
             object-fit: contain;
+            image-rendering: pixelated;
         }}
 
         .item-code {{
@@ -192,8 +237,8 @@ def generate_labels_html(items: List[Dict[str, Any]], config: dict = None) -> st
             font-family: 'Courier New', monospace;
             font-weight: bold;
             text-align: center;
-            margin-top: 0.5mm;
-            letter-spacing: 0.5px;
+            margin-top: 0.3mm;
+            letter-spacing: 0.3px;
         }}
 
         .product-name {{
@@ -201,48 +246,27 @@ def generate_labels_html(items: List[Dict[str, Any]], config: dict = None) -> st
             font-weight: bold;
             text-align: center;
             text-transform: uppercase;
-            margin-top: 0.5mm;
-            max-width: {width_mm - 2}mm;
+            margin-top: 0.3mm;
+            max-width: {label_w - 2}mm;
+            line-height: 1.1;
             overflow: hidden;
             text-overflow: ellipsis;
             white-space: nowrap;
         }}
 
-        .price-row {{
-            font-size: 6pt;
-            text-align: center;
-            margin-top: 0.5mm;
-        }}
-
-        .mrp {{
-            color: #666;
-        }}
-
-        .rate {{
-            font-weight: bold;
-            font-size: 7pt;
+        .product-name .unit {{
+            font-weight: normal;
+            font-size: 5.5pt;
+            color: #333;
         }}
 
         @media print {{
-            .label {{
-                border: none;
-            }}
+            .label {{ border: none; }}
         }}
     </style>
 </head>
 <body>
-"""
-
-    # Generate labels for each item based on quantity
-    for item in items:
-        quantity = int(item.get('quantity', 1))
-        label = generate_label_html(item)
-
-        # Print 'quantity' number of labels for this item
-        for _ in range(quantity):
-            html += label
-
-    html += """
+{"".join(pages_html)}
 </body>
 </html>
 """
