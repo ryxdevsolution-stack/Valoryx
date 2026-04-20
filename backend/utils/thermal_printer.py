@@ -783,7 +783,6 @@ class ThermalPrinter:
 
             # Method 2: Try using PowerShell with -Verb Print (fire and forget - don't wait)
             try:
-                # Use PowerShell's Start-Process with -Verb Print - DON'T wait for completion
                 ps_script = f'''
                 try {{
                     Start-Process -FilePath "{html_file}" -Verb Print
