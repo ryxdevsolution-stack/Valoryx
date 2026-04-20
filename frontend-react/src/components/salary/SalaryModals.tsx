@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
-import type { Employee, SalaryCycle } from '@/pages/Salary'
+import type { AttendanceStatus, Employee, SalaryCycle } from '@/pages/Salary'
 
 // ─── Shared Modal Shell ───────────────────────────────────────────────────────
 
@@ -186,12 +186,22 @@ interface MarkAttendanceModalProps {
   employee: Employee
   onClose: () => void
   onSave: (employeeId: string, checkIn: string, notes: string) => Promise<void>
+  // Pre-fill the date portion; time defaults to current IST time. Used when
+  // back-filling attendance from the mini-calendar (click on an absent day).
+  prefillDate?: string
 }
 
-export function MarkAttendanceModal({ employee, onClose, onSave }: MarkAttendanceModalProps) {
-  const nowIso = new Date(Date.now() - new Date().getTimezoneOffset() * 60000)
-    .toISOString()
-    .slice(0, 16)
+export function MarkAttendanceModal({ employee, onClose, onSave, prefillDate }: MarkAttendanceModalProps) {
+  // Pre-fill with IST (Asia/Kolkata) "now" — datetime-local expects YYYY-MM-DDTHH:MM
+  const istParts = new Intl.DateTimeFormat('en-CA', {
+    timeZone: 'Asia/Kolkata',
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', hour12: false,
+  }).formatToParts(new Date()).reduce<Record<string, string>>((acc, p) => { acc[p.type] = p.value; return acc }, {})
+  const defaultDate = `${istParts.year}-${istParts.month}-${istParts.day}`
+  const defaultTime = `${istParts.hour}:${istParts.minute}`
+  // If a prefillDate was supplied (e.g. "2026-04-15") use that day with current IST time
+  const nowIso = `${prefillDate ?? defaultDate}T${defaultTime}`
   const [checkIn, setCheckIn] = useState(nowIso)
   const [notes, setNotes] = useState('')
   const [saving, setSaving] = useState(false)
@@ -279,9 +289,18 @@ export function NewCycleModal({ employee, onClose, onSave }: NewCycleModalProps)
   const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
   const [startDate, setStartDate] = useState(`${currentYearMonth}-01`)
   const [endDate, setEndDate] = useState(`${currentYearMonth}-25`)
-  const [fullDayMins, setFullDayMins] = useState('480')
+  const [fullDayHours, setFullDayHours] = useState('8')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
+
+  // Convert hours (possibly fractional) → minutes. 8 → 480, 7.5 → 450, 9.25 → 555.
+  const fullDayMinutes = Math.round((Number(fullDayHours) || 0) * 60)
+  const minsLabel = (() => {
+    const h = Math.floor(fullDayMinutes / 60)
+    const m = fullDayMinutes % 60
+    if (m === 0) return `${h} hour${h === 1 ? '' : 's'}`
+    return `${h}h ${m}m`
+  })()
 
   function applyPreset(start: string, end: string) {
     const ym = currentYearMonth
@@ -303,7 +322,7 @@ export function NewCycleModal({ employee, onClose, onSave }: NewCycleModalProps)
       await onSave(employee.employee_id, {
         start_date: startDate,
         end_date: endDate,
-        full_day_mins: Number(fullDayMins) || 480,
+        full_day_mins: fullDayMinutes || 480,
       })
       onClose()
     } catch (err: unknown) {
@@ -359,16 +378,21 @@ export function NewCycleModal({ employee, onClose, onSave }: NewCycleModalProps)
           </InputField>
         </div>
 
-        <InputField label="Full Day Minutes">
+        <InputField label="Full Day Hours">
           <input
             type="number"
-            min="60"
-            max="1440"
-            value={fullDayMins}
-            onChange={e => setFullDayMins(e.target.value)}
+            min="1"
+            max="24"
+            step="0.5"
+            value={fullDayHours}
+            onChange={e => setFullDayHours(e.target.value)}
             className={inputClass}
+            placeholder="e.g. 8"
           />
-          <p className="text-[11px] text-gray-400 mt-1">Default 480 = 8 hours. Used for daily-rate employees.</p>
+          <p className="text-[11px] text-gray-400 mt-1">
+            How many hours count as a full day = <strong>{minsLabel}</strong>
+            {' '}({fullDayMinutes} min). Used for daily-rate employees — working less counts as a fraction of a day.
+          </p>
         </InputField>
 
         <div className="flex justify-end gap-2 pt-2">
@@ -397,12 +421,33 @@ interface AddAdvanceModalProps {
   onSave: (employeeId: string, data: { amount: number; advance_date: string; notes: string; cycle_id?: string }) => Promise<void>
 }
 
+// localStorage key for sticky cycle selection — scoped per employee.
+const STICKY_CYCLE_KEY = (empId: string) => `valoryx:salary:lastCycle:${empId}`
+
+// Compact date formatter for the cycle dropdown — turns "Wed, 01 Apr 2026 00:00:00 GMT" → "1 Apr 2026".
+function fmtCycleDate(d: string): string {
+  try {
+    const parsed = new Date(d)
+    if (isNaN(parsed.getTime())) return d
+    return parsed.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+  } catch {
+    return d
+  }
+}
+
 export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAdvanceModalProps) {
   const todayIso = new Date().toISOString().split('T')[0]
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(todayIso)
   const [notes, setNotes] = useState('')
-  const [cycleId, setCycleId] = useState('')
+
+  // Sticky cycle selection: remember the last cycle the admin linked an advance to
+  // for this employee, and pre-select it on subsequent opens — until they change it.
+  const [cycleId, setCycleId] = useState<string>(() => {
+    const stored = localStorage.getItem(STICKY_CYCLE_KEY(employee.employee_id)) ?? ''
+    // Only honor the stored value if that cycle is still in the open list
+    return openCycles.some(c => c.cycle_id === stored) ? stored : ''
+  })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -420,6 +465,12 @@ export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAd
         notes: notes.trim(),
         ...(cycleId ? { cycle_id: cycleId } : {}),
       })
+      // Persist the last-used cycle (or clear it if admin unlinked) for next time
+      if (cycleId) {
+        localStorage.setItem(STICKY_CYCLE_KEY(employee.employee_id), cycleId)
+      } else {
+        localStorage.removeItem(STICKY_CYCLE_KEY(employee.employee_id))
+      }
       onClose()
     } catch (err: unknown) {
       const msg = err && typeof err === 'object' && 'response' in err
@@ -479,7 +530,7 @@ export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAd
               <option value="">— Not linked —</option>
               {openCycles.map(c => (
                 <option key={c.cycle_id} value={c.cycle_id}>
-                  {c.start_date} – {c.end_date}
+                  {fmtCycleDate(c.start_date)} – {fmtCycleDate(c.end_date)}
                 </option>
               ))}
             </select>
@@ -495,6 +546,162 @@ export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAd
             className="px-4 py-2 text-sm font-medium bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 transition-colors"
           >
             {saving ? 'Saving...' : 'Add Advance'}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
+  )
+}
+
+// ─── Mark Day Off Modal ──────────────────────────────────────────────────────
+// Used for back-filling a day the employee didn't check in — leave, holiday,
+// absent, etc. Distinct from MarkAttendanceModal which records actual punches.
+
+interface DayOffStatus {
+  value: AttendanceStatus
+  label: string
+  description: string
+  paid: boolean
+}
+
+// Presented in the order an admin most often reaches for (paid leave first, absent last)
+const DAY_OFF_OPTIONS: DayOffStatus[] = [
+  { value: 'paid_leave',   label: 'Paid Leave',   description: 'Sanctioned leave — full day pay',  paid: true },
+  { value: 'holiday',      label: 'Holiday',      description: 'National or company holiday',       paid: true },
+  { value: 'weekly_off',   label: 'Weekly Off',   description: 'Weekly rest day (e.g. Sunday)',     paid: true },
+  { value: 'unpaid_leave', label: 'Unpaid Leave', description: 'Sanctioned — no pay for the day',   paid: false },
+  { value: 'absent',       label: 'Absent',       description: 'Did not arrive — no pay',           paid: false },
+]
+
+interface MarkDayOffModalProps {
+  employee: Employee
+  workDate: string // YYYY-MM-DD
+  onClose: () => void
+  onSave: (
+    employeeId: string,
+    data: { work_date: string; status: AttendanceStatus; reason: string; notes: string }
+  ) => Promise<void>
+}
+
+function fmtPrettyDate(isoDate: string): string {
+  try {
+    const d = new Date(isoDate + 'T00:00:00')
+    if (isNaN(d.getTime())) return isoDate
+    return d.toLocaleDateString('en-IN', { weekday: 'long', day: 'numeric', month: 'short', year: 'numeric' })
+  } catch { return isoDate }
+}
+
+export function MarkDayOffModal({ employee, workDate, onClose, onSave }: MarkDayOffModalProps) {
+  const [status, setStatus] = useState<AttendanceStatus>('paid_leave')
+  const [reason, setReason] = useState('')
+  const [notes, setNotes] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const selected = DAY_OFF_OPTIONS.find(o => o.value === status)
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    setSaving(true)
+    try {
+      await onSave(employee.employee_id, {
+        work_date: workDate,
+        status,
+        reason: reason.trim(),
+        notes: notes.trim(),
+      })
+      onClose()
+    } catch (err: unknown) {
+      const msg = err && typeof err === 'object' && 'response' in err
+        ? (err as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined
+      setError(msg ?? 'Failed to save day-off note')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <ModalShell title="Mark Day Off" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
+          <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">{error}</p>
+        )}
+
+        <div className="bg-gray-50 dark:bg-gray-800 rounded-lg px-3 py-2">
+          <p className="text-[11px] text-gray-500 dark:text-gray-400">Employee</p>
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">{employee.name}</p>
+          <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-1.5">Date</p>
+          <p className="text-sm font-semibold text-gray-900 dark:text-white">{fmtPrettyDate(workDate)}</p>
+        </div>
+
+        <InputField label="Type" required>
+          <div className="space-y-1.5">
+            {DAY_OFF_OPTIONS.map(opt => (
+              <label
+                key={opt.value}
+                className={`flex items-start gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition-colors ${
+                  status === opt.value
+                    ? 'border-gray-900 dark:border-white bg-gray-50 dark:bg-gray-800'
+                    : 'border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800/40'
+                }`}
+              >
+                <input
+                  type="radio"
+                  name="day_off_status"
+                  value={opt.value}
+                  checked={status === opt.value}
+                  onChange={() => setStatus(opt.value)}
+                  className="mt-0.5 accent-gray-900 dark:accent-white"
+                />
+                <div className="flex-1 min-w-0">
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm font-medium text-gray-900 dark:text-white">{opt.label}</span>
+                    <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full ${
+                      opt.paid
+                        ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
+                    }`}>
+                      {opt.paid ? 'PAID' : 'UNPAID'}
+                    </span>
+                  </div>
+                  <p className="text-[11px] text-gray-500 dark:text-gray-400 mt-0.5">{opt.description}</p>
+                </div>
+              </label>
+            ))}
+          </div>
+        </InputField>
+
+        <InputField label="Reason">
+          <input
+            type="text"
+            value={reason}
+            onChange={e => setReason(e.target.value)}
+            placeholder={selected?.value === 'holiday' ? 'e.g. Diwali' : selected?.value === 'paid_leave' ? 'e.g. Sick leave' : 'Short label (optional)'}
+            className={inputClass}
+          />
+        </InputField>
+
+        <InputField label="Notes">
+          <input
+            type="text"
+            value={notes}
+            onChange={e => setNotes(e.target.value)}
+            placeholder="Additional notes (optional)"
+            className={inputClass}
+          />
+        </InputField>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 text-sm font-medium bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
+          >
+            {saving ? 'Saving...' : 'Save'}
           </button>
         </div>
       </form>

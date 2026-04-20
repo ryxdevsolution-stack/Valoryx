@@ -132,18 +132,40 @@ def _compute_total_minutes(check_in_dt: datetime, check_out_dt: datetime) -> int
     return max(0, int(delta.total_seconds() // 60))
 
 
+# Day-off status constants — shared between the mark_day_off endpoint and the
+# salary calculator. Paid statuses count as one full day of pay; unpaid count as 0.
+_DAY_OFF_PAID_STATUSES = {'paid_leave', 'holiday', 'weekly_off'}
+_DAY_OFF_UNPAID_STATUSES = {'absent', 'unpaid_leave'}
+_DAY_OFF_STATUSES = _DAY_OFF_PAID_STATUSES | _DAY_OFF_UNPAID_STATUSES
+
+
 def _calculate_cycle_amounts(cycle: dict):
     """
     Recalculate gross, total_advances, and net salary for a cycle.
+
+    Per-date logic (aggregated across punches):
+      status='present'                              → pay by minutes worked
+      status in {paid_leave, holiday, weekly_off}   → pay a full day regardless
+      status in {absent, unpaid_leave}              → pay zero
+
+    Daily-rate: full day = rate_snapshot
+    Hourly-rate: full day = (full_day_mins / 60) * rate_snapshot
+
     Returns (gross, total_advances, net, daily_breakdown).
     """
     rows = db.session.execute(
         text(
-            "SELECT work_date, SUM(total_minutes) AS day_minutes "
+            # MAX(status) picks any non-'present' label when both exist (shouldn't
+            # happen since mark_day_off rejects mixed dates, but defensive anyway).
+            # Filter: include completed punches OR any day-off row; skip
+            # incomplete open check-ins (status='present' AND total_minutes IS NULL).
+            "SELECT work_date, "
+            "       SUM(COALESCE(total_minutes, 0)) AS day_minutes, "
+            "       MAX(status) AS day_status "
             "FROM employee_attendance "
             "WHERE client_id = :client AND employee_id = :eid "
             "  AND work_date BETWEEN :start AND :end "
-            "  AND total_minutes IS NOT NULL "
+            "  AND (total_minutes IS NOT NULL OR status != 'present') "
             "GROUP BY work_date "
             "ORDER BY work_date"
         ),
@@ -158,27 +180,45 @@ def _calculate_cycle_amounts(cycle: dict):
     full_day_mins = int(cycle.get('full_day_mins') or 480)
     rate_snapshot = float(cycle.get('rate_snapshot') or 0)
     pay_type = (cycle.get('pay_type_snap') or 'daily').lower()
+    # What one full day pays (used for paid day-off statuses)
+    full_day_pay = rate_snapshot if pay_type == 'daily' else (full_day_mins / 60.0) * rate_snapshot
 
     daily_breakdown = []
     gross = 0.0
 
     for row in [_row_to_dict(r) for r in rows]:
+        day_status = (row.get('day_status') or 'present').lower()
         mins = int(row['day_minutes'] or 0)
         hours = mins / 60.0
-        if pay_type == 'hourly':
-            amount = hours * rate_snapshot
-            days_counted = hours / 8.0
-        else:  # daily
-            day_fraction = min(mins / full_day_mins, 1.0)
-            amount = day_fraction * rate_snapshot
-            days_counted = day_fraction
+
+        if day_status in _DAY_OFF_PAID_STATUSES:
+            # Full day's pay; display minutes stay 0 since no work was done
+            amount = full_day_pay
+            days_counted = 1.0
+            hours_display = round(full_day_mins / 60.0, 2)
+        elif day_status in _DAY_OFF_UNPAID_STATUSES:
+            # No pay for this day
+            amount = 0.0
+            days_counted = 0.0
+            hours_display = 0.0
+        else:  # 'present' — pay by minutes worked
+            if pay_type == 'hourly':
+                amount = hours * rate_snapshot
+                days_counted = hours / 8.0
+            else:  # daily
+                day_fraction = min(mins / full_day_mins, 1.0) if full_day_mins > 0 else 0
+                amount = day_fraction * rate_snapshot
+                days_counted = day_fraction
+            hours_display = round(hours, 2)
+
         gross += amount
         daily_breakdown.append({
             'date': str(row['work_date']),
             'total_minutes': mins,
-            'hours_worked': round(hours, 2),
+            'hours_worked': hours_display,
             'days_counted': round(days_counted, 2),
             'amount_earned': round(amount, 2),
+            'status': day_status,
         })
 
     adv_row = db.session.execute(
@@ -493,6 +533,110 @@ def checkout(employee_id):
     return jsonify({'success': True, 'data': _row_to_dict(row), 'message': 'Check-out recorded'}), 200
 
 
+@employees_bp.route('/<employee_id>/day-off', methods=['POST'])
+@authenticate
+def mark_day_off(employee_id):
+    """
+    Mark a specific date as a day-off with a status and optional reason.
+
+    Unlike check-in/check-out, day-off rows have no punch times; the status
+    field determines whether the day is paid (paid_leave, holiday, weekly_off)
+    or unpaid (absent, unpaid_leave). The salary calculator treats paid
+    statuses as a full day's earnings regardless of minutes worked.
+
+    Body:
+      work_date: "YYYY-MM-DD"     (required)
+      status:    one of _DAY_OFF_STATUSES (required)
+      reason:    short label (optional, e.g. "Sick leave", "Diwali")
+      notes:     free text (optional)
+    """
+    client_id = g.user['client_id']
+    emp = _get_employee(employee_id, client_id)
+    if not emp:
+        return jsonify({'success': False, 'error': 'Employee not found'}), 404
+
+    body = request.get_json(silent=True) or {}
+
+    work_date_str = body.get('work_date')
+    if not work_date_str:
+        return jsonify({'success': False, 'error': 'work_date is required'}), 400
+    work_date = _parse_date(work_date_str)
+    if not work_date:
+        return jsonify({'success': False, 'error': 'Invalid work_date format'}), 400
+
+    # Reject future dates — you can't mark "absent" before the day has passed
+    if work_date > date.today():
+        return jsonify({'success': False, 'error': 'Cannot mark a day off for a future date'}), 400
+
+    status = (body.get('status') or '').strip().lower()
+    if status not in _DAY_OFF_STATUSES:
+        return jsonify({
+            'success': False,
+            'error': f'status must be one of: {", ".join(sorted(_DAY_OFF_STATUSES))}'
+        }), 400
+
+    # Reject if this date already has any attendance record (punch OR day-off).
+    # Admin must delete the existing row first to change their mind — prevents
+    # silent overwrites of real check-ins.
+    existing = db.session.execute(
+        text(
+            "SELECT attendance_id, status FROM employee_attendance "
+            "WHERE employee_id = :eid AND client_id = :cid AND work_date = :wd "
+            "LIMIT 1"
+        ),
+        {'eid': employee_id, 'cid': client_id, 'wd': str(work_date)}
+    ).fetchone()
+    if existing:
+        return jsonify({
+            'success': False,
+            'error': 'An attendance record already exists for this date. Delete it first to re-mark.',
+            'existing_attendance_id': existing[0],
+            'existing_status': existing[1] if len(existing) > 1 else None,
+        }), 409
+
+    attendance_id = str(uuid.uuid4())
+    now_iso = _now_iso()
+
+    # check_in is NULL on PostgreSQL (post-v15 migration); on SQLite we fall
+    # back to a midnight sentinel since the column can't be relaxed in place.
+    dialect = db.engine.dialect.name
+    check_in_val = None if dialect == 'postgresql' else f"{work_date} 00:00:00"
+
+    db.session.execute(
+        text(
+            "INSERT INTO employee_attendance "
+            "(attendance_id, employee_id, client_id, work_date, check_in, "
+            " check_out, total_minutes, marked_by, notes, status, reason, "
+            " created_at, updated_at) "
+            "VALUES (:aid, :eid, :cid, :wd, :ci, NULL, 0, :marked_by, "
+            "        :notes, :status, :reason, :now, :now)"
+        ),
+        {
+            'aid': attendance_id,
+            'eid': employee_id,
+            'cid': client_id,
+            'wd': str(work_date),
+            'ci': check_in_val,
+            'marked_by': g.user['user_id'],
+            'notes': (body.get('notes') or '').strip() or None,
+            'status': status,
+            'reason': (body.get('reason') or '').strip() or None,
+            'now': now_iso,
+        }
+    )
+    db.session.commit()
+
+    row = db.session.execute(
+        text("SELECT * FROM employee_attendance WHERE attendance_id = :aid"),
+        {'aid': attendance_id}
+    ).fetchone()
+    return jsonify({
+        'success': True,
+        'data': _row_to_dict(row),
+        'message': f'Marked as {status.replace("_", " ")}'
+    }), 201
+
+
 @employees_bp.route('/<employee_id>/attendance', methods=['GET'])
 @authenticate
 def get_attendance_log(employee_id):
@@ -524,16 +668,29 @@ def get_attendance_log(employee_id):
         }
     ).fetchall()
 
-    # Group by date for a convenient daily view
+    # Group by date for a convenient daily view. Each day also gets a
+    # `day_status` and `day_reason` so the frontend can render day-off entries
+    # (paid_leave, holiday, absent, etc.) without having to inspect each punch.
     grouped: dict = {}
     for r in rows:
         punch = _row_to_dict(r)
         d = str(punch['work_date'])
         if d not in grouped:
-            grouped[d] = {'work_date': d, 'punches': [], 'day_total_minutes': 0}
+            grouped[d] = {
+                'work_date': d,
+                'punches': [],
+                'day_total_minutes': 0,
+                'day_status': 'present',
+                'day_reason': None,
+            }
         grouped[d]['punches'].append(punch)
         if punch.get('total_minutes'):
             grouped[d]['day_total_minutes'] += punch['total_minutes']
+        # A day-off row always "wins" — overrides the default 'present'
+        row_status = (punch.get('status') or 'present').lower()
+        if row_status != 'present':
+            grouped[d]['day_status'] = row_status
+            grouped[d]['day_reason'] = punch.get('reason')
 
     daily = sorted(grouped.values(), key=lambda x: x['work_date'], reverse=True)
     return jsonify({'success': True, 'data': daily, 'total': len(rows)}), 200

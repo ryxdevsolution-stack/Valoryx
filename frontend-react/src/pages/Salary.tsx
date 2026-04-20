@@ -12,6 +12,7 @@ import {
   MarkAttendanceModal,
   NewCycleModal,
   AddAdvanceModal,
+  MarkDayOffModal,
 } from '@/components/salary/SalaryModals'
 import EmployeeHistory from '@/components/salary/EmployeeHistory'
 
@@ -27,12 +28,24 @@ export interface Employee {
   is_active: boolean
 }
 
+// Day-off status values — must match backend _DAY_OFF_STATUSES.
+// 'present' is the default for actual check-in records.
+export type AttendanceStatus =
+  | 'present'
+  | 'paid_leave'
+  | 'unpaid_leave'
+  | 'absent'
+  | 'holiday'
+  | 'weekly_off'
+
 export interface AttendancePunch {
   attendance_id: string
-  check_in: string
+  check_in: string | null // null for day-off rows on Postgres
   check_out: string | null
   total_minutes: number | null
   notes: string | null
+  status?: AttendanceStatus
+  reason?: string | null
   marked_by_name?: string
 }
 
@@ -41,6 +54,8 @@ export interface AttendanceDay {
   punches: AttendancePunch[]
   day_total_minutes: number
   day_hours: number
+  day_status?: AttendanceStatus
+  day_reason?: string | null
 }
 
 export interface DailyBreakdown {
@@ -79,7 +94,8 @@ export interface SalaryCycle {
 
 type ActiveModal =
   | { type: 'add-employee' }
-  | { type: 'mark-attendance' }
+  | { type: 'mark-attendance'; prefillDate?: string }
+  | { type: 'mark-day-off'; workDate: string }
   | { type: 'new-cycle' }
   | { type: 'add-advance'; cycles: SalaryCycle[] }
   | { type: 'history'; employee: Employee }
@@ -104,6 +120,7 @@ export default function SalaryPage() {
   const [modal, setModal] = useState<ActiveModal>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [cycleRefresh, setCycleRefresh] = useState(0)
+  const [attendanceRefresh, setAttendanceRefresh] = useState(0)
 
   const hasManagerAccess =
     user?.role === 'owner' ||
@@ -149,6 +166,7 @@ export default function SalaryPage() {
   ) {
     await api.post(`/employees/${employeeId}/attendance/checkin`, { check_in: checkIn, notes })
     showToast('Attendance marked')
+    setAttendanceRefresh(n => n + 1)
   }
 
   async function handleNewCycle(
@@ -167,6 +185,17 @@ export default function SalaryPage() {
     await api.post(`/employees/${employeeId}/advances`, data)
     showToast('Advance recorded')
     setCycleRefresh(n => n + 1)
+  }
+
+  async function handleMarkDayOff(
+    employeeId: string,
+    data: { work_date: string; status: string; reason: string; notes: string }
+  ) {
+    await api.post(`/employees/${employeeId}/day-off`, data)
+    showToast(`Marked as ${data.status.replace('_', ' ')}`)
+    setCycleRefresh(n => n + 1)
+    // Refresh the attendance list/calendar so the new entry appears immediately
+    setAttendanceRefresh(n => n + 1)
   }
 
   return (
@@ -211,8 +240,10 @@ export default function SalaryPage() {
         {selected ? (
           <AttendancePanel
             employee={selected}
-            onMarkAttendance={() => setModal({ type: 'mark-attendance' })}
+            onMarkAttendance={(prefillDate) => setModal({ type: 'mark-attendance', prefillDate })}
+            onMarkDayOff={(workDate) => setModal({ type: 'mark-day-off', workDate })}
             hasManagerAccess={hasManagerAccess}
+            refreshSignal={attendanceRefresh}
           />
         ) : (
           <EmptySlate message="Select an employee to view attendance" />
@@ -243,6 +274,15 @@ export default function SalaryPage() {
           employee={selected}
           onClose={() => setModal(null)}
           onSave={handleMarkAttendance}
+          prefillDate={modal.prefillDate}
+        />
+      )}
+      {modal?.type === 'mark-day-off' && selected && (
+        <MarkDayOffModal
+          employee={selected}
+          workDate={modal.workDate}
+          onClose={() => setModal(null)}
+          onSave={handleMarkDayOff}
         />
       )}
       {modal?.type === 'new-cycle' && selected && (

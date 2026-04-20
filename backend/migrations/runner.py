@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 14
+CURRENT_SCHEMA_VERSION = 15
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -933,6 +933,65 @@ def _m014_employee_salary_tables(db):
     logging.info("[Migration] v14: employee salary tables done")
 
 
+def _m015_attendance_status_column(db):
+    """
+    Add day-off / leave / holiday support to employee_attendance.
+
+    - Adds `status` column (default 'present')
+    - Relaxes `check_in` to allow NULL (day-off rows have no punch)
+
+    Status values carry pay semantics — see routes/employees.py::_calculate_cycle_amounts:
+      present       → computed from minutes worked (existing behavior)
+      paid_leave    → counts as 1 full day of pay
+      holiday       → counts as 1 full day of pay
+      weekly_off    → counts as 1 full day of pay
+      absent        → counts as 0 (no pay)
+      unpaid_leave  → counts as 0 (no pay)
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    # 1. Status column — drives pay semantics
+    _add_col('employee_attendance', 'status',
+             "VARCHAR(20) NOT NULL DEFAULT 'present'")
+
+    # 2. Reason column — short categorized label shown in UI (e.g. "Sick leave", "Festival")
+    _add_col('employee_attendance', 'reason', "VARCHAR(255)")
+
+    # 3. Relax check_in NOT NULL. Day-off rows legitimately have no punch time.
+    #    Use dialect-specific syntax — SQLite cannot ALTER COLUMN, so we check the
+    #    column's current nullability and only DDL on PostgreSQL.
+    if dialect == 'postgresql':
+        try:
+            db.session.execute(text(
+                "ALTER TABLE employee_attendance ALTER COLUMN check_in DROP NOT NULL"
+            ))
+            logging.info("[Migration] employee_attendance.check_in is now NULLABLE")
+        except Exception as e:
+            # Already nullable or dialect quirk — safe to ignore
+            logging.debug(f"[Migration] check_in relax skipped: {e}")
+    else:
+        # SQLite can't relax NOT NULL via ALTER. Day-off rows on SQLite stores use a
+        # sentinel (check_in = work_date midnight) and rely on status='...' to disambiguate.
+        logging.info("[Migration] SQLite: check_in stays NOT NULL (day-off rows use sentinel)")
+
+    db.session.commit()
+    logging.info("[Migration] v15: attendance status/reason columns added")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -950,6 +1009,7 @@ MIGRATIONS = [
     (12, _m012_create_customer_table),
     (13, _m013_apparel_label_fields),
     (14, _m014_employee_salary_tables),
+    (15, _m015_attendance_status_column),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

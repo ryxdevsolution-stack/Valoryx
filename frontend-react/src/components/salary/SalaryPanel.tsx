@@ -288,6 +288,64 @@ export default function SalaryPanel({
           })
         )}
       </div>
+
+      {/* Lifetime stats footer — computed from loaded cycles */}
+      <LifetimeStats cycles={cycles} />
+    </div>
+  )
+}
+
+function LifetimeStats({ cycles }: { cycles: SalaryCycle[] }) {
+  const paidCycles = cycles.filter(c => c.status === 'paid')
+  const totalEarned = cycles.reduce((sum, c) => sum + Number(c.gross_salary ?? 0), 0)
+  const totalAdvances = cycles.reduce((sum, c) => sum + Number(c.total_advances ?? 0), 0)
+  const totalNetPaid = paidCycles.reduce((sum, c) => sum + Number(c.net_salary ?? 0), 0)
+
+  // Most recent paid_at across paid cycles
+  const lastPaid = paidCycles
+    .map(c => c.paid_at)
+    .filter((x): x is string => !!x)
+    .sort()
+    .pop()
+
+  const lastPaidLabel = lastPaid
+    ? new Date(lastPaid).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
+    : '—'
+
+  return (
+    <div className="border-t border-gray-100 dark:border-gray-800 px-3 py-3 bg-gray-50/60 dark:bg-gray-800/20">
+      <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400 mb-2">
+        Lifetime stats
+      </p>
+      <div className="grid grid-cols-2 gap-2">
+        <StatTile label="Total Earned" value={`₹${totalEarned.toFixed(2)}`} tone="green" />
+        <StatTile label="Total Advances" value={`₹${totalAdvances.toFixed(2)}`} tone="orange" />
+        <StatTile label="Net Paid Out" value={`₹${totalNetPaid.toFixed(2)}`} tone="blue" sub={`${paidCycles.length} paid cycle${paidCycles.length === 1 ? '' : 's'}`} />
+        <StatTile label="Last Paid" value={lastPaidLabel} tone="gray" />
+      </div>
+    </div>
+  )
+}
+
+function StatTile({
+  label, value, tone, sub,
+}: {
+  label: string
+  value: string
+  tone: 'green' | 'orange' | 'blue' | 'gray'
+  sub?: string
+}) {
+  const toneClass: Record<string, string> = {
+    green: 'text-green-700 dark:text-green-400',
+    orange: 'text-orange-700 dark:text-orange-400',
+    blue: 'text-blue-700 dark:text-blue-400',
+    gray: 'text-gray-900 dark:text-white',
+  }
+  return (
+    <div className="rounded-lg bg-white dark:bg-gray-900 border border-gray-100 dark:border-gray-800 px-3 py-2">
+      <p className="text-[10px] text-gray-400 dark:text-gray-500">{label}</p>
+      <p className={`text-sm font-bold truncate ${toneClass[tone]}`}>{value}</p>
+      {sub && <p className="text-[9px] text-gray-400 mt-0.5">{sub}</p>}
     </div>
   )
 }

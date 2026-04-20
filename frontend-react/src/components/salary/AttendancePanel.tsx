@@ -5,8 +5,16 @@ import type { Employee, AttendanceDay } from '@/pages/Salary'
 
 interface AttendancePanelProps {
   employee: Employee
-  onMarkAttendance: () => void
+  // Open the Mark Attendance modal. If a prefillDate (YYYY-MM-DD) is passed,
+  // the modal opens on that specific date — used for back-filling from the calendar.
+  onMarkAttendance: (prefillDate?: string) => void
+  // Open the Mark Day Off modal for a specific date — for marking leave / absent
+  // / holiday on a day without actual check-in punches.
+  onMarkDayOff: (workDate: string) => void
   hasManagerAccess: boolean
+  // Bumps when an external action (check-in/out, day-off save) should force
+  // the panel to re-fetch its attendance data. Acts like a useEffect trigger.
+  refreshSignal?: number
 }
 
 function formatMinutes(mins: number): string {
@@ -21,10 +29,126 @@ function monthLabel(year: number, month: number): string {
   return new Date(year, month - 1, 1).toLocaleString('default', { month: 'long', year: 'numeric' })
 }
 
+// Paid day-off statuses — match backend _DAY_OFF_PAID_STATUSES
+const PAID_OFF_STATUSES = new Set(['paid_leave', 'holiday', 'weekly_off'])
+const UNPAID_OFF_STATUSES = new Set(['absent', 'unpaid_leave'])
+
+// Mini calendar footer — visual overview of attendance for the displayed month.
+// Four states per cell:
+//   - Present (green, has punches)       → expand that day's punches
+//   - Paid day-off (amber)               → open day-off modal (to edit)
+//   - Unpaid day-off (gray with border)  → open day-off modal (to edit)
+//   - Unmarked absent (plain gray)       → open day-off modal (to create)
+//   - Future date                        → disabled
+function MiniCalendar({
+  year, month, days, onSelectPresent, onMarkDayOff, canMark,
+}: {
+  year: number
+  month: number
+  days: AttendanceDay[]
+  onSelectPresent: (workDate: string) => void
+  onMarkDayOff: (workDate: string) => void
+  canMark: boolean
+}) {
+  const firstDow = new Date(year, month - 1, 1).getDay() // 0=Sun
+  const daysInMonth = new Date(year, month, 0).getDate()
+  const todayStr = new Date().toISOString().slice(0, 10)
+  // Map workDate → day_status so we can branch three ways (present / paid off / unpaid off)
+  const dayStatusMap = new Map(days.map(d => [d.work_date, d.day_status ?? 'present']))
+
+  // Pad the start of the grid with empty cells so day-1 lands under its weekday.
+  const cells: Array<{ date: string; day: number } | null> = [
+    ...Array.from({ length: firstDow }, () => null),
+    ...Array.from({ length: daysInMonth }, (_, i) => {
+      const day = i + 1
+      const date = `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`
+      return { date, day }
+    }),
+  ]
+
+  return (
+    <div className="border-t border-gray-100 dark:border-gray-800 px-3 py-3 bg-gray-50/60 dark:bg-gray-800/20">
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
+          Monthly overview
+        </p>
+        <div className="flex items-center gap-2 text-[10px] text-gray-400">
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-green-500" />Present</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-400" />Paid off</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-gray-400 dark:bg-gray-600" />Unpaid</span>
+        </div>
+      </div>
+      <div className="grid grid-cols-7 gap-1 text-center">
+        {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
+          <div key={i} className="text-[9px] font-medium text-gray-400">{d}</div>
+        ))}
+        {cells.map((cell, i) => {
+          if (!cell) return <div key={`pad-${i}`} />
+          const status = dayStatusMap.get(cell.date)
+          const hasEntry = status !== undefined
+          const isPresent = status === 'present'
+          const isPaidOff = status !== undefined && PAID_OFF_STATUSES.has(status)
+          const isUnpaidOff = status !== undefined && UNPAID_OFF_STATUSES.has(status)
+          const isToday = cell.date === todayStr
+          const isFuture = cell.date > todayStr
+          // Any recorded day (present OR day-off) is clickable for viewing;
+          // unrecorded past days are clickable only for admins who can mark off.
+          const canClick = hasEntry || (canMark && !isFuture)
+          const handleClick = () => {
+            // If the day already has any entry, open it in the list above —
+            // don't re-open the creation modal (that would confuse "is my save lost?").
+            if (hasEntry) onSelectPresent(cell.date)
+            else if (canMark && !isFuture) onMarkDayOff(cell.date)
+          }
+          const tooltip = isPresent
+            ? 'Click to view punches'
+            : isPaidOff
+              ? `Paid day off (${status!.replace('_', ' ')}) — click to view`
+              : isUnpaidOff
+                ? `Unpaid (${status!.replace('_', ' ')}) — click to view`
+                : isFuture
+                  ? 'Future date'
+                  : canMark
+                    ? 'Absent — click to mark leave / absent'
+                    : 'Absent — no attendance recorded'
+          return (
+            <button
+              key={cell.date}
+              type="button"
+              onClick={handleClick}
+              disabled={!canClick}
+              title={tooltip}
+              className={[
+                'aspect-square rounded-md text-[10px] font-semibold transition-colors',
+                isPresent
+                  ? 'bg-green-500 text-white hover:bg-green-600 cursor-pointer'
+                  : isPaidOff
+                    ? 'bg-amber-400 text-amber-950 hover:bg-amber-500 cursor-pointer'
+                    : isUnpaidOff
+                      ? 'bg-gray-400 dark:bg-gray-600 text-white ring-1 ring-gray-500 dark:ring-gray-500 hover:bg-gray-500 cursor-pointer'
+                      : isFuture
+                        ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-not-allowed'
+                        : canMark
+                          ? 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 hover:text-amber-700 dark:hover:text-amber-300 cursor-pointer'
+                          : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-default',
+                isToday ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50 dark:ring-offset-gray-900' : '',
+              ].join(' ')}
+            >
+              {cell.day}
+            </button>
+          )
+        })}
+      </div>
+    </div>
+  )
+}
+
 export default function AttendancePanel({
   employee,
   onMarkAttendance,
+  onMarkDayOff,
   hasManagerAccess,
+  refreshSignal = 0,
 }: AttendancePanelProps) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
@@ -53,7 +177,9 @@ export default function AttendancePanel({
 
   useEffect(() => {
     fetchAttendance()
-  }, [fetchAttendance])
+    // refreshSignal intentionally in deps — parent bumps it after check-in /
+    // check-out / day-off saves to force a re-fetch.
+  }, [fetchAttendance, refreshSignal])
 
   function prevMonth() {
     if (month === 1) { setYear(y => y - 1); setMonth(12) }
@@ -107,7 +233,7 @@ export default function AttendancePanel({
             ) : (
               <button
                 type="button"
-                onClick={onMarkAttendance}
+                onClick={() => onMarkAttendance()}
                 className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-lg hover:opacity-90 transition-opacity"
               >
                 <LogIn className="w-3.5 h-3.5" />
@@ -170,26 +296,49 @@ export default function AttendancePanel({
           </div>
         ) : (
           <ul className="divide-y divide-gray-100 dark:divide-gray-800">
-            {days.map(day => (
+            {days.map(day => {
+              const dayStatus = day.day_status ?? 'present'
+              const isDayOff = dayStatus !== 'present'
+              const isPaidOff = PAID_OFF_STATUSES.has(dayStatus)
+              return (
               <li key={day.work_date}>
                 <button
                   type="button"
                   onClick={() => setExpandedDay(expandedDay === day.work_date ? null : day.work_date)}
                   className="w-full flex items-center justify-between px-4 py-3 hover:bg-gray-50 dark:hover:bg-gray-800/50 transition-colors text-left"
                 >
-                  <div>
-                    <span className="text-sm font-medium text-gray-900 dark:text-white">
-                      {new Date(day.work_date + 'T00:00:00').toLocaleDateString('default', {
-                        weekday: 'short', month: 'short', day: 'numeric',
-                      })}
-                    </span>
-                    <span className="ml-2 text-xs text-gray-400 dark:text-gray-500">
-                      {day.punches.length} punch{day.punches.length !== 1 ? 'es' : ''}
-                    </span>
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="text-sm font-medium text-gray-900 dark:text-white">
+                        {new Date(day.work_date + 'T00:00:00').toLocaleDateString('default', {
+                          weekday: 'short', month: 'short', day: 'numeric',
+                        })}
+                      </span>
+                      {isDayOff ? (
+                        <span className={`text-[10px] font-semibold px-1.5 py-0.5 rounded-full uppercase ${
+                          isPaidOff
+                            ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+                            : 'bg-gray-200 dark:bg-gray-700 text-gray-700 dark:text-gray-300'
+                        }`}>
+                          {dayStatus.replace('_', ' ')}
+                        </span>
+                      ) : (
+                        <span className="text-xs text-gray-400 dark:text-gray-500">
+                          {day.punches.length} punch{day.punches.length !== 1 ? 'es' : ''}
+                        </span>
+                      )}
+                    </div>
+                    {isDayOff && day.day_reason && (
+                      <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5 truncate">
+                        {day.day_reason}
+                      </p>
+                    )}
                   </div>
-                  <span className="text-sm font-semibold text-gray-700 dark:text-gray-300">
-                    {formatMinutes(day.day_total_minutes)}
-                  </span>
+                  {!isDayOff && (
+                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex-shrink-0">
+                      {formatMinutes(day.day_total_minutes)}
+                    </span>
+                  )}
                 </button>
 
                 {expandedDay === day.work_date && (
@@ -203,14 +352,16 @@ export default function AttendancePanel({
                           <div className="flex items-center gap-1.5">
                             <LogIn className="w-3 h-3 text-green-500" />
                             <span className="text-gray-700 dark:text-gray-300">
-                              {new Date(punch.check_in).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                              {punch.check_in
+                                ? new Date(punch.check_in).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })
+                                : '—'}
                             </span>
                           </div>
                           {punch.check_out ? (
                             <div className="flex items-center gap-1.5">
                               <LogOut className="w-3 h-3 text-red-400" />
                               <span className="text-gray-700 dark:text-gray-300">
-                                {new Date(punch.check_out).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                {new Date(punch.check_out).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}
                               </span>
                             </div>
                           ) : hasManagerAccess ? (
@@ -237,10 +388,21 @@ export default function AttendancePanel({
                   </ul>
                 )}
               </li>
-            ))}
+              )
+            })}
           </ul>
         )}
       </div>
+
+      {/* Mini monthly calendar footer */}
+      <MiniCalendar
+        year={year}
+        month={month}
+        days={days}
+        canMark={hasManagerAccess}
+        onSelectPresent={(workDate) => setExpandedDay(expandedDay === workDate ? null : workDate)}
+        onMarkDayOff={(workDate) => onMarkDayOff(workDate)}
+      />
     </div>
   )
 }
