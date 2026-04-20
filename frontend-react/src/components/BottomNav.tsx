@@ -17,8 +17,9 @@ import {
   User,
   LogOut,
   X,
-Store,
+  Store,
   Download,
+  Banknote,
 } from 'lucide-react'
 import { usePWA } from '@/hooks/usePWA'
 
@@ -85,7 +86,10 @@ export default function BottomNav() {
     hasPermission('view_audit_logs') && {
       name: 'Audit Logs', href: '/audit', icon: Search,
     },
-isSuperAdmin() && {
+    hasPermission('view_stock') && {
+      name: 'Salary', href: '/salary', icon: Banknote,
+    },
+    isSuperAdmin() && {
       name: 'Admin', href: '/admin/clients', icon: Building2,
     },
     {

@@ -55,6 +55,9 @@ yarn-error.log*
 htmlcov/
 .pytest_cache/
 .tox/
+.playwright-mcp/
+playwright-report/
+test-results/
 
 # Database
 *.db

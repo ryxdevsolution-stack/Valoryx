@@ -5,8 +5,8 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { useClient } from '@/contexts/ClientContext'
-import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle, Calendar, X, Package, User, Clock, Hash, CheckCircle } from 'lucide-react'
-import { useNavigate, useLocation } from 'react-router-dom'
+import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle, Calendar, X, Package, User, Clock, Hash, CheckCircle, RotateCcw } from 'lucide-react'
+import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { generateBillPDF } from '@/lib/pdfService'
 import { getShopSettings } from '@/services/shopSettingsService'
 import type { ShopSettings } from '@/services/shopSettingsService'
@@ -652,9 +652,18 @@ export default function AllBillsPage() {
         {/* Header with Date Filter */}
         <div className="flex-shrink-0 mb-2">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h1 className="text-lg font-bold text-gray-900 dark:text-white">All Bills</h1>
-              <p className="text-[10px] text-gray-600 dark:text-gray-400">Filter by date and payment method</p>
+            <div className="flex items-center gap-3">
+              <div>
+                <h1 className="text-lg font-bold text-gray-900 dark:text-white">All Bills</h1>
+                <p className="text-[10px] text-gray-600 dark:text-gray-400">Filter by date and payment method</p>
+              </div>
+              <Link
+                to="/billing/restore"
+                className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors"
+              >
+                <RotateCcw className="w-3.5 h-3.5" strokeWidth={2} />
+                Restore Bills
+              </Link>
             </div>
 
             {/* Date Filter - Compact */}

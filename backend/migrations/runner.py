@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 13
+CURRENT_SCHEMA_VERSION = 14
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -808,6 +808,131 @@ def _m013_apparel_label_fields(db):
     logging.info("[Migration] v13: apparel label fields added")
 
 
+def _m014_employee_salary_tables(db):
+    """
+    Create Employee Salary & Attendance Management tables:
+      - employees            (employee master)
+      - employee_attendance  (daily punch records)
+      - salary_cycles        (pay period with gross/net calculation)
+      - salary_advances      (advance payments within a cycle)
+    """
+    inspector = sa_inspect(db.engine)
+    tables = inspector.get_table_names()
+
+    if 'employees' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS employees (
+                employee_id  TEXT PRIMARY KEY,
+                client_id    TEXT NOT NULL,
+                branch_id    TEXT,
+                name         VARCHAR(255) NOT NULL,
+                phone        VARCHAR(20),
+                pay_type     VARCHAR(10) NOT NULL CHECK (pay_type IN ('hourly', 'daily')),
+                rate         DECIMAL(10, 2) NOT NULL,
+                is_active    BOOLEAN DEFAULT 1,
+                created_by   TEXT NOT NULL,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_emp_client "
+            "ON employees (client_id)"
+        ))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_emp_active "
+            "ON employees (client_id, is_active)"
+        ))
+        logging.info("[Migration] v14: employees table created")
+
+    if 'employee_attendance' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS employee_attendance (
+                attendance_id  TEXT PRIMARY KEY,
+                employee_id    TEXT NOT NULL,
+                client_id      TEXT NOT NULL,
+                work_date      DATE NOT NULL,
+                check_in       TIMESTAMP NOT NULL,
+                check_out      TIMESTAMP,
+                total_minutes  INTEGER,
+                marked_by      TEXT NOT NULL,
+                notes          TEXT,
+                created_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at     TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_att_emp_date "
+            "ON employee_attendance (client_id, employee_id, work_date)"
+        ))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_att_client_date "
+            "ON employee_attendance (client_id, work_date)"
+        ))
+        logging.info("[Migration] v14: employee_attendance table created")
+
+    if 'salary_cycles' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS salary_cycles (
+                cycle_id        TEXT PRIMARY KEY,
+                employee_id     TEXT NOT NULL,
+                client_id       TEXT NOT NULL,
+                start_date      DATE NOT NULL,
+                end_date        DATE NOT NULL,
+                status          VARCHAR(20) DEFAULT 'open'
+                                CHECK (status IN ('open', 'paid')),
+                gross_salary    DECIMAL(10, 2),
+                total_advances  DECIMAL(10, 2) DEFAULT 0,
+                net_salary      DECIMAL(10, 2),
+                paid_at         TIMESTAMP,
+                paid_by         TEXT,
+                payment_note    TEXT,
+                rate_snapshot   DECIMAL(10, 2),
+                pay_type_snap   VARCHAR(10),
+                full_day_mins   INTEGER DEFAULT 480,
+                created_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at      TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                UNIQUE (employee_id, start_date)
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_cycle_emp_status "
+            "ON salary_cycles (client_id, employee_id, status)"
+        ))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_cycle_client_status "
+            "ON salary_cycles (client_id, status)"
+        ))
+        logging.info("[Migration] v14: salary_cycles table created")
+
+    if 'salary_advances' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS salary_advances (
+                advance_id   TEXT PRIMARY KEY,
+                employee_id  TEXT NOT NULL,
+                client_id    TEXT NOT NULL,
+                cycle_id     TEXT NOT NULL,
+                amount       DECIMAL(10, 2) NOT NULL,
+                advance_date DATE NOT NULL,
+                notes        TEXT,
+                recorded_by  TEXT NOT NULL,
+                created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_adv_cycle "
+            "ON salary_advances (cycle_id)"
+        ))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_adv_emp_date "
+            "ON salary_advances (client_id, employee_id, advance_date)"
+        ))
+        logging.info("[Migration] v14: salary_advances table created")
+
+    db.session.commit()
+    logging.info("[Migration] v14: employee salary tables done")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -824,6 +949,7 @@ MIGRATIONS = [
     (11, _m011_sync_bill_number_counters),
     (12, _m012_create_customer_table),
     (13, _m013_apparel_label_fields),
+    (14, _m014_employee_salary_tables),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────
