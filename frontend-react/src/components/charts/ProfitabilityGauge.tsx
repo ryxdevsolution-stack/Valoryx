@@ -35,7 +35,10 @@ export default function ProfitabilityGauge({ profitMargin, totalProfit }: Profit
     chart: {
       type: 'solidgauge',
       backgroundColor: 'transparent',
-      height: '100%',
+      // Fixed pixel height — prevents the chart from expanding unboundedly when
+      // the parent card is in a content-sized grid (`items-start`). The footer
+      // legend sits absolutely below, so the card total lands ~280px.
+      height: 220,
     },
     title: {
       text: 'Profitability',

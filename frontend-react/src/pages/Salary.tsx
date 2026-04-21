@@ -11,6 +11,7 @@ import {
   AddEmployeeModal,
   MarkAttendanceModal,
   NewCycleModal,
+  EditCycleModal,
   AddAdvanceModal,
   MarkDayOffModal,
 } from '@/components/salary/SalaryModals'
@@ -97,6 +98,7 @@ type ActiveModal =
   | { type: 'mark-attendance'; prefillDate?: string }
   | { type: 'mark-day-off'; workDate: string }
   | { type: 'new-cycle' }
+  | { type: 'edit-cycle'; cycle: SalaryCycle }
   | { type: 'add-advance'; cycles: SalaryCycle[] }
   | { type: 'history'; employee: Employee }
   | null
@@ -178,6 +180,16 @@ export default function SalaryPage() {
     setCycleRefresh(n => n + 1)
   }
 
+  async function handleEditCycle(
+    employeeId: string,
+    cycleId: string,
+    data: { start_date: string; end_date: string; full_day_mins: number }
+  ) {
+    await api.put(`/employees/${employeeId}/cycles/${cycleId}`, data)
+    showToast('Cycle updated')
+    setCycleRefresh(n => n + 1)
+  }
+
   async function handleAddAdvance(
     employeeId: string,
     data: { amount: number; advance_date: string; notes: string; cycle_id?: string }
@@ -224,8 +236,10 @@ export default function SalaryPage() {
         </div>
       </div>
 
-      {/* 3-panel layout */}
-      <div className="grid grid-cols-1 md:grid-cols-[260px_1fr_1fr] gap-4 h-[calc(100vh-200px)] min-h-[500px]">
+      {/* 3-panel layout.
+          Mobile: auto-height, panels stack and page scrolls naturally.
+          Desktop (≥md): fixed viewport height so the 3 panels share the screen nicely. */}
+      <div className="grid grid-cols-1 md:grid-cols-[260px_1fr_1fr] gap-4 md:h-[calc(100vh-200px)] md:min-h-[500px]">
         {/* Left: Employees */}
         <EmployeePanel
           employees={employees}
@@ -254,6 +268,7 @@ export default function SalaryPage() {
           <SalaryPanel
             employee={selected}
             onNewCycle={() => setModal({ type: 'new-cycle' })}
+            onEditCycle={(cycle) => setModal({ type: 'edit-cycle', cycle })}
             onAddAdvance={(cycles) => setModal({ type: 'add-advance', cycles })}
             refreshSignal={cycleRefresh}
           />
@@ -292,6 +307,14 @@ export default function SalaryPage() {
           onSave={handleNewCycle}
         />
       )}
+      {modal?.type === 'edit-cycle' && selected && (
+        <EditCycleModal
+          employee={selected}
+          cycle={modal.cycle}
+          onClose={() => setModal(null)}
+          onSave={handleEditCycle}
+        />
+      )}
       {modal?.type === 'add-advance' && selected && (
         <AddAdvanceModal
           employee={selected}
@@ -313,8 +336,10 @@ export default function SalaryPage() {
 // ─── Empty state placeholder ──────────────────────────────────────────────────
 
 function EmptySlate({ message }: { message: string }) {
+  // min-h on mobile so the placeholder has visible body even without a parent height;
+  // on desktop it still stretches via the grid row.
   return (
-    <div className="flex items-center justify-center bg-white dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700">
+    <div className="flex items-center justify-center min-h-[120px] md:min-h-0 bg-white dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 py-8 md:py-0">
       <p className="text-sm text-gray-400 dark:text-gray-600 text-center px-6">{message}</p>
     </div>
   )

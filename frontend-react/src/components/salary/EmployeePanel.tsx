@@ -27,7 +27,9 @@ export default function EmployeePanel({
   )
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+    // On mobile: cap height at 60vh so the list is scrollable but other panels
+    // below remain visible. On desktop (≥md): fill the parent's fixed viewport height.
+    <div className="flex flex-col md:h-full max-h-[60vh] md:max-h-none bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-800">
         <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Employees</h2>

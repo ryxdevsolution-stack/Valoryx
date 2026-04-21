@@ -130,6 +130,20 @@ export default function ReportsPage() {
   // Collapsible section states
   const [isExpenseCategoriesOpen, setIsExpenseCategoriesOpen] = useState(false)
   const [isTopCustomersOpen, setIsTopCustomersOpen] = useState(false)
+  const [isPayrollOpen, setIsPayrollOpen] = useState(false)
+
+  // Payroll summary for the selected period — matches backend /employees/summary response
+  const [payroll, setPayroll] = useState<{
+    active_employees: number
+    open_cycles: number
+    paid_in_period: number
+    paid_all_time: number
+    pending_advances: number
+    advances_paid_in_period: number
+    total_payroll_expense: number
+    leave_days_period: number
+    absent_days_period: number
+  } | null>(null)
 
   const ongoingRequest = useRef<Promise<void> | null>(null)
   const hasInitialized = useRef(false)
@@ -158,11 +172,12 @@ export default function ReportsPage() {
     return { start_date: startDate, end_date: endDate }
   }
 
-  // Handle period type change
+  // Handle period type change. Guards against double-tapping the SAME period
+  // but lets users switch periods while a fetch is in flight — `fetchReportData`
+  // itself uses `ongoingRequest` to coalesce concurrent calls. The old blanket
+  // `if (loading) return` silently dropped clicks and looked like "filter broken".
   const handlePeriodChange = (type: 'daily' | 'weekly' | 'monthly') => {
-    // Prevent changing period while loading
-    if (loading) return
-
+    if (type === periodType) return
     setPeriodType(type)
     const range = calculateDateRange(type)
     setDateRange(range)
@@ -198,9 +213,11 @@ export default function ReportsPage() {
       return
     }
 
-    if (ongoingRequest.current) {
-      return ongoingRequest.current
-    }
+    // NOTE: We intentionally do NOT dedupe against `ongoingRequest.current` here.
+    // Period-switching (Daily/Weekly/Monthly) calls this with DIFFERENT date
+    // ranges — returning an in-flight promise for a stale range would drop the
+    // new click and look like "filters don't work". React's `setReportData`
+    // naturally applies whichever fetch finishes last (last-write-wins).
 
     const request = (async () => {
       try {
@@ -449,6 +466,25 @@ export default function ReportsPage() {
     setCurrentPage(1)
   }, [searchQuery, sortBy])
 
+  // Fetch payroll summary for the selected date range.
+  // Runs in parallel with the main report fetch; a failing payroll endpoint
+  // must not prevent the main report from rendering.
+  useEffect(() => {
+    if (!dateRange.start_date || !dateRange.end_date) return
+    const controller = new AbortController()
+    api.get(
+      `/employees/summary?from=${dateRange.start_date}&to=${dateRange.end_date}`,
+      { signal: controller.signal }
+    )
+      .then(res => setPayroll(res.data.data))
+      .catch(err => {
+        if (err?.code !== 'ERR_CANCELED' && err?.name !== 'AbortError') {
+          setPayroll(null)
+        }
+      })
+    return () => controller.abort()
+  }, [dateRange.start_date, dateRange.end_date])
+
   if (loading && !reportData) {
     return (
       <DashboardLayout>
@@ -514,13 +550,16 @@ export default function ReportsPage() {
               Notes
             </button>
 
-            {/* Period Selector Buttons */}
+            {/* Period Selector Buttons.
+                NOT disabled during load — the user expects instant period-switching.
+                Same-period clicks are idempotent (handlePeriodChange early-returns);
+                different-period clicks trigger a new fetch that last-write-wins.
+                The spinner inside the active button gives visual feedback for in-flight work. */}
             <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
               <button
                 type="button"
                 onClick={() => handlePeriodChange('daily')}
-                disabled={loading}
-                className={`px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
+                className={`px-4 py-2 text-sm font-medium transition-colors flex items-center gap-2 ${
                   periodType === 'daily'
                     ? 'bg-indigo-600 text-white'
                     : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
@@ -534,8 +573,7 @@ export default function ReportsPage() {
               <button
                 type="button"
                 onClick={() => handlePeriodChange('weekly')}
-                disabled={loading}
-                className={`px-4 py-2 text-sm font-medium border-l border-r border-gray-300 dark:border-gray-600 transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
+                className={`px-4 py-2 text-sm font-medium border-l border-r border-gray-300 dark:border-gray-600 transition-colors flex items-center gap-2 ${
                   periodType === 'weekly'
                     ? 'bg-indigo-600 text-white'
                     : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
@@ -549,8 +587,7 @@ export default function ReportsPage() {
               <button
                 type="button"
                 onClick={() => handlePeriodChange('monthly')}
-                disabled={loading}
-                className={`px-4 py-2 text-sm font-medium transition-colors disabled:opacity-50 disabled:cursor-not-allowed flex items-center gap-2 ${
+                className={`px-4 py-2 text-sm font-medium transition-colors flex items-center gap-2 ${
                   periodType === 'monthly'
                     ? 'bg-indigo-600 text-white'
                     : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
@@ -607,55 +644,72 @@ export default function ReportsPage() {
             </p>
           </motion.div>
 
-          {/* Total Expenses */}
-          {reportData?.expenses && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: 0.2 }}
-              className="bg-white dark:bg-gray-800 rounded-md p-3 border border-red-200 dark:border-red-900"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                  Total Expenses
-                </span>
-                <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
-                </svg>
-              </div>
-              <p className="text-xl font-bold text-red-600 dark:text-red-400">
-                {formatCurrency(reportData.expenses.total_expenses)}
-              </p>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                {reportData.expenses.expense_count} transactions
-              </p>
-            </motion.div>
-          )}
+          {/* Total Expenses — now includes both general expenses and payroll */}
+          {reportData?.expenses && (() => {
+            const generalExp = reportData.expenses.total_expenses
+            const payrollExp = payroll?.total_payroll_expense ?? 0
+            const combinedExp = generalExp + payrollExp
+            return (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.2 }}
+                className="bg-white dark:bg-gray-800 rounded-md p-3 border border-red-200 dark:border-red-900"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                    Total Expenses
+                  </span>
+                  <svg className="w-5 h-5 text-red-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M17 9V7a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2m2 4h10a2 2 0 002-2v-6a2 2 0 00-2-2H9a2 2 0 00-2 2v6a2 2 0 002 2zm7-5a2 2 0 11-4 0 2 2 0 014 0z" />
+                  </svg>
+                </div>
+                <p className="text-xl font-bold text-red-600 dark:text-red-400">
+                  {formatCurrency(combinedExp)}
+                </p>
+                {payrollExp > 0 ? (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {formatCurrency(generalExp)} expense{reportData.expenses.expense_count !== 1 ? 's' : ''} + {formatCurrency(payrollExp)} payroll
+                  </p>
+                ) : (
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                    {reportData.expenses.expense_count} transactions
+                  </p>
+                )}
+              </motion.div>
+            )
+          })()}
 
-          {/* Net Profit */}
-          {reportData?.expenses && (
-            <motion.div
-              initial={{ opacity: 0, y: 20 }}
-              animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.3, delay: 0.3 }}
-              className="bg-white dark:bg-gray-800 rounded-md p-3 border border-green-200 dark:border-green-900"
-            >
-              <div className="flex items-center justify-between mb-2">
-                <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
-                  Net Profit
-                </span>
-                <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
-                </svg>
-              </div>
-              <p className={`text-xl font-bold ${reportData.expenses.net_profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                {formatCurrency(reportData.expenses.net_profit)}
-              </p>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-                Revenue - Expenses
-              </p>
-            </motion.div>
-          )}
+          {/* Net Profit — Revenue − (Expenses + Payroll) */}
+          {reportData?.expenses && (() => {
+            const generalExp = reportData.expenses.total_expenses
+            const payrollExp = payroll?.total_payroll_expense ?? 0
+            const combinedExp = generalExp + payrollExp
+            const adjustedNetProfit = (reportData.total_revenue ?? 0) - combinedExp
+            return (
+              <motion.div
+                initial={{ opacity: 0, y: 20 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.3, delay: 0.3 }}
+                className="bg-white dark:bg-gray-800 rounded-md p-3 border border-green-200 dark:border-green-900"
+              >
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-gray-500 dark:text-gray-400 uppercase">
+                    Net Profit
+                  </span>
+                  <svg className="w-5 h-5 text-green-500" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6" />
+                  </svg>
+                </div>
+                <p className={`text-xl font-bold ${adjustedNetProfit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
+                  {formatCurrency(adjustedNetProfit)}
+                </p>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+                  {payrollExp > 0 ? 'Revenue − Expenses − Payroll' : 'Revenue − Expenses'}
+                </p>
+              </motion.div>
+            )
+          })()}
         </div>
 
 
@@ -719,6 +773,78 @@ export default function ReportsPage() {
                       )
                     })}
                 </div>
+              </motion.div>
+            )}
+          </motion.div>
+        )}
+
+        {/* Payroll & Attendance — only visible when the client uses the salary module */}
+        {payroll && payroll.active_employees > 0 && (
+          <motion.div
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.4, delay: 0.17 }}
+            className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 mb-6 overflow-hidden"
+          >
+            <button
+              onClick={() => setIsPayrollOpen(!isPayrollOpen)}
+              className="w-full px-6 py-4 flex items-center justify-between hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors"
+            >
+              <div className="flex items-center gap-3">
+                <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Payroll &amp; Attendance</h3>
+                <span className="text-xs text-gray-500 dark:text-gray-400">
+                  {payroll.active_employees} employee{payroll.active_employees === 1 ? '' : 's'} · {formatCurrency(payroll.total_payroll_expense)} paid this period
+                </span>
+              </div>
+              <svg
+                className={`w-5 h-5 text-gray-500 dark:text-gray-400 transition-transform ${isPayrollOpen ? 'rotate-180' : ''}`}
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+              </svg>
+            </button>
+            {isPayrollOpen && (
+              <motion.div
+                initial={{ height: 0, opacity: 0 }}
+                animate={{ height: 'auto', opacity: 1 }}
+                exit={{ height: 0, opacity: 0 }}
+                transition={{ duration: 0.3 }}
+                className="px-6 pb-6"
+              >
+                {/* Salary + Advances = Total Payroll. Matches the payroll chunk
+                    shown in Total Expenses card above. */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                  <div className="rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-4">
+                    <p className="text-[11px] text-gray-500 dark:text-gray-400 uppercase tracking-wide">Salary Paid</p>
+                    <p className="text-xl font-bold text-green-700 dark:text-green-400 mt-1">
+                      {formatCurrency(payroll.paid_in_period)}
+                    </p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">Net from closed cycles</p>
+                  </div>
+                  <div className="rounded-lg border border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/40 p-4">
+                    <p className="text-[11px] text-gray-500 dark:text-gray-400 uppercase tracking-wide">Advances Disbursed</p>
+                    <p className="text-xl font-bold text-orange-600 dark:text-orange-400 mt-1">
+                      {formatCurrency(payroll.advances_paid_in_period)}
+                    </p>
+                    <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-1">
+                      {payroll.pending_advances > 0
+                        ? `${formatCurrency(payroll.pending_advances)} still owed back`
+                        : 'All settled'}
+                    </p>
+                  </div>
+                  <div className="rounded-lg border-2 border-red-300 dark:border-red-800 bg-red-50 dark:bg-red-900/20 p-4">
+                    <p className="text-[11px] text-red-700 dark:text-red-300 uppercase tracking-wide font-bold">Total Payroll Cost</p>
+                    <p className="text-xl font-bold text-red-700 dark:text-red-300 mt-1">
+                      {formatCurrency(payroll.total_payroll_expense)}
+                    </p>
+                    <p className="text-[10px] text-gray-600 dark:text-gray-400 mt-1">
+                      = {formatCurrency(payroll.paid_in_period)} salary + {formatCurrency(payroll.advances_paid_in_period)} advances
+                    </p>
+                  </div>
+                </div>
+
               </motion.div>
             )}
           </motion.div>
@@ -977,42 +1103,55 @@ export default function ReportsPage() {
             </div>
           )}
 
-          {/* Fixed Footer with Page Total and Grand Total */}
+          {/* Fixed Footer with Page Total and Grand Total.
+              Theme-responsive: light gray bg on light mode, dark gradient on dark mode.
+              All colored values use darker shades in light mode for contrast. */}
           {filteredBills.length > 0 && (
-            <div className="mt-3 bg-gradient-to-r from-slate-800 to-slate-700 rounded-lg p-4 border border-slate-600">
+            <div className="mt-3 bg-gray-100 dark:bg-gradient-to-r dark:from-slate-800 dark:to-slate-700 rounded-lg p-4 border border-gray-200 dark:border-slate-600">
               <div className="flex justify-between items-center">
                 {/* Left side - Page Info and Page Total */}
                 <div className="flex items-center gap-6">
                   <div>
-                    <p className="text-xs text-slate-400">Page {currentPage} of {totalPages || 1}</p>
-                    <p className="text-xs text-slate-400">{paginatedBills.length} items</p>
+                    <p className="text-xs text-gray-600 dark:text-slate-400">Page {currentPage} of {totalPages || 1}</p>
+                    <p className="text-xs text-gray-600 dark:text-slate-400">{paginatedBills.length} items</p>
                   </div>
-                  <div className="border-l border-slate-600 pl-6">
-                    <p className="text-xs text-slate-400">Page Total</p>
-                    <p className="text-lg font-bold text-yellow-400">{formatCurrency(pageTotal)}</p>
+                  <div className="border-l border-gray-300 dark:border-slate-600 pl-6">
+                    <p className="text-xs text-gray-600 dark:text-slate-400">Page Total</p>
+                    <p className="text-lg font-bold text-yellow-700 dark:text-yellow-400">{formatCurrency(pageTotal)}</p>
                   </div>
                 </div>
 
-                {/* Middle - Expenses Info (if available) */}
-                {reportData?.expenses && (
-                  <div className="flex items-center gap-6">
-                    <div className="border-l border-slate-600 pl-6">
-                      <p className="text-xs text-slate-400">Total Expenses</p>
-                      <p className="text-lg font-bold text-red-400">{formatCurrency(reportData.expenses.total_expenses)}</p>
+                {/* Middle - Expenses Info (expenses + payroll combined) */}
+                {reportData?.expenses && (() => {
+                  const generalExp = reportData.expenses.total_expenses
+                  const payrollExp = payroll?.total_payroll_expense ?? 0
+                  const combinedExp = generalExp + payrollExp
+                  const adjNet = (reportData.total_revenue ?? 0) - combinedExp
+                  return (
+                    <div className="flex items-center gap-6">
+                      <div className="border-l border-gray-300 dark:border-slate-600 pl-6">
+                        <p className="text-xs text-gray-600 dark:text-slate-400">Total Expenses</p>
+                        <p className="text-lg font-bold text-red-700 dark:text-red-400">{formatCurrency(combinedExp)}</p>
+                        {payrollExp > 0 && (
+                          <p className="text-[10px] text-gray-600 dark:text-slate-400 mt-0.5 font-medium">
+                            incl. {formatCurrency(payrollExp)} payroll
+                          </p>
+                        )}
+                      </div>
+                      <div className="border-l border-gray-300 dark:border-slate-600 pl-6">
+                        <p className="text-xs text-gray-600 dark:text-slate-400">Net Profit</p>
+                        <p className={`text-lg font-bold ${adjNet >= 0 ? 'text-green-700 dark:text-green-400' : 'text-red-700 dark:text-red-400'}`}>
+                          {formatCurrency(adjNet)}
+                        </p>
+                      </div>
                     </div>
-                    <div className="border-l border-slate-600 pl-6">
-                      <p className="text-xs text-slate-400">Net Profit</p>
-                      <p className={`text-lg font-bold ${reportData.expenses.net_profit >= 0 ? 'text-green-400' : 'text-red-400'}`}>
-                        {formatCurrency(reportData.expenses.net_profit)}
-                      </p>
-                    </div>
-                  </div>
-                )}
+                  )
+                })()}
 
                 {/* Right side - Grand Total */}
                 <div className="text-right">
-                  <p className="text-xs text-slate-400">Grand Total ({filteredBills.length} bills)</p>
-                  <p className="text-xl font-bold text-white">
+                  <p className="text-xs text-gray-600 dark:text-slate-400">Grand Total ({filteredBills.length} bills)</p>
+                  <p className="text-xl font-bold text-gray-900 dark:text-white">
                     {formatCurrency(filteredBills.reduce((sum, bill) => {
                       const amount = bill.type === 'gst' ? parseFloat((bill as any).final_amount || 0) : parseFloat((bill as any).total_amount || 0)
                       return sum + amount

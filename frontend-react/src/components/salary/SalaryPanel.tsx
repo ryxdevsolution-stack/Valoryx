@@ -1,11 +1,12 @@
 import { useState, useEffect, useCallback } from 'react'
-import { Plus, Calculator, CheckCircle, ChevronDown, ChevronUp, RefreshCw } from 'lucide-react'
+import { Plus, Calculator, CheckCircle, ChevronDown, ChevronUp, RefreshCw, Pencil } from 'lucide-react'
 import api from '@/lib/api'
 import type { Employee, SalaryCycle, SalaryAdvance } from '@/pages/Salary'
 
 interface SalaryPanelProps {
   employee: Employee
   onNewCycle: () => void
+  onEditCycle: (cycle: SalaryCycle) => void
   onAddAdvance: (cycles: SalaryCycle[]) => void
   refreshSignal: number
 }
@@ -35,6 +36,7 @@ const STATUS_STYLES: Record<string, string> = {
 export default function SalaryPanel({
   employee,
   onNewCycle,
+  onEditCycle,
   onAddAdvance,
   refreshSignal,
 }: SalaryPanelProps) {
@@ -87,7 +89,8 @@ export default function SalaryPanel({
   }
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+    // Mobile: auto-height; desktop: fills the parent's viewport height.
+    <div className="flex flex-col md:h-full bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-800">
         <div>
@@ -120,8 +123,8 @@ export default function SalaryPanel({
         </div>
       </div>
 
-      {/* Cycle list */}
-      <div className="flex-1 overflow-y-auto divide-y divide-gray-100 dark:divide-gray-800">
+      {/* Cycle list — bounded on mobile; flex-grown on desktop */}
+      <div className="md:flex-1 overflow-y-auto max-h-[400px] md:max-h-none divide-y divide-gray-100 dark:divide-gray-800">
         {loading ? (
           <div className="flex items-center justify-center h-32">
             <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 dark:border-gray-600 dark:border-t-gray-200 rounded-full animate-spin" />
@@ -172,9 +175,23 @@ export default function SalaryPanel({
                 {/* Expanded details */}
                 {isExpanded && (
                   <div className="px-4 pb-4 bg-gray-50 dark:bg-gray-800/30 space-y-4">
-                    {/* Action buttons */}
-                    {cycle.status === 'open' && (
-                      <div className="flex items-center gap-2 pt-2">
+                    {/* Action buttons.
+                        advanceCoversSalary: the employee's advances already meet or exceed
+                        their gross — closing the cycle means NO extra money changes hands.
+                        The UI shifts from "Mark as Paid" (scary when net<0) to "Close Cycle". */}
+                    {cycle.status === 'open' && (() => {
+                      const gross = Number(cycle.gross_salary ?? 0)
+                      const adv = Number(cycle.total_advances ?? 0)
+                      const advanceCoversSalary = cycle.gross_salary !== null && adv >= gross && adv > 0
+                      return (
+                      <div className="flex items-center gap-2 pt-2 flex-wrap">
+                        {advanceCoversSalary && (
+                          <div className="w-full bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 mb-1">
+                            <p className="text-[11px] text-blue-700 dark:text-blue-300">
+                              <strong>Advance covers salary.</strong> Employee was paid ₹{adv.toFixed(2)} as advances; they earned ₹{gross.toFixed(2)} this cycle. No additional payment due — closing this cycle settles the period.
+                            </p>
+                          </div>
+                        )}
                         <button
                           type="button"
                           onClick={() => handleCalculate(cycle.cycle_id)}
@@ -183,6 +200,15 @@ export default function SalaryPanel({
                         >
                           <Calculator className="w-3.5 h-3.5" />
                           {calculating === cycle.cycle_id ? 'Calculating...' : 'Calculate'}
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => onEditCycle(cycle)}
+                          className="flex items-center gap-1.5 text-xs font-medium px-3 py-2 bg-gray-100 dark:bg-gray-700 text-gray-700 dark:text-gray-200 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition-colors"
+                          title="Change cycle dates or full-day hours"
+                        >
+                          <Pencil className="w-3.5 h-3.5" />
+                          Edit
                         </button>
                         {cycle.gross_salary !== null && (
                           payNoteInput === cycle.cycle_id ? (
@@ -218,12 +244,13 @@ export default function SalaryPanel({
                               className="flex items-center gap-1.5 text-xs font-medium px-3 py-2 bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors"
                             >
                               <CheckCircle className="w-3.5 h-3.5" />
-                              Mark as Paid
+                              {advanceCoversSalary ? 'Close Cycle' : 'Mark as Paid'}
                             </button>
                           )
                         )}
                       </div>
-                    )}
+                      )
+                    })()}
 
                     {/* Daily breakdown */}
                     {cycle.daily_breakdown && cycle.daily_breakdown.length > 0 && (

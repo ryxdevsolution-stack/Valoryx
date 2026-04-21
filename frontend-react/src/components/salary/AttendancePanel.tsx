@@ -1,7 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ChevronLeft, ChevronRight, LogIn, LogOut, Clock, RefreshCw } from 'lucide-react'
 import api from '@/lib/api'
-import type { Employee, AttendanceDay } from '@/pages/Salary'
+import type { Employee, AttendanceDay, AttendancePunch } from '@/pages/Salary'
 
 interface AttendancePanelProps {
   employee: Employee
@@ -41,7 +41,7 @@ const UNPAID_OFF_STATUSES = new Set(['absent', 'unpaid_leave'])
 //   - Unmarked absent (plain gray)       → open day-off modal (to create)
 //   - Future date                        → disabled
 function MiniCalendar({
-  year, month, days, onSelectPresent, onMarkDayOff, canMark,
+  year, month, days, onSelectPresent, onMarkDayOff, canMark, selectedDate,
 }: {
   year: number
   month: number
@@ -49,6 +49,9 @@ function MiniCalendar({
   onSelectPresent: (workDate: string) => void
   onMarkDayOff: (workDate: string) => void
   canMark: boolean
+  // The workDate the user currently has "drilled into" — gets a stronger ring
+  // so it's clear which tile's data is showing in the list above.
+  selectedDate: string | null
 }) {
   const firstDow = new Date(year, month - 1, 1).getDay() // 0=Sun
   const daysInMonth = new Date(year, month, 0).getDate()
@@ -131,7 +134,10 @@ function MiniCalendar({
                         : canMark
                           ? 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 hover:text-amber-700 dark:hover:text-amber-300 cursor-pointer'
                           : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-default',
-                isToday ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50 dark:ring-offset-gray-900' : '',
+                // Selected tile gets a thick dark ring; "today" keeps blue ring as a secondary hint.
+                // Selected ring wins on top if both apply.
+                isToday && cell.date !== selectedDate ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50 dark:ring-offset-gray-900' : '',
+                cell.date === selectedDate ? 'ring-[3px] ring-gray-900 dark:ring-white ring-offset-1 ring-offset-gray-50 dark:ring-offset-gray-900 scale-105' : '',
               ].join(' ')}
             >
               {cell.day}
@@ -157,6 +163,26 @@ export default function AttendancePanel({
   const [loading, setLoading] = useState(false)
   const [expandedDay, setExpandedDay] = useState<string | null>(null)
   const [checkingOut, setCheckingOut] = useState<string | null>(null)
+  // Drill-down: which calendar date the user clicked. null = nothing selected,
+  // list area shows a prompt. When set, the list shows ONLY that date's entry.
+  const [selectedDate, setSelectedDate] = useState<string | null>(null)
+  // Heartbeat for live-ticking timers on open punches. Updated every 30s so
+  // any in-progress check-in displays its running elapsed time without DB writes.
+  const [, setTick] = useState(0)
+  useEffect(() => {
+    const id = setInterval(() => setTick(t => t + 1), 30_000)
+    return () => clearInterval(id)
+  }, [])
+
+  // Compute live minutes for a still-open punch (check_out IS NULL).
+  // Returns null for completed punches so callers can tell the difference.
+  function liveMinutesFor(punch: AttendancePunch): number | null {
+    if (punch.check_out || !punch.check_in) return null
+    const checkInMs = new Date(punch.check_in).getTime()
+    if (isNaN(checkInMs)) return null
+    const elapsed = Math.max(0, Math.floor((Date.now() - checkInMs) / 60000))
+    return elapsed
+  }
 
   const fetchAttendance = useCallback(async () => {
     setLoading(true)
@@ -180,6 +206,13 @@ export default function AttendancePanel({
     // refreshSignal intentionally in deps — parent bumps it after check-in /
     // check-out / day-off saves to force a re-fetch.
   }, [fetchAttendance, refreshSignal])
+
+  // Clear the selected date whenever the employee or month changes — otherwise
+  // a stale date from a previous month/employee would stay highlighted.
+  useEffect(() => {
+    setSelectedDate(null)
+    setExpandedDay(null)
+  }, [employee.employee_id, year, month])
 
   function prevMonth() {
     if (month === 1) { setYear(y => y - 1); setMonth(12) }
@@ -206,7 +239,9 @@ export default function AttendancePanel({
   const openPunch = days.flatMap(d => d.punches).find(p => p.check_out === null)
 
   return (
-    <div className="flex flex-col h-full bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+    // Mobile: auto-height (no outer constraint), so the page scrolls naturally.
+    // Desktop: fill the parent's fixed viewport height.
+    <div className="flex flex-col md:h-full bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-800">
         <div>
@@ -284,22 +319,41 @@ export default function AttendancePanel({
         </div>
       </div>
 
-      {/* Day list */}
-      <div className="flex-1 overflow-y-auto">
+      {/* Day list — drill-down: shows ONLY the date the user clicked in the
+          mini calendar below. Empty state = prompt to click a date.
+          On mobile: bounded at ~180px so it doesn't push the calendar off-screen.
+          On desktop: flex-1 to fill remaining vertical space in the panel. */}
+      <div className="md:flex-1 overflow-y-auto min-h-[120px] max-h-[180px] md:max-h-none">
         {loading ? (
           <div className="flex items-center justify-center h-32">
             <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 dark:border-gray-600 dark:border-t-gray-200 rounded-full animate-spin" />
           </div>
         ) : days.length === 0 ? (
           <div className="flex flex-col items-center justify-center h-32 text-gray-400 dark:text-gray-600">
-            <p className="text-sm">No attendance records</p>
+            <p className="text-sm">No attendance records this month</p>
+          </div>
+        ) : !selectedDate ? (
+          // Nothing clicked yet — show a subtle hint pointing down to the calendar
+          <div className="flex flex-col items-center justify-center h-32 text-gray-400 dark:text-gray-600 px-6 text-center">
+            <svg className="w-6 h-6 mb-2 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
+            </svg>
+            <p className="text-sm">Click a date in the calendar below to view details</p>
+            <p className="text-[11px] mt-1 opacity-70">{days.length} {days.length === 1 ? 'day' : 'days'} recorded this month</p>
           </div>
         ) : (
           <ul className="divide-y divide-gray-100 dark:divide-gray-800">
-            {days.map(day => {
+            {days.filter(day => day.work_date === selectedDate).map(day => {
               const dayStatus = day.day_status ?? 'present'
               const isDayOff = dayStatus !== 'present'
               const isPaidOff = PAID_OFF_STATUSES.has(dayStatus)
+              // Live day total — adds elapsed minutes from any still-open punch
+              const liveExtra = day.punches.reduce((sum, p) => {
+                const live = liveMinutesFor(p)
+                return sum + (live ?? 0)
+              }, 0)
+              const liveDayTotal = day.day_total_minutes + liveExtra
+              const hasOpenPunch = day.punches.some(p => liveMinutesFor(p) !== null)
               return (
               <li key={day.work_date}>
                 <button
@@ -335,8 +389,14 @@ export default function AttendancePanel({
                     )}
                   </div>
                   {!isDayOff && (
-                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex-shrink-0">
-                      {formatMinutes(day.day_total_minutes)}
+                    <span className="text-sm font-semibold text-gray-700 dark:text-gray-300 flex-shrink-0 flex items-center gap-1.5">
+                      {hasOpenPunch && (
+                        <span className="relative flex w-2 h-2" title="Currently clocked in">
+                          <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                          <span className="relative inline-flex rounded-full h-2 w-2 bg-green-500" />
+                        </span>
+                      )}
+                      {formatMinutes(liveDayTotal)}
                     </span>
                   )}
                 </button>
@@ -378,11 +438,24 @@ export default function AttendancePanel({
                             <span className="text-orange-500 text-xs">Still clocked in</span>
                           )}
                         </div>
-                        {punch.total_minutes !== null && (
+                        {/* Duration: finalized on completed punches, live-ticking on open ones */}
+                        {punch.total_minutes !== null ? (
                           <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
                             {formatMinutes(punch.total_minutes)}
                           </span>
-                        )}
+                        ) : (() => {
+                          const live = liveMinutesFor(punch)
+                          if (live === null) return null
+                          return (
+                            <span className="text-xs font-semibold text-green-600 dark:text-green-400 flex items-center gap-1" title="Live — ticking every 30s">
+                              <span className="relative flex w-1.5 h-1.5">
+                                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
+                                <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-500" />
+                              </span>
+                              {formatMinutes(live)}
+                            </span>
+                          )
+                        })()}
                       </li>
                     ))}
                   </ul>
@@ -394,13 +467,24 @@ export default function AttendancePanel({
         )}
       </div>
 
-      {/* Mini monthly calendar footer */}
+      {/* Mini monthly calendar footer — clicking a recorded day drives the
+          drill-down list above: sets selectedDate + auto-expands the entry. */}
       <MiniCalendar
         year={year}
         month={month}
         days={days}
         canMark={hasManagerAccess}
-        onSelectPresent={(workDate) => setExpandedDay(expandedDay === workDate ? null : workDate)}
+        selectedDate={selectedDate}
+        onSelectPresent={(workDate) => {
+          // Toggle: clicking the same day again clears the selection
+          if (selectedDate === workDate) {
+            setSelectedDate(null)
+            setExpandedDay(null)
+          } else {
+            setSelectedDate(workDate)
+            setExpandedDay(workDate) // auto-expand punches for that day
+          }
+        }}
         onMarkDayOff={(workDate) => onMarkDayOff(workDate)}
       />
     </div>

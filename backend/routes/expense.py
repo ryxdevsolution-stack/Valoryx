@@ -368,11 +368,12 @@ def get_expense_categories():
             client_id=client_id
         ).distinct().all()
 
-        # Default categories
+        # Default categories.
+        # NOTE: "Salary" was deliberately removed — payroll now lives in the
+        # dedicated Salary & Attendance module, not as a generic expense line.
         default_categories = [
             'Rent',
             'Utilities',
-            'Salary',
             'Supplies',
             'Maintenance',
             'Transportation',
@@ -380,8 +381,10 @@ def get_expense_categories():
             'Other'
         ]
 
-        # Combine with used categories
-        used_categories = [cat[0] for cat in categories]
+        # Combine with used categories, then filter out deprecated ones so
+        # historical DB rows still exist but no longer surface in the dropdown.
+        deprecated_categories = {'Salary'}
+        used_categories = [cat[0] for cat in categories if cat[0] not in deprecated_categories]
         all_categories = list(set(default_categories + used_categories))
 
         return jsonify({

@@ -994,6 +994,81 @@ def get_cycle_detail(employee_id, cycle_id):
     return jsonify({'success': True, 'data': data}), 200
 
 
+_ALLOWED_CYCLE_EDIT_FIELDS = {'start_date', 'end_date', 'full_day_mins'}
+
+
+@employees_bp.route('/<employee_id>/cycles/<cycle_id>', methods=['PUT'])
+@authenticate
+def edit_cycle(employee_id, cycle_id):
+    """
+    Edit an OPEN salary cycle's dates or full_day_mins.
+    Refuses to touch paid cycles — those are closed financial records.
+
+    Body: any subset of { start_date, end_date, full_day_mins }
+    """
+    client_id = g.user['client_id']
+    emp = _get_employee_any(employee_id, client_id)
+    if not emp:
+        return jsonify({'success': False, 'error': 'Employee not found'}), 404
+
+    cycle = _get_cycle(cycle_id, employee_id, client_id)
+    if not cycle:
+        return jsonify({'success': False, 'error': 'Salary cycle not found'}), 404
+    if cycle.get('status') != 'open':
+        return jsonify({
+            'success': False,
+            'error': 'Only open cycles can be edited. Paid cycles are closed financial records.'
+        }), 409
+
+    body = request.get_json(silent=True) or {}
+    updates: dict = {}
+
+    if 'start_date' in body:
+        parsed = _parse_date(body['start_date'])
+        if not parsed:
+            return jsonify({'success': False, 'error': 'Invalid start_date'}), 400
+        updates['start_date'] = str(parsed)
+    if 'end_date' in body:
+        parsed = _parse_date(body['end_date'])
+        if not parsed:
+            return jsonify({'success': False, 'error': 'Invalid end_date'}), 400
+        updates['end_date'] = str(parsed)
+    if 'full_day_mins' in body:
+        try:
+            mins = int(body['full_day_mins'])
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'full_day_mins must be an integer'}), 400
+        if mins < 60 or mins > 1440:
+            return jsonify({'success': False, 'error': 'full_day_mins must be between 60 and 1440'}), 400
+        updates['full_day_mins'] = mins
+
+    if not updates:
+        return jsonify({'success': False, 'error': 'No editable fields supplied'}), 400
+
+    # Validate date ordering when both are (or will be) set
+    new_start = updates.get('start_date', str(cycle['start_date']))
+    new_end = updates.get('end_date', str(cycle['end_date']))
+    if new_start > new_end:
+        return jsonify({'success': False, 'error': 'start_date must be on or before end_date'}), 400
+
+    # Filter through allowlist, then build parameterised SET clause.
+    safe_updates = {k: v for k, v in updates.items() if k in _ALLOWED_CYCLE_EDIT_FIELDS}
+    set_clause = ', '.join(f"{k} = :{k}" for k in safe_updates)
+    params = {**safe_updates, 'cid': cycle_id, 'eid': employee_id, 'client_id': client_id, 'now': _now_iso()}
+    db.session.execute(
+        text(
+            f"UPDATE salary_cycles SET {set_clause}, updated_at = :now "
+            "WHERE cycle_id = :cid AND employee_id = :eid AND client_id = :client_id "
+            "  AND status = 'open'"
+        ),
+        params
+    )
+    db.session.commit()
+
+    updated = _get_cycle(cycle_id, employee_id, client_id)
+    return jsonify({'success': True, 'data': updated, 'message': 'Cycle updated'}), 200
+
+
 @employees_bp.route('/<employee_id>/cycles/<cycle_id>/calculate', methods=['POST'])
 @authenticate
 def calculate_cycle(employee_id, cycle_id):
@@ -1104,6 +1179,238 @@ def list_open_cycles():
         {'cid': client_id}
     ).fetchall()
     return jsonify({'success': True, 'data': [_row_to_dict(r) for r in rows]}), 200
+
+
+@employees_bp.route('/payroll-timeseries', methods=['GET'])
+@authenticate
+def payroll_timeseries():
+    """
+    Monthly payroll activity for the dashboard's trend chart.
+
+    Aggregates THREE signals, all scoped to the last N months (default 6):
+      - gross_earned:   what employees earned based on attendance (cost signal)
+      - advances_paid:  sum of salary_advances.amount by advance_date
+      - net_paid:       sum of MAX(net_salary, 0) from paid cycles (final settlement)
+      - cash_out:       advances_paid + net_paid (total money disbursed to employees)
+
+    Gross is computed directly from attendance rows (not from cycles), so it
+    reflects true payroll cost even for months where no cycle has been closed.
+    Uses the same per-row branch logic as _calculate_cycle_amounts:
+      paid_leave/holiday/weekly_off → full day pay
+      absent/unpaid_leave           → 0
+      present                       → prorated from minutes
+
+    Response: { data: [ { month, label, gross_earned, advances_paid, net_paid, cash_out, cycles_paid } ] }
+    """
+    client_id = g.user['client_id']
+    try:
+        months = max(1, min(24, int(request.args.get('months', 6))))
+    except (TypeError, ValueError):
+        months = 6
+
+    today = date.today()
+    year, month = today.year, today.month - (months - 1)
+    while month <= 0:
+        month += 12
+        year -= 1
+    from_date = date(year, month, 1)
+
+    dialect = db.engine.dialect.name
+    # Dialect-specific month-key expressions (work_date is DATE, paid_at is TIMESTAMP)
+    if dialect == 'postgresql':
+        month_expr_attend = "TO_CHAR(ea.work_date, 'YYYY-MM')"
+        month_expr_paid = "TO_CHAR(paid_at, 'YYYY-MM')"
+        month_expr_adv = "TO_CHAR(advance_date, 'YYYY-MM')"
+    else:
+        month_expr_attend = "strftime('%Y-%m', ea.work_date)"
+        month_expr_paid = "strftime('%Y-%m', paid_at)"
+        month_expr_adv = "strftime('%Y-%m', advance_date)"
+
+    # Query 1: GROSS EARNED from attendance, joined to employees for rate/pay_type.
+    # Mirrors _calculate_cycle_amounts per-row logic — any drift here should be
+    # fixed in both places together.
+    attend_rows = db.session.execute(
+        text(
+            f"SELECT {month_expr_attend} AS month_key, "
+            "  COALESCE(SUM( "
+            "    CASE "
+            "      WHEN ea.status IN ('paid_leave', 'holiday', 'weekly_off') THEN "
+            "        CASE WHEN e.pay_type = 'daily' THEN CAST(e.rate AS FLOAT) "
+            "             ELSE 8.0 * CAST(e.rate AS FLOAT) END "
+            "      WHEN ea.status IN ('absent', 'unpaid_leave') THEN 0 "
+            "      ELSE "
+            "        CASE WHEN e.pay_type = 'daily' THEN "
+            "               LEAST(COALESCE(ea.total_minutes, 0) / 480.0, 1.0) * CAST(e.rate AS FLOAT) "
+            "             ELSE "
+            "               COALESCE(ea.total_minutes, 0) / 60.0 * CAST(e.rate AS FLOAT) "
+            "        END "
+            "    END "
+            "  ), 0) AS gross_earned "
+            "FROM employee_attendance ea "
+            "JOIN employees e ON e.employee_id = ea.employee_id "
+            "                AND e.client_id = ea.client_id "
+            "WHERE ea.client_id = :cid "
+            "  AND ea.work_date >= :from_d "
+            "  AND (ea.total_minutes IS NOT NULL OR ea.status != 'present') "
+            f"GROUP BY {month_expr_attend}"
+        ),
+        {'cid': client_id, 'from_d': str(from_date)}
+    ).fetchall()
+
+    # Query 2: NET PAID from paid cycles (positive contributions only)
+    paid_rows = db.session.execute(
+        text(
+            f"SELECT {month_expr_paid} AS month_key, "
+            "  COALESCE(SUM(GREATEST(net_salary, 0)), 0) AS net_paid, "
+            "  COUNT(*) AS cycles_paid "
+            "FROM salary_cycles "
+            "WHERE client_id = :cid AND status = 'paid' "
+            "  AND paid_at >= :from_d "
+            f"GROUP BY {month_expr_paid}"
+        ),
+        {'cid': client_id, 'from_d': str(from_date)}
+    ).fetchall()
+
+    # Query 3: ADVANCES paid — money disbursed mid-cycle, dated by advance_date
+    adv_rows = db.session.execute(
+        text(
+            f"SELECT {month_expr_adv} AS month_key, "
+            "  COALESCE(SUM(amount), 0) AS advances_paid "
+            "FROM salary_advances "
+            "WHERE client_id = :cid "
+            "  AND advance_date >= :from_d "
+            f"GROUP BY {month_expr_adv}"
+        ),
+        {'cid': client_id, 'from_d': str(from_date)}
+    ).fetchall()
+
+    # Merge by month_key
+    attend_by_key = {r[0]: float(r[1] or 0) for r in attend_rows}
+    paid_by_key = {r[0]: {'net_paid': float(r[1] or 0), 'cycles_paid': int(r[2] or 0)} for r in paid_rows}
+    adv_by_key = {r[0]: float(r[1] or 0) for r in adv_rows}
+
+    MONTH_ABBREV = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+    series = []
+    y, m = year, month
+    for _ in range(months):
+        key = f"{y:04d}-{m:02d}"
+        gross = attend_by_key.get(key, 0.0)
+        paid_entry = paid_by_key.get(key, {'net_paid': 0.0, 'cycles_paid': 0})
+        advances = adv_by_key.get(key, 0.0)
+        cash_out = paid_entry['net_paid'] + advances
+        series.append({
+            'month': key,
+            'label': f"{MONTH_ABBREV[m - 1]} {y}",
+            'gross_earned': round(gross, 2),
+            'advances_paid': round(advances, 2),
+            'net_paid': round(paid_entry['net_paid'], 2),
+            'cash_out': round(cash_out, 2),
+            'cycles_paid': paid_entry['cycles_paid'],
+            # Back-compat — keep the old keys so the frontend transition is graceful
+            'gross': round(gross, 2),
+            'paid': round(cash_out, 2),
+        })
+        m += 1
+        if m > 12:
+            m = 1
+            y += 1
+
+    return jsonify({'success': True, 'data': series}), 200
+
+
+@employees_bp.route('/summary', methods=['GET'])
+@authenticate
+def payroll_summary():
+    """
+    Aggregate payroll snapshot for the dashboard and reports.
+
+    Optional query params:
+      from=YYYY-MM-DD  — defaults to first day of current month
+      to=YYYY-MM-DD    — defaults to today
+
+    Returns a single JSON blob with all the numbers both the Dashboard and
+    Reports pages need — one round-trip instead of three separate endpoints.
+    """
+    client_id = g.user['client_id']
+
+    today = date.today()
+    from_date = _parse_date(request.args.get('from')) or date(today.year, today.month, 1)
+    to_date = _parse_date(request.args.get('to')) or today
+
+    # Single-query aggregate. Per-field design notes:
+    #  - `paid_in_period` uses GREATEST(net_salary, 0) PER ROW so negative-net
+    #    cycles (edge case: advances > gross) don't subtract from the total.
+    #    A cycle where the employee owes money back still "paid" ₹0, not ₹-200.
+    #  - `gross_in_period` captures the total earned (always ≥ 0) — used by the
+    #    Payroll Trend chart as the stable primary metric.
+    result = db.session.execute(
+        text(
+            "SELECT "
+            "  (SELECT COUNT(*) FROM employees "
+            "    WHERE client_id = :cid AND is_active = TRUE) AS active_employees, "
+            "  (SELECT COUNT(*) FROM salary_cycles "
+            "    WHERE client_id = :cid AND status = 'open') AS open_cycles, "
+            "  (SELECT COALESCE(SUM(GREATEST(net_salary, 0)), 0) FROM salary_cycles "
+            "    WHERE client_id = :cid AND status = 'paid' "
+            "      AND paid_at BETWEEN :from_d AND :to_d_end) AS paid_in_period, "
+            "  (SELECT COALESCE(SUM(gross_salary), 0) FROM salary_cycles "
+            "    WHERE client_id = :cid AND status = 'paid' "
+            "      AND paid_at BETWEEN :from_d AND :to_d_end) AS gross_in_period, "
+            "  (SELECT COALESCE(SUM(gross_salary), 0) FROM salary_cycles "
+            "    WHERE client_id = :cid AND status = 'paid') AS paid_all_time, "
+            "  (SELECT COALESCE(SUM(sa.amount), 0) "
+            "    FROM salary_advances sa "
+            "    JOIN salary_cycles sc ON sc.cycle_id = sa.cycle_id "
+            "    WHERE sa.client_id = :cid AND sc.status = 'open') AS pending_advances, "
+            # Advances DATED in the period — used for P&L expense tracking in reports.
+            # Different from pending_advances (all-time open-cycle) and works
+            # correctly when a cycle started in a prior period.
+            "  (SELECT COALESCE(SUM(amount), 0) "
+            "    FROM salary_advances "
+            "    WHERE client_id = :cid "
+            "      AND advance_date BETWEEN :from_d AND :to_d) AS advances_paid_in_period, "
+            "  (SELECT COUNT(*) FROM employee_attendance "
+            "    WHERE client_id = :cid "
+            "      AND status IN ('paid_leave', 'unpaid_leave', 'holiday', 'weekly_off') "
+            "      AND work_date BETWEEN :from_d AND :to_d) AS leave_days_period, "
+            "  (SELECT COUNT(*) FROM employee_attendance "
+            "    WHERE client_id = :cid "
+            "      AND status = 'absent' "
+            "      AND work_date BETWEEN :from_d AND :to_d) AS absent_days_period "
+        ),
+        {
+            'cid': client_id,
+            'from_d': str(from_date),
+            'to_d': str(to_date),
+            # paid_at is a timestamp, so extend `to_date` to end-of-day for inclusive range
+            'to_d_end': f"{to_date} 23:59:59",
+        }
+    ).fetchone()
+
+    r = _row_to_dict(result)
+
+    paid = float(r['paid_in_period'] or 0)
+    advances_in_period = float(r['advances_paid_in_period'] or 0)
+    # Total payroll expense for P&L: cash that actually left the business for
+    # employee payments during this period (closed-cycle net + dated advances).
+    total_payroll_expense = paid + advances_in_period
+
+    return jsonify({
+        'success': True,
+        'data': {
+            'active_employees': int(r['active_employees'] or 0),
+            'open_cycles': int(r['open_cycles'] or 0),
+            'paid_in_period': paid,
+            'gross_in_period': float(r['gross_in_period'] or 0),
+            'paid_all_time': float(r['paid_all_time'] or 0),
+            'pending_advances': float(r['pending_advances'] or 0),
+            'advances_paid_in_period': advances_in_period,
+            'total_payroll_expense': round(total_payroll_expense, 2),
+            'leave_days_period': int(r['leave_days_period'] or 0),
+            'absent_days_period': int(r['absent_days_period'] or 0),
+            'period': {'from': str(from_date), 'to': str(to_date)},
+        }
+    }), 200
 
 
 # ── Advances ──────────────────────────────────────────────────────────────────

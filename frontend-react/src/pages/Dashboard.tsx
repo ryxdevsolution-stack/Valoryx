@@ -16,7 +16,8 @@ const RevenueAreaChart = lazy(() => import('@/components/charts/RevenueAreaChart
 const PeakHoursChart = lazy(() => import('@/components/charts/PeakHoursChart'))
 const TopProductsPieChart = lazy(() => import('@/components/charts/TopProductsPieChart'))
 const ProductPerformanceChart = lazy(() => import('@/components/charts/ProductPerformanceChart'))
-const ProfitabilityGauge = lazy(() => import('@/components/charts/ProfitabilityGauge'))
+const ProfitabilityGauge = lazy(() => import('@/components/charts/ProfitabilityTierBar'))
+const PayrollTrendChart = lazy(() => import('@/components/charts/PayrollTrendChart'))
 
 interface AnalyticsDashboard {
   revenue: {
@@ -85,9 +86,37 @@ interface AnalyticsDashboard {
   }
 }
 
+// Payroll snapshot from /api/employees/summary — matches the backend payload
+interface PayrollSummary {
+  active_employees: number
+  open_cycles: number
+  paid_in_period: number
+  paid_all_time: number
+  pending_advances: number
+  leave_days_period: number
+  absent_days_period: number
+  period: { from: string; to: string }
+}
+
+// One month in the payroll trend chart — matches /api/employees/payroll-timeseries
+interface PayrollTrendPoint {
+  month: string
+  label: string
+  gross_earned: number
+  advances_paid: number
+  net_paid: number
+  cash_out: number
+  cycles_paid: number
+  // Legacy back-compat fields still returned by the API
+  paid: number
+  gross: number
+}
+
 export default function DashboardPage() {
   const { client } = useClient()
   const [analytics, setAnalytics] = useState<AnalyticsDashboard | null>(null)
+  const [payroll, setPayroll] = useState<PayrollSummary | null>(null)
+  const [payrollTrend, setPayrollTrend] = useState<PayrollTrendPoint[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [timeRange, setTimeRange] = useState<'today' | 'week' | 'month'>('month')
   const [showPredictions, setShowPredictions] = useState(false)
@@ -130,6 +159,51 @@ export default function DashboardPage() {
       controller.abort()
     }
   }, [timeRange])
+
+  // Fetch payroll summary in parallel with analytics — separate state so a slow
+  // or failing payroll endpoint never blocks the rest of the dashboard.
+  useEffect(() => {
+    const controller = new AbortController()
+
+    // Derive from/to dates from the same timeRange the analytics endpoint uses
+    const today = new Date()
+    const iso = (d: Date) => d.toISOString().slice(0, 10)
+    let fromDate: Date
+    if (timeRange === 'today') {
+      fromDate = today
+    } else if (timeRange === 'week') {
+      fromDate = new Date(today); fromDate.setDate(today.getDate() - 6)
+    } else {
+      fromDate = new Date(today.getFullYear(), today.getMonth(), 1)
+    }
+
+    api.get(`/employees/summary?from=${iso(fromDate)}&to=${iso(today)}`, {
+      signal: controller.signal,
+    })
+      .then(res => setPayroll(res.data.data))
+      .catch(err => {
+        if (err?.code !== 'ERR_CANCELED' && err?.name !== 'AbortError') {
+          setPayroll(null)
+        }
+      })
+
+    return () => controller.abort()
+  }, [timeRange])
+
+  // Payroll trend chart — always last 6 months regardless of timeRange (the
+  // chart's purpose is a *trend*, which needs a fixed-length window, not the
+  // currently-viewed slice). Fetched once per session.
+  useEffect(() => {
+    const controller = new AbortController()
+    api.get('/employees/payroll-timeseries?months=6', { signal: controller.signal })
+      .then(res => setPayrollTrend(res.data.data))
+      .catch(err => {
+        if (err?.code !== 'ERR_CANCELED' && err?.name !== 'AbortError') {
+          setPayrollTrend(null)
+        }
+      })
+    return () => controller.abort()
+  }, [])
 
   // Memoize low stock calculations to prevent recalculation on every render
   const lowStockCalculations = useMemo(() => {
@@ -558,17 +632,22 @@ export default function DashboardPage() {
         </div>
       </div>
 
-      {/* Insights Section - Profit & Customers */}
+      {/* Insights Section - Profit & Customers.
+          Default `stretch` alignment — both cards take the height of the taller
+          sibling (Top Customers with its payroll strip). Profitability's
+          internal layout uses justify-between so the tier bar breathes into
+          any extra vertical space. */}
       <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mb-3">
-        {/* Profit Analysis - Gauge Chart */}
-        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3" style={{ minHeight: '280px' }}>
+        {/* Profit Analysis - Tier Bar. Height comes from the grid stretch;
+            the component distributes its children vertically to fill cleanly. */}
+        <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-4 h-full">
           <ProfitabilityGauge
             profitMargin={analytics.insights.profitMargin}
             totalProfit={analytics.insights.totalProfit}
           />
         </div>
 
-        {/* Top Customers */}
+        {/* Top Customers (+ compact Payroll footer when employees exist) */}
         <div className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3">
           <div className="flex items-center justify-between mb-2">
             <h3 className="text-xs font-semibold text-gray-900 dark:text-white">Top Customers</h3>
@@ -590,8 +669,97 @@ export default function DashboardPage() {
               </div>
             ))}
           </div>
+
+          {/* Compact payroll strip — sits naturally after the customer list.
+              Card no longer stretches thanks to `items-start` on the parent grid. */}
+          {payroll && payroll.active_employees > 0 && (
+            <div className="mt-3 pt-3 border-t border-gray-100 dark:border-gray-700">
+              <div className="flex items-center justify-between mb-1.5">
+                <h4 className="text-[10px] font-semibold text-gray-600 dark:text-gray-400 uppercase tracking-wide">
+                  Payroll &amp; Attendance
+                </h4>
+                <span className="text-[9px] text-gray-400">
+                  {timeRange === 'today' ? 'Today' : timeRange === 'week' ? 'This week' : 'This month'}
+                </span>
+              </div>
+              <div className="grid grid-cols-4 gap-2">
+                <div>
+                  <p className="text-[9px] text-gray-500 dark:text-gray-400 uppercase">Employees</p>
+                  <p className="text-xs font-bold text-gray-900 dark:text-white">{payroll.active_employees}</p>
+                </div>
+                <div>
+                  <p className="text-[9px] text-gray-500 dark:text-gray-400 uppercase">Paid</p>
+                  <p className="text-xs font-bold text-gray-900 dark:text-white">
+                    ₹{payroll.paid_in_period.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] text-gray-500 dark:text-gray-400 uppercase">Open</p>
+                  <p className={`text-xs font-bold ${payroll.pending_advances > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-gray-900 dark:text-white'}`}>
+                    {payroll.open_cycles}
+                    {payroll.pending_advances > 0 && (
+                      <span className="text-[9px] font-normal text-amber-500 ml-1">
+                        · ₹{payroll.pending_advances.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                      </span>
+                    )}
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[9px] text-gray-500 dark:text-gray-400 uppercase">Leave</p>
+                  <p className="text-xs font-bold text-gray-900 dark:text-white">
+                    {payroll.leave_days_period + payroll.absent_days_period}
+                    <span className="text-[9px] font-normal text-gray-400 ml-1">
+                      ({payroll.leave_days_period}L · {payroll.absent_days_period}A)
+                    </span>
+                  </p>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </div>
+
+      {/* Payroll Trend — always shown when payroll module is in use.
+          `payroll.active_employees > 0` is the right gate (do they use payroll at all?),
+          not "is there already chart data" (which would hide the chart until first
+          paid cycle, confusing new users). Empty months show as zero-height bars. */}
+      {payrollTrend && payroll && payroll.active_employees > 0 && (
+        <motion.div
+          initial={hasAnimated.current ? false : { opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, delay: 0.25 }}
+          className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded p-3 mb-3"
+        >
+          <div className="flex items-center justify-between mb-2">
+            <div>
+              <h3 className="text-xs font-semibold text-gray-900 dark:text-white">Payroll Trend</h3>
+              <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
+                Gross earned (bars) · Advances vs Salary paid (lines) · Last 6 months
+              </p>
+            </div>
+            <span className="text-[10px] text-gray-400">
+              Total Earned: ₹{payrollTrend.reduce((s, p) => s + Math.max(0, p.gross_earned), 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+            </span>
+          </div>
+          {payrollTrend.some(p => p.gross_earned > 0 || p.advances_paid > 0 || p.net_paid > 0) ? (
+            <PayrollTrendChart data={payrollTrend} />
+          ) : (
+            // Empty state — when no paid cycles yet, show a clear message
+            // instead of an empty chart with axes only.
+            <div className="flex flex-col items-center justify-center py-12 text-center">
+              <svg className="w-10 h-10 text-gray-300 dark:text-gray-600 mb-2" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 19V6l12-3v13M9 19c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zm12-3c0 1.105-1.343 2-3 2s-3-.895-3-2 1.343-2 3-2 3 .895 3 2zM9 10l12-3" />
+              </svg>
+              <p className="text-xs text-gray-500 dark:text-gray-400 font-medium">
+                No payroll paid out yet
+              </p>
+              <p className="text-[10px] text-gray-400 dark:text-gray-500 mt-1 max-w-sm">
+                The trend will appear once you mark a salary cycle as paid with gross earnings.
+              </p>
+            </div>
+          )}
+        </motion.div>
+      )}
 
       {/* Low Stock Alert - Compact Design */}
       {analytics.inventory.lowStock.length > 0 && (

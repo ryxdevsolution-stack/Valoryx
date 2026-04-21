@@ -412,6 +412,137 @@ export function NewCycleModal({ employee, onClose, onSave }: NewCycleModalProps)
   )
 }
 
+// ─── Edit Cycle Modal ────────────────────────────────────────────────────────
+// Similar to NewCycleModal but pre-fills from an existing cycle's values.
+// Only reachable for cycles with status='open' — paid cycles are not editable.
+
+interface EditCycleModalProps {
+  employee: Employee
+  cycle: SalaryCycle
+  onClose: () => void
+  onSave: (
+    employeeId: string,
+    cycleId: string,
+    data: { start_date: string; end_date: string; full_day_mins: number }
+  ) => Promise<void>
+}
+
+export function EditCycleModal({ employee, cycle, onClose, onSave }: EditCycleModalProps) {
+  // Backend returns dates as timestamps ("Wed, 01 Apr 2026 00:00:00 GMT") OR YYYY-MM-DD.
+  // Normalize into the YYYY-MM-DD format that the <input type="date"> expects.
+  const toDateInput = (d: string | null): string => {
+    if (!d) return ''
+    // If already YYYY-MM-DD, keep it
+    if (/^\d{4}-\d{2}-\d{2}$/.test(d)) return d
+    try {
+      const parsed = new Date(d)
+      if (isNaN(parsed.getTime())) return ''
+      return parsed.toISOString().slice(0, 10)
+    } catch { return '' }
+  }
+
+  const [startDate, setStartDate] = useState(toDateInput(cycle.start_date))
+  const [endDate, setEndDate] = useState(toDateInput(cycle.end_date))
+  // Backend stores minutes; show hours to the admin, convert back on save.
+  const initialHours = cycle.full_day_mins ? (cycle.full_day_mins / 60).toString() : '8'
+  const [fullDayHours, setFullDayHours] = useState(initialHours)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  const fullDayMinutes = Math.round((Number(fullDayHours) || 0) * 60)
+  const minsLabel = (() => {
+    const h = Math.floor(fullDayMinutes / 60)
+    const m = fullDayMinutes % 60
+    if (m === 0) return `${h} hour${h === 1 ? '' : 's'}`
+    return `${h}h ${m}m`
+  })()
+
+  async function handleSubmit(e: React.FormEvent) {
+    e.preventDefault()
+    if (!startDate || !endDate) { setError('Start and end dates are required'); return }
+    if (startDate > endDate) { setError('Start date must be on or before end date'); return }
+    setSaving(true)
+    try {
+      await onSave(employee.employee_id, cycle.cycle_id, {
+        start_date: startDate,
+        end_date: endDate,
+        full_day_mins: fullDayMinutes || 480,
+      })
+      onClose()
+    } catch (err: unknown) {
+      const msg = err && typeof err === 'object' && 'response' in err
+        ? (err as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined
+      setError(msg ?? 'Failed to update cycle')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <ModalShell title="Edit Salary Cycle" onClose={onClose}>
+      <form onSubmit={handleSubmit} className="space-y-4">
+        {error && (
+          <p className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">{error}</p>
+        )}
+
+        <div className="bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg px-3 py-2">
+          <p className="text-[11px] text-amber-700 dark:text-amber-300">
+            <strong>Editing open cycle for {employee.name}.</strong> After saving, click <em>Calculate</em> to recompute the gross based on the new date range.
+          </p>
+        </div>
+
+        <div className="grid grid-cols-2 gap-3">
+          <InputField label="Start Date" required>
+            <input
+              type="date"
+              value={startDate}
+              onChange={e => setStartDate(e.target.value)}
+              className={inputClass}
+            />
+          </InputField>
+          <InputField label="End Date" required>
+            <input
+              type="date"
+              value={endDate}
+              onChange={e => setEndDate(e.target.value)}
+              className={inputClass}
+            />
+          </InputField>
+        </div>
+
+        <InputField label="Full Day Hours">
+          <input
+            type="number"
+            min="1"
+            max="24"
+            step="0.5"
+            value={fullDayHours}
+            onChange={e => setFullDayHours(e.target.value)}
+            className={inputClass}
+          />
+          <p className="text-[11px] text-gray-400 mt-1">
+            = <strong>{minsLabel}</strong> ({fullDayMinutes} min)
+          </p>
+        </InputField>
+
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+            Cancel
+          </button>
+          <button
+            type="submit"
+            disabled={saving}
+            className="px-4 py-2 text-sm font-medium bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-lg hover:opacity-90 disabled:opacity-50 transition-opacity"
+          >
+            {saving ? 'Saving...' : 'Save Changes'}
+          </button>
+        </div>
+      </form>
+    </ModalShell>
+  )
+}
+
 // ─── Add Advance Modal ────────────────────────────────────────────────────────
 
 interface AddAdvanceModalProps {
