@@ -39,6 +39,7 @@ from sqlalchemy import text
 
 from extensions import db
 from utils.auth_middleware import authenticate
+from utils.permission_middleware import require_permission
 
 logger = logging.getLogger(__name__)
 
@@ -239,6 +240,7 @@ def _calculate_cycle_amounts(cycle: dict):
 
 @employees_bp.route('', methods=['GET'])
 @authenticate
+@require_permission('view_employees')
 def list_employees():
     client_id = g.user['client_id']
     rows = db.session.execute(
@@ -254,6 +256,7 @@ def list_employees():
 
 @employees_bp.route('', methods=['POST'])
 @authenticate
+@require_permission('add_employee')
 def create_employee():
     client_id = g.user['client_id']
     body = request.get_json(silent=True) or {}
@@ -305,6 +308,7 @@ def create_employee():
 
 @employees_bp.route('/<employee_id>', methods=['GET'])
 @authenticate
+@require_permission('view_employees')
 def get_employee(employee_id):
     client_id = g.user['client_id']
     emp = _get_employee(employee_id, client_id)
@@ -315,6 +319,7 @@ def get_employee(employee_id):
 
 @employees_bp.route('/<employee_id>', methods=['PUT'])
 @authenticate
+@require_permission('edit_employee')
 def update_employee(employee_id):
     client_id = g.user['client_id']
     emp = _get_employee(employee_id, client_id)
@@ -375,6 +380,7 @@ def update_employee(employee_id):
 
 @employees_bp.route('/<employee_id>', methods=['DELETE'])
 @authenticate
+@require_permission('delete_employee')
 def delete_employee(employee_id):
     client_id = g.user['client_id']
     emp = _get_employee(employee_id, client_id)
@@ -396,6 +402,7 @@ def delete_employee(employee_id):
 
 @employees_bp.route('/<employee_id>/attendance/checkin', methods=['POST'])
 @authenticate
+@require_permission('mark_attendance')
 def checkin(employee_id):
     client_id = g.user['client_id']
     emp = _get_employee(employee_id, client_id)
@@ -471,6 +478,7 @@ def checkin(employee_id):
 
 @employees_bp.route('/<employee_id>/attendance/checkout', methods=['POST'])
 @authenticate
+@require_permission('mark_attendance')
 def checkout(employee_id):
     client_id = g.user['client_id']
     emp = _get_employee(employee_id, client_id)
@@ -535,6 +543,7 @@ def checkout(employee_id):
 
 @employees_bp.route('/<employee_id>/day-off', methods=['POST'])
 @authenticate
+@require_permission('mark_attendance')
 def mark_day_off(employee_id):
     """
     Mark a specific date as a day-off with a status and optional reason.
@@ -639,6 +648,7 @@ def mark_day_off(employee_id):
 
 @employees_bp.route('/<employee_id>/attendance', methods=['GET'])
 @authenticate
+@require_permission('view_attendance')
 def get_attendance_log(employee_id):
     client_id = g.user['client_id']
     emp = _get_employee_any(employee_id, client_id)
@@ -698,6 +708,7 @@ def get_attendance_log(employee_id):
 
 @employees_bp.route('/attendance/<attendance_id>', methods=['PUT'])
 @authenticate
+@require_permission('mark_attendance')
 def edit_attendance(attendance_id):
     client_id = g.user['client_id']
     row = db.session.execute(
@@ -774,6 +785,7 @@ def edit_attendance(attendance_id):
 
 @employees_bp.route('/attendance/<attendance_id>', methods=['DELETE'])
 @authenticate
+@require_permission('mark_attendance')
 def delete_attendance(attendance_id):
     client_id = g.user['client_id']
     row = db.session.execute(
@@ -796,6 +808,7 @@ def delete_attendance(attendance_id):
 
 @employees_bp.route('/attendance/daily-summary', methods=['GET'])
 @authenticate
+@require_permission('view_attendance')
 def daily_summary():
     """
     Return punch summary for every active employee on a given date.
@@ -879,6 +892,7 @@ def daily_summary():
 
 @employees_bp.route('/<employee_id>/cycles', methods=['GET'])
 @authenticate
+@require_permission('view_salary')
 def list_cycles(employee_id):
     client_id = g.user['client_id']
     emp = _get_employee_any(employee_id, client_id)
@@ -898,6 +912,7 @@ def list_cycles(employee_id):
 
 @employees_bp.route('/<employee_id>/cycles', methods=['POST'])
 @authenticate
+@require_permission('manage_salary_cycles')
 def create_cycle(employee_id):
     client_id = g.user['client_id']
     emp = _get_employee(employee_id, client_id)
@@ -967,6 +982,7 @@ def create_cycle(employee_id):
 
 @employees_bp.route('/<employee_id>/cycles/<cycle_id>', methods=['GET'])
 @authenticate
+@require_permission('view_salary')
 def get_cycle_detail(employee_id, cycle_id):
     client_id = g.user['client_id']
     emp = _get_employee_any(employee_id, client_id)
@@ -999,6 +1015,7 @@ _ALLOWED_CYCLE_EDIT_FIELDS = {'start_date', 'end_date', 'full_day_mins'}
 
 @employees_bp.route('/<employee_id>/cycles/<cycle_id>', methods=['PUT'])
 @authenticate
+@require_permission('manage_salary_cycles')
 def edit_cycle(employee_id, cycle_id):
     """
     Edit an OPEN salary cycle's dates or full_day_mins.
@@ -1071,6 +1088,7 @@ def edit_cycle(employee_id, cycle_id):
 
 @employees_bp.route('/<employee_id>/cycles/<cycle_id>/calculate', methods=['POST'])
 @authenticate
+@require_permission('manage_salary_cycles')
 def calculate_cycle(employee_id, cycle_id):
     client_id = g.user['client_id']
     cycle = _get_cycle(cycle_id, employee_id, client_id)
@@ -1112,6 +1130,7 @@ def calculate_cycle(employee_id, cycle_id):
 
 @employees_bp.route('/<employee_id>/cycles/<cycle_id>/mark-paid', methods=['POST'])
 @authenticate
+@require_permission('mark_salary_paid')
 def mark_cycle_paid(employee_id, cycle_id):
     client_id = g.user['client_id']
     cycle = _get_cycle(cycle_id, employee_id, client_id)
@@ -1165,6 +1184,7 @@ def mark_cycle_paid(employee_id, cycle_id):
 
 @employees_bp.route('/cycles/open', methods=['GET'])
 @authenticate
+@require_permission('view_salary')
 def list_open_cycles():
     """List all open salary cycles for this client, joined with employee name."""
     client_id = g.user['client_id']
@@ -1183,6 +1203,7 @@ def list_open_cycles():
 
 @employees_bp.route('/payroll-timeseries', methods=['GET'])
 @authenticate
+@require_permission('view_salary')
 def payroll_timeseries():
     """
     Monthly payroll activity for the dashboard's trend chart.
@@ -1226,6 +1247,10 @@ def payroll_timeseries():
         month_expr_paid = "strftime('%Y-%m', paid_at)"
         month_expr_adv = "strftime('%Y-%m', advance_date)"
 
+    # SQLite uses scalar MAX(a,b)/MIN(a,b); PostgreSQL needs GREATEST/LEAST
+    greatest = 'GREATEST' if dialect == 'postgresql' else 'MAX'
+    least = 'LEAST' if dialect == 'postgresql' else 'MIN'
+
     # Query 1: GROSS EARNED from attendance, joined to employees for rate/pay_type.
     # Mirrors _calculate_cycle_amounts per-row logic — any drift here should be
     # fixed in both places together.
@@ -1240,7 +1265,7 @@ def payroll_timeseries():
             "      WHEN ea.status IN ('absent', 'unpaid_leave') THEN 0 "
             "      ELSE "
             "        CASE WHEN e.pay_type = 'daily' THEN "
-            "               LEAST(COALESCE(ea.total_minutes, 0) / 480.0, 1.0) * CAST(e.rate AS FLOAT) "
+            f"               {least}(COALESCE(ea.total_minutes, 0) / 480.0, 1.0) * CAST(e.rate AS FLOAT) "
             "             ELSE "
             "               COALESCE(ea.total_minutes, 0) / 60.0 * CAST(e.rate AS FLOAT) "
             "        END "
@@ -1261,7 +1286,7 @@ def payroll_timeseries():
     paid_rows = db.session.execute(
         text(
             f"SELECT {month_expr_paid} AS month_key, "
-            "  COALESCE(SUM(GREATEST(net_salary, 0)), 0) AS net_paid, "
+            f"  COALESCE(SUM({greatest}(net_salary, 0)), 0) AS net_paid, "
             "  COUNT(*) AS cycles_paid "
             "FROM salary_cycles "
             "WHERE client_id = :cid AND status = 'paid' "
@@ -1320,6 +1345,7 @@ def payroll_timeseries():
 
 @employees_bp.route('/summary', methods=['GET'])
 @authenticate
+@require_permission('view_salary')
 def payroll_summary():
     """
     Aggregate payroll snapshot for the dashboard and reports.
@@ -1337,6 +1363,9 @@ def payroll_summary():
     from_date = _parse_date(request.args.get('from')) or date(today.year, today.month, 1)
     to_date = _parse_date(request.args.get('to')) or today
 
+    # SQLite uses scalar MAX(a,b); PostgreSQL needs GREATEST(a,b)
+    greatest = 'GREATEST' if db.engine.dialect.name == 'postgresql' else 'MAX'
+
     # Single-query aggregate. Per-field design notes:
     #  - `paid_in_period` uses GREATEST(net_salary, 0) PER ROW so negative-net
     #    cycles (edge case: advances > gross) don't subtract from the total.
@@ -1350,7 +1379,7 @@ def payroll_summary():
             "    WHERE client_id = :cid AND is_active = TRUE) AS active_employees, "
             "  (SELECT COUNT(*) FROM salary_cycles "
             "    WHERE client_id = :cid AND status = 'open') AS open_cycles, "
-            "  (SELECT COALESCE(SUM(GREATEST(net_salary, 0)), 0) FROM salary_cycles "
+            f"  (SELECT COALESCE(SUM({greatest}(net_salary, 0)), 0) FROM salary_cycles "
             "    WHERE client_id = :cid AND status = 'paid' "
             "      AND paid_at BETWEEN :from_d AND :to_d_end) AS paid_in_period, "
             "  (SELECT COALESCE(SUM(gross_salary), 0) FROM salary_cycles "
@@ -1417,6 +1446,7 @@ def payroll_summary():
 
 @employees_bp.route('/<employee_id>/advances', methods=['POST'])
 @authenticate
+@require_permission('record_advance')
 def record_advance(employee_id):
     client_id = g.user['client_id']
     emp = _get_employee(employee_id, client_id)
@@ -1496,6 +1526,7 @@ def record_advance(employee_id):
 
 @employees_bp.route('/advances/<advance_id>', methods=['DELETE'])
 @authenticate
+@require_permission('record_advance')
 def delete_advance(advance_id):
     client_id = g.user['client_id']
     adv = db.session.execute(
@@ -1547,6 +1578,7 @@ def delete_advance(advance_id):
 
 @employees_bp.route('/<employee_id>/history', methods=['GET'])
 @authenticate
+@require_permission('view_employees')
 def employee_history(employee_id):
     """
     Full employment history for one employee:

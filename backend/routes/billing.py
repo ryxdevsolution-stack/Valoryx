@@ -362,6 +362,7 @@ def create_non_gst_bill():
 
 @billing_bp.route('/next-number', methods=['GET'])
 @authenticate
+@require_any_permission('gst_billing', 'non_gst_billing')
 def get_next_bill_number_route():
     """
     Get the next bill number - OPTIMIZED lightweight endpoint
@@ -427,6 +428,10 @@ def get_bills():
         status_filter = None if status_param == 'all' else status_param
         date_from = request.args.get('date_from')
         date_to = request.args.get('date_to')
+        # Extend YYYY-MM-DD to end-of-day so the "Daily" filter (and any same-day
+        # from/to range) includes bills created during that day, not just midnight.
+        if date_to and len(date_to) == 10:
+            date_to = f"{date_to} 23:59:59"
         page = int(request.args.get('page', 1))
         limit = min(int(request.args.get('limit', 50)), 100)  # Cap at 100 for performance
 
@@ -1248,6 +1253,7 @@ def update_bill(bill_id):
 
 @billing_bp.route('/exchange/<bill_id>', methods=['POST'])
 @authenticate
+@require_permission('edit_bill_details')
 def exchange_bill(bill_id):
     """
     Exchange bill - updates the original bill in place
@@ -1602,6 +1608,7 @@ def print_bill():
 
 @billing_bp.route('/printers', methods=['GET'])
 @authenticate
+@require_permission('print_bills')
 def list_printers():
     """
     List all available printers on the system

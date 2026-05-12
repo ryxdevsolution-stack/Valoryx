@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef, useCallback } from 'react'
+import { createPortal } from 'react-dom'
 import { useNavigate } from 'react-router-dom'
 import type { LucideProps } from 'lucide-react'
 import {
@@ -169,8 +170,10 @@ export default function GlobalSearch() {
         </div>
       </div>
 
-      {/* Overlay */}
-      {open && (
+      {/* Overlay — portalled to body because the sidebar has a CSS transform,
+          which makes any `position: fixed` descendant fix to the sidebar
+          (as a containing block) instead of the viewport. */}
+      {open && createPortal(
         <div
           className="fixed inset-0 z-[60] bg-black/50 backdrop-blur-sm flex items-start justify-center pt-24"
           onClick={handleClose}
@@ -273,7 +276,8 @@ export default function GlobalSearch() {
               <span><kbd className="font-mono bg-gray-100 dark:bg-gray-800 px-1 rounded">Esc</kbd> Close</span>
             </div>
           </div>
-        </div>
+        </div>,
+        document.body
       )}
     </>
   )

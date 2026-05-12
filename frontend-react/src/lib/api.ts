@@ -81,6 +81,18 @@ function getCacheTTL(url: string): number {
   return 0 // No caching by default
 }
 
+// Build a cache key that includes query params, so /billing/list?from=A&to=B
+// and /billing/list?from=C&to=D don't collide. Sorted to be order-stable.
+function buildCacheKey(url: string, params?: Record<string, any>): string {
+  if (!params) return url
+  const entries = Object.entries(params)
+    .filter(([, v]) => v !== undefined && v !== null)
+    .sort(([a], [b]) => a.localeCompare(b))
+  if (entries.length === 0) return url
+  const qs = entries.map(([k, v]) => `${k}=${v}`).join('&')
+  return `${url}?${qs}`
+}
+
 // Get from cache if valid
 function getFromCache(url: string): any | null {
   const entry = requestCache.get(url)
@@ -236,7 +248,7 @@ api.interceptors.response.use(
       const url = response.config.url
       const ttl = getCacheTTL(url)
       if (ttl > 0) {
-        saveToCache(url, response.data, ttl)
+        saveToCache(buildCacheKey(url, response.config.params), response.data, ttl)
       }
     }
 
@@ -357,26 +369,28 @@ api.get = function smartGet<T = any>(url: string, config?: AxiosRequestConfig): 
   const ttl = getCacheTTL(url)
   if (ttl <= 0) return originalGet<T>(url, config)
 
+  const cacheKey = buildCacheKey(url, config?.params)
+
   // 1. Serve from cache if fresh
-  const cached = getFromCache(url)
+  const cached = getFromCache(cacheKey)
   if (cached) {
     return Promise.resolve({ data: cached, status: 200, statusText: 'OK', headers: {}, config: { ...config, _fromCache: true } })
   }
 
-  // 2. Deduplicate in-flight requests for the same URL
-  const inflight = inflightRequests.get(url)
+  // 2. Deduplicate in-flight requests for the same URL+params
+  const inflight = inflightRequests.get(cacheKey)
   if (inflight) return inflight
 
   const request = originalGet<T>(url, config).then((response: any) => {
-    saveToCache(url, response.data, ttl)
-    inflightRequests.delete(url)
+    saveToCache(cacheKey, response.data, ttl)
+    inflightRequests.delete(cacheKey)
     return response
   }).catch((err: any) => {
-    inflightRequests.delete(url)
+    inflightRequests.delete(cacheKey)
     throw err
   })
 
-  inflightRequests.set(url, request)
+  inflightRequests.set(cacheKey, request)
   return request
 } as typeof api.get
 
