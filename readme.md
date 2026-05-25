@@ -1,22 +1,74 @@
 # Valoryx Software - Development Guide
 
 ## Project Overview
-Multi-tenant billing system with complete client isolation using client_id filtering.
+Multi-tenant retail/billing platform with complete client isolation via `client_id`.
+What started as a simple GST / Non-GST invoice tool is now a full point-of-sale + back-office
+suite covering pending payments, exchanges, multi-branch stock movement, supplier purchases,
+expenses, payroll, notes and a full audit trail — designed to run **offline-first** on the
+counter and sync to Supabase in the background.
+
+---
+
+## What changed vs. the old billing system
+
+The first version of Valoryx ("old billing") could only do one thing well: create a GST or
+Non-GST invoice and decrement stock. Every other shop workflow — taking partial payments,
+moving stock between branches, recording a supplier delivery, tracking an expense, fixing a
+mistake on yesterday's bill — had to be done outside the app, on paper or in Excel. That made
+audits painful and made the numbers untrustworthy at month-end.
+
+The current build closes those gaps. Below is the side-by-side: what the old billing forced
+you to do manually, and which new module now handles it.
+
+| Area | Old billing (pain) | New module (fix) |
+| --- | --- | --- |
+| **Bill payment** | Bill = paid. No way to invoice now and collect later. | **Pending Bills** — bills can be saved as *Pending*, partially paid, or marked paid later via `/api/billing/<id>/mark-paid`. Customer credit is visible per bill. |
+| **Returns & exchanges** | Cancel + recreate, stock stayed wrong. | **Exchange** (`pages/billing/Exchange.tsx`) — issue a structured return/exchange that reverses stock and links back to the original bill. |
+| **Bill mistakes** | A deleted bill was gone. Audit holes. | **Restore Bills** (`RestoreBills.tsx`) — soft-deleted bills are recoverable with full history. Nothing is destroyed. |
+| **Multi-branch shops** | One stock pool. Branches couldn't move goods. | **Stock Transfer** (`pages/stock-transfer/`, `routes/stock_transfer.py`) — branch-aware transfers with sender/receiver authority, in-transit state, and per-branch inventory. |
+| **Supplier purchases** | Stock magically appeared with no paper trail. | **Suppliers + Deliveries** (`routes/suppliers.py`) — supplier master, delivery drafts, product confirmation, delivery-note file upload/download, complete-on-receipt that updates stock. |
+| **Large procurement** | Multiple POs typed manually into stock. | **Bulk Stock Order** (`routes/bulk_stock_order.py`) — auto-numbered POs (`ORD-YYYY-###`), multi-line items, status flow, and one-click stock receipt. |
+| **Shop expenses** | Tracked outside the system (Excel / paper). | **Expense** (`routes/expense.py`) — category-tagged expenses with date, amount, summaries by period, and contribution to true profit. |
+| **Daily reminders / handover notes** | Sticky notes on the monitor. | **Notes** (`routes/notes.py`) — per-user notes with optional auto-expiry, scoped to the logged-in cashier. |
+| **Auditability** | Best-effort log; some routes skipped it. | **Audit Log** (`routes/audit.py` + `Audit.tsx`) — every create/update/delete is logged with `client_id`, permission-gated views, and date filters. `view_all_bills` vs `view_own_bills` enforced server-side. |
+| **Payroll** | Done manually outside the app. | **Salary / Employees / Attendance** (`pages/Salary.tsx`, `routes/employees.py`) — employee master, attendance cycles, advances, payroll computation with trend charts. |
+| **Customers** | Free-text name on each bill. | **Customers** (`Customers.tsx`, `routes/customer.py`) — customer master linked to bills, supports email/address, used by GST invoices. |
+| **Permissions** | One role: owner. | **Roles + Permissions** (`routes/permissions.py`) — `owner / manager / admin / staff / cashier`, fine-grained permission checks on routes (`view_audit_logs`, `view_all_bills`, etc.). |
+| **Going offline** | Backend down → counter down. | **Offline-first** — backend can run in `DB_MODE=offline` against local SQLite (`~/.mj-billing/local.db`), syncs to Supabase in the background. POS keeps billing during internet outages. |
+| **Desktop install** | Browser tab only. | **Electron app** (`electron/`) — packaged Windows/Linux desktop build with auto-update; web build still works at the same URL. |
+| **POS UX** | List-only product picker. | **Card / List toggle** on `CreateBill.tsx` (F3 shortcut), mobile cart, profit summary bar, faster keyboard flow. |
+| **Performance** | 3–9 s page loads (live Supabase per request). | Local SQLite round-trips ≈0.7 ms vs 307 ms on remote. Routes now respond in **1–20 ms**, with in-memory analytics cache and request-scoped session caching. |
+| **Security** | Hardening done ad-hoc. | Security regression suite (`backend/tests/test_security.py`), TOTP 2FA, forced password change, IP/last-seen tracking, session table, throttled writes. |
+
+> Net effect: a shop owner can now run the day end-to-end inside Valoryx — take a sale, hold
+> a pending bill, accept a return, receive a supplier delivery, log an expense, transfer
+> stock to another branch, run payroll, and read a clean audit trail — without ever opening
+> Excel.
+
+---
 
 ## Project Structure
 ```
-mj-billing/
-├── migration/       # Database migrations only (PostgreSQL/Supabase)
-├── frontend/        # Next.js/React frontend with Tailwind CSS
-└── backend/         # Python Flask/FastAPI with Supabase
+Valoryx/
+├── migration/         # PostgreSQL/Supabase migrations (source of truth for cloud schema)
+├── backend/           # Flask app, models, routes, SQLite offline mirror, sync service
+│   ├── routes/        # Feature blueprints (billing, suppliers, expense, notes, …)
+│   ├── models/        # SQLAlchemy models
+│   ├── migrations/    # Local SQLite migration runner (versioned, currently v16)
+│   └── tests/         # Pytest suite incl. security regressions
+├── frontend-react/    # React 18 + TypeScript + Vite + Tailwind (the live frontend)
+│   └── src/pages/     # billing/, stock-transfer/, admin/, Suppliers.tsx, Salary.tsx, …
+├── electron/          # Desktop wrapper (auto-update enabled)
+└── docs/              # Design docs and plans
 ```
 
 ## Tech Stack
-- **Frontend**: Next.js 14+, React, Tailwind CSS, Framer Motion
-- **Backend**: Flask/FastAPI (Python)
-- **Database**: Supabase (PostgreSQL)
-- **Storage**: Supabase Storage
-- **Auth**: Supabase Auth + JWT
+- **Frontend**: React 18 + TypeScript, Vite, Tailwind CSS, Framer Motion (dev server on `:3002`)
+- **Backend**: Flask + SQLAlchemy (runs on `:5017`)
+- **Database**: Supabase (PostgreSQL) for cloud + local SQLite mirror for offline-first POS
+- **Cache**: Redis when available, in-memory fallback otherwise
+- **Auth**: JWT, optional Google OAuth, optional TOTP 2FA
+- **Desktop**: Electron with auto-update
 
 ## CRITICAL DEVELOPMENT RULES (ALWAYS FOLLOW)
 
@@ -256,24 +308,69 @@ class Invoice(BaseModel):
 - ❌ No multiple documentation files
 - ❌ No migrations outside /migration folder
 
-## Core Modules
-1. **Authentication** - Client-based login with RYX logo animation (2s fade)
-2. **Dashboard** - Dynamic dashboard filtered by client_id
-3. **Billing** - GST & Non-GST billing segregation per client
-4. **Inventory Management** - Stock tracking isolated by client_id
-5. **Reports & Audit** - Client-specific reports and audit logs
-6. **Client Management** - Admin-level client registration
-7. **Payment Management** - Payment type tracking per client
+## Core Modules (current build)
 
-## Database Tables (All with client_id isolation)
-- **users** - Authentication with client_id foreign key
-- **client_entry** - Master client registration (logo, GST number, etc.)
-- **gst_billing** - GST-enabled billing with percentage calculation
-- **non_gst_billing** - Non-GST billing (excluded from audit reports)
-- **stock_entry** - Product inventory with auto-reduction on billing
-- **payment_type** - Custom payment methods per client
-- **report** - Auto-generated summary reports
-- **audit_log** - Complete audit trail with client_id
+Each module is `client_id`-scoped end-to-end. Files in parentheses are the entry points.
+
+1. **Authentication & sessions** — JWT login, Google OAuth, TOTP 2FA, forced password
+   reset, session tracking (`routes/auth.py`, `oauth.py`, `totp.py`, `sessions.py`)
+2. **Dashboard & Analytics** — live KPIs, payment breakdowns, period-over-period
+   (`pages/Dashboard.tsx`, `routes/analytics.py`)
+3. **Billing**
+   - **Create Bill** — GST + Non-GST, card/list product picker, F3 toggle, profit bar
+     (`pages/billing/CreateBill.tsx`)
+   - **Pending Bills** — save unpaid, mark paid later (`POST /api/billing/<id>/mark-paid`)
+   - **Exchange** — structured returns that reverse stock (`pages/billing/Exchange.tsx`)
+   - **Restore Bills** — undelete soft-deleted bills (`pages/billing/RestoreBills.tsx`)
+4. **Stock**
+   - **Stock master** with low-stock alerts (`pages/Stock.tsx`, `routes/stock.py`)
+   - **Stock Transfer** between branches with in-transit state
+     (`pages/stock-transfer/`, `routes/stock_transfer.py`)
+   - **Bulk Stock Order** (PO) — auto-numbered `ORD-YYYY-###`
+     (`routes/bulk_stock_order.py`)
+5. **Suppliers** — vendor master, delivery drafts, delivery-note upload, complete-on-receipt
+   stock update (`pages/Suppliers.tsx`, `routes/suppliers.py`)
+6. **Customers** — customer master linked to bills (`pages/Customers.tsx`, `routes/customer.py`)
+7. **Expense** — categorized expenses with summaries (`routes/expense.py`)
+8. **Salary / Employees / Attendance** — payroll cycles, advances, trend charts
+   (`pages/Salary.tsx`, `routes/employees.py`)
+9. **Notes** — per-user sticky notes with optional expiry (`routes/notes.py`)
+10. **Reports** — combined GST + Non-GST reporting with payment breakdown
+    (`pages/Reports.tsx`, `routes/report.py`)
+11. **Audit Log** — every mutation recorded, permission-filtered viewing
+    (`pages/Audit.tsx`, `routes/audit.py`)
+12. **Branches** — multi-location support, branch managers
+    (`pages/admin/BranchManagement.tsx`, `routes/branches.py`)
+13. **Team / Permissions** — role + fine-grained permission model
+    (`routes/team.py`, `routes/permissions.py`, `routes/invite.py`)
+14. **Shop Settings** — bill numbering, GST defaults, logo, etc.
+    (`pages/ShopSettings.tsx`, `routes/shop_settings.py`)
+15. **Subscription & Billing-of-the-app** — Razorpay subscription, trial expiry
+    (`routes/subscription.py`, `pages/TrialExpired.tsx`)
+16. **Admin (super admin)** — multi-client management, impersonation, admin audit
+    (`pages/admin/`, `routes/admin.py`, `routes/impersonate.py`)
+17. **Electron desktop** — packaged app with auto-update (`electron/`, `pages/ElectronSetup.tsx`)
+
+## Database Tables (all `client_id`-scoped)
+
+Cloud schema lives in `/migration` (Supabase, source of truth). Local SQLite schema is built
+by `backend/migrations/runner.py` and is currently at **v16**.
+
+Old (still present): `users`, `client_entry`, `gst_billing`, `non_gst_billing`,
+`stock_entry`, `payment_type`, `report`, `audit_log`.
+
+New tables added by later migrations:
+- `customers` — customer master linked to bills
+- `suppliers`, `supplier_deliveries`, `supplier_delivery_items` — supplier purchase flow (v9)
+- `bulk_stock_orders`, `bulk_stock_order_items` — purchase orders
+- `stock_transfers`, `stock_transfer_items`, `branch_inventory` — multi-branch stock
+- `branches` — physical locations
+- `employees`, `attendance`, `salary_cycles`, `salary_advances` — payroll
+- `expenses` — categorized expenses
+- `notes` — per-user sticky notes
+- `sessions` — active user sessions
+- `sync_metadata`, `sync_log` — offline sync bookkeeping (v8)
+- `permissions`, `role_permissions`, `user_permissions` — fine-grained access
 
 ## Authentication Flow
 1. App loads → RYX logo fullscreen (2s fade via Framer Motion)
@@ -464,15 +561,9 @@ npm run dev
 - Dashboard with real-time stats
 - Client Context with JWT management
 
-### 🔄 Next Immediate Steps
-1. Run migration 011 to create test user
-2. Test login with: admin@testcompany.com / password123
-3. Verify JWT token generation
-4. Test dashboard data loading
-
 ---
-**Last Updated**: 2025-10-15
-**Project**: Valoryx Software v1.0.0
-**Backend Status**: ✅ 100% Complete and Ready
-**Frontend Status**: ✅ Core Complete (Auth, Dashboard, Navigation)
-**Database Status**: ✅ Migrations Ready to Run
+**Last Updated**: 2026-05-25
+**Project**: Valoryx Software (multi-tenant retail platform)
+**Backend Status**: ✅ Offline-first (SQLite mirror) + Supabase sync, schema v16
+**Frontend Status**: ✅ React 18 / Vite, full module set live (billing, stock, suppliers, expense, payroll, notes, audit)
+**Desktop**: ✅ Electron build with auto-update
