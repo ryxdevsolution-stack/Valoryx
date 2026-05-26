@@ -1,7 +1,7 @@
 
 
 import { motion } from 'framer-motion'
-import { ArrowRight, CheckCircle2, Sparkles, Zap } from 'lucide-react'
+import { ArrowRight, CheckCircle2, Sparkles, Zap, Download } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { siteConfig, trustItems, stats } from '@/config/landing.config'
 import { viewportOnce } from '@/lib/landing/animations'
@@ -195,6 +195,15 @@ export default function CTASection() {
                 <ArrowRight className="w-5 h-5 group-hover:translate-x-1 transition-transform" />
               </span>
             </Link>
+
+            {/* Download CTA */}
+            <a
+              href="#"
+              className="group inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl border border-white/20 hover:border-white/40 text-white font-semibold backdrop-blur-sm transition-all duration-300 hover:bg-white/5"
+            >
+              <Download className="w-5 h-5 group-hover:scale-110 transition-transform" />
+              Download for Windows
+            </a>
 
             {/* Secondary CTA */}
             <Link

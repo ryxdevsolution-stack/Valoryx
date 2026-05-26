@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Menu, X } from 'lucide-react'
+import { Menu, X, Download } from 'lucide-react'
 import { Link } from 'react-router-dom'
 import { AnimatedThemeToggler } from '@/components/AnimatedThemeToggler'
 import { siteConfig, navLinks } from '@/config/landing.config'
@@ -78,6 +78,14 @@ export default function LandingNavbar() {
                 Login
               </Link>
 
+              <a
+                href="#"
+                className="inline-flex items-center gap-2 font-semibold px-5 py-2.5 rounded-xl border border-primary-500 text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-950/30 transition-all duration-300"
+              >
+                <Download className="w-4 h-4" />
+                Download
+              </a>
+
               <Link
                 to={siteConfig.routes.register}
                 className="font-semibold px-6 py-2.5 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white shadow-lg shadow-primary-500/25 hover:shadow-xl hover:shadow-primary-500/30 transition-all duration-300"
@@ -140,6 +148,14 @@ export default function LandingNavbar() {
                 >
                   Login
                 </Link>
+                <a
+                  href="#"
+                  className="flex items-center justify-center gap-2 w-full text-center font-semibold text-primary-600 dark:text-primary-400 py-3 rounded-xl border border-primary-500"
+                  onClick={() => setIsMobileMenuOpen(false)}
+                >
+                  <Download className="w-4 h-4" />
+                  Download for Windows
+                </a>
                 <Link
                   to={siteConfig.routes.register}
                   className="block w-full text-center font-semibold text-white py-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600"
