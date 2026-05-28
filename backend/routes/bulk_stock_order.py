@@ -53,6 +53,9 @@ def create_bulk_order():
         # Generate order number
         order_number = generate_order_number(client_id)
 
+        # Added-by label (v19) — user-typed name for shared-login attribution
+        added_by_label = (data.get('added_by_label') or '').strip() or None
+
         # Create order (apply title case to supplier name)
         order = BulkStockOrder(
             order_id=str(uuid.uuid4()),
@@ -65,6 +68,7 @@ def create_bulk_order():
             status='pending',
             notes=data.get('notes'),
             created_by=user_id,
+            added_by_label=added_by_label,
             created_at=datetime.utcnow()
         )
 
@@ -349,7 +353,9 @@ def receive_bulk_order(order_id):
                     barcode=order_item.barcode,
                     gst_percentage=order_item.gst_percentage or 0,
                     hsn_code=order_item.hsn_code,
-                    created_at=datetime.utcnow()
+                    created_at=datetime.utcnow(),
+                    created_by=g.user['user_id'],
+                    added_by_label=order.added_by_label,
                 )
 
                 db.session.add(new_product)

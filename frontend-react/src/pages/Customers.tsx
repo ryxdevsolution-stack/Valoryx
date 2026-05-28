@@ -3,7 +3,8 @@
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
-import { Link } from 'react-router-dom'
+import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
+import { focusRowById } from '@/utils/focusRow'
 import { CustomerCardSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { X, User, Phone, Mail, MapPin, ShoppingBag, TrendingUp, Clock, ChevronDown, ChevronUp, Package, Pencil } from 'lucide-react'
 import { toast } from '@/utils/toast'
@@ -47,6 +48,10 @@ const formatCurrency = (amount: number) => `₹${currencyFormatter.format(amount
 const formatDate = (dateString: string) => dateString ? dateFormatter.format(new Date(dateString)) : 'N/A'
 
 export default function CustomersPage() {
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const location = useLocation()
+
   const [customers, setCustomers] = useState<Customer[]>([])
   const [statistics, setStatistics] = useState<Statistics | null>(null)
   const [loading, setLoading] = useState(true)
@@ -235,6 +240,17 @@ export default function CustomersPage() {
     setCurrentPage(1)
   }, [searchQuery, filterStatus])
 
+  // Deep-link focus: scroll to and highlight the row matching ?focus=<customer_id>
+  useEffect(() => {
+    const focus = searchParams.get('focus')
+    if (!focus) return
+    if (!customers || customers.length === 0) return
+    focusRowById(focus)
+    const next = new URLSearchParams(searchParams)
+    next.delete('focus')
+    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true })
+  }, [customers, searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
+
   // Pagination
   const totalPages = Math.max(1, Math.ceil(filteredCustomers.length / ITEMS_PER_PAGE))
   const paginatedCustomers = useMemo(() => {
@@ -393,6 +409,7 @@ export default function CustomersPage() {
                       return (
                       <tr
                         key={customer.is_walkin ? `walkin-${customer.bill_number}-${globalIndex}` : (customer.customer_code ?? customer.customer_phone ?? `customer-${globalIndex}`)}
+                        data-focus-id={customer.customer_id}
                         className="hover:bg-gray-50 dark:hover:bg-gray-700 transition cursor-pointer"
                         onClick={() => handleViewCustomer(customer)}
                       >
@@ -443,6 +460,7 @@ export default function CustomersPage() {
                 return (
                   <div
                     key={customer.is_walkin ? `walkin-${customer.bill_number}-${globalIndex}` : (customer.customer_code ?? customer.customer_phone ?? `customer-${globalIndex}`)}
+                    data-focus-id={customer.customer_id}
                     onClick={() => handleViewCustomer(customer)}
                     className="bg-white dark:bg-gray-800 rounded-xl shadow-md p-4 hover:shadow-lg transition touch-manipulation border border-gray-200 dark:border-gray-700"
                   >

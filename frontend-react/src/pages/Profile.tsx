@@ -170,7 +170,7 @@ export default function ProfilePage() {
     } : null,
   } : null
 
-  const canManageTeam = user?.role === 'owner' || user?.role === 'admin'
+  const canManageTeam = user?.role === 'owner' || user?.role === 'manager'
 
   // ─── Handlers ───────────────────────────────────────────────
 
@@ -283,11 +283,17 @@ export default function ProfilePage() {
     }
     try {
       setChangingPassword(true)
-      await api.post('/profile/password', {
+      const resp = await api.post('/profile/password', {
         current_password: passwordForm.current_password,
         new_password: passwordForm.new_password
       })
-      setMessage({ type: 'success', text: 'Password changed successfully' })
+      const revoked = resp.data?.other_sessions_revoked || 0
+      setMessage({
+        type: 'success',
+        text: revoked > 0
+          ? `Password changed. ${revoked} other session${revoked === 1 ? '' : 's'} signed out for security.`
+          : 'Password changed successfully',
+      })
       setShowPasswordForm(false)
       setPasswordForm({ current_password: '', new_password: '', confirm_password: '' })
     } catch (error: any) {
@@ -418,7 +424,7 @@ export default function ProfilePage() {
         onTabChange={handleTabChange}
         showTeamTab={canManageTeam}
         showSubscriptionTab={canManageTeam && !import.meta.env.VITE_ELECTRON}
-        showWebhooksTab={(user?.role === 'owner' || user?.role === 'admin') && !import.meta.env.VITE_ELECTRON}
+        showWebhooksTab={(user?.role === 'owner' || user?.role === 'manager') && !import.meta.env.VITE_ELECTRON}
         showTwoFactorTab={!import.meta.env.VITE_ELECTRON}
       />
 

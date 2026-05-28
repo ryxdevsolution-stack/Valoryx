@@ -43,6 +43,8 @@ class StockEntry(db.Model):
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
+    created_by = db.Column(FlexibleUUID, nullable=True)  # User who added this stock; NULL for legacy rows
+    added_by_label = db.Column(db.String(120), nullable=True)  # User-typed display name for shared-login attribution
 
     def to_dict(self):
         return {
@@ -70,7 +72,20 @@ class StockEntry(db.Model):
             'importer_address': self.importer_address,
             'consumer_care_phone': self.consumer_care_phone,
             'consumer_care_email': self.consumer_care_email,
+            'created_by': str(self.created_by) if self.created_by else None,
+            'created_by_name': self._lookup_creator_name(),
+            'added_by_label': self.added_by_label,
             'is_low_stock': self.quantity <= self.low_stock_alert,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None
         }
+
+    def _lookup_creator_name(self):
+        """Resolve created_by user_id → display name. Returns None for legacy rows."""
+        if not self.created_by:
+            return None
+        from models.user_model import User
+        user = User.query.filter_by(user_id=self.created_by).first()
+        if not user:
+            return None
+        return user.full_name or user.email or None

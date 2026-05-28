@@ -3,12 +3,14 @@ import Sidebar from './Sidebar'
 import BottomNav from './BottomNav'
 import ProtectedRoute from './ProtectedRoute'
 import TrialBanner from './TrialBanner'
+import SubscriptionWarningBanner from './SubscriptionWarningBanner'
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
     <ProtectedRoute>
       <div className="min-h-screen bg-gradient-to-br from-gray-50 via-gray-100 to-gray-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900 transition-colors duration-300">
         <TrialBanner />
+        <SubscriptionWarningBanner />
         <Sidebar />
         <BottomNav />
         {/* Mobile: pb-16 clears bottom nav. Desktop: pl-20 clears left pill sidebar */}

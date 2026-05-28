@@ -97,11 +97,12 @@ def create_app():
                     ('add_payment', 'Add payment methods to bills'),
                     ('select_customer', 'Select and assign customers to bills'),
                     ('add_products', 'Add products to bills'),
-                    ('set_tax_rate', 'Set custom tax/GST rates'),
+                    ('set_tax_rate', 'Override the tax/GST rate on individual bills at checkout'),
                     # Manage Bills
-                    ('view_all_bills', 'View all bills in the system'),
-                    ('view_own_bills', 'View only own created bills'),
+                    ('view_all_bills', 'View bills created by every user'),
+                    ('view_own_bills', 'View only bills this user personally created'),
                     ('edit_bill_details', 'Edit bill information and details'),
+                    ('edit_bill_price_audit', 'Correct historical bill prices from the audit-log view (power feature)'),
                     ('delete_bills', 'Delete bills from the system'),
                     ('print_bills', 'Print bills'),
                     ('download_pdf', 'Download bills as PDF'),
@@ -138,7 +139,7 @@ def create_app():
                     ('view_customer_reports', 'View customer analytics'),
                     ('export_reports', 'Export reports to file'),
                     ('print_reports', 'Print reports'),
-                    ('custom_report_filters', 'Use custom filters in reports'),
+                    ('custom_report_filters', 'Build saved custom date/branch/category filters in reports'),
                     # Payment Types
                     ('view_payment_types', 'View payment types'),
                     ('add_payment_type', 'Add new payment types'),
@@ -151,20 +152,20 @@ def create_app():
                     ('edit_user', 'Edit user information'),
                     ('delete_user', 'Delete users'),
                     ('activate_deactivate_user', 'Activate or deactivate users'),
-                    ('assign_permissions', 'Assign permissions to users'),
+                    ('assign_permissions', 'Grant or revoke permissions on any user (on this screen)'),
                     # System Settings
                     ('view_settings', 'View system settings'),
                     ('edit_company_settings', 'Edit company information'),
                     ('edit_billing_settings', 'Edit billing configuration'),
-                    ('edit_tax_settings', 'Edit tax and GST settings'),
+                    ('edit_tax_settings', 'Edit company-wide default GST rates and tax configuration'),
                     ('edit_notification_settings', 'Edit notification preferences'),
                     ('edit_theme_settings', 'Edit theme and appearance'),
                     # Audit & Logs
-                    ('view_audit_logs', 'View audit trail logs'),
+                    ('view_audit_logs', 'View the audit-trail page showing who changed what and when'),
                     ('export_audit_logs', 'Export audit logs'),
                     ('view_system_logs', 'View system error logs'),
                     # System Administration
-                    ('manage_clients', 'Manage client organizations'),
+                    ('manage_clients', 'Manage other tenant organizations (super-admin only)'),
                     ('system_backup', 'Create system backups'),
                     ('system_restore', 'Restore from backups'),
                     ('maintenance_mode', 'Enable maintenance mode'),
@@ -173,20 +174,31 @@ def create_app():
                     ('create_bulk_order', 'Create new bulk stock orders'),
                     ('edit_bulk_order', 'Edit bulk stock orders'),
                     ('delete_bulk_order', 'Delete bulk stock orders'),
-                    ('approve_bulk_order', 'Approve bulk stock orders'),
-                    ('receive_bulk_order', 'Mark bulk orders as received'),
+                    ('approve_bulk_order', 'Approve a bulk-order draft so it can be sent to the supplier'),
+                    ('receive_bulk_order', 'Confirm physical receipt of stock and add it to inventory'),
                     # Notes
                     ('view_notes', 'View notes'),
                     ('view_all_notes', 'View all users notes (admin)'),
                     ('create_notes', 'Create new notes'),
                     ('edit_notes', 'Edit existing notes'),
                     ('delete_notes', 'Delete notes'),
+                    # Employees & Salary
+                    ('view_employees', 'View employee list and individual employee details'),
+                    ('add_employee', 'Add new employees to the team'),
+                    ('edit_employee', 'Edit employee personal and job details'),
+                    ('delete_employee', 'Remove employees from the team'),
+                    ('view_attendance', 'View attendance records and check-in/check-out logs'),
+                    ('mark_attendance', 'Check employees in and out for the day'),
+                    ('view_salary', 'View salary cycles, advances, and payment status'),
+                    ('manage_salary_cycles', 'Create, edit, and close monthly salary cycles'),
+                    ('record_advance', 'Record salary advances given to employees'),
+                    ('mark_salary_paid', 'Mark a salary cycle as paid out to the employee'),
                     # Legacy broad permissions (kept for backward compatibility)
                     ('manage_customers', 'Create/edit/delete customers'),
                     ('manage_payment_types', 'Manage payment types'),
                     ('manage_settings', 'Manage account settings'),
                     ('manage_users', 'Create/edit/delete users'),
-                    ('manage_permissions', 'Manage user permissions'),
+                    ('manage_permissions', 'Legacy alias for permission management — kept for backward compatibility'),
                 ]
                 existing_names = {
                     r[0] for r in db.session.query(Permission.permission_name).all()
@@ -203,6 +215,8 @@ def create_app():
                 if added:
                     db.session.commit()
                     logging.info(f"[Seed] {added} missing permission(s) added")
+                from utils.owner_permission_sync import grant_audit_edit_to_owners
+                grant_audit_edit_to_owners()
         except Exception as _e:
             with app.app_context():
                 db.session.rollback()
@@ -456,6 +470,13 @@ def create_app():
         import_errors.append(f"employees: {str(e)}")
         logging.error(f"Failed to import employees blueprint: {e}")
 
+    search_bp = None
+    try:
+        from routes.search import search_bp
+    except Exception as e:
+        import_errors.append(f"search: {str(e)}")
+        logging.error(f"Failed to import search blueprint: {e}")
+
     # Store import errors for debugging
     app.config['IMPORT_ERRORS'] = import_errors
     if import_errors:
@@ -663,6 +684,13 @@ def create_app():
             blueprints_registered.append('employees')
         except Exception as e:
             print(f"Warning: Could not register employees blueprint: {e}")
+
+    if search_bp:
+        try:
+            app.register_blueprint(search_bp, url_prefix='/api/search')
+            blueprints_registered.append('search')
+        except Exception as e:
+            print(f"Warning: Could not register search blueprint: {e}")
 
     # Store blueprint registration status
     app.config['BLUEPRINTS_REGISTERED'] = blueprints_registered
@@ -1315,11 +1343,12 @@ if __name__ == '__main__':
                 ('add_payment', 'Add payment methods to bills'),
                 ('select_customer', 'Select and assign customers to bills'),
                 ('add_products', 'Add products to bills'),
-                ('set_tax_rate', 'Set custom tax/GST rates'),
+                ('set_tax_rate', 'Override the tax/GST rate on individual bills at checkout'),
                 # Manage Bills
-                ('view_all_bills', 'View all bills in the system'),
-                ('view_own_bills', 'View only own created bills'),
+                ('view_all_bills', 'View bills created by every user'),
+                ('view_own_bills', 'View only bills this user personally created'),
                 ('edit_bill_details', 'Edit bill information and details'),
+                ('edit_bill_price_audit', 'Correct historical bill prices from the audit-log view (power feature)'),
                 ('delete_bills', 'Delete bills from the system'),
                 ('print_bills', 'Print bills'),
                 ('download_pdf', 'Download bills as PDF'),
@@ -1356,7 +1385,7 @@ if __name__ == '__main__':
                 ('view_customer_reports', 'View customer analytics'),
                 ('export_reports', 'Export reports to file'),
                 ('print_reports', 'Print reports'),
-                ('custom_report_filters', 'Use custom filters in reports'),
+                ('custom_report_filters', 'Build saved custom date/branch/category filters in reports'),
                 # Payment Types
                 ('view_payment_types', 'View payment types'),
                 ('add_payment_type', 'Add new payment types'),
@@ -1369,20 +1398,20 @@ if __name__ == '__main__':
                 ('edit_user', 'Edit user information'),
                 ('delete_user', 'Delete users'),
                 ('activate_deactivate_user', 'Activate or deactivate users'),
-                ('assign_permissions', 'Assign permissions to users'),
+                ('assign_permissions', 'Grant or revoke permissions on any user (on this screen)'),
                 # System Settings
                 ('view_settings', 'View system settings'),
                 ('edit_company_settings', 'Edit company information'),
                 ('edit_billing_settings', 'Edit billing configuration'),
-                ('edit_tax_settings', 'Edit tax and GST settings'),
+                ('edit_tax_settings', 'Edit company-wide default GST rates and tax configuration'),
                 ('edit_notification_settings', 'Edit notification preferences'),
                 ('edit_theme_settings', 'Edit theme and appearance'),
                 # Audit & Logs
-                ('view_audit_logs', 'View audit trail logs'),
+                ('view_audit_logs', 'View the audit-trail page showing who changed what and when'),
                 ('export_audit_logs', 'Export audit logs'),
                 ('view_system_logs', 'View system error logs'),
                 # System Administration
-                ('manage_clients', 'Manage client organizations'),
+                ('manage_clients', 'Manage other tenant organizations (super-admin only)'),
                 ('system_backup', 'Create system backups'),
                 ('system_restore', 'Restore from backups'),
                 ('maintenance_mode', 'Enable maintenance mode'),
@@ -1391,20 +1420,31 @@ if __name__ == '__main__':
                 ('create_bulk_order', 'Create new bulk stock orders'),
                 ('edit_bulk_order', 'Edit bulk stock orders'),
                 ('delete_bulk_order', 'Delete bulk stock orders'),
-                ('approve_bulk_order', 'Approve bulk stock orders'),
-                ('receive_bulk_order', 'Mark bulk orders as received'),
+                ('approve_bulk_order', 'Approve a bulk-order draft so it can be sent to the supplier'),
+                ('receive_bulk_order', 'Confirm physical receipt of stock and add it to inventory'),
                 # Notes
                 ('view_notes', 'View notes'),
                 ('view_all_notes', 'View all users notes (admin)'),
                 ('create_notes', 'Create new notes'),
                 ('edit_notes', 'Edit existing notes'),
                 ('delete_notes', 'Delete notes'),
+                # Employees & Salary
+                ('view_employees', 'View employee list and individual employee details'),
+                ('add_employee', 'Add new employees to the team'),
+                ('edit_employee', 'Edit employee personal and job details'),
+                ('delete_employee', 'Remove employees from the team'),
+                ('view_attendance', 'View attendance records and check-in/check-out logs'),
+                ('mark_attendance', 'Check employees in and out for the day'),
+                ('view_salary', 'View salary cycles, advances, and payment status'),
+                ('manage_salary_cycles', 'Create, edit, and close monthly salary cycles'),
+                ('record_advance', 'Record salary advances given to employees'),
+                ('mark_salary_paid', 'Mark a salary cycle as paid out to the employee'),
                 # Legacy broad permissions (kept for backward compatibility)
                 ('manage_customers', 'Create/edit/delete customers'),
                 ('manage_payment_types', 'Manage payment types'),
                 ('manage_settings', 'Manage account settings'),
                 ('manage_users', 'Create/edit/delete users'),
-                ('manage_permissions', 'Manage user permissions'),
+                ('manage_permissions', 'Legacy alias for permission management — kept for backward compatibility'),
             ]
             existing_names = {
                 r[0] for r in db.session.query(Permission.permission_name).all()
@@ -1421,6 +1461,8 @@ if __name__ == '__main__':
             if added:
                 db.session.commit()
                 print(f"[Seed] {added} missing permission(s) added")
+            from utils.owner_permission_sync import grant_audit_edit_to_owners
+            grant_audit_edit_to_owners()
         except Exception as e:
             db.session.rollback()
             print(f"[Seed] Permission seeding skipped: {e}")
@@ -1477,10 +1519,9 @@ if __name__ == '__main__':
                 migrated_count += 1
                 print(f'[Migration] Created Main Branch for client {client_id} with {len(stock_entries)} inventory items')
 
+            # Only log when work was actually done — avoids noise on every startup.
             if migrated_count > 0:
                 print(f'[Migration] Main Branch migration complete: {migrated_count} client(s) migrated')
-            else:
-                print('[Migration] Main Branch migration complete: no clients needed migration')
 
         except Exception as e:
             db.session.rollback()

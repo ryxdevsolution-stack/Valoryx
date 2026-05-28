@@ -30,6 +30,7 @@ class GSTBilling(db.Model):
     customer_phone = db.Column(db.String(20))
     customer_gstin = db.Column(db.String(15))
     items = db.Column(FlexibleJSON, nullable=False)
+    audit_overrides = db.Column(FlexibleJSON, nullable=True)  # Audit annotation (corrected items); does NOT alter original `items`
     subtotal = db.Column(FlexibleNumeric, nullable=False)
     gst_percentage = db.Column(FlexibleNumeric, nullable=False)
     gst_amount = db.Column(FlexibleNumeric, nullable=False)
@@ -61,6 +62,7 @@ class GSTBilling(db.Model):
             'customer_phone': self.customer_phone,
             'customer_gstin': self.customer_gstin,
             'items': self.items,
+            'audit_overrides': self.audit_overrides,
             'subtotal': str(self.subtotal),
             'gst_percentage': str(self.gst_percentage),
             'gst_amount': str(self.gst_amount),
@@ -100,6 +102,7 @@ class NonGSTBilling(db.Model):
     customer_phone = db.Column(db.String(20))
     customer_gstin = db.Column(db.String(15))
     items = db.Column(FlexibleJSON, nullable=False)
+    audit_overrides = db.Column(FlexibleJSON, nullable=True)  # Audit annotation (corrected items); does NOT alter original `items`
     total_amount = db.Column(FlexibleNumeric, nullable=False)
     payment_type = db.Column(db.Text)
     amount_received = db.Column(FlexibleNumeric)
@@ -128,6 +131,7 @@ class NonGSTBilling(db.Model):
             'customer_phone': self.customer_phone,
             'customer_gstin': self.customer_gstin,
             'items': self.items,
+            'audit_overrides': self.audit_overrides,
             'total_amount': str(self.total_amount),
             'payment_type': self.payment_type,
             'amount_received': str(self.amount_received) if self.amount_received else None,

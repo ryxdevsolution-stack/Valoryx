@@ -108,8 +108,8 @@ describe('401 response handling', () => {
   })
 })
 
-// ── 6. 403 TRIAL_EXPIRED redirects to upgrade page ───────────────────────────
-describe('403 TRIAL_EXPIRED handling', () => {
+// ── 6. 403 TRIAL_EXPIRED / SUBSCRIPTION_EXPIRED redirects to upgrade page ──────
+describe('403 expiry code handling', () => {
   it('changes window.location.href to /upgrade on TRIAL_EXPIRED', async () => {
     // jsdom allows assigning window.location.href
     const originalHref = window.location.href
@@ -122,6 +122,25 @@ describe('403 TRIAL_EXPIRED handling', () => {
       http.get(`${BASE}/stock`, () =>
         HttpResponse.json(
           { error: 'Trial expired', code: 'TRIAL_EXPIRED' },
+          { status: 403 }
+        )
+      )
+    )
+
+    await expect(api.get('/stock')).rejects.toThrow()
+    expect(window.location.href).toBe('/upgrade')
+  })
+
+  it('changes window.location.href to /upgrade on SUBSCRIPTION_EXPIRED', async () => {
+    Object.defineProperty(window, 'location', {
+      writable: true,
+      value: { href: 'http://localhost/', hash: '' },
+    })
+
+    server.use(
+      http.get(`${BASE}/stock`, () =>
+        HttpResponse.json(
+          { error: 'Subscription expired', code: 'SUBSCRIPTION_EXPIRED' },
           { status: 403 }
         )
       )

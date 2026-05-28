@@ -70,7 +70,7 @@ export default function EmployeePanel({
         ) : (
           <ul className="py-1">
             {filtered.map(emp => (
-              <li key={emp.employee_id}>
+              <li key={emp.employee_id} data-focus-id={emp.employee_id}>
                 <button
                   type="button"
                   onClick={() => onSelect(emp)}

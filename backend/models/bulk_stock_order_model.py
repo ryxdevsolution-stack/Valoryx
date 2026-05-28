@@ -21,6 +21,7 @@ class BulkStockOrder(db.Model):
     status = db.Column(db.String(20), default='pending')  # pending, received, partial, cancelled
     notes = db.Column(db.Text, nullable=True)
     created_by = db.Column(FlexibleUUID, nullable=True)  # user_id who created the order
+    added_by_label = db.Column(db.String(120), nullable=True)  # User-typed display name for shared-login attribution
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     received_at = db.Column(db.DateTime, nullable=True)  # When order was marked as received
@@ -41,12 +42,25 @@ class BulkStockOrder(db.Model):
             'status': self.status,
             'notes': self.notes,
             'created_by': self.created_by,
+            'created_by_name': self._lookup_creator_name(),
+            'added_by_label': self.added_by_label,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'updated_at': self.updated_at.isoformat() if self.updated_at else None,
             'received_at': self.received_at.isoformat() if self.received_at else None,
             'synced_at': self.synced_at.isoformat() if self.synced_at else None,
             'items': [item.to_dict() for item in self.items.all()]
         }
+
+
+    def _lookup_creator_name(self):
+        """Resolve created_by user_id → display name. Returns None for legacy rows."""
+        if not self.created_by:
+            return None
+        from models.user_model import User
+        user = User.query.filter_by(user_id=self.created_by).first()
+        if not user:
+            return None
+        return user.full_name or user.email or None
 
 
 class BulkStockOrderItem(db.Model):

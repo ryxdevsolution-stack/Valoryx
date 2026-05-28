@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
 import api from '@/lib/api';
+import { PermissionHelpTooltip } from '@/components/admin/PermissionHelpTooltip';
 import {
   ArrowLeft,
   User,
@@ -141,9 +142,12 @@ export default function UserDetailPage() {
     }
   }, [userId]);
 
-  const fetchPermissions = useCallback(async () => {
+  const fetchPermissions = useCallback(async (includeSuperAdmin: boolean = false) => {
     try {
-      const response = await api.get('/permissions/all');
+      const url = includeSuperAdmin
+        ? '/permissions/all?include_super_admin=true'
+        : '/permissions/all';
+      const response = await api.get(url);
       setAvailablePermissions(response.data.permissions || []);
     } catch (error) {
       console.error('Error fetching permissions:', error);
@@ -164,8 +168,16 @@ export default function UserDetailPage() {
     }
 
     fetchUserDetails();
-    fetchPermissions();
-  }, [authLoading, currentUser, isSuperAdminUser, navigate, fetchUserDetails, fetchPermissions]);
+  }, [authLoading, currentUser, isSuperAdminUser, navigate, fetchUserDetails]);
+
+  // Re-fetch permissions list whenever the target user's super_admin status is known
+  // or changes. Pass include_super_admin only when the target IS a super admin —
+  // otherwise the 4 super-admin-only perms shouldn't be assignable.
+  useEffect(() => {
+    if (user) {
+      fetchPermissions(user.is_super_admin === true);
+    }
+  }, [user?.is_super_admin, fetchPermissions, user]);
 
   const handleBillingTypeChange = (bt: 'gst' | 'non_gst' | 'both' | 'none') => {
     setBillingType(bt);
@@ -445,9 +457,7 @@ export default function UserDetailPage() {
                         className={inputCls}
                       >
                         <option value="staff">Staff</option>
-                        <option value="cashier">Cashier</option>
                         <option value="manager">Manager</option>
-                        <option value="admin">Admin</option>
                       </select>
                     </div>
                     <div className="flex items-end pb-1">
@@ -612,7 +622,7 @@ export default function UserDetailPage() {
                         {(perms as any[]).map((perm: any) => (
                           <label
                             key={perm.permission_name}
-                            className="flex items-center gap-2.5 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors"
+                            className="group flex items-center gap-2.5 p-2 rounded-lg hover:bg-gray-50 dark:hover:bg-gray-700/50 cursor-pointer transition-colors"
                           >
                             <input
                               type="checkbox"
@@ -620,9 +630,10 @@ export default function UserDetailPage() {
                               onChange={() => togglePermission(perm.permission_name)}
                               className="w-4 h-4 rounded border-gray-300 dark:border-gray-600 text-gray-800 focus:ring-gray-400 cursor-pointer"
                             />
-                            <span className="text-sm text-gray-700 dark:text-gray-300">
+                            <span className="text-sm text-gray-700 dark:text-gray-300 flex-1">
                               {perm.description}
                             </span>
+                            <PermissionHelpTooltip permissionName={perm.permission_name} />
                           </label>
                         ))}
                       </div>

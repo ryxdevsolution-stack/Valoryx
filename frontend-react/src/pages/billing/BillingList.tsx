@@ -662,7 +662,7 @@ export default function AllBillsPage() {
                 className="flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg bg-gray-100 dark:bg-gray-800 text-gray-600 dark:text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-900 dark:hover:text-white transition-colors"
               >
                 <RotateCcw className="w-3.5 h-3.5" strokeWidth={2} />
-                Restore Bills
+                Cancelled Bills
               </Link>
             </div>
 

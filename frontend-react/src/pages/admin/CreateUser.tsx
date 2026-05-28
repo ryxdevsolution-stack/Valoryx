@@ -2,6 +2,7 @@ import React, { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
 import api from '@/lib/api';
+import { PermissionHelpTooltip } from '@/components/admin/PermissionHelpTooltip';
 import {
   ArrowLeft,
   User,
@@ -52,11 +53,17 @@ export default function CreateUser() {
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  // Fetch permissions and branches for the super admin's own client
-  const fetchData = useCallback(async () => {
+  // Fetch permissions and branches for the super admin's own client.
+  // includeSuperAdmin reflects whether the user being created will be a super
+  // admin — gates the 4 super-admin-only perms (manage_clients, system_backup,
+  // system_restore, maintenance_mode) in the displayed list.
+  const fetchData = useCallback(async (includeSuperAdmin: boolean = false) => {
     try {
+      const permsUrl = includeSuperAdmin
+        ? '/permissions/all?include_super_admin=true'
+        : '/permissions/all';
       const [permsRes, branchesRes] = await Promise.all([
-        api.get('/permissions/all'),
+        api.get(permsUrl),
         client?.client_id ? api.get(`/admin/clients/${client.client_id}/branches`) : Promise.resolve({ data: { branches: [] } })
       ]);
       setAvailablePermissions(permsRes.data.permissions || []);
@@ -70,8 +77,8 @@ export default function CreateUser() {
     if (authLoading) return;
     if (!user) { navigate('/auth/login'); return; }
     if (!isSuperAdminUser) { navigate('/dashboard'); return; }
-    fetchData();
-  }, [authLoading, user, isSuperAdminUser, navigate, fetchData]);
+    fetchData(formData.is_super_admin);
+  }, [authLoading, user, isSuperAdminUser, navigate, fetchData, formData.is_super_admin]);
 
   // When billing_type changes, keep gst_billing / non_gst_billing permissions in sync
   const handleBillingTypeChange = (billing_type: 'gst' | 'non_gst' | 'both' | 'none') => {
@@ -280,9 +287,7 @@ export default function CreateUser() {
                 onChange={e => setFormData(p => ({ ...p, role: e.target.value }))}
                 className={inputCls}>
                 <option value="staff">Staff</option>
-                <option value="cashier">Cashier</option>
                 <option value="manager">Manager</option>
-                <option value="admin">Admin</option>
               </select>
             </div>
             <div className="flex items-end gap-4 pb-0.5">
@@ -367,12 +372,13 @@ export default function CreateUser() {
                 <p className="text-xs font-semibold text-gray-500 uppercase tracking-wide mb-2">{category}</p>
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-1">
                   {(perms as any[]).map((perm: any) => (
-                    <label key={perm.permission_name} className="flex items-start gap-2 cursor-pointer py-1">
+                    <label key={perm.permission_name} className="group flex items-start gap-2 cursor-pointer py-1">
                       <input type="checkbox"
                         checked={selectedPermissions.includes(perm.permission_name)}
                         onChange={() => handlePermissionToggle(perm.permission_name)}
                         className="mt-0.5 rounded border-gray-300 text-blue-600" />
-                      <span className="text-sm text-gray-700">{perm.description || perm.permission_name}</span>
+                      <span className="text-sm text-gray-700 flex-1">{perm.description || perm.permission_name}</span>
+                      <PermissionHelpTooltip permissionName={perm.permission_name} />
                     </label>
                   ))}
                 </div>

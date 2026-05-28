@@ -3,6 +3,8 @@ from models import db
 from models.user_model import User
 from models.client_model import ClientEntry
 from models.permission_model import Permission, UserPermission, has_permission, get_user_permissions
+from utils.permissions import SUPER_ADMIN_ONLY_PERMISSIONS
+from models.permission_template_model import PermissionTemplate
 from models.audit_model import AuditLog
 from models.billing_model import GSTBilling, NonGSTBilling
 from models.stock_model import StockEntry
@@ -26,6 +28,7 @@ from utils.email_service import (
     send_welcome_email,
 )
 import bcrypt
+import json as _json
 from datetime import datetime, timedelta
 import uuid
 from sqlalchemy import or_, and_, func
@@ -300,6 +303,12 @@ def create_user():
                 permissions.append('non_gst_billing')
             permissions = [p for p in permissions if p != 'gst_billing']
         # 'both' — keep whatever was passed (both already set by caller or permissions list)
+
+        # Strip super-admin-only perms unless the new user IS a super admin.
+        # Defense in depth: even if the UI sends these, the role gate is the
+        # security boundary — this just prevents them from polluting the row set.
+        if not new_user.is_super_admin:
+            permissions = [p for p in permissions if p not in SUPER_ADMIN_ONLY_PERMISSIONS]
 
         if permissions:
             # Single IN query instead of 1 query per permission name
@@ -840,307 +849,173 @@ def get_available_roles():
 @authenticate
 @require_super_admin
 def get_permission_templates():
-    """Get permission templates/presets for different business types"""
+    """Return the super admin's saved custom permission templates.
+
+    Built-in business templates were removed in the 2026-05-27 redesign;
+    only user-defined templates are returned now. Frontend CreateClient
+    treats every entry as a custom template.
+    """
     try:
+        custom = PermissionTemplate.query.filter(
+            PermissionTemplate.deleted_at.is_(None)
+        ).all()
+
+        # Batch-fetch creator emails to avoid N+1.
+        creator_ids = {str(t.created_by) for t in custom}
+        creators = (
+            User.query.with_entities(User.user_id, User.email)
+            .filter(User.user_id.in_(creator_ids))
+            .all()
+            if creator_ids else []
+        )
+        email_by_id = {str(uid): email for uid, email in creators}
+
         templates = {
-            'full_access': {
-                'name': 'Full Access (All Permissions)',
-                'description': 'Complete access to all features - for owners/managers',
-                'business_type': 'all',
-                'permissions': [p.permission_name for p in _get_all_permissions()]
-            },
-
-            # Dress Shop / Fashion Boutique
-            'dress_shop': {
-                'name': 'Dress Shop / Fashion Boutique',
-                'description': 'Perfect for clothing stores, boutiques, and fashion retail',
-                'business_type': 'retail',
-                'permissions': [
-                    # Dashboard
-                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
-                    # Billing - Full access for sales
-                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
-                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
-                    'billing.set_discount', 'billing.set_tax', 'billing.print', 'billing.download_pdf',
-                    # Customers - Full management
-                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.search',
-                    'customers.view_history', 'customers.create', 'customers.edit', 'customers.export',
-                    # Stock - Full inventory management
-                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
-                    'stock.view_levels', 'stock.view_low_stock', 'stock.create', 'stock.edit',
-                    'stock.edit_price', 'stock.edit_mrp', 'stock.adjust_quantity', 'stock.import', 'stock.export',
-                    # Reports
-                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_inventory',
-                    'reports.generate', 'reports.export', 'reports.print',
-                ]
-            },
-
-            # Supermarket / Grocery Store
-            'supermarket': {
-                'name': 'Supermarket / Grocery Store',
-                'description': 'Ideal for supermarkets, grocery stores, and convenience stores',
-                'business_type': 'retail',
-                'permissions': [
-                    # Dashboard
-                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
-                    # Billing - Fast checkout focused
-                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
-                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
-                    'billing.set_discount', 'billing.set_tax', 'billing.print', 'billing.mark_paid',
-                    # Customers - Basic management
-                    'customers.view', 'customers.view_all', 'customers.search', 'customers.create',
-                    # Stock - Comprehensive inventory
-                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
-                    'stock.view_levels', 'stock.view_low_stock', 'stock.create', 'stock.edit',
-                    'stock.edit_price', 'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity',
-                    'stock.import', 'stock.export',
-                    # Reports
-                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
-                    'reports.view_inventory', 'reports.generate', 'reports.export',
-                ]
-            },
-
-            # General Store / Kirana Shop
-            'general_store': {
-                'name': 'General Store / Kirana Shop',
-                'description': 'For neighborhood stores, kirana shops, and small retail',
-                'business_type': 'retail',
-                'permissions': [
-                    # Dashboard
-                    'dashboard.view', 'dashboard.view_sales',
-                    # Billing - Simple billing
-                    'billing.view', 'billing.view_all', 'billing.create', 'billing.create_bill',
-                    'billing.add_products', 'billing.set_discount', 'billing.print',
-                    # Customers - Basic
-                    'customers.view', 'customers.view_all', 'customers.create',
-                    # Stock - Essential management
-                    'stock.view', 'stock.view_all', 'stock.view_levels', 'stock.view_low_stock',
-                    'stock.create', 'stock.edit', 'stock.edit_price', 'stock.edit_mrp',
-                    'stock.adjust_quantity',
-                    # Reports - Basic
-                    'reports.view', 'reports.view_sales', 'reports.view_inventory',
-                ]
-            },
-
-            # Food Store / Bakery / Confectionery
-            'food_store': {
-                'name': 'Food Store / Bakery / Confectionery',
-                'description': 'For bakeries, sweet shops, cafes, and food retail',
-                'business_type': 'food_retail',
-                'permissions': [
-                    # Dashboard
-                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_sales',
-                    # Billing - Quick service
-                    'billing.view', 'billing.view_all', 'billing.create', 'billing.create_bill',
-                    'billing.add_products', 'billing.set_discount', 'billing.print', 'billing.download_pdf',
-                    # Customers
-                    'customers.view', 'customers.view_all', 'customers.create', 'customers.view_history',
-                    # Stock - Perishable inventory
-                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.view_levels',
-                    'stock.view_low_stock', 'stock.create', 'stock.edit', 'stock.edit_price',
-                    'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity',
-                    # Reports
-                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_inventory',
-                    'reports.generate', 'reports.export',
-                ]
-            },
-
-            # Restaurant / Hotel / Food Service
-            'restaurant_hotel': {
-                'name': 'Restaurant / Hotel / Food Service',
-                'description': 'For restaurants, hotels, cafes, and food service businesses',
-                'business_type': 'hospitality',
-                'permissions': [
-                    # Dashboard
-                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
-                    # Billing - Table service
-                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
-                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
-                    'billing.set_discount', 'billing.set_tax', 'billing.edit', 'billing.edit_details',
-                    'billing.edit_products', 'billing.print', 'billing.download_pdf', 'billing.send_email',
-                    # Customers - Guest management
-                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.view_history',
-                    'customers.create', 'customers.edit',
-                    # Stock - Kitchen inventory
-                    'stock.view', 'stock.view_all', 'stock.view_levels', 'stock.view_low_stock',
-                    'stock.edit', 'stock.edit_price', 'stock.adjust_quantity',
-                    # Reports
-                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
-                    'reports.generate', 'reports.export', 'reports.custom_filters',
-                ]
-            },
-
-            # Fruit & Vegetable Stall / Market
-            'fruit_vegetable_stall': {
-                'name': 'Fruit & Vegetable Stall / Market',
-                'description': 'For fruit stalls, vegetable markets, and fresh produce vendors',
-                'business_type': 'market',
-                'permissions': [
-                    # Dashboard
-                    'dashboard.view', 'dashboard.view_sales',
-                    # Billing - Quick weighing & billing
-                    'billing.view', 'billing.view_all', 'billing.create', 'billing.create_bill',
-                    'billing.add_products', 'billing.print',
-                    # Customers - Simple
-                    'customers.view', 'customers.create',
-                    # Stock - Daily fresh stock
-                    'stock.view', 'stock.view_all', 'stock.view_levels', 'stock.create',
-                    'stock.edit', 'stock.edit_price', 'stock.adjust_quantity',
-                    # Reports - Basic sales
-                    'reports.view', 'reports.view_sales', 'reports.view_inventory',
-                ]
-            },
-
-            # Medical Store / Pharmacy
-            'medical_pharmacy': {
-                'name': 'Medical Store / Pharmacy',
-                'description': 'For pharmacies, medical stores, and healthcare retail',
-                'business_type': 'healthcare',
-                'permissions': [
-                    # Dashboard
-                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_sales',
-                    # Billing - Prescription based
-                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
-                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
-                    'billing.set_discount', 'billing.set_tax', 'billing.print', 'billing.download_pdf',
-                    # Customers - Patient records
-                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.view_history',
-                    'customers.create', 'customers.edit', 'customers.search',
-                    # Stock - Expiry tracking important
-                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
-                    'stock.view_levels', 'stock.view_low_stock', 'stock.create', 'stock.edit',
-                    'stock.edit_price', 'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity',
-                    'stock.import', 'stock.export',
-                    # Reports
-                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_inventory',
-                    'reports.generate', 'reports.export',
-                    # Audit - Important for compliance
-                    'audit.view', 'audit.view_all', 'audit.search',
-                ]
-            },
-
-            # Electronics Store / Mobile Shop
-            'electronics_store': {
-                'name': 'Electronics Store / Mobile Shop',
-                'description': 'For electronics, mobile phones, and gadget stores',
-                'business_type': 'retail',
-                'permissions': [
-                    # Dashboard
-                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
-                    # Billing - Warranty & GST focused
-                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
-                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
-                    'billing.set_discount', 'billing.set_tax', 'billing.print', 'billing.download_pdf',
-                    'billing.send_email',
-                    # Customers - Warranty tracking
-                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.view_history',
-                    'customers.create', 'customers.edit', 'customers.export',
-                    # Stock - Serial number tracking
-                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
-                    'stock.view_levels', 'stock.view_low_stock', 'stock.create', 'stock.edit',
-                    'stock.edit_price', 'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity',
-                    'stock.import', 'stock.export',
-                    # Reports
-                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
-                    'reports.view_inventory', 'reports.generate', 'reports.export',
-                ]
-            },
-
-            # Hardware / Building Materials
-            'hardware_store': {
-                'name': 'Hardware / Building Materials',
-                'description': 'For hardware stores, building materials, and construction supplies',
-                'business_type': 'retail',
-                'permissions': [
-                    # Dashboard
-                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_sales',
-                    # Billing - Bulk orders
-                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
-                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
-                    'billing.set_discount', 'billing.set_tax', 'billing.print', 'billing.download_pdf',
-                    'billing.duplicate',
-                    # Customers - Contractor management
-                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.view_history',
-                    'customers.create', 'customers.edit', 'customers.export',
-                    # Stock - Heavy inventory
-                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
-                    'stock.view_levels', 'stock.view_low_stock', 'stock.create', 'stock.edit',
-                    'stock.edit_price', 'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity',
-                    'stock.import', 'stock.export',
-                    # Reports
-                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
-                    'reports.view_inventory', 'reports.generate', 'reports.export',
-                ]
-            },
-
-            # Jewelry Store
-            'jewelry_store': {
-                'name': 'Jewelry Store',
-                'description': 'For jewelry shops, gold stores, and precious items retail',
-                'business_type': 'luxury_retail',
-                'permissions': [
-                    # Dashboard
-                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
-                    # Billing - High value transactions
-                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
-                    'billing.create', 'billing.create_bill', 'billing.select_customer', 'billing.add_products',
-                    'billing.set_discount', 'billing.set_tax', 'billing.edit', 'billing.print',
-                    'billing.download_pdf', 'billing.send_email',
-                    # Customers - Premium customer management
-                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.view_history',
-                    'customers.create', 'customers.edit', 'customers.export',
-                    # Stock - Precious inventory
-                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
-                    'stock.view_levels', 'stock.create', 'stock.edit', 'stock.edit_price',
-                    'stock.edit_mrp', 'stock.edit_cost', 'stock.adjust_quantity', 'stock.export',
-                    # Reports - Detailed analytics
-                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_profit',
-                    'reports.view_inventory', 'reports.view_customer', 'reports.generate',
-                    'reports.export', 'reports.custom_filters',
-                    # Audit - Critical for high value
-                    'audit.view', 'audit.view_all', 'audit.search', 'audit.export',
-                ]
-            },
-
-            # Basic Staff / Cashier
-            'staff_cashier': {
-                'name': 'Staff / Cashier (Limited Access)',
-                'description': 'Basic billing access for cashiers and sales staff',
-                'business_type': 'all',
-                'permissions': [
-                    # Dashboard - View only
-                    'dashboard.view',
-                    # Billing - Create and print only
-                    'billing.view', 'billing.create', 'billing.create_bill', 'billing.add_products',
-                    'billing.print',
-                    # Customers - Basic view
-                    'customers.view', 'customers.create',
-                    # Stock - View only
-                    'stock.view', 'stock.view_all', 'stock.search',
-                ]
-            },
-
-            # View Only Access
-            'view_only': {
-                'name': 'View Only (Read-Only Access)',
-                'description': 'Read-only access to all modules - for auditors/viewers',
-                'business_type': 'all',
-                'permissions': [
-                    'dashboard.view', 'dashboard.view_analytics', 'dashboard.view_revenue', 'dashboard.view_sales',
-                    'billing.view', 'billing.view_all', 'billing.view_details', 'billing.search',
-                    'customers.view', 'customers.view_all', 'customers.view_details', 'customers.search',
-                    'stock.view', 'stock.view_all', 'stock.view_details', 'stock.search',
-                    'reports.view', 'reports.view_sales', 'reports.view_revenue', 'reports.view_inventory',
-                    'audit.view', 'audit.view_all',
-                    'payment_types.view', 'payment_types.view_all'
-                ]
-            }
+            str(t.template_id): t.to_dict(
+                created_by_email=email_by_id.get(str(t.created_by))
+            )
+            for t in custom
         }
-
         return jsonify({'templates': templates}), 200
 
     except Exception as e:
         return jsonify({'error': f'Failed to fetch permission templates: {str(e)}'}), 500
+
+# ── Custom Permission Templates (Phase 2) ────────────────────────────────────
+
+
+def _validate_template_payload(data: dict, exclude_id: str | None = None):
+    """Validate a custom-template create/update payload.
+
+    Returns (clean_payload, None) on success or (None, (error_json, status)) on failure.
+    exclude_id is the template_id to exclude from the uniqueness check (for PUT).
+    """
+    name = (data.get('name') or '').strip()
+    description = (data.get('description') or '').strip()
+    permissions = data.get('permissions') or []
+
+    if not isinstance(name, str) or not (3 <= len(name) <= 40):
+        return None, ({'error': 'Validation failed', 'field': 'name',
+                       'message': 'Name must be 3-40 characters'}, 400)
+
+    if len(description) > 200:
+        return None, ({'error': 'Validation failed', 'field': 'description',
+                       'message': 'Description must be 200 characters or fewer'}, 400)
+
+    if not isinstance(permissions, list) or not permissions:
+        return None, ({'error': 'Validation failed', 'field': 'permissions',
+                       'message': 'Template must contain at least one permission'}, 400)
+
+    # Strip super-admin-only perms silently (defense in depth — matches Phase 1.5).
+    permissions = [p for p in permissions if p not in SUPER_ADMIN_ONLY_PERMISSIONS]
+    if not permissions:
+        return None, ({'error': 'Validation failed', 'field': 'permissions',
+                       'message': 'Template must contain at least one assignable permission'}, 400)
+
+    # Every remaining perm must exist in the seeded table (single IN query).
+    existing_perms = {
+        p.permission_name for p in Permission.query.filter(
+            Permission.permission_name.in_(permissions)
+        ).all()
+    }
+    missing = [p for p in permissions if p not in existing_perms]
+    if missing:
+        return None, ({'error': 'Validation failed', 'field': 'permissions',
+                       'message': f'Unknown permissions: {", ".join(missing)}'}, 400)
+
+    # Case-insensitive name uniqueness across active templates (excluding self on PUT).
+    q = PermissionTemplate.query.filter(
+        func.lower(PermissionTemplate.name) == name.lower(),
+        PermissionTemplate.deleted_at.is_(None),
+    )
+    if exclude_id:
+        q = q.filter(PermissionTemplate.template_id != exclude_id)
+    if q.first():
+        return None, ({'error': 'Validation failed', 'field': 'name',
+                       'message': 'A template with this name already exists'}, 400)
+
+    return {
+        'name': name,
+        'description': description or None,
+        'permissions': sorted(set(permissions)),
+    }, None
+
+
+def _template_to_response(t: PermissionTemplate) -> dict:
+    """Wrap a PermissionTemplate row in the API response shape (with email lookup)."""
+    email = None
+    if t.created_by:
+        creator = User.query.filter_by(user_id=t.created_by).first()
+        email = creator.email if creator else None
+    return t.to_dict(created_by_email=email)
+
+
+@admin_bp.route('/permission-templates/custom', methods=['POST'])
+@authenticate
+@require_super_admin
+def create_custom_permission_template():
+    """Create a custom (user-defined) permission template."""
+    data = request.get_json() or {}
+    clean, err = _validate_template_payload(data)
+    if err:
+        body, status = err
+        return jsonify(body), status
+
+    template = PermissionTemplate(
+        template_id=str(uuid.uuid4()),
+        name=clean['name'],
+        description=clean['description'],
+        permissions=_json.dumps(clean['permissions']),
+        created_by=g.user['user_id'],
+    )
+    db.session.add(template)
+    db.session.commit()
+
+    return jsonify({'template': _template_to_response(template)}), 201
+
+
+@admin_bp.route('/permission-templates/custom/<template_id>', methods=['PUT'])
+@authenticate
+@require_super_admin
+def update_custom_permission_template(template_id):
+    """Update an existing custom permission template."""
+    template = PermissionTemplate.query.filter_by(
+        template_id=template_id, deleted_at=None
+    ).first()
+    if not template:
+        return jsonify({'error': 'Template not found'}), 404
+
+    data = request.get_json() or {}
+    clean, err = _validate_template_payload(data, exclude_id=str(template.template_id))
+    if err:
+        body, status = err
+        return jsonify(body), status
+
+    template.name = clean['name']
+    template.description = clean['description']
+    template.permissions = _json.dumps(clean['permissions'])
+    template.updated_at = datetime.utcnow()
+    db.session.commit()
+
+    return jsonify({'template': _template_to_response(template)}), 200
+
+
+@admin_bp.route('/permission-templates/custom/<template_id>', methods=['DELETE'])
+@authenticate
+@require_super_admin
+def delete_custom_permission_template(template_id):
+    """Soft-delete a custom permission template."""
+    template = PermissionTemplate.query.filter_by(
+        template_id=template_id, deleted_at=None
+    ).first()
+    if not template:
+        return jsonify({'error': 'Template not found'}), 404
+
+    template.deleted_at = datetime.utcnow()
+    db.session.commit()
+
+    return '', 204
+
 
 # CLIENT MANAGEMENT ENDPOINTS FOR SUPER ADMIN
 @admin_bp.route('/clients', methods=['GET'])
@@ -1317,7 +1192,7 @@ def create_client():
         # Validate role_quotas if provided
         role_quotas = data.get('role_quotas')
         if role_quotas is not None:
-            allowed_quota_roles = {'admin', 'manager', 'staff', 'cashier'}
+            allowed_quota_roles = {'manager', 'staff'}
             for qrole, qval in role_quotas.items():
                 if qrole not in allowed_quota_roles:
                     return jsonify({'error': f"Invalid role in quotas: '{qrole}'"}), 400
@@ -1480,7 +1355,7 @@ def update_client(client_id):
         if 'role_quotas' in data:
             new_quotas = data['role_quotas']
             if new_quotas is not None:
-                allowed_quota_roles = {'admin', 'manager', 'staff', 'cashier'}
+                allowed_quota_roles = {'manager', 'staff'}
                 for qrole, qval in new_quotas.items():
                     if qrole not in allowed_quota_roles:
                         return jsonify({'error': f"Invalid role in quotas: '{qrole}'"}), 400
@@ -1504,6 +1379,106 @@ def update_client(client_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': f'Failed to update client: {str(e)}'}), 500
+
+@admin_bp.route('/clients/<client_id>/subscription', methods=['POST'])
+@authenticate
+@require_super_admin
+def update_client_subscription(client_id):
+    """Manually override a client's subscription state. Super-admin only.
+
+    Accepts:
+      subscription_status: 'trial' | 'active' | 'cancelled' | 'expired' (required)
+      ends_on: ISO date 'YYYY-MM-DD' or ISO datetime (optional)
+               Routes to trial_end_date if status == 'trial' else subscription_end_date.
+      plan_id: UUID of an existing SubscriptionPlan (optional, sets client.plan_id)
+      reason: free-text note for the audit log (optional)
+    """
+    try:
+        from datetime import datetime as _dt
+        from models.subscription_model import SubscriptionPlan
+
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+
+        data = request.get_json() or {}
+        new_status = (data.get('subscription_status') or '').strip().lower()
+        ends_on_raw = data.get('ends_on')
+        new_plan_id = data.get('plan_id')
+        reason = (data.get('reason') or '').strip() or None
+
+        VALID_STATUSES = {'trial', 'active', 'cancelled', 'expired'}
+        if new_status not in VALID_STATUSES:
+            return jsonify({'error': f"subscription_status must be one of {sorted(VALID_STATUSES)}"}), 400
+
+        # Parse ends_on if provided
+        new_end_date = None
+        if ends_on_raw:
+            try:
+                # Accept either YYYY-MM-DD or full ISO timestamp
+                if 'T' in ends_on_raw or ' ' in ends_on_raw:
+                    new_end_date = _dt.fromisoformat(ends_on_raw.replace('Z', '+00:00'))
+                else:
+                    new_end_date = _dt.strptime(ends_on_raw, '%Y-%m-%d')
+            except (ValueError, TypeError):
+                return jsonify({'error': "ends_on must be YYYY-MM-DD or ISO datetime"}), 400
+
+        # Validate plan_id exists if provided
+        if new_plan_id:
+            plan = SubscriptionPlan.query.filter_by(plan_id=new_plan_id).first()
+            if not plan:
+                return jsonify({'error': 'Invalid plan_id'}), 400
+
+        # Snapshot before-state for audit log
+        before = {
+            'subscription_status': client.subscription_status,
+            'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
+            'subscription_end_date': client.subscription_end_date.isoformat() if client.subscription_end_date else None,
+            'plan_id': str(client.plan_id) if client.plan_id else None,
+        }
+
+        # Apply changes
+        client.subscription_status = new_status
+
+        if new_end_date is not None:
+            if new_status == 'trial':
+                client.trial_end_date = new_end_date
+                # Set trial_start_date if currently None and we're moving into trial
+                if not client.trial_start_date:
+                    client.trial_start_date = _dt.utcnow()
+            else:
+                client.subscription_end_date = new_end_date
+
+        if new_plan_id is not None:
+            client.plan_id = new_plan_id if new_plan_id else None
+
+        db.session.commit()
+
+        after = {
+            'subscription_status': client.subscription_status,
+            'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
+            'subscription_end_date': client.subscription_end_date.isoformat() if client.subscription_end_date else None,
+            'plan_id': str(client.plan_id) if client.plan_id else None,
+            'reason': reason,
+        }
+
+        log_admin_action(
+            action_type='SUBSCRIPTION_UPDATE',
+            table_name='client_entry',
+            record_id=client_id,
+            old_data=before,
+            new_data=after,
+        )
+
+        return jsonify({
+            'success': True,
+            'message': 'Subscription updated',
+            'client': client.to_dict(),
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': f'Failed to update subscription: {str(e)}'}), 500
 
 @admin_bp.route('/clients/<client_id>/toggle-status', methods=['POST'])
 @authenticate

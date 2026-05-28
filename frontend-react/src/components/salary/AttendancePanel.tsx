@@ -1,7 +1,8 @@
 import { useState, useEffect, useCallback } from 'react'
 import { ChevronLeft, ChevronRight, LogIn, LogOut, Clock, RefreshCw } from 'lucide-react'
 import api from '@/lib/api'
-import type { Employee, AttendanceDay, AttendancePunch } from '@/pages/Salary'
+import { toast } from '@/utils/toast'
+import type { Employee, AttendanceDay, AttendancePunch, SalaryCycle } from '@/pages/Salary'
 
 interface AttendancePanelProps {
   employee: Employee
@@ -15,6 +16,19 @@ interface AttendancePanelProps {
   // Bumps when an external action (check-in/out, day-off save) should force
   // the panel to re-fetch its attendance data. Acts like a useEffect trigger.
   refreshSignal?: number
+  // Callback to open the create-cycle modal when no cycle covers the date.
+  onCreateCycle?: () => void
+}
+
+// ── Cycle-coverage helpers ────────────────────────────────────────────────────
+
+function isCovered(dateStr: string, cycles: SalaryCycle[]): { covered: boolean; sealed: boolean } {
+  for (const c of cycles) {
+    if (c.start_date <= dateStr && c.end_date >= dateStr) {
+      return { covered: true, sealed: c.status !== 'open' }
+    }
+  }
+  return { covered: false, sealed: false }
 }
 
 function formatMinutes(mins: number): string {
@@ -34,14 +48,16 @@ const PAID_OFF_STATUSES = new Set(['paid_leave', 'holiday', 'weekly_off'])
 const UNPAID_OFF_STATUSES = new Set(['absent', 'unpaid_leave'])
 
 // Mini calendar footer — visual overview of attendance for the displayed month.
-// Four states per cell:
+// States per cell:
 //   - Present (green, has punches)       → expand that day's punches
 //   - Paid day-off (amber)               → open day-off modal (to edit)
 //   - Unpaid day-off (gray with border)  → open day-off modal (to edit)
 //   - Unmarked absent (plain gray)       → open day-off modal (to create)
+//   - No cycle covering date (red dot)   → toast warning + prompt to create cycle
+//   - Sealed cycle (grayed, strikethrough) → toast that cycle is sealed
 //   - Future date                        → disabled
 function MiniCalendar({
-  year, month, days, onSelectPresent, onMarkDayOff, canMark, selectedDate,
+  year, month, days, onSelectPresent, onMarkDayOff, canMark, selectedDate, cycles, onCreateCycle,
 }: {
   year: number
   month: number
@@ -52,6 +68,8 @@ function MiniCalendar({
   // The workDate the user currently has "drilled into" — gets a stronger ring
   // so it's clear which tile's data is showing in the list above.
   selectedDate: string | null
+  cycles: SalaryCycle[]
+  onCreateCycle?: () => void
 }) {
   const firstDow = new Date(year, month - 1, 1).getDay() // 0=Sun
   const daysInMonth = new Date(year, month, 0).getDate()
@@ -75,10 +93,11 @@ function MiniCalendar({
         <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
           Monthly overview
         </p>
-        <div className="flex items-center gap-2 text-[10px] text-gray-400">
+        <div className="flex items-center gap-2 text-[10px] text-gray-400 flex-wrap">
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-green-500" />Present</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-amber-400" />Paid off</span>
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm bg-gray-400 dark:bg-gray-600" />Unpaid</span>
+          <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm border border-red-300 dark:border-red-700 bg-white dark:bg-gray-900" />No cycle</span>
         </div>
       </div>
       <div className="grid grid-cols-7 gap-1 text-center">
@@ -94,14 +113,34 @@ function MiniCalendar({
           const isUnpaidOff = status !== undefined && UNPAID_OFF_STATUSES.has(status)
           const isToday = cell.date === todayStr
           const isFuture = cell.date > todayStr
+          // Cycle coverage for this cell
+          const coverage = isCovered(cell.date, cycles)
+          const noCycle = !isFuture && !coverage.covered
+          const cycleSealed = !isFuture && coverage.covered && coverage.sealed
           // Any recorded day (present OR day-off) is clickable for viewing;
           // unrecorded past days are clickable only for admins who can mark off.
           const canClick = hasEntry || (canMark && !isFuture)
           const handleClick = () => {
             // If the day already has any entry, open it in the list above —
             // don't re-open the creation modal (that would confuse "is my save lost?").
-            if (hasEntry) onSelectPresent(cell.date)
-            else if (canMark && !isFuture) onMarkDayOff(cell.date)
+            if (hasEntry) {
+              onSelectPresent(cell.date)
+              return
+            }
+            // Gate: no cycle covering this date
+            if (noCycle && canMark) {
+              toast.warning(`No salary cycle covers ${cell.date}. Create a cycle first.`)
+              if (onCreateCycle) {
+                // Show a slight delay so the toast is readable before modal opens
+                setTimeout(onCreateCycle, 300)
+              }
+              return
+            }
+            if (cycleSealed && canMark) {
+              toast.warning(`The salary cycle for ${cell.date} is sealed (paid). Cannot record attendance.`)
+              return
+            }
+            if (canMark && !isFuture) onMarkDayOff(cell.date)
           }
           const tooltip = isPresent
             ? 'Click to view punches'
@@ -111,18 +150,22 @@ function MiniCalendar({
                 ? `Unpaid (${status!.replace('_', ' ')}) — click to view`
                 : isFuture
                   ? 'Future date'
-                  : canMark
-                    ? 'Absent — click to mark leave / absent'
-                    : 'Absent — no attendance recorded'
+                  : noCycle
+                    ? 'No salary cycle — create one first'
+                    : cycleSealed
+                      ? 'Cycle sealed (paid) — cannot mark attendance'
+                      : canMark
+                        ? 'Absent — click to mark leave / absent'
+                        : 'Absent — no attendance recorded'
           return (
             <button
               key={cell.date}
               type="button"
               onClick={handleClick}
-              disabled={!canClick}
+              disabled={!canClick && !noCycle && !cycleSealed}
               title={tooltip}
               className={[
-                'aspect-square rounded-md text-[10px] font-semibold transition-colors',
+                'aspect-square rounded-md text-[10px] font-semibold transition-colors relative',
                 isPresent
                   ? 'bg-green-500 text-white hover:bg-green-600 cursor-pointer'
                   : isPaidOff
@@ -131,9 +174,13 @@ function MiniCalendar({
                       ? 'bg-gray-400 dark:bg-gray-600 text-white ring-1 ring-gray-500 dark:ring-gray-500 hover:bg-gray-500 cursor-pointer'
                       : isFuture
                         ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 cursor-not-allowed'
-                        : canMark
-                          ? 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 hover:text-amber-700 dark:hover:text-amber-300 cursor-pointer'
-                          : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-default',
+                        : noCycle
+                          ? 'bg-white dark:bg-gray-900 text-red-600 dark:text-red-400 border border-red-300 dark:border-red-700 cursor-pointer hover:bg-red-50 dark:hover:bg-red-900/20'
+                          : cycleSealed
+                            ? 'bg-gray-100 dark:bg-gray-800 text-gray-400 dark:text-gray-600 opacity-60 cursor-pointer line-through'
+                            : canMark
+                              ? 'bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 hover:bg-amber-100 dark:hover:bg-amber-900/30 hover:text-amber-700 dark:hover:text-amber-300 cursor-pointer'
+                              : 'bg-gray-200 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-default',
                 // Selected tile gets a thick dark ring; "today" keeps blue ring as a secondary hint.
                 // Selected ring wins on top if both apply.
                 isToday && cell.date !== selectedDate ? 'ring-2 ring-blue-500 ring-offset-1 ring-offset-gray-50 dark:ring-offset-gray-900' : '',
@@ -141,6 +188,10 @@ function MiniCalendar({
               ].join(' ')}
             >
               {cell.day}
+              {/* Red dot indicator for no-cycle days */}
+              {noCycle && !hasEntry && (
+                <span className="absolute bottom-0.5 right-0.5 w-1 h-1 rounded-full bg-red-500" />
+              )}
             </button>
           )
         })}
@@ -155,11 +206,13 @@ export default function AttendancePanel({
   onMarkDayOff,
   hasManagerAccess,
   refreshSignal = 0,
+  onCreateCycle,
 }: AttendancePanelProps) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
   const [month, setMonth] = useState(now.getMonth() + 1)
   const [days, setDays] = useState<AttendanceDay[]>([])
+  const [cycles, setCycles] = useState<SalaryCycle[]>([])
   const [loading, setLoading] = useState(false)
   const [expandedDay, setExpandedDay] = useState<string | null>(null)
   const [checkingOut, setCheckingOut] = useState<string | null>(null)
@@ -190,12 +243,15 @@ export default function AttendancePanel({
       const from = `${year}-${String(month).padStart(2, '0')}-01`
       const daysInMonth = new Date(year, month, 0).getDate()
       const to = `${year}-${String(month).padStart(2, '0')}-${String(daysInMonth).padStart(2, '0')}`
-      const res = await api.get(`/employees/${employee.employee_id}/attendance`, {
-        params: { from, to },
-      })
-      setDays(res.data.data ?? [])
-    } catch {
-      setDays([])
+      // allSettled (not all) — if attendance fails because the user lacks
+      // view_attendance, the cycles fetch should still populate the calendar
+      // coverage. Likewise the reverse. One failed fetch must not blank both.
+      const [attResult, cycleResult] = await Promise.allSettled([
+        api.get(`/employees/${employee.employee_id}/attendance`, { params: { from, to } }),
+        api.get(`/employees/${employee.employee_id}/cycles`),
+      ])
+      setDays(attResult.status === 'fulfilled' ? (attResult.value.data.data ?? []) : [])
+      setCycles(cycleResult.status === 'fulfilled' ? (cycleResult.value.data.data ?? []) : [])
     } finally {
       setLoading(false)
     }
@@ -265,16 +321,43 @@ export default function AttendancePanel({
                 <LogOut className="w-3.5 h-3.5" />
                 {checkingOut === openPunch.attendance_id ? 'Saving...' : 'Check Out'}
               </button>
-            ) : (
-              <button
-                type="button"
-                onClick={() => onMarkAttendance()}
-                className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-lg hover:opacity-90 transition-opacity"
-              >
-                <LogIn className="w-3.5 h-3.5" />
-                Check In
-              </button>
-            )
+            ) : (() => {
+              const todayDateStr = new Date().toISOString().slice(0, 10)
+              const todayCoverage = isCovered(todayDateStr, cycles)
+              return (
+                <button
+                  type="button"
+                  onClick={() => {
+                    if (!todayCoverage.covered) {
+                      toast.warning('No salary cycle covers today. Create a cycle first.')
+                      if (onCreateCycle) setTimeout(onCreateCycle, 300)
+                      return
+                    }
+                    if (todayCoverage.sealed) {
+                      toast.warning("Today's salary cycle is sealed (paid). Cannot record attendance.")
+                      return
+                    }
+                    onMarkAttendance()
+                  }}
+                  title={
+                    !todayCoverage.covered
+                      ? 'No salary cycle covers today — create one first'
+                      : todayCoverage.sealed
+                        ? "Today's cycle is sealed (paid)"
+                        : undefined
+                  }
+                  className={[
+                    'flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 rounded-lg',
+                    (!todayCoverage.covered || todayCoverage.sealed)
+                      ? 'bg-gray-300 dark:bg-gray-700 text-gray-500 dark:text-gray-400 cursor-not-allowed opacity-70'
+                      : 'bg-gray-900 dark:bg-white text-white dark:text-gray-900 hover:opacity-90 transition-opacity',
+                  ].join(' ')}
+                >
+                  <LogIn className="w-3.5 h-3.5" />
+                  Check In
+                </button>
+              )
+            })()
           )}
           <button
             type="button"
@@ -473,8 +556,10 @@ export default function AttendancePanel({
         year={year}
         month={month}
         days={days}
+        cycles={cycles}
         canMark={hasManagerAccess}
         selectedDate={selectedDate}
+        onCreateCycle={onCreateCycle}
         onSelectPresent={(workDate) => {
           // Toggle: clicking the same day again clears the selection
           if (selectedDate === workDate) {

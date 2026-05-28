@@ -84,10 +84,21 @@ class SupplierDelivery(db.Model):
     # Completion
     completed_by          = db.Column(FlexibleUUID, nullable=True)
     completed_at          = db.Column(db.DateTime, nullable=True)
+    added_by_label        = db.Column(db.String(120), nullable=True)  # User-typed display name for shared-login attribution
     created_at            = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at            = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     items = db.relationship('SupplierDeliveryItem', backref='delivery', lazy='joined', cascade='all, delete-orphan')
+
+    def _lookup_user_name(self, user_id):
+        """Resolve a user_id → display name. Returns None if user not found."""
+        if not user_id:
+            return None
+        from models.user_model import User
+        user = User.query.filter_by(user_id=user_id).first()
+        if not user:
+            return None
+        return user.full_name or user.email or None
 
     def to_dict(self, include_supplier=False):
         data = {
@@ -102,12 +113,15 @@ class SupplierDelivery(db.Model):
             'status':                 self.status,
             'products_confirmed':     self.products_confirmed,
             'confirmed_by':           self.confirmed_by,
+            'confirmed_by_name':      self._lookup_user_name(self.confirmed_by),
             'confirmed_at':           self.confirmed_at.isoformat() if self.confirmed_at else None,
             'delivery_note_filename': self.delivery_note_filename,
             'has_delivery_note':      bool(self.delivery_note_path),
             'delivery_note_type':     self.delivery_note_type,
             'completed_by':           self.completed_by,
+            'completed_by_name':      self._lookup_user_name(self.completed_by),
             'completed_at':           self.completed_at.isoformat() if self.completed_at else None,
+            'added_by_label':         self.added_by_label,
             'created_at':             self.created_at.isoformat() if self.created_at else None,
             'updated_at':             self.updated_at.isoformat() if self.updated_at else None,
             'items':                  [item.to_dict() for item in self.items],

@@ -87,8 +87,48 @@ def _parse_datetime(value: str):
 
 
 def _row_to_dict(row):
-    """Convert a SQLAlchemy Row (from text() query) to plain dict."""
-    return dict(row._mapping)
+    """Convert a SQLAlchemy Row (from text() query) to plain dict.
+
+    Date/datetime values are converted to ISO 8601 strings ('2026-05-28').
+    Flask's default jsonify serializes date columns as RFC 2822
+    ('Fri, 28 May 2026 00:00:00 GMT'), which breaks frontend string
+    comparisons that expect ISO format. Converting at the serialization
+    boundary keeps every downstream consumer (cycle coverage, calendar
+    rendering, attendance status) working with a predictable format.
+    """
+    from datetime import date, datetime as _dt
+    d = dict(row._mapping)
+    for k, v in list(d.items()):
+        # Handle both date and datetime — keep date as 'YYYY-MM-DD',
+        # datetime as 'YYYY-MM-DDTHH:MM:SS'. UUID and other types pass through
+        # unchanged (Flask's encoder handles them fine).
+        if isinstance(v, _dt):
+            d[k] = v.isoformat()
+        elif isinstance(v, date):
+            d[k] = v.isoformat()
+    return d
+
+
+def _find_covering_cycle(employee_id: str, client_id: str, work_date) -> dict | None:
+    """Return the salary_cycles row whose date range covers work_date,
+    or None if no cycle covers it.
+
+    A cycle "covers" a date when start_date <= work_date <= end_date.
+    """
+    if hasattr(work_date, 'strftime'):
+        date_str = work_date.strftime('%Y-%m-%d')
+    else:
+        date_str = str(work_date)
+    row = db.session.execute(
+        text(
+            "SELECT * FROM salary_cycles "
+            "WHERE employee_id = :eid AND client_id = :cid "
+            "  AND start_date <= :d AND end_date >= :d "
+            "LIMIT 1"
+        ),
+        {'eid': employee_id, 'cid': client_id, 'd': date_str}
+    ).fetchone()
+    return _row_to_dict(row) if row else None
 
 
 def _get_employee(employee_id: str, client_id: str):
@@ -149,20 +189,40 @@ def _calculate_cycle_amounts(cycle: dict):
       status in {paid_leave, holiday, weekly_off}   → pay a full day regardless
       status in {absent, unpaid_leave}              → pay zero
 
+    OT pay (layered on top of regular pay for 'present' days):
+      approved_ot_minutes × (rate_snapshot / 60) × ot_multiplier
+      Only approved OT (approved_ot_minutes IS NOT NULL and > 0) counts.
+      Regular pay is still capped at full_day_mins for daily employees;
+      OT is billed separately.
+
     Daily-rate: full day = rate_snapshot
     Hourly-rate: full day = (full_day_mins / 60) * rate_snapshot
 
     Returns (gross, total_advances, net, daily_breakdown).
     """
+    # Fetch per-employee OT multiplier — default 1.5 when NULL (pre-migration rows).
+    emp_row = db.session.execute(
+        text("SELECT ot_multiplier FROM employees WHERE employee_id = :eid AND client_id = :cid LIMIT 1"),
+        {'eid': cycle['employee_id'], 'cid': cycle['client_id']}
+    ).fetchone()
+    try:
+        ot_multiplier = float((emp_row[0] if emp_row and emp_row[0] is not None else None) or 1.5)
+    except (TypeError, ValueError):
+        ot_multiplier = 1.5
+
     rows = db.session.execute(
         text(
             # MAX(status) picks any non-'present' label when both exist (shouldn't
             # happen since mark_day_off rejects mixed dates, but defensive anyway).
             # Filter: include completed punches OR any day-off row; skip
             # incomplete open check-ins (status='present' AND total_minutes IS NULL).
+            # SUM(approved_ot_minutes) — NULL values are excluded by SUM; a day
+            # with no approved OT rows contributes 0 via COALESCE.
             "SELECT work_date, "
             "       SUM(COALESCE(total_minutes, 0)) AS day_minutes, "
-            "       MAX(status) AS day_status "
+            "       MAX(status) AS day_status, "
+            "       COALESCE(SUM(CASE WHEN approved_ot_minutes IS NOT NULL "
+            "                         THEN approved_ot_minutes ELSE 0 END), 0) AS day_ot_minutes "
             "FROM employee_attendance "
             "WHERE client_id = :client AND employee_id = :eid "
             "  AND work_date BETWEEN :start AND :end "
@@ -183,36 +243,53 @@ def _calculate_cycle_amounts(cycle: dict):
     pay_type = (cycle.get('pay_type_snap') or 'daily').lower()
     # What one full day pays (used for paid day-off statuses)
     full_day_pay = rate_snapshot if pay_type == 'daily' else (full_day_mins / 60.0) * rate_snapshot
+    # Per-minute rate used for OT calculation (hourly: rate/60; daily: rate/full_day_mins)
+    minute_rate = (rate_snapshot / 60.0) if pay_type == 'hourly' else (rate_snapshot / float(full_day_mins) if full_day_mins > 0 else 0)
 
     daily_breakdown = []
     gross = 0.0
+    total_ot_minutes = 0
+    total_ot_pay = 0.0
 
     for row in [_row_to_dict(r) for r in rows]:
         day_status = (row.get('day_status') or 'present').lower()
         mins = int(row['day_minutes'] or 0)
         hours = mins / 60.0
+        ot_mins = int(row.get('day_ot_minutes') or 0)
 
         if day_status in _DAY_OFF_PAID_STATUSES:
             # Full day's pay; display minutes stay 0 since no work was done
             amount = full_day_pay
             days_counted = 1.0
             hours_display = round(full_day_mins / 60.0, 2)
+            ot_mins = 0  # no OT on paid day-off
         elif day_status in _DAY_OFF_UNPAID_STATUSES:
             # No pay for this day
             amount = 0.0
             days_counted = 0.0
             hours_display = 0.0
-        else:  # 'present' — pay by minutes worked
+            ot_mins = 0  # no OT on unpaid day-off
+        else:  # 'present' — pay by minutes worked (regular pay capped, OT is extra)
             if pay_type == 'hourly':
+                # Regular: pay all minutes at minute_rate
+                regular_mins = mins
                 amount = hours * rate_snapshot
                 days_counted = hours / 8.0
             else:  # daily
+                # Cap regular pay at full_day_mins; OT is the excess
+                regular_mins = min(mins, full_day_mins)
                 day_fraction = min(mins / full_day_mins, 1.0) if full_day_mins > 0 else 0
                 amount = day_fraction * rate_snapshot
                 days_counted = day_fraction
             hours_display = round(hours, 2)
 
-        gross += amount
+        # OT pay (only for 'present' days with manager-approved OT minutes)
+        ot_pay = round(ot_mins * minute_rate * ot_multiplier, 2) if ot_mins > 0 else 0.0
+
+        gross += amount + ot_pay
+        total_ot_minutes += ot_mins
+        total_ot_pay += ot_pay
+
         daily_breakdown.append({
             'date': str(row['work_date']),
             'total_minutes': mins,
@@ -220,6 +297,8 @@ def _calculate_cycle_amounts(cycle: dict):
             'days_counted': round(days_counted, 2),
             'amount_earned': round(amount, 2),
             'status': day_status,
+            'ot_minutes': ot_mins,
+            'ot_pay': ot_pay,
         })
 
     adv_row = db.session.execute(
@@ -233,7 +312,11 @@ def _calculate_cycle_amounts(cycle: dict):
     total_advances = float(adv_row[0])
     net = gross - total_advances
 
-    return round(gross, 2), total_advances, round(net, 2), daily_breakdown
+    return round(gross, 2), total_advances, round(net, 2), daily_breakdown, {
+        'total_ot_minutes': total_ot_minutes,
+        'total_ot_pay': round(total_ot_pay, 2),
+        'ot_multiplier': ot_multiplier,
+    }
 
 
 # ── Employee CRUD ─────────────────────────────────────────────────────────────
@@ -277,6 +360,17 @@ def create_employee():
     except (TypeError, ValueError):
         return jsonify({'success': False, 'error': 'rate must be a non-negative number'}), 400
 
+    ot_multiplier = body.get('ot_multiplier')
+    if ot_multiplier is not None:
+        try:
+            ot_multiplier = float(ot_multiplier)
+            if ot_multiplier < 0:
+                raise ValueError()
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'ot_multiplier must be a non-negative number'}), 400
+    else:
+        ot_multiplier = 1.5  # sensible default
+
     employee_id = str(uuid.uuid4())
     now = _now_iso()
 
@@ -284,9 +378,9 @@ def create_employee():
         text(
             "INSERT INTO employees "
             "(employee_id, client_id, branch_id, name, phone, pay_type, rate, "
-            " is_active, created_by, created_at, updated_at) "
+            " ot_multiplier, is_active, created_by, created_at, updated_at) "
             "VALUES (:eid, :cid, :bid, :name, :phone, :pay_type, :rate, "
-            "        TRUE, :created_by, :now, :now)"
+            "        :ot_multiplier, TRUE, :created_by, :now, :now)"
         ),
         {
             'eid': employee_id,
@@ -296,6 +390,7 @@ def create_employee():
             'phone': (body.get('phone') or '').strip() or None,
             'pay_type': pay_type,
             'rate': rate,
+            'ot_multiplier': ot_multiplier,
             'created_by': g.user['user_id'],
             'now': now,
         }
@@ -356,10 +451,19 @@ def update_employee(employee_id):
         except (TypeError, ValueError):
             return jsonify({'success': False, 'error': 'rate must be a non-negative number'}), 400
 
+    if 'ot_multiplier' in body:
+        try:
+            om = float(body['ot_multiplier'])
+            if om < 0:
+                raise ValueError()
+            updates['ot_multiplier'] = om
+        except (TypeError, ValueError):
+            return jsonify({'success': False, 'error': 'ot_multiplier must be a non-negative number'}), 400
+
     if not updates:
         return jsonify({'success': True, 'data': emp, 'message': 'Nothing to update'}), 200
 
-    _ALLOWED_EMPLOYEE_FIELDS = {'name', 'phone', 'branch_id', 'pay_type', 'rate'}
+    _ALLOWED_EMPLOYEE_FIELDS = {'name', 'phone', 'branch_id', 'pay_type', 'rate', 'ot_multiplier'}
     set_clause = ', '.join(f"{k} = :{k}" for k in updates if k in _ALLOWED_EMPLOYEE_FIELDS)
     updates['updated_at'] = _now_iso()
     updates['eid'] = employee_id
@@ -409,6 +513,41 @@ def checkin(employee_id):
     if not emp:
         return jsonify({'success': False, 'error': 'Employee not found'}), 404
 
+    # Determine the work_date that this punch belongs to so we can gate it
+    # against salary-cycle coverage BEFORE touching any other data.
+    body_preview = request.get_json(silent=True) or {}
+    _wd_str = body_preview.get('work_date')
+    _ci_str = body_preview.get('check_in')
+    if _wd_str:
+        wd_check = _parse_date(_wd_str)
+    elif _ci_str:
+        _ci_dt = _parse_datetime(_ci_str)
+        wd_check = _ci_dt.date() if _ci_dt else datetime.utcnow().date()
+    else:
+        wd_check = datetime.utcnow().date()
+
+    # Enforce: a salary cycle must cover this work_date.
+    # Sealed (paid) cycles also block new attendance — uniform rule.
+    cycle = _find_covering_cycle(employee_id, client_id, wd_check)
+    if not cycle:
+        return jsonify({
+            'success': False,
+            'error': f'No salary cycle covers {wd_check}. Please create a cycle first.',
+            'code': 'NO_CYCLE',
+            'work_date': str(wd_check),
+        }), 409
+    if cycle.get('status') != 'open':
+        return jsonify({
+            'success': False,
+            'error': (
+                f'The salary cycle for {wd_check} is sealed ({cycle.get("status")}). '
+                'Cannot record new attendance.'
+            ),
+            'code': 'CYCLE_SEALED',
+            'work_date': str(wd_check),
+            'cycle_id': cycle.get('cycle_id'),
+        }), 409
+
     # Reject if there is already an open punch (check_out IS NULL)
     open_punch = db.session.execute(
         text(
@@ -425,7 +564,7 @@ def checkin(employee_id):
             'open_attendance_id': open_punch[0],
         }), 409
 
-    body = request.get_json(silent=True) or {}
+    body = body_preview  # reuse already-parsed body
     now = datetime.utcnow()
 
     # Allow caller to override check_in time (e.g. retroactive entry)
@@ -517,16 +656,35 @@ def checkout(employee_id):
 
     total_minutes = _compute_total_minutes(check_in_dt, check_out_dt) if check_in_dt else None
 
+    # Auto-detect OT minutes: anything past the cycle's full_day_mins is candidate
+    # OT. Manager must approve via /attendance/<aid>/approve-ot before it counts in pay.
+    work_date_for_calc = open_punch.get('work_date')
+    if hasattr(work_date_for_calc, 'strftime'):
+        pass  # already a date object
+    elif work_date_for_calc:
+        work_date_for_calc = _parse_date(str(work_date_for_calc))
+
+    full_day_mins_for_calc = 480  # fallback default
+    _ot_cycle = _find_covering_cycle(employee_id, client_id, work_date_for_calc) if work_date_for_calc else None
+    if _ot_cycle and _ot_cycle.get('full_day_mins'):
+        try:
+            full_day_mins_for_calc = int(_ot_cycle['full_day_mins'])
+        except (TypeError, ValueError):
+            pass
+    auto_ot = max(0, int(total_minutes or 0) - full_day_mins_for_calc)
+
     db.session.execute(
         text(
             "UPDATE employee_attendance "
             "SET check_out = :check_out, total_minutes = :total_minutes, "
+            "    auto_ot_minutes = :auto_ot, "
             "    updated_at = :now "
             "WHERE attendance_id = :aid AND client_id = :cid"
         ),
         {
             'check_out': check_out_dt.strftime('%Y-%m-%d %H:%M:%S'),
             'total_minutes': total_minutes,
+            'auto_ot': auto_ot,
             'now': _now_iso(),
             'aid': open_punch['attendance_id'],
             'cid': client_id,
@@ -576,6 +734,28 @@ def mark_day_off(employee_id):
     # Reject future dates — you can't mark "absent" before the day has passed
     if work_date > date.today():
         return jsonify({'success': False, 'error': 'Cannot mark a day off for a future date'}), 400
+
+    # Enforce: a salary cycle (status='open') must cover this work_date.
+    # Sealed (paid) cycles also block new attendance — uniform rule.
+    _day_off_cycle = _find_covering_cycle(employee_id, client_id, work_date)
+    if not _day_off_cycle:
+        return jsonify({
+            'success': False,
+            'error': f'No salary cycle covers {work_date}. Please create a cycle first.',
+            'code': 'NO_CYCLE',
+            'work_date': str(work_date),
+        }), 409
+    if _day_off_cycle.get('status') != 'open':
+        return jsonify({
+            'success': False,
+            'error': (
+                f'The salary cycle for {work_date} is sealed ({_day_off_cycle.get("status")}). '
+                'Cannot record new attendance.'
+            ),
+            'code': 'CYCLE_SEALED',
+            'work_date': str(work_date),
+            'cycle_id': _day_off_cycle.get('cycle_id'),
+        }), 409
 
     status = (body.get('status') or '').strip().lower()
     if status not in _DAY_OFF_STATUSES:
@@ -994,7 +1174,7 @@ def get_cycle_detail(employee_id, cycle_id):
         return jsonify({'success': False, 'error': 'Salary cycle not found'}), 404
 
     # Build per-day breakdown and advances list
-    _, _, _, daily_breakdown = _calculate_cycle_amounts(cycle)
+    _, _, _, daily_breakdown, ot_summary = _calculate_cycle_amounts(cycle)
 
     advances = db.session.execute(
         text(
@@ -1007,6 +1187,7 @@ def get_cycle_detail(employee_id, cycle_id):
     data = dict(cycle)
     data['daily_breakdown'] = daily_breakdown
     data['advances'] = [_row_to_dict(a) for a in advances]
+    data['ot_summary'] = ot_summary
     return jsonify({'success': True, 'data': data}), 200
 
 
@@ -1098,7 +1279,7 @@ def calculate_cycle(employee_id, cycle_id):
     if cycle['status'] != 'open':
         return jsonify({'success': False, 'error': 'Only open cycles can be recalculated'}), 400
 
-    gross, total_advances, net, daily_breakdown = _calculate_cycle_amounts(cycle)
+    gross, total_advances, net, daily_breakdown, ot_summary = _calculate_cycle_amounts(cycle)
 
     db.session.execute(
         text(
@@ -1123,6 +1304,7 @@ def calculate_cycle(employee_id, cycle_id):
         'data': {
             'cycle': cycle,
             'daily_breakdown': daily_breakdown,
+            'ot_summary': ot_summary,
         },
         'message': 'Cycle recalculated',
     }), 200
@@ -1141,7 +1323,7 @@ def mark_cycle_paid(employee_id, cycle_id):
     now = _now_iso()
 
     # Recalculate one final time before sealing
-    gross, total_advances, net, _ = _calculate_cycle_amounts(cycle)
+    gross, total_advances, net, _, _ot = _calculate_cycle_amounts(cycle)
 
     # Use rowcount guard — only update if status is still 'open'
     result = db.session.execute(
@@ -1504,7 +1686,7 @@ def record_advance(employee_id):
     )
 
     # Keep cycle totals fresh
-    gross, total_advances, net, _ = _calculate_cycle_amounts(cycle)
+    gross, total_advances, net, _, _ot = _calculate_cycle_amounts(cycle)
     db.session.execute(
         text(
             "UPDATE salary_cycles "
@@ -1559,7 +1741,7 @@ def delete_advance(advance_id):
     ).fetchone()
     if cycle:
         cycle_dict = _row_to_dict(cycle)
-        gross, total_advances, net, _ = _calculate_cycle_amounts(cycle_dict)
+        gross, total_advances, net, _, _ot = _calculate_cycle_amounts(cycle_dict)
         db.session.execute(
             text(
                 "UPDATE salary_cycles "
@@ -1609,7 +1791,7 @@ def employee_history(employee_id):
 
     for cr in cycle_rows:
         cycle = _row_to_dict(cr)
-        gross, adv_sum, net, breakdown = _calculate_cycle_amounts(cycle)
+        gross, adv_sum, net, breakdown, _ot = _calculate_cycle_amounts(cycle)
 
         # Advances for this cycle
         adv_rows = db.session.execute(
@@ -1669,3 +1851,88 @@ def employee_history(employee_id):
             },
         },
     }), 200
+
+
+# ── OT Approval ───────────────────────────────────────────────────────────────
+
+@employees_bp.route('/<employee_id>/ot/pending', methods=['GET'])
+@authenticate
+@require_permission('view_salary')
+def list_pending_ot(employee_id):
+    """List attendance rows with auto_ot_minutes > 0 AND approved_ot_minutes IS NULL."""
+    client_id = g.user['client_id']
+    rows = db.session.execute(
+        text(
+            "SELECT * FROM employee_attendance "
+            "WHERE employee_id = :eid AND client_id = :cid "
+            "  AND auto_ot_minutes > 0 "
+            "  AND approved_ot_minutes IS NULL "
+            "ORDER BY work_date DESC"
+        ),
+        {'eid': employee_id, 'cid': client_id}
+    ).fetchall()
+    return jsonify({'success': True, 'data': [_row_to_dict(r) for r in rows]}), 200
+
+
+@employees_bp.route('/attendance/<attendance_id>/approve-ot', methods=['POST'])
+@authenticate
+@require_permission('manage_salary_cycles')
+def approve_ot(attendance_id):
+    """Manager approves (or rejects) OT for a specific attendance row.
+
+    Body: { ot_minutes: <int> }  — 0 to reject, N to approve N minutes
+                                    (typically equals or differs from auto_ot_minutes)
+    """
+    client_id = g.user['client_id']
+    body = request.get_json(silent=True) or {}
+    ot_mins = body.get('ot_minutes')
+    if ot_mins is None:
+        return jsonify({'success': False, 'error': 'ot_minutes is required'}), 400
+    try:
+        ot_mins_int = int(ot_mins)
+        if ot_mins_int < 0:
+            raise ValueError()
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'ot_minutes must be a non-negative integer'}), 400
+
+    row = db.session.execute(
+        text(
+            "SELECT * FROM employee_attendance "
+            "WHERE attendance_id = :aid AND client_id = :cid "
+            "LIMIT 1"
+        ),
+        {'aid': attendance_id, 'cid': client_id}
+    ).fetchone()
+    if not row:
+        return jsonify({'success': False, 'error': 'Attendance row not found'}), 404
+
+    db.session.execute(
+        text(
+            "UPDATE employee_attendance SET "
+            "  approved_ot_minutes = :ot, "
+            "  updated_at = :now "
+            "WHERE attendance_id = :aid AND client_id = :cid"
+        ),
+        {'ot': ot_mins_int, 'now': _now_iso(), 'aid': attendance_id, 'cid': client_id}
+    )
+    db.session.commit()
+    return jsonify({
+        'success': True,
+        'data': {'attendance_id': attendance_id, 'approved_ot_minutes': ot_mins_int},
+    }), 200
+
+
+@employees_bp.route('/<employee_id>/cycles/covering', methods=['GET'])
+@authenticate
+@require_permission('view_salary')
+def get_covering_cycle(employee_id):
+    """Return the salary cycle that covers ?date=YYYY-MM-DD, or null."""
+    client_id = g.user['client_id']
+    date_str = request.args.get('date')
+    if not date_str:
+        return jsonify({'success': False, 'error': 'date query param required'}), 400
+    wd = _parse_date(date_str)
+    if not wd:
+        return jsonify({'success': False, 'error': 'Invalid date format (use YYYY-MM-DD)'}), 400
+    cycle = _find_covering_cycle(employee_id, client_id, wd)
+    return jsonify({'success': True, 'data': cycle}), 200

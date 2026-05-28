@@ -12,7 +12,7 @@ export interface User {
   client_id: string;
   email: string;
   full_name?: string;
-  role: 'admin' | 'manager' | 'staff';
+  role: 'owner' | 'manager' | 'staff';
   is_active: boolean;
   is_super_admin: boolean;
   permissions: string[];
@@ -139,13 +139,13 @@ export interface CreateUserRequest {
   email: string;
   password: string;
   full_name?: string;
-  role: 'admin' | 'manager' | 'staff';
+  role: 'owner' | 'manager' | 'staff';
   permissions: string[];
 }
 
 export interface UpdateUserRequest {
   full_name?: string;
-  role?: 'admin' | 'manager' | 'staff';
+  role?: 'owner' | 'manager' | 'staff';
   is_active?: boolean;
   permissions?: string[];
 }

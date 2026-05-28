@@ -35,6 +35,7 @@ interface Client {
   subscription_end_date?: string
   trial_end_date?: string
   trial_days_remaining?: number
+  subscription_days_remaining?: number
 }
 
 interface ClientContextType {
@@ -100,6 +101,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
                 subscription_end_date: fresh.subscription_end_date,
                 trial_end_date: fresh.trial_end_date,
                 trial_days_remaining: fresh.trial_days_remaining,
+                subscription_days_remaining: fresh.subscription_days_remaining,
               }
               setClient(updated)
               localStorage.setItem('client', JSON.stringify(updated))

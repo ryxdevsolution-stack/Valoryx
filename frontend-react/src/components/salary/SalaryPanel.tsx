@@ -123,6 +123,30 @@ export default function SalaryPanel({
         </div>
       </div>
 
+      {/* "No cycle covers today" banner — appears when the most recent cycle
+          has ended but no new one has been created yet. Prevents the confusion
+          of seeing an OPEN cycle from a past month while expecting to record
+          today's attendance. */}
+      {(() => {
+        const todayStr = new Date().toISOString().slice(0, 10)
+        const hasCoveringCycle = cycles.some(c => c.start_date <= todayStr && c.end_date >= todayStr)
+        if (loading || cycles.length === 0 || hasCoveringCycle) return null
+        return (
+          <div className="px-4 py-3 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 flex items-start justify-between gap-3">
+            <p className="text-xs text-amber-800 dark:text-amber-200">
+              <strong>No cycle covers today.</strong> The cycles below are from past periods. Create a new cycle to record attendance for the current month.
+            </p>
+            <button
+              type="button"
+              onClick={onNewCycle}
+              className="shrink-0 text-xs font-medium px-2.5 py-1 bg-amber-600 hover:bg-amber-700 text-white rounded-md whitespace-nowrap"
+            >
+              Create cycle
+            </button>
+          </div>
+        )
+      })()}
+
       {/* Cycle list — bounded on mobile; flex-grown on desktop */}
       <div className="md:flex-1 overflow-y-auto max-h-[400px] md:max-h-none divide-y divide-gray-100 dark:divide-gray-800">
         {loading ? (
@@ -256,6 +280,21 @@ export default function SalaryPanel({
                     {cycle.daily_breakdown && cycle.daily_breakdown.length > 0 && (
                       <div>
                         <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Daily Breakdown</p>
+                        {/* OT summary banner — only show when there is any OT pay */}
+                        {cycle.ot_summary && cycle.ot_summary.total_ot_minutes > 0 && (
+                          <div className="mb-2 rounded-lg bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 px-3 py-2 text-xs flex flex-wrap gap-x-4 gap-y-1">
+                            <span className="text-amber-800 dark:text-amber-300">
+                              Total OT: <strong>{formatMins(cycle.ot_summary.total_ot_minutes)}</strong>
+                              {' '}({(cycle.ot_summary.total_ot_minutes / 60).toFixed(1)}h)
+                            </span>
+                            <span className="text-amber-800 dark:text-amber-300">
+                              OT pay: <strong>₹{Number(cycle.ot_summary.total_ot_pay).toFixed(2)}</strong>
+                            </span>
+                            <span className="text-amber-600 dark:text-amber-400">
+                              Multiplier: {cycle.ot_summary.ot_multiplier}×
+                            </span>
+                          </div>
+                        )}
                         <div className="rounded-xl overflow-hidden border border-gray-200 dark:border-gray-700">
                           <table className="w-full text-xs">
                             <thead>
@@ -264,6 +303,8 @@ export default function SalaryPanel({
                                 <th className="text-right px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Hours</th>
                                 <th className="text-right px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Days</th>
                                 <th className="text-right px-3 py-2 font-medium text-gray-600 dark:text-gray-400">Earned</th>
+                                <th className="text-right px-3 py-2 font-medium text-amber-600 dark:text-amber-400">OT min</th>
+                                <th className="text-right px-3 py-2 font-medium text-amber-600 dark:text-amber-400">OT pay</th>
                               </tr>
                             </thead>
                             <tbody className="divide-y divide-gray-100 dark:divide-gray-800">
@@ -273,6 +314,12 @@ export default function SalaryPanel({
                                   <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{formatMins(Number(day.total_minutes))}</td>
                                   <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{Number(day.days_counted).toFixed(2)}</td>
                                   <td className="px-3 py-2 text-right font-semibold text-gray-900 dark:text-white">₹{Number(day.amount_earned).toFixed(2)}</td>
+                                  <td className="px-3 py-2 text-right text-amber-700 dark:text-amber-300">
+                                    {Number(day.ot_minutes) > 0 ? `${day.ot_minutes}m` : '—'}
+                                  </td>
+                                  <td className="px-3 py-2 text-right text-amber-700 dark:text-amber-300 font-medium">
+                                    {Number(day.ot_pay) > 0 ? `₹${Number(day.ot_pay).toFixed(2)}` : '—'}
+                                  </td>
                                 </tr>
                               ))}
                             </tbody>

@@ -95,7 +95,7 @@ def create_branch():
     """
     try:
         user_role = (g.user.get('role') or '').lower().strip()
-        if user_role not in ('owner', 'admin'):
+        if user_role not in ('owner', 'manager'):
             return jsonify({
                 'success': False,
                 'error': 'Only owners and admins can create branches'
@@ -183,7 +183,7 @@ def update_branch(branch_id):
     """Update branch name/location, and optionally reassign manager."""
     try:
         user_role = (g.user.get('role') or '').lower().strip()
-        if user_role not in ('owner', 'admin'):
+        if user_role not in ('owner', 'manager'):
             return jsonify({'success': False, 'error': 'Only owners and admins can update branches'}), 403
 
         client_id = g.user['client_id']
@@ -246,7 +246,7 @@ def delete_branch(branch_id):
     """Soft-delete a branch."""
     try:
         user_role = (g.user.get('role') or '').lower().strip()
-        if user_role not in ('owner', 'admin'):
+        if user_role not in ('owner', 'manager'):
             return jsonify({'success': False, 'error': 'Only owners and admins can delete branches'}), 403
 
         client_id = g.user['client_id']
@@ -285,7 +285,7 @@ def list_available_managers():
     """
     try:
         user_role = (g.user.get('role') or '').lower().strip()
-        if user_role not in ('owner', 'admin'):
+        if user_role not in ('owner', 'manager'):
             return jsonify({'success': False, 'error': 'Access denied'}), 403
 
         client_id = g.user['client_id']

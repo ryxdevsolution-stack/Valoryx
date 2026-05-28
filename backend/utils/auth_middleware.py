@@ -101,6 +101,18 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
                     'code': 'TRIAL_EXPIRED'
                 }), 403
 
+            if client.is_subscription_expired:
+                client.subscription_status = 'expired'
+                try:
+                    db.session.commit()
+                except Exception:
+                    db.session.rollback()
+                return jsonify({
+                    'error': 'Subscription expired',
+                    'message': 'Your subscription has expired. Please renew to continue.',
+                    'code': 'SUBSCRIPTION_EXPIRED'
+                }), 403
+
         # Store user and client info in g object
         g.user = {
             'user_id': user_id,
@@ -129,6 +141,7 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
             'subscription_status': client.subscription_status,
             'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
             'trial_days_remaining': client.trial_days_remaining,
+            'subscription_days_remaining': client.subscription_days_remaining,
             'subscription_end_date': client.subscription_end_date.isoformat() if client.subscription_end_date else None,
             'points_per_100': getattr(client, 'points_per_100', 0) or 0,
         }

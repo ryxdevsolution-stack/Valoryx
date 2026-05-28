@@ -56,10 +56,8 @@ interface UsersResponse {
 
 const ROLE_OPTIONS = [
   { value: 'owner', label: 'Owner' },
-  { value: 'admin', label: 'Admin' },
   { value: 'manager', label: 'Manager' },
   { value: 'staff', label: 'Staff' },
-  { value: 'cashier', label: 'Cashier' },
 ];
 
 const STATUS_OPTIONS = [
@@ -71,10 +69,8 @@ const STATUS_OPTIONS = [
 function RoleBadge({ role, isSuperAdmin }: { role: string; isSuperAdmin: boolean }) {
   const colors: Record<string, string> = {
     owner: 'bg-violet-100 dark:bg-violet-900/30 text-violet-700 dark:text-violet-400',
-    admin: 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-400',
     manager: 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-400',
     staff: 'bg-slate-100 dark:bg-slate-700 text-slate-600 dark:text-slate-300',
-    cashier: 'bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400',
   };
   return (
     <div className="flex items-center gap-1.5">

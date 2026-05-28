@@ -1,0 +1,1 @@
+function r(e,o={}){const i=o.duration??2e3,s=o.highlightClass??"focus-row-highlight";requestAnimationFrame(()=>{const t=document.querySelector(`[data-focus-id="${c(e)}"]`);t&&(t.scrollIntoView({behavior:"smooth",block:"center"}),t.classList.add(s),window.setTimeout(()=>t.classList.remove(s),i))})}function c(e){return e.replace(/[^a-zA-Z0-9-_]/g,"\\$&")}export{r as f};

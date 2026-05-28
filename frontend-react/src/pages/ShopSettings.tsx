@@ -215,7 +215,7 @@ export default function ShopSettingsPage() {
   const [btLoading, setBtLoading] = useState<'idle' | 'searching' | 'connecting' | 'printing'>('idle')
   const [btError, setBtError] = useState<string | null>(null)
 
-  const canEdit = user?.role === 'owner' || user?.role === 'manager' || user?.role === 'admin' || user?.role === 'super admin'
+  const canEdit = user?.role === 'owner' || user?.role === 'manager' || user?.role === 'super admin'
 
   // ─── Fetch settings on mount ────────────────────────────────────
 

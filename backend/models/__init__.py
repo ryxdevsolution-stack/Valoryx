@@ -10,6 +10,7 @@ from models.permission_model import (                                    # noqa:
     PermissionSection, Permission, UserPermission,
 )
 from models.permission_preset_model import PermissionPreset              # noqa: F401
+from models.permission_template_model import PermissionTemplate          # noqa: F401
 from models.branch_model import Branch                                   # noqa: F401
 from models.branch_inventory_model import BranchInventory                # noqa: F401
 from models.session_model import UserSession                             # noqa: F401

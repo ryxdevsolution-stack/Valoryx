@@ -14,7 +14,7 @@ interface ProfitSummaryBarProps {
 }
 
 function ProfitSummaryBar({ items, userRole }: ProfitSummaryBarProps) {
-  if (!['owner', 'manager', 'admin'].includes(userRole)) return null
+  if (!['owner', 'manager'].includes(userRole)) return null
   if (items.length === 0) return null
 
   const { totalCost, totalRevenue, profit, margin, hasCostData } = useMemo(() => {

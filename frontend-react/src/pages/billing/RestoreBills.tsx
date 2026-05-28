@@ -1,8 +1,9 @@
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
+import { Link } from 'react-router-dom'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
-import { RotateCcw, Calendar, X, Package, User, Clock, Hash } from 'lucide-react'
+import { RotateCcw, Calendar, X, Package, User, Clock, Hash, ArrowLeft } from 'lucide-react'
 
 interface BillItem {
   product_name: string
@@ -126,14 +127,25 @@ export default function RestoreBills() {
         {/* Header */}
         <div className="flex-shrink-0 px-4 pt-4 pb-2 md:px-6 md:pt-6 md:pb-3">
           <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2 mb-3">
-            <div>
-              <h1 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
-                <RotateCcw className="w-5 h-5 text-orange-500" />
-                Cancelled Bills
-              </h1>
-              <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                {dateFilteredBills.length} cancelled bill{dateFilteredBills.length !== 1 ? 's' : ''}
-              </p>
+            <div className="flex items-center gap-3">
+              <Link
+                to="/billing"
+                aria-label="Back to Bills"
+                title="Back to Bills"
+                className="flex items-center gap-1 rounded-lg px-2 py-1.5 text-xs font-medium text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-900 dark:hover:text-white transition-colors"
+              >
+                <ArrowLeft className="w-4 h-4" strokeWidth={2} />
+                <span className="hidden sm:inline">Back to Bills</span>
+              </Link>
+              <div>
+                <h1 className="text-lg font-bold text-gray-900 dark:text-white flex items-center gap-2">
+                  <RotateCcw className="w-5 h-5 text-orange-500" />
+                  Cancelled Bills
+                </h1>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  {dateFilteredBills.length} cancelled bill{dateFilteredBills.length !== 1 ? 's' : ''}
+                </p>
+              </div>
             </div>
           </div>
 

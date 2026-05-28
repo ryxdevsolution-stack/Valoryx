@@ -244,6 +244,7 @@ def create_delivery():
         transport_fee  = body.get('transport_fee') or 0,
         notes          = (body.get('notes') or '').strip() or None,
         status         = 'draft',
+        added_by_label = (body.get('added_by_label') or '').strip() or None,
     )
     db.session.add(delivery)
     db.session.flush()  # get delivery_id before items
@@ -539,6 +540,8 @@ def complete_delivery(delivery_id):
                     barcode         = item.barcode or None,
                     gst_percentage  = item.gst_percentage or 0,
                     hsn_code        = item.hsn_code or None,
+                    created_by      = g.user.get('user_id'),
+                    added_by_label  = delivery.added_by_label,
                 )
                 db.session.add(new_stock)
                 db.session.flush()

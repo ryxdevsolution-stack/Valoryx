@@ -17,7 +17,7 @@ stock_transfer_bp = Blueprint('stock_transfers', __name__)
 # ── Auth helpers ──────────────────────────────────────────────────────────────
 
 def _is_owner_admin(user):
-    return user.get('role') in ('owner', 'admin') or user.get('is_super_admin')
+    return user.get('role') in ('owner', 'manager') or user.get('is_super_admin')
 
 
 def _is_branch_manager(user):

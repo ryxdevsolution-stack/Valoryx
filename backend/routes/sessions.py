@@ -109,7 +109,7 @@ def revoke_all_sessions():
 
 @sessions_bp.route('/user/<user_id>', methods=['GET'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner'])
 def list_user_sessions(user_id):
     """Admin: list active sessions for a team member. GET /api/sessions/user/<user_id>"""
     target = User.query.filter_by(
@@ -132,7 +132,7 @@ def list_user_sessions(user_id):
 
 @sessions_bp.route('/user/<user_id>/revoke-all', methods=['POST'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner'])
 def admin_revoke_user_sessions(user_id):
     """Admin: force-logout all sessions for a team member. POST /api/sessions/user/<user_id>/revoke-all"""
     target = User.query.filter_by(

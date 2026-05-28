@@ -104,9 +104,11 @@ def create_test_app():
         import models.billing_model     # noqa: F401
         import models.session_model     # noqa: F401
         import models.permission_model  # noqa: F401
+        import models.permission_template_model  # noqa: F401
 
         for optional in [
-"models.customer_model",
+            "models.customer_model",
+            "models.supplier_model",
             "models.report_model",
             "models.audit_model",
         ]:
@@ -122,10 +124,147 @@ def create_test_app():
                 _db.metadata.remove(_db.metadata.tables[_tname])
         _db.create_all()
 
+        # Seed default permissions (same list as in app.py create_app)
+        from models.permission_model import Permission
+        import uuid as _uuid
+        default_perms = [
+            # Dashboard
+            ('view_dashboard', 'Access main dashboard'),
+            # Create Bill
+            ('gst_billing', 'Create bills with GST'),
+            ('non_gst_billing', 'Create bills without GST'),
+            ('apply_discount', 'Apply discounts to bills'),
+            ('add_payment', 'Add payment methods to bills'),
+            ('select_customer', 'Select and assign customers to bills'),
+            ('add_products', 'Add products to bills'),
+            ('set_tax_rate', 'Override the tax/GST rate on individual bills at checkout'),
+            # Manage Bills
+            ('view_all_bills', 'View bills created by every user'),
+            ('view_own_bills', 'View only bills this user personally created'),
+            ('edit_bill_details', 'Edit bill information and details'),
+            ('edit_bill_price_audit', 'Correct historical bill prices from the audit-log view (power feature)'),
+            ('delete_bills', 'Delete bills from the system'),
+            ('print_bills', 'Print bills'),
+            ('download_pdf', 'Download bills as PDF'),
+            ('send_email', 'Send bills via email'),
+            ('mark_paid', 'Mark bills as paid'),
+            ('mark_cancelled', 'Mark bills as cancelled'),
+            ('duplicate_bill', 'Duplicate existing bills'),
+            ('search_bills', 'Search and filter bills'),
+            ('show_no_exchange', 'Show "No Exchange Available" on printed bills'),
+            # Customer Management
+            ('view_customers', 'View customer list and details'),
+            ('add_customer', 'Add new customers'),
+            ('edit_customer', 'Edit customer information'),
+            ('delete_customer', 'Delete customers'),
+            ('view_purchase_history', 'View customer purchase history'),
+            ('import_customers', 'Import customers from file'),
+            ('export_customers', 'Export customer data'),
+            # Stock Management
+            ('view_stock', 'View stock and inventory'),
+            ('add_product', 'Add new products to inventory'),
+            ('edit_product_details', 'Edit product information'),
+            ('edit_pricing', 'Edit product MRP and sale price'),
+            ('edit_cost_price', 'Edit product cost price'),
+            ('delete_product', 'Delete products from inventory'),
+            ('adjust_quantity', 'Adjust stock quantities'),
+            ('view_low_stock_alerts', 'View low stock alerts'),
+            ('import_stock', 'Import stock from file'),
+            ('export_stock', 'Export stock data'),
+            # Reports & Analytics
+            ('view_sales_reports', 'View sales reports'),
+            ('view_revenue_reports', 'View revenue reports'),
+            ('view_profit_reports', 'View profit and margin reports'),
+            ('view_inventory_reports', 'View inventory reports'),
+            ('view_customer_reports', 'View customer analytics'),
+            ('export_reports', 'Export reports to file'),
+            ('print_reports', 'Print reports'),
+            ('custom_report_filters', 'Build saved custom date/branch/category filters in reports'),
+            # Payment Types
+            ('view_payment_types', 'View payment types'),
+            ('add_payment_type', 'Add new payment types'),
+            ('edit_payment_type', 'Edit payment types'),
+            ('delete_payment_type', 'Delete payment types'),
+            ('set_default_payment', 'Set default payment type'),
+            # User Management
+            ('view_users', 'View system users'),
+            ('add_user', 'Add new users'),
+            ('edit_user', 'Edit user information'),
+            ('delete_user', 'Delete users'),
+            ('activate_deactivate_user', 'Activate or deactivate users'),
+            ('assign_permissions', 'Grant or revoke permissions on any user (on this screen)'),
+            ('manage_user_roles', 'Manage user roles'),
+            ('view_user_activity', 'View user activity logs'),
+            # Branch Management
+            ('manage_branches', 'Manage shop branches'),
+            ('create_branch', 'Create new branches'),
+            ('edit_branch', 'Edit branch information'),
+            ('delete_branch', 'Delete branches'),
+            ('transfer_stock_between_branches', 'Transfer stock between branches'),
+            # Settings
+            ('edit_business_settings', 'Edit business information'),
+            ('edit_tax_settings', 'Edit company-wide default GST rates and tax configuration'),
+            ('edit_notification_settings', 'Edit notification preferences'),
+            ('edit_theme_settings', 'Edit theme and appearance'),
+            # Audit & Logs
+            ('view_audit_logs', 'View the audit-trail page showing who changed what and when'),
+            ('export_audit_logs', 'Export audit logs'),
+            ('view_system_logs', 'View system error logs'),
+            # System Administration
+            ('manage_clients', 'Manage other tenant organizations (super-admin only)'),
+            ('system_backup', 'Create system backups'),
+            ('system_restore', 'Restore from backups'),
+            ('maintenance_mode', 'Enable maintenance mode'),
+            # Bulk Orders
+            ('view_bulk_orders', 'View bulk stock orders'),
+            ('create_bulk_order', 'Create new bulk stock orders'),
+            ('edit_bulk_order', 'Edit bulk stock orders'),
+            ('delete_bulk_order', 'Delete bulk stock orders'),
+            ('approve_bulk_order', 'Approve a bulk-order draft so it can be sent to the supplier'),
+            ('receive_bulk_order', 'Confirm physical receipt of stock and add it to inventory'),
+            # Notes
+            ('view_notes', 'View notes'),
+            ('view_all_notes', 'View all users notes (admin)'),
+            ('create_notes', 'Create new notes'),
+            ('edit_notes', 'Edit existing notes'),
+            ('delete_notes', 'Delete notes'),
+            # Employees & Salary
+            ('view_employees', 'View employee list and individual employee details'),
+            ('add_employee', 'Add new employees to the team'),
+            ('edit_employee', 'Edit employee personal and job details'),
+            ('delete_employee', 'Remove employees from the team'),
+            ('view_attendance', 'View attendance records and check-in/check-out logs'),
+            ('mark_attendance', 'Check employees in and out for the day'),
+            ('view_salary', 'View salary cycles, advances, and payment status'),
+            ('manage_salary_cycles', 'Create, edit, and close monthly salary cycles'),
+            ('record_advance', 'Record salary advances given to employees'),
+            ('mark_salary_paid', 'Mark a salary cycle as paid out to the employee'),
+            # Legacy broad permissions (kept for backward compatibility)
+            ('manage_customers', 'Create/edit/delete customers'),
+            ('manage_payment_types', 'Manage payment types'),
+            ('manage_settings', 'Manage account settings'),
+            ('manage_users', 'Create/edit/delete users'),
+            ('manage_permissions', 'Legacy alias for permission management — kept for backward compatibility'),
+        ]
+        existing_names = {
+            r[0] for r in _db.session.query(Permission.permission_name).all()
+        }
+        for perm_name, desc in default_perms:
+            if perm_name not in existing_names:
+                _db.session.add(Permission(
+                    permission_id=str(_uuid.uuid4()),
+                    permission_name=perm_name,
+                    description=desc,
+                ))
+        _db.session.commit()
+
         for _bp_path, _prefix in [
             ("routes.auth",    "/api/auth"),
             ("routes.billing", "/api/billing"),
             ("routes.stock",   "/api/stock"),
+            ("routes.search",  "/api/search"),
+            ("routes.admin",   "/api/admin"),
+            ("routes.team",    "/api/team"),
         ]:
             try:
                 mod = __import__(_bp_path, fromlist=[""])
@@ -327,6 +466,127 @@ def app_ctx(app, test_mode):
             db.session.commit()
         except Exception:
             db.session.rollback()
+
+        # Re-seed permissions after wiping all tables
+        try:
+            from models.permission_model import Permission
+            import uuid as _uuid
+            default_perms = [
+                ('view_dashboard', 'Access main dashboard'),
+                ('gst_billing', 'Create bills with GST'),
+                ('non_gst_billing', 'Create bills without GST'),
+                ('apply_discount', 'Apply discounts to bills'),
+                ('add_payment', 'Add payment methods to bills'),
+                ('select_customer', 'Select and assign customers to bills'),
+                ('add_products', 'Add products to bills'),
+                ('set_tax_rate', 'Override the tax/GST rate on individual bills at checkout'),
+                ('view_all_bills', 'View bills created by every user'),
+                ('view_own_bills', 'View only bills this user personally created'),
+                ('edit_bill_details', 'Edit bill information and details'),
+                ('edit_bill_price_audit', 'Correct historical bill prices from the audit-log view (power feature)'),
+                ('delete_bills', 'Delete bills from the system'),
+                ('print_bills', 'Print bills'),
+                ('download_pdf', 'Download bills as PDF'),
+                ('send_email', 'Send bills via email'),
+                ('mark_paid', 'Mark bills as paid'),
+                ('mark_cancelled', 'Mark bills as cancelled'),
+                ('duplicate_bill', 'Duplicate existing bills'),
+                ('search_bills', 'Search and filter bills'),
+                ('show_no_exchange', 'Show "No Exchange Available" on printed bills'),
+                ('view_customers', 'View customer list and details'),
+                ('add_customer', 'Add new customers'),
+                ('edit_customer', 'Edit customer information'),
+                ('delete_customer', 'Delete customers'),
+                ('view_purchase_history', 'View customer purchase history'),
+                ('import_customers', 'Import customers from file'),
+                ('export_customers', 'Export customer data'),
+                ('view_stock', 'View stock and inventory'),
+                ('add_product', 'Add new products to inventory'),
+                ('edit_product_details', 'Edit product information'),
+                ('edit_pricing', 'Edit product MRP and sale price'),
+                ('edit_cost_price', 'Edit product cost price'),
+                ('delete_product', 'Delete products from inventory'),
+                ('adjust_quantity', 'Adjust stock quantities'),
+                ('view_low_stock_alerts', 'View low stock alerts'),
+                ('import_stock', 'Import stock from file'),
+                ('export_stock', 'Export stock data'),
+                ('view_sales_reports', 'View sales reports'),
+                ('view_revenue_reports', 'View revenue reports'),
+                ('view_profit_reports', 'View profit and margin reports'),
+                ('view_inventory_reports', 'View inventory reports'),
+                ('view_customer_reports', 'View customer analytics'),
+                ('export_reports', 'Export reports to file'),
+                ('print_reports', 'Print reports'),
+                ('custom_report_filters', 'Build saved custom date/branch/category filters in reports'),
+                ('view_payment_types', 'View payment types'),
+                ('add_payment_type', 'Add new payment types'),
+                ('edit_payment_type', 'Edit payment types'),
+                ('delete_payment_type', 'Delete payment types'),
+                ('set_default_payment', 'Set default payment type'),
+                ('view_users', 'View system users'),
+                ('add_user', 'Add new users'),
+                ('edit_user', 'Edit user information'),
+                ('delete_user', 'Delete users'),
+                ('activate_deactivate_user', 'Activate or deactivate users'),
+                ('assign_permissions', 'Grant or revoke permissions on any user (on this screen)'),
+                ('manage_user_roles', 'Manage user roles'),
+                ('view_user_activity', 'View user activity logs'),
+                ('manage_branches', 'Manage shop branches'),
+                ('create_branch', 'Create new branches'),
+                ('edit_branch', 'Edit branch information'),
+                ('delete_branch', 'Delete branches'),
+                ('transfer_stock_between_branches', 'Transfer stock between branches'),
+                ('edit_business_settings', 'Edit business information'),
+                ('edit_tax_settings', 'Edit company-wide default GST rates and tax configuration'),
+                ('edit_notification_settings', 'Edit notification preferences'),
+                ('edit_theme_settings', 'Edit theme and appearance'),
+                ('view_audit_logs', 'View the audit-trail page showing who changed what and when'),
+                ('export_audit_logs', 'Export audit logs'),
+                ('view_system_logs', 'View system error logs'),
+                ('manage_clients', 'Manage other tenant organizations (super-admin only)'),
+                ('system_backup', 'Create system backups'),
+                ('system_restore', 'Restore from backups'),
+                ('maintenance_mode', 'Enable maintenance mode'),
+                ('view_bulk_orders', 'View bulk stock orders'),
+                ('create_bulk_order', 'Create new bulk stock orders'),
+                ('edit_bulk_order', 'Edit bulk stock orders'),
+                ('delete_bulk_order', 'Delete bulk stock orders'),
+                ('approve_bulk_order', 'Approve a bulk-order draft so it can be sent to the supplier'),
+                ('receive_bulk_order', 'Confirm physical receipt of stock and add it to inventory'),
+                ('view_notes', 'View notes'),
+                ('view_all_notes', 'View all users notes (admin)'),
+                ('create_notes', 'Create new notes'),
+                ('edit_notes', 'Edit existing notes'),
+                ('delete_notes', 'Delete notes'),
+                # Employees & Salary
+                ('view_employees', 'View employee list and individual employee details'),
+                ('add_employee', 'Add new employees to the team'),
+                ('edit_employee', 'Edit employee personal and job details'),
+                ('delete_employee', 'Remove employees from the team'),
+                ('view_attendance', 'View attendance records and check-in/check-out logs'),
+                ('mark_attendance', 'Check employees in and out for the day'),
+                ('view_salary', 'View salary cycles, advances, and payment status'),
+                ('manage_salary_cycles', 'Create, edit, and close monthly salary cycles'),
+                ('record_advance', 'Record salary advances given to employees'),
+                ('mark_salary_paid', 'Mark a salary cycle as paid out to the employee'),
+                ('manage_customers', 'Create/edit/delete customers'),
+                ('manage_payment_types', 'Manage payment types'),
+                ('manage_settings', 'Manage account settings'),
+                ('manage_users', 'Create/edit/delete users'),
+                ('manage_permissions', 'Legacy alias for permission management — kept for backward compatibility'),
+            ]
+            for perm_name, desc in default_perms:
+                db.session.add(Permission(
+                    permission_id=str(_uuid.uuid4()),
+                    permission_name=perm_name,
+                    description=desc,
+                ))
+            db.session.commit()
+        except Exception as _seed_err:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
     else:
         _cleanup_online(db)
     ctx.pop()
@@ -361,6 +621,21 @@ def patch_side_effects(monkeypatch, test_mode):
             monkeypatch.setattr(f"routes.auth.{email_fn}", lambda *a, **k: None)
         except (AttributeError, ImportError, Exception):
             pass
+
+    # Silence team invite email (send_invite_email called when creating team members)
+    try:
+        monkeypatch.setattr("routes.team.send_invite_email", lambda *a, **k: None)
+    except (AttributeError, ImportError, Exception):
+        pass
+
+    # Silence team plan rules to use Enterprise limits in tests (avoids quota blocking)
+    try:
+        monkeypatch.setattr(
+            "routes.team._get_plan_rules",
+            lambda client_id: ("Enterprise", {"max_members": 100, "allowed_billing": ["gst_billing", "non_gst_billing"]}, False),
+        )
+    except (AttributeError, ImportError, Exception):
+        pass
 
     # ── always: silence log_action ────────────────────────────────────────────
     # log_action adds AuditLog objects to the session without committing.
@@ -562,6 +837,17 @@ def gst_headers(sample_user, sample_client):
         sample_user.user_id,
         sample_client.client_id,
         permissions=["gst_billing", "non_gst_billing", "add_product", "view_stock"],
+    )
+    return auth_hdr(token)
+
+
+@pytest.fixture
+def audit_only_headers(sample_user, sample_client):
+    """Auth headers for a user who has ONLY edit_bill_price_audit, NOT edit_bill_details."""
+    token = make_token(
+        sample_user.user_id,
+        sample_client.client_id,
+        permissions=["edit_bill_price_audit"],
     )
     return auth_hdr(token)
 

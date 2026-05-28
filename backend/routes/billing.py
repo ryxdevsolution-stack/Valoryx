@@ -866,6 +866,7 @@ def create_unified_bill():
         effective_gst_percentage = (total_gst_amount / subtotal * 100) if subtotal > 0 else 0
 
         # Create new products in stock_entry table BEFORE creating bill
+        _bill_added_by_label = (data.get('added_by_label') or '').strip() or None
         for new_product_data, new_product_id in new_products_to_create:
             new_stock_entry = StockEntry(
                 product_id=new_product_data['product_id'],
@@ -878,7 +879,9 @@ def create_unified_bill():
                 gst_percentage=new_product_data['gst_percentage'],
                 hsn_code=new_product_data['hsn_code'],
                 created_at=new_product_data['created_at'],
-                updated_at=new_product_data['updated_at']
+                updated_at=new_product_data['updated_at'],
+                created_by=g.user['user_id'],
+                added_by_label=_bill_added_by_label,
             )
             db.session.add(new_stock_entry)
 
@@ -1129,7 +1132,7 @@ def mark_bill_paid(bill_id):
 
 @billing_bp.route('/<bill_id>', methods=['PUT'])
 @authenticate
-@require_permission('edit_bill_details')
+@require_any_permission('edit_bill_details', 'edit_bill_price_audit')
 def update_bill(bill_id):
     """
     Update an existing bill (GST or Non-GST)
@@ -1137,6 +1140,24 @@ def update_bill(bill_id):
     """
     try:
         data = request.get_json()
+
+        # Field whitelist for audit-only callers (have edit_bill_price_audit but not edit_bill_details)
+        PRICING_ONLY_FIELDS = {'items', 'subtotal', 'gst_percentage', 'gst_amount',
+                               'final_amount', 'total_amount', 'discount_percentage',
+                               'payment_type'}
+        user_permissions = set(g.user.get('permissions', []))
+        is_super_admin = g.user.get('is_super_admin', False)
+        has_broad_edit = is_super_admin or 'edit_bill_details' in user_permissions
+
+        if not has_broad_edit:
+            submitted_fields = set(data.keys())
+            non_pricing = submitted_fields - PRICING_ONLY_FIELDS
+            if non_pricing:
+                return jsonify({
+                    'success': False,
+                    'error': f'Only pricing fields are editable with audit permission. Forbidden: {sorted(non_pricing)}'
+                }), 400
+
         client_id = g.user['client_id']
         user_id = g.user['user_id']
 
@@ -1165,6 +1186,37 @@ def update_bill(bill_id):
         is_valid, error_msg = validate_items(new_items)
         if not is_valid:
             return jsonify({'error': error_msg}), 400
+
+        # Scope routing for the audit-log edit feature.
+        # scope=audit_only: write to audit_overrides JSON; leave bill items untouched.
+        # scope=apply (or unset): existing behavior — mutate items, clear any prior audit_overrides.
+        scope = request.args.get('scope', 'apply').lower()
+        if scope not in ('audit_only', 'apply'):
+            return jsonify({'success': False, 'error': f'Invalid scope: {scope}. Use audit_only or apply.'}), 400
+
+        if scope == 'audit_only':
+            # Write corrected items to audit_overrides; leave bill items and stock untouched.
+            existing_bill.audit_overrides = new_items
+            existing_bill.updated_at = get_current_time()
+
+            db.session.commit()
+
+            _invalidate_billing(client_id)
+
+            log_action('UPDATE',
+                      'gst_billing' if is_gst else 'non_gst_billing',
+                      bill_id,
+                      old_bill_data,
+                      existing_bill.to_dict())
+
+            return jsonify({
+                'success': True,
+                'message': 'Audit annotation saved',
+                'bill': existing_bill.to_dict(),
+                'scope': scope,
+            }), 200
+
+        # scope == 'apply': existing stock-touching flow
 
         # OPTIMIZED: Batch fetch all products in single query (fixes N+1)
         all_product_ids = set()
@@ -1207,6 +1259,7 @@ def update_bill(bill_id):
         existing_bill.customer_phone = data.get('customer_phone', existing_bill.customer_phone)
         existing_bill.customer_gstin = data.get('customer_gstin', existing_bill.customer_gstin)
         existing_bill.items = new_items
+        existing_bill.audit_overrides = None  # clear any prior audit annotation when applying
         existing_bill.payment_type = data.get('payment_type', existing_bill.payment_type)
         existing_bill.amount_received = data.get('amount_received', existing_bill.amount_received)
         existing_bill.discount_percentage = data.get('discount_percentage', existing_bill.discount_percentage)
@@ -1243,7 +1296,8 @@ def update_bill(bill_id):
         return jsonify({
             'success': True,
             'message': 'Bill updated successfully',
-            'bill': existing_bill.to_dict()
+            'bill': existing_bill.to_dict(),
+            'scope': scope,
         }), 200
 
     except Exception as e:

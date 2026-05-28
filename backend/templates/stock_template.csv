@@ -1,28 +1,28 @@
-product_name,category,quantity,rate,unit,low_stock_alert,item_code,barcode,gst_percentage,hsn_code,purchase_price,mrp
-Sample Minimal Item,,10,100.00,,,,,,,,
-Sample No Barcode Item,Accessories,5,250.00,pcs,2,,,,,,
-Laptop Dell Inspiron,Electronics,52,34882.56,pcs,4,ITEM-3493,BAR-857762,28.0,3587,28000.00,39999.00
-HP Desktop,Electronics,181,19466.00,pcs,6,ITEM-2205,BAR-839428,12.0,8003,15000.00,22999.00
-Wireless Mouse,Electronics,427,500.00,pcs,6,ITEM-3957,BAR-172056,18.0,6370,350.00,599.00
-Mechanical Keyboard,Electronics,204,2479.00,pcs,11,ITEM-4632,BAR-892092,5.0,3527,1800.00,2999.00
-USB Cable Type-C,Electronics,277,150.00,pcs,7,ITEM-5899,BAR-153543,12.0,4161,80.00,199.00
-LED Monitor,Electronics,137,15000.00,pcs,15,ITEM-3662,BAR-300642,5.0,6812,12000.00,17999.00
-HDMI Cable,Electronics,37,450.00,pcs,4,ITEM-1846,BAR-672074,18.0,1742,300.00,599.00
-External Hard Drive,Electronics,229,4500.00,pcs,1,ITEM-7520,BAR-853929,5.0,2963,3500.00,5499.00
-Bluetooth Speaker,Electronics,120,2500.00,pcs,9,ITEM-5274,BAR-383558,5.0,6558,1800.00,2999.00
-Webcam HD,Electronics,267,1800.00,pcs,5,ITEM-9884,BAR-709671,18.0,3167,1200.00,2199.00
-Office Desk,Furniture,36,8500.00,pcs,20,ITEM-7230,BAR-179271,5.0,3670,6500.00,9999.00
-Executive Chair,Furniture,199,5500.00,pcs,3,ITEM-2345,BAR-700602,12.0,8838,4000.00,6499.00
-Filing Cabinet,Furniture,232,3200.00,pcs,9,ITEM-9335,BAR-330774,18.0,2746,2400.00,3799.00
-Conference Table,Furniture,70,15000.00,pcs,12,ITEM-9972,BAR-144529,18.0,9814,12000.00,17999.00
-Bookshelf,Furniture,472,2800.00,pcs,6,ITEM-1493,BAR-303942,28.0,5621,2000.00,3299.00
-A4 Paper Ream,Stationery,442,350.00,ream,23,ITEM-4137,BAR-465821,12.0,8077,280.00,399.00
-Black Gel Pen,Stationery,395,25.00,pcs,14,ITEM-4841,BAR-665686,18.0,3515,15.00,30.00
-Blue Ball Pen,Stationery,490,15.00,pcs,13,ITEM-5967,BAR-829076,28.0,1943,8.00,20.00
-Spiral Notebook,Stationery,97,80.00,pcs,21,ITEM-6280,BAR-876358,5.0,8903,50.00,99.00
-Highlighter Marker,Stationery,163,45.00,pcs,12,ITEM-7380,BAR-267713,28.0,7496,30.00,55.00
-Laptop Bag,Accessories,106,1200.00,pcs,2,ITEM-4003,BAR-713743,12.0,1520,800.00,1499.00
-Mouse Pad,Accessories,494,250.00,pcs,18,ITEM-6950,BAR-927249,12.0,2126,150.00,299.00
-Keyboard Cover,Accessories,359,350.00,pcs,11,ITEM-5740,BAR-426274,28.0,3231,200.00,449.00
-Power Adapter,Accessories,103,800.00,pcs,12,ITEM-1534,BAR-807071,18.0,9840,550.00,999.00
-USB Hub,Accessories,356,650.00,pcs,13,ITEM-8563,BAR-156656,18.0,2190,450.00,799.00
+product_name,category,quantity,rate,unit,low_stock_alert,item_code,barcode,gst_percentage,hsn_code,purchase_price,mrp,added_by_label
+Sample Minimal Item,,10,100.00,,,,,,,,,Ramesh
+Sample No Barcode Item,Accessories,5,250.00,pcs,2,,,,,,,Priya
+Laptop Dell Inspiron,Electronics,52,34882.56,pcs,4,ITEM-3493,BAR-857762,28.0,3587,28000.00,39999.00,Ramesh
+HP Desktop,Electronics,181,19466.00,pcs,6,ITEM-2205,BAR-839428,12.0,8003,15000.00,22999.00,Ramesh
+Wireless Mouse,Electronics,427,500.00,pcs,6,ITEM-3957,BAR-172056,18.0,6370,350.00,599.00,Priya
+Mechanical Keyboard,Electronics,204,2479.00,pcs,11,ITEM-4632,BAR-892092,5.0,3527,1800.00,2999.00,Priya
+USB Cable Type-C,Electronics,277,150.00,pcs,7,ITEM-5899,BAR-153543,12.0,4161,80.00,199.00,Ramesh
+LED Monitor,Electronics,137,15000.00,pcs,15,ITEM-3662,BAR-300642,5.0,6812,12000.00,17999.00,Ramesh
+HDMI Cable,Electronics,37,450.00,pcs,4,ITEM-1846,BAR-672074,18.0,1742,300.00,599.00,Priya
+External Hard Drive,Electronics,229,4500.00,pcs,1,ITEM-7520,BAR-853929,5.0,2963,3500.00,5499.00,Priya
+Bluetooth Speaker,Electronics,120,2500.00,pcs,9,ITEM-5274,BAR-383558,5.0,6558,1800.00,2999.00,Ramesh
+Webcam HD,Electronics,267,1800.00,pcs,5,ITEM-9884,BAR-709671,18.0,3167,1200.00,2199.00,Ramesh
+Office Desk,Furniture,36,8500.00,pcs,20,ITEM-7230,BAR-179271,5.0,3670,6500.00,9999.00,Priya
+Executive Chair,Furniture,199,5500.00,pcs,3,ITEM-2345,BAR-700602,12.0,8838,4000.00,6499.00,Priya
+Filing Cabinet,Furniture,232,3200.00,pcs,9,ITEM-9335,BAR-330774,18.0,2746,2400.00,3799.00,Ramesh
+Conference Table,Furniture,70,15000.00,pcs,12,ITEM-9972,BAR-144529,18.0,9814,12000.00,17999.00,Ramesh
+Bookshelf,Furniture,472,2800.00,pcs,6,ITEM-1493,BAR-303942,28.0,5621,2000.00,3299.00,Priya
+A4 Paper Ream,Stationery,442,350.00,ream,23,ITEM-4137,BAR-465821,12.0,8077,280.00,399.00,Priya
+Black Gel Pen,Stationery,395,25.00,pcs,14,ITEM-4841,BAR-665686,18.0,3515,15.00,30.00,Ramesh
+Blue Ball Pen,Stationery,490,15.00,pcs,13,ITEM-5967,BAR-829076,28.0,1943,8.00,20.00,Ramesh
+Spiral Notebook,Stationery,97,80.00,pcs,21,ITEM-6280,BAR-876358,5.0,8903,50.00,99.00,Priya
+Highlighter Marker,Stationery,163,45.00,pcs,12,ITEM-7380,BAR-267713,28.0,7496,30.00,55.00,Priya
+Laptop Bag,Accessories,106,1200.00,pcs,2,ITEM-4003,BAR-713743,12.0,1520,800.00,1499.00,Ramesh
+Mouse Pad,Accessories,494,250.00,pcs,18,ITEM-6950,BAR-927249,12.0,2126,150.00,299.00,Ramesh
+Keyboard Cover,Accessories,359,350.00,pcs,11,ITEM-5740,BAR-426274,28.0,3231,200.00,449.00,Priya
+Power Adapter,Accessories,103,800.00,pcs,12,ITEM-1534,BAR-807071,18.0,9840,550.00,999.00,Priya
+USB Hub,Accessories,356,650.00,pcs,13,ITEM-8563,BAR-156656,18.0,2190,450.00,799.00,Ramesh

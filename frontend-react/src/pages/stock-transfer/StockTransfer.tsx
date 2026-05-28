@@ -338,9 +338,8 @@ export default function StockTransfer() {
   const { user } = useClient()
 
   // Role detection
-  const isOwner = (user?.role === 'owner' || user?.role === 'admin') && !user?.branch_id
-  // admin with branch_id = branch admin (acts as manager for their branch)
-  const isBranchManager = (user?.role === 'manager' || user?.role === 'admin') && !!user?.branch_id
+  const isOwner = user?.role === 'owner' && !user?.branch_id
+  const isBranchManager = user?.role === 'manager' && !!user?.branch_id
   const userBranchId = user?.branch_id ?? null
 
   // ── Common state ──

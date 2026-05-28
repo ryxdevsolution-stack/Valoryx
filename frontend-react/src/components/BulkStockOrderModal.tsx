@@ -7,6 +7,7 @@ import Tesseract from 'tesseract.js'
 import BarcodeScannerOverlay from '@/components/BarcodeScannerOverlay'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
 import { toast } from '@/utils/toast'
+import { getAddedByLabel, setAddedByLabel } from '@/utils/addedByLabel'
 
 interface OrderItem {
   item_id?: string
@@ -49,6 +50,7 @@ interface Props {
 export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existingOrder, onReceive }: Props) {
   const [activeTab, setActiveTab] = useState<'create' | 'orders'>('create')
   const [submitting, setSubmitting] = useState(false)
+  const [addedByLabel, setAddedByLabelState] = useState<string>(() => getAddedByLabel())
   const fileInputRef = useRef<HTMLInputElement>(null)
   const [formData, setFormData] = useState<BulkOrder>({
     supplier_name: '',
@@ -377,12 +379,18 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
       return
     }
 
+    if (!addedByLabel.trim()) {
+      toast.error('Please enter your name in "Added By"')
+      return
+    }
+
     setSubmitting(true)
     try {
       if (existingOrder?.order_id) {
-        await api.put(`/bulk-orders/${existingOrder.order_id}`, formData)
+        await api.put(`/bulk-orders/${existingOrder.order_id}`, { ...formData, added_by_label: addedByLabel.trim() })
       } else {
-        await api.post('/bulk-orders', formData)
+        await api.post('/bulk-orders', { ...formData, added_by_label: addedByLabel.trim() })
+        setAddedByLabel(addedByLabel)
       }
       onSuccess()
       // Switch to orders tab to see the created order
@@ -474,7 +482,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
           <form onSubmit={handleSubmit} className="flex-1 overflow-y-auto">
             <div className="p-5 space-y-5">
               {/* Supplier Info — Compact Row */}
-              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-3">
                 <div>
                   <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Supplier Name *</label>
                   <input
@@ -512,6 +520,17 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                     value={formData.notes}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                     placeholder="Optional notes"
+                    className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-gray-600 dark:text-gray-400 mb-1">Added By *</label>
+                  <input
+                    type="text"
+                    required
+                    value={addedByLabel}
+                    onChange={(e) => setAddedByLabelState(e.target.value)}
+                    placeholder="Your name"
                     className="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                   />
                 </div>
@@ -857,7 +876,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
               ) : (
                 <div className="space-y-3">
                   {orders.map(order => (
-                    <div key={order.order_id} className="border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden">
+                    <div key={order.order_id} data-focus-id={order.order_id} className="border border-gray-200 dark:border-gray-600 rounded-lg overflow-hidden">
                       {/* Order Header */}
                       <button
                         type="button"

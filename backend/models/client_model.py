@@ -67,6 +67,23 @@ class ClientEntry(db.Model):
             end = end.replace(tzinfo=timezone.utc)
         return max(0, (end - utcnow()).days)
 
+    @property
+    def is_subscription_expired(self):
+        """True when status is 'active' and the end date has passed."""
+        if self.subscription_status != 'active' or not self.subscription_end_date:
+            return False
+        return is_past(self.subscription_end_date)
+
+    @property
+    def subscription_days_remaining(self):
+        """Days until subscription_end_date for active subscriptions. None if not active."""
+        if self.subscription_status != 'active' or not self.subscription_end_date:
+            return None
+        end = self.subscription_end_date
+        if end.tzinfo is None:
+            end = end.replace(tzinfo=timezone.utc)
+        return max(0, (end - utcnow()).days)
+
     # Relationships
     users = db.relationship('User', backref='client', lazy=True, cascade='all, delete-orphan')
     stock_entries = db.relationship('StockEntry', backref='client', lazy=True, cascade='all, delete-orphan')
@@ -90,6 +107,7 @@ class ClientEntry(db.Model):
             'trial_start_date': self.trial_start_date.isoformat() if self.trial_start_date else None,
             'trial_end_date': self.trial_end_date.isoformat() if self.trial_end_date else None,
             'trial_days_remaining': self.trial_days_remaining,
+            'subscription_days_remaining': self.subscription_days_remaining,
             'plan_id': str(self.plan_id) if self.plan_id else None,
             'subscription_end_date': self.subscription_end_date.isoformat() if self.subscription_end_date else None,
             'razorpay_subscription_id': self.razorpay_subscription_id,

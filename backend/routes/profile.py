@@ -12,6 +12,7 @@ from models.client_model import ClientEntry
 from models.branch_model import Branch
 from models.audit_model import AuditLog
 from models.permission_model import get_user_permissions
+from models.session_model import UserSession
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager
@@ -169,18 +170,45 @@ def change_password():
         # Clear force-change flag now that the user has chosen their own password
         user.must_change_password = False
 
+        # Security: revoke all OTHER active sessions on password change.
+        # Keeps the current session alive (so user stays logged in here) but
+        # forces re-login on every other device/browser. Mitigates the "attacker
+        # session keeps working after victim resets password" scenario.
+        current_session_id = g.user.get('session_id')
+        revoke_query = UserSession.query.filter(
+            UserSession.user_id == user_id,
+            UserSession.is_active.is_(True),
+        )
+        if current_session_id:
+            revoke_query = revoke_query.filter(UserSession.session_id != current_session_id)
+        revoked_sessions = revoke_query.all()
+        now = datetime.utcnow()
+        for s in revoked_sessions:
+            s.is_active = False
+            s.revoked_at = now
+
         db.session.commit()
 
-        # Invalidate cache
+        # Invalidate cache for this user + each revoked session (auth middleware
+        # may cache them; without this, revoked sessions could still appear
+        # valid until their cache TTL expires).
         cache = get_cache_manager()
         cache.delete(f"user_session:{user_id}")
+        for s in revoked_sessions:
+            cache.delete(f"session:{s.session_id}")
 
-        # Log action (don't store passwords)
-        log_action('PASSWORD_CHANGE', 'users', user_id, None, {'changed_at': datetime.utcnow().isoformat()})
+        # Log action (don't store passwords). Include the count of sessions
+        # killed so an audit reader can spot suspicious activity (e.g. a user
+        # who had 7 active sessions before a password change).
+        log_action('PASSWORD_CHANGE', 'users', user_id, None, {
+            'changed_at': now.isoformat(),
+            'other_sessions_revoked': len(revoked_sessions),
+        })
 
         return jsonify({
             'success': True,
-            'message': 'Password changed successfully'
+            'message': 'Password changed successfully',
+            'other_sessions_revoked': len(revoked_sessions),
         }), 200
 
     except Exception as e:

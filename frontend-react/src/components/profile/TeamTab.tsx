@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
 import { useClient } from '@/contexts/ClientContext'
 import teamService, { type TeamMember, type PlanInfo } from '@/services/teamService'
+import api from '@/lib/api'
 import TeamMemberModal from '@/components/profile/TeamMemberModal'
 import TotpActionModal from '@/components/TotpActionModal'
 import {
@@ -28,13 +29,33 @@ const PER_PAGE = 20
 
 const ROLE_BADGE_CLASSES: Record<string, string> = {
   owner: 'bg-purple-100 text-purple-700 dark:bg-purple-900/30 dark:text-purple-400',
-  admin: 'bg-blue-100 text-blue-700 dark:bg-blue-900/30 dark:text-blue-400',
   manager: 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400',
   staff: 'bg-gray-100 text-gray-700 dark:bg-gray-700 dark:text-gray-300',
-  cashier: 'bg-amber-100 text-amber-700 dark:bg-amber-900/30 dark:text-amber-400',
 }
 
-const ROLE_OPTIONS = ['', 'owner', 'admin', 'manager', 'staff', 'cashier']
+const ROLE_OPTIONS = ['', 'owner', 'manager', 'staff']
+
+// ─── Tree Types ─────────────────────────────────────────────────────
+
+type TreeUser = {
+  user_id: string
+  full_name: string
+  email: string
+  role: string
+}
+
+type TreeOwnerView = {
+  owner: TreeUser
+  managers: Array<TreeUser & { staff: TreeUser[] }>
+  direct_reports: TreeUser[]
+}
+
+type TreeManagerView = {
+  self: TreeUser
+  staff: TreeUser[]
+}
+
+type TreeResponse = TreeOwnerView | TreeManagerView
 
 // ─── Helpers ────────────────────────────────────────────────────────
 
@@ -88,11 +109,32 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
   // Resend invite loading
   const [resendingInvite, setResendingInvite] = useState<string | null>(null)
 
+  // Tree view state
+  const [tree, setTree] = useState<TreeResponse | null>(null)
+  const [treeLoading, setTreeLoading] = useState(false)
+  const [treeError, setTreeError] = useState<string | null>(null)
+
   // Debounce ref
   const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   // Skip first debounced search to avoid duplicate with page/filter effect
   const isInitialMount = useRef(true)
+
+  // ─── Fetch tree ────────────────────────────────────────────────
+
+  const fetchTree = useCallback(async () => {
+    setTreeLoading(true)
+    setTreeError(null)
+    try {
+      const res = await api.get<TreeResponse>('/team/tree')
+      setTree(res.data)
+    } catch (err: any) {
+      console.error('Failed to load team tree:', err)
+      setTreeError(err?.response?.data?.error || 'Failed to load team')
+    } finally {
+      setTreeLoading(false)
+    }
+  }, [])
 
   // ─── Fetch members ─────────────────────────────────────────────
 
@@ -126,6 +168,9 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
   useEffect(() => {
     fetchPlanInfo()
   }, [fetchPlanInfo])
+
+  // Fetch tree on mount
+  useEffect(() => { fetchTree() }, [fetchTree])
 
   // Fetch members on page/filter changes
   useEffect(() => {
@@ -177,6 +222,7 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
       onMessage({ type: 'success', text: 'Team member removed successfully' })
       setConfirmDelete(null)
       fetchPlanInfo()
+      fetchTree()
       // If we deleted the last item on this page, go back a page
       if (members.length === 1 && page > 1) {
         setPage(page - 1)
@@ -215,6 +261,7 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
   const handleModalSaved = () => {
     fetchMembers(page, search, roleFilter)
     fetchPlanInfo()
+    fetchTree()
   }
 
   const handleResendInvite = async (userId: string) => {
@@ -246,8 +293,8 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
     if (member.user_id === user.user_id) return false
     // Owner can manage anyone
     if (user.role === 'owner') return true
-    // Admin can manage manager, staff, cashier
-    if (user.role === 'admin') return ['manager', 'staff', 'cashier'].includes(member.role)
+    // Manager can manage staff
+    if (user.role === 'manager') return ['staff'].includes(member.role)
     return false
   }
 
@@ -666,6 +713,125 @@ export default function TeamTab({ onMessage }: TeamTabProps) {
             )}
           </>
         )}
+      </div>
+
+      {/* ── Tree View ──────────────────────────────────────────────── */}
+      <div className="bg-white dark:bg-gray-800 rounded-xl sm:rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 overflow-hidden">
+        <div className="p-4 sm:p-6 border-b border-gray-200 dark:border-gray-700">
+          <h3 className="text-base sm:text-lg font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+            <Users className="w-5 h-5 flex-shrink-0" /> Team Hierarchy
+          </h3>
+        </div>
+
+        <div className="p-4 sm:p-6">
+          {treeLoading && (
+            <div className="flex items-center gap-2 text-sm text-gray-500">
+              <Loader2 className="w-4 h-4 animate-spin" /> Loading team…
+            </div>
+          )}
+          {treeError && <p className="text-sm text-red-600 dark:text-red-400">{treeError}</p>}
+
+          {/* Owner view */}
+          {tree && 'owner' in tree && (
+            <div className="space-y-3">
+              {/* Owner row */}
+              <div className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-gray-700">
+                <span className="text-lg" aria-hidden>👑</span>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    {tree.owner.full_name} (You){' '}
+                    <span className="text-xs text-gray-400 ml-1">owner</span>
+                  </p>
+                  <p className="text-xs text-gray-500">{tree.owner.email}</p>
+                </div>
+              </div>
+
+              {/* Each manager + their staff */}
+              {tree.managers.map(mgr => (
+                <div key={mgr.user_id} className="pl-6 border-l-2 border-gray-200 dark:border-gray-700 space-y-2">
+                  <div className="flex items-center gap-3 py-2">
+                    <span className="text-base" aria-hidden>👤</span>
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-gray-900 dark:text-gray-100">
+                        {mgr.full_name}
+                        <span className="text-xs text-gray-400 ml-2">
+                          manager · {mgr.staff.length} {mgr.staff.length === 1 ? 'staff' : 'staff'}
+                        </span>
+                      </p>
+                      <p className="text-xs text-gray-500">{mgr.email}</p>
+                    </div>
+                  </div>
+                  {mgr.staff.length > 0 && (
+                    <div className="pl-6 border-l-2 border-gray-100 dark:border-gray-800 space-y-1">
+                      {mgr.staff.map(s => (
+                        <div key={s.user_id} className="flex items-center gap-3 py-1">
+                          <span className="text-sm" aria-hidden>👨</span>
+                          <div className="flex-1">
+                            <p className="text-sm text-gray-800 dark:text-gray-200">{s.full_name}</p>
+                            <p className="text-xs text-gray-500">{s.email}</p>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {tree.managers.length === 0 && (
+                <p className="text-sm text-gray-400 italic py-3">
+                  No managers yet — click '+ Add Team Member' to start building your team.
+                </p>
+              )}
+
+              {/* Staff directly under owner (not assigned to a manager) */}
+              {tree.direct_reports.length > 0 && (
+                <div className="pl-6 border-l-2 border-gray-200 dark:border-gray-700 space-y-1 mt-3">
+                  <p className="text-xs text-gray-400 uppercase tracking-wide">Staff directly under you</p>
+                  {tree.direct_reports.map(s => (
+                    <div key={s.user_id} className="flex items-center gap-3 py-1">
+                      <span aria-hidden>👨</span>
+                      <div className="flex-1">
+                        <p className="text-sm text-gray-800 dark:text-gray-200">{s.full_name}</p>
+                        <p className="text-xs text-gray-500">{s.email}</p>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* Manager view */}
+          {tree && 'self' in tree && (
+            <div className="space-y-3">
+              <div className="flex items-center gap-3 py-2 border-b border-gray-100 dark:border-gray-700">
+                <span className="text-lg" aria-hidden>👤</span>
+                <div className="flex-1">
+                  <p className="text-sm font-semibold text-gray-900 dark:text-gray-100">
+                    {tree.self.full_name} (You){' '}
+                    <span className="text-xs text-gray-400 ml-1">manager</span>
+                  </p>
+                  <p className="text-xs text-gray-500">{tree.self.email}</p>
+                </div>
+              </div>
+              {tree.staff.length === 0 ? (
+                <p className="text-sm text-gray-400 italic">
+                  No staff yet — click '+ Add Team Member' to assign your first.
+                </p>
+              ) : (
+                tree.staff.map(s => (
+                  <div key={s.user_id} className="pl-6 border-l-2 border-gray-200 dark:border-gray-700 flex items-center gap-3 py-1">
+                    <span aria-hidden>👨</span>
+                    <div className="flex-1">
+                      <p className="text-sm text-gray-800 dark:text-gray-200">{s.full_name}</p>
+                      <p className="text-xs text-gray-500">{s.email}</p>
+                    </div>
+                  </div>
+                ))
+              )}
+            </div>
+          )}
+        </div>
       </div>
 
       {/* TOTP verification modal — shown before adding a new user when 2FA is enabled */}

@@ -20,6 +20,7 @@ import {
   Store,
   Download,
   Banknote,
+  History,
 } from 'lucide-react'
 import { usePWA } from '@/hooks/usePWA'
 
@@ -80,11 +81,11 @@ export default function BottomNav() {
     hasPermission('view_sales_reports') && {
       name: 'Reports', href: '/reports', icon: TrendingUp,
     },
-    (user.role === 'owner' || user.role === 'admin') && {
+    (user.role === 'owner' || user.role === 'manager') && {
       name: 'Stock Transfer', href: '/stock-transfer', icon: ArrowLeftRight,
     },
     hasPermission('view_audit_logs') && {
-      name: 'Audit Logs', href: '/audit', icon: Search,
+      name: 'Auditor Reports', href: '/audit', icon: History,
     },
     hasPermission('view_stock') && {
       name: 'Salary', href: '/salary', icon: Banknote,

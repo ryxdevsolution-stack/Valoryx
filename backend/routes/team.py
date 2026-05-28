@@ -44,7 +44,7 @@ team_bp = Blueprint('team', __name__)
 # ---------------------------------------------------------------------------
 # Role hierarchy
 # ---------------------------------------------------------------------------
-ROLE_HIERARCHY = {'cashier': 0, 'staff': 0, 'manager': 1, 'admin': 2, 'owner': 3}
+ROLE_HIERARCHY = {'staff': 0, 'manager': 1, 'owner': 2}
 
 # ---------------------------------------------------------------------------
 # Default permission sets per role (used as fallback when no client preset exists)
@@ -79,53 +79,17 @@ _ALL_PERMISSIONS = [
     'edit_tax_settings', 'edit_notification_settings', 'edit_theme_settings',
     # Audit & Logs
     'view_audit_logs', 'export_audit_logs', 'view_system_logs',
-    # System Administration
-    'manage_clients', 'system_backup', 'system_restore', 'maintenance_mode',
     # Bulk Orders
     'view_bulk_orders', 'create_bulk_order', 'edit_bulk_order',
     'delete_bulk_order', 'approve_bulk_order', 'receive_bulk_order',
     # Notes
     'view_notes', 'view_all_notes', 'create_notes', 'edit_notes', 'delete_notes',
+    # System Administration (manage_clients, system_backup, system_restore,
+    # maintenance_mode) intentionally excluded — see utils.permissions.SUPER_ADMIN_ONLY_PERMISSIONS.
 ]
 
 DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
     'owner': _ALL_PERMISSIONS,
-
-    'admin': [
-        # Create Bill
-        'gst_billing', 'non_gst_billing', 'apply_discount', 'add_payment',
-        'select_customer', 'add_products', 'set_tax_rate',
-        # Manage Bills
-        'view_all_bills', 'view_own_bills', 'edit_bill_details', 'delete_bills',
-        'print_bills', 'download_pdf', 'send_email', 'mark_paid', 'mark_cancelled',
-        'duplicate_bill', 'search_bills', 'show_no_exchange',
-        # Customer Management
-        'view_customers', 'add_customer', 'edit_customer', 'delete_customer',
-        'view_purchase_history', 'import_customers', 'export_customers',
-        # Stock Management
-        'view_stock', 'add_product', 'edit_product_details', 'edit_pricing',
-        'edit_cost_price', 'delete_product', 'adjust_quantity',
-        'view_low_stock_alerts', 'import_stock', 'export_stock',
-        # Reports & Analytics
-        'view_dashboard', 'view_sales_reports', 'view_revenue_reports',
-        'view_profit_reports', 'view_inventory_reports', 'view_customer_reports',
-        'export_reports', 'print_reports', 'custom_report_filters',
-        # Payment Types
-        'view_payment_types', 'add_payment_type', 'edit_payment_type',
-        'delete_payment_type', 'set_default_payment',
-        # User Management
-        'view_users', 'add_user', 'edit_user', 'activate_deactivate_user', 'assign_permissions',
-        # System Settings
-        'view_settings', 'edit_company_settings', 'edit_billing_settings',
-        'edit_tax_settings', 'edit_notification_settings', 'edit_theme_settings',
-        # Audit & Logs
-        'view_audit_logs', 'export_audit_logs',
-        # Bulk Orders
-        'view_bulk_orders', 'create_bulk_order', 'edit_bulk_order',
-        'approve_bulk_order', 'receive_bulk_order',
-        # Notes
-        'view_notes', 'view_all_notes', 'create_notes', 'edit_notes', 'delete_notes',
-    ],
 
     'manager': [
         # Create Bill
@@ -172,18 +136,6 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         'view_notes', 'create_notes',
     ],
 
-    'cashier': [
-        # Create Bill
-        'gst_billing', 'non_gst_billing', 'add_payment', 'select_customer', 'add_products',
-        # Manage Bills
-        'view_own_bills', 'print_bills', 'search_bills',
-        # Customer Management
-        'view_customers',
-        # Stock Management
-        'view_stock',
-        # Reports & Analytics
-        'view_dashboard',
-    ],
 }
 
 
@@ -279,7 +231,7 @@ def _log_team_action(action_type, table_name='users', record_id=None,
 # ---------------------------------------------------------------------------
 @team_bp.route('', methods=['GET'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def list_team_members():
     """List team members for the current tenant with pagination."""
     try:
@@ -366,11 +318,78 @@ def list_team_members():
 
 
 # ---------------------------------------------------------------------------
+# 1b. GET /api/team/tree -- Return hierarchy scoped to caller's role
+# ---------------------------------------------------------------------------
+@team_bp.route('/tree', methods=['GET'])
+@authenticate
+@require_role(['owner', 'manager'])
+def get_team_tree():
+    """Return the team hierarchy scoped to the caller's role.
+
+    Owner: full {owner, managers[], direct_reports[]}.
+    Manager: {self, staff[]} (only their own subtree).
+    Staff: 403 (handled by @require_role).
+    """
+    client_id = g.user['client_id']
+    caller_role = g.user['role']
+
+    def _serialize(u):
+        return {
+            'user_id': str(u.user_id),
+            'full_name': u.full_name,
+            'email': u.email,
+            'role': u.role,
+        }
+
+    if caller_role == 'manager':
+        staff = User.query.filter_by(
+            client_id=client_id,
+            reports_to_id=g.user['user_id'],
+        ).order_by(User.full_name).all()
+        self_user = User.query.filter_by(user_id=g.user['user_id']).first()
+        return jsonify({
+            'self': _serialize(self_user),
+            'staff': [_serialize(s) for s in staff],
+        }), 200
+
+    # owner branch
+    owner = User.query.filter_by(client_id=client_id, role='owner').first()
+    if not owner:
+        return jsonify({'error': 'Owner not found for this client'}), 500
+    managers = User.query.filter_by(
+        client_id=client_id, role='manager',
+    ).order_by(User.full_name).all()
+
+    # Batch-fetch all staff in this client to assemble manager-keyed lists in one query.
+    all_staff = User.query.filter_by(client_id=client_id, role='staff').order_by(User.full_name).all()
+    staff_by_parent = {}
+    direct_reports = []
+    for s in all_staff:
+        parent = str(s.reports_to_id) if s.reports_to_id else None
+        if parent == str(owner.user_id):
+            direct_reports.append(s)
+        else:
+            staff_by_parent.setdefault(parent, []).append(s)
+
+    return jsonify({
+        'owner': _serialize(owner),
+        'managers': [
+            {
+                **_serialize(m),
+                'staff': [_serialize(s) for s in staff_by_parent.get(str(m.user_id), [])],
+            }
+            for m in managers
+        ],
+        'direct_reports': [_serialize(s) for s in direct_reports],
+    }), 200
+
+
+# ---------------------------------------------------------------------------
 # 2. POST /api/team -- Create team member
 # ---------------------------------------------------------------------------
 @team_bp.route('', methods=['POST'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def create_team_member():
     """Create a new team member within the current tenant."""
     try:
@@ -427,12 +446,51 @@ def create_team_member():
                 'error': f"Invalid role '{target_role}'. Allowed: {', '.join(ROLE_HIERARCHY.keys())}",
             }), 400
 
+        # ── Role-hierarchy enforcement (Phase: hierarchy redesign) ───────────
+        # Owner role is never user-creatable — only one per client.
+        # Check this BEFORE the generic _can_manage guard so we return 400, not 403.
+        if target_role == 'owner':
+            return jsonify({'success': False, 'error': 'Cannot create another owner — only one per client'}), 400
+
         # Enforce hierarchy -- cannot create users at equal or higher level
         if not _can_manage(actor_role, target_role):
             return jsonify({
                 'success': False,
                 'error': 'You cannot create a user with an equal or higher role',
             }), 403
+
+        # Manager can only create staff, never another manager or higher.
+        if actor_role == 'manager' and target_role != 'staff':
+            return jsonify({'success': False, 'error': 'Managers can only create staff users'}), 403
+
+        # Resolve reports_to_id based on caller + target role combination.
+        if actor_role == 'manager':
+            # Manager creating staff → always reports to this manager; ignore client-supplied value.
+            resolved_reports_to = g.user['user_id']
+        elif actor_role == 'owner' and target_role == 'manager':
+            # Owner creating manager → manager always reports directly to the owner.
+            resolved_reports_to = g.user['user_id']
+        elif actor_role == 'owner' and target_role == 'staff':
+            # Owner creating staff → defaults to owner, unless client picks a specific manager.
+            requested = data.get('reports_to_id')
+            if requested:
+                target_mgr = User.query.filter_by(
+                    user_id=requested,
+                    client_id=client_id,
+                    role='manager',
+                ).first()
+                if not target_mgr:
+                    return jsonify({
+                        'success': False,
+                        'error': 'reports_to_id must reference a manager in this client',
+                    }), 400
+                resolved_reports_to = requested
+            else:
+                resolved_reports_to = g.user['user_id']
+        else:
+            # Fallback — shouldn't reach here given @require_role guards above.
+            resolved_reports_to = None
+        # ── End hierarchy enforcement ────────────────────────────────────────
 
         # ── Plan-based team member limit ──
         plan_name, rules, is_trial = _get_plan_rules(client_id)
@@ -485,6 +543,7 @@ def create_team_member():
             is_active=False,          # Inactive until invite accepted
             branch_id=data.get('branch_id') or None,
             created_by=g.user['user_id'],
+            reports_to_id=resolved_reports_to,
             invite_token=invite_token,
             invite_token_expires=invite_expires,
             invite_accepted=False,
@@ -594,7 +653,7 @@ def create_team_member():
 # ---------------------------------------------------------------------------
 @team_bp.route('/<user_id>', methods=['PUT'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def update_team_member(user_id):
     """Update an existing team member (profile, role, branch, status)."""
     try:
@@ -619,6 +678,27 @@ def update_team_member(user_id):
         data = request.get_json()
         if not data:
             return jsonify({'success': False, 'error': 'Request body is required'}), 400
+
+        caller_role = g.user['role']
+
+        # Subtree filter: manager can only edit users whose reports_to_id is themselves.
+        if caller_role == 'manager':
+            if str(user.reports_to_id or '') != str(g.user['user_id']):
+                return jsonify({'error': 'Manager can only edit users they manage'}), 403
+
+        # Only owner can change reports_to_id; ignore the field for non-owner callers.
+        if 'reports_to_id' in data and caller_role != 'owner':
+            data.pop('reports_to_id', None)
+
+        # If owner is changing reports_to_id, validate the target is a manager in the same client.
+        if caller_role == 'owner' and 'reports_to_id' in data and data['reports_to_id']:
+            target_mgr = User.query.filter_by(
+                user_id=data['reports_to_id'],
+                client_id=g.user['client_id'],
+                role='manager',
+            ).first()
+            if not target_mgr:
+                return jsonify({'error': 'reports_to_id must reference a manager in this client'}), 400
 
         old_data = {
             'email': user.email,
@@ -657,6 +737,8 @@ def update_team_member(user_id):
             user.is_active = bool(data['is_active'])
         if 'branch_id' in data:
             user.branch_id = data['branch_id'] or None
+        if 'reports_to_id' in data:
+            user.reports_to_id = data['reports_to_id'] or None
 
         user.updated_at = datetime.utcnow()
         user.updated_by = g.user['user_id']
@@ -712,7 +794,7 @@ def update_team_member(user_id):
 # ---------------------------------------------------------------------------
 @team_bp.route('/<user_id>', methods=['DELETE'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def delete_team_member(user_id):
     """Soft-delete a team member (sets deleted_at, is_active=False)."""
     try:
@@ -739,6 +821,16 @@ def delete_team_member(user_id):
             }), 403
 
         old_data = {'email': user.email, 'role': user.role, 'is_active': user.is_active}
+
+        # Pre-delete bubble-up: if target is a manager with direct reports,
+        # bubble those reports up to the manager's own reports_to_id (typically the owner).
+        if user.role == 'manager':
+            new_parent = user.reports_to_id  # typically the owner.user_id
+            User.query.filter_by(reports_to_id=user.user_id).update(
+                {'reports_to_id': new_parent},
+                synchronize_session='fetch',
+            )
+            db.session.flush()
 
         user.deleted_at = datetime.utcnow()
         user.is_active = False
@@ -770,7 +862,7 @@ def delete_team_member(user_id):
 # ---------------------------------------------------------------------------
 @team_bp.route('/<user_id>/toggle-status', methods=['POST'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def toggle_team_member_status(user_id):
     """Toggle a team member's is_active flag."""
     try:
@@ -838,7 +930,7 @@ def toggle_team_member_status(user_id):
 @team_bp.route('/<user_id>/reset-password', methods=['POST'])
 @authenticate
 @rate_limit(max_requests=10, window_seconds=60, key_func=lambda: g.user['user_id'], error_message='Too many password resets. Please wait.')
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def reset_team_member_password(user_id):
     """Reset a team member's password (accept in body or auto-generate)."""
     try:
@@ -900,7 +992,7 @@ def reset_team_member_password(user_id):
 # ---------------------------------------------------------------------------
 @team_bp.route('/<user_id>/permissions', methods=['GET'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def get_member_permissions(user_id):
     """Get a team member's permissions organized by section."""
     try:
@@ -931,7 +1023,7 @@ def get_member_permissions(user_id):
 # ---------------------------------------------------------------------------
 @team_bp.route('/<user_id>/permissions', methods=['POST'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def update_member_permissions(user_id):
     """Bulk-update a team member's permissions."""
     try:
@@ -1000,7 +1092,7 @@ def update_member_permissions(user_id):
 # ---------------------------------------------------------------------------
 @team_bp.route('/permissions/all', methods=['GET'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def get_all_permissions():
     """Get all available permissions organized by section."""
     try:
@@ -1025,7 +1117,7 @@ def get_all_permissions():
 # ---------------------------------------------------------------------------
 @team_bp.route('/branches', methods=['GET'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def get_team_branches():
     """Get all active branches for the current tenant (for dropdown selects)."""
     try:
@@ -1050,7 +1142,7 @@ def get_team_branches():
 # ---------------------------------------------------------------------------
 @team_bp.route('/plan-info', methods=['GET'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def get_plan_info():
     """Return plan name, team member limits, and allowed billing types."""
     try:
@@ -1124,7 +1216,7 @@ def get_plan_info():
 # ---------------------------------------------------------------------------
 @team_bp.route('/presets/<role>', methods=['GET'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def get_permission_preset(role):
     """Get the saved permission preset for a specific role (per client)."""
     try:

@@ -168,6 +168,21 @@ def test_delete_product_success(http, stock_headers, sample_stock):
     assert StockEntry.query.filter_by(product_id=pid).first() is None
 
 
+# 11. POST /api/stock — created_by is captured from the authenticated user
+def test_stock_creation_captures_created_by(http, stock_headers, sample_user, sample_client):
+    """When a user adds stock, created_by should equal their user_id."""
+    from models.stock_model import StockEntry
+    from extensions import db
+
+    resp = _add_product(http, stock_headers, "Test Widget X", 10, rate=50.0, gst=18.0)
+    assert resp.status_code == 201, resp.get_json()
+
+    db.session.expire_all()
+    stock = StockEntry.query.filter_by(product_name="Test Widget X").first()
+    assert stock is not None
+    assert str(stock.created_by) == str(sample_user.user_id)
+
+
 # 10. GET /api/stock?search=<term> filters results by product name
 def test_list_stock_search_filter(http, stock_headers):
     from models.stock_model import StockEntry
@@ -184,3 +199,28 @@ def test_list_stock_search_filter(http, stock_headers):
     names = [p["product_name"].lower() for p in resp.get_json()["stock"]]
     assert any("banana" in n for n in names)
     assert not any("cherry" in n for n in names)
+
+
+def test_stock_creation_persists_added_by_label(http, sample_user, sample_client, stock_headers):
+    """When add_stock includes added_by_label, the column gets persisted."""
+    from models.stock_model import StockEntry
+
+    payload = {
+        'product_name': 'AddedByLabel Test Widget',
+        'quantity': 5,
+        'rate': 75.0,
+        'gst_percentage': 18,
+        'added_by_label': 'Ramesh',
+    }
+    resp = http.post(
+        '/api/stock',
+        data=json.dumps(payload),
+        content_type='application/json',
+        headers=stock_headers,
+    )
+    assert resp.status_code in (200, 201), resp.get_json()
+
+    stock = StockEntry.query.filter_by(product_name='Addedbylabel Test Widget').first() \
+        or StockEntry.query.filter_by(product_name='AddedByLabel Test Widget').first()
+    assert stock is not None
+    assert stock.added_by_label == 'Ramesh'

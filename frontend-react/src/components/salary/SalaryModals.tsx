@@ -73,6 +73,7 @@ interface AddEmployeeForm {
   phone: string
   pay_type: 'hourly' | 'daily'
   rate: string
+  ot_multiplier: string
 }
 
 interface AddEmployeeModalProps {
@@ -82,7 +83,7 @@ interface AddEmployeeModalProps {
 
 export function AddEmployeeModal({ onClose, onSave }: AddEmployeeModalProps) {
   const [form, setForm] = useState<AddEmployeeForm>({
-    name: '', phone: '', pay_type: 'daily', rate: '',
+    name: '', phone: '', pay_type: 'daily', rate: '', ot_multiplier: '1.5',
   })
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -91,6 +92,8 @@ export function AddEmployeeModal({ onClose, onSave }: AddEmployeeModalProps) {
     e.preventDefault()
     if (!form.name.trim()) { setError('Name is required'); return }
     if (!form.rate || isNaN(Number(form.rate))) { setError('Valid rate is required'); return }
+    const otMul = parseFloat(form.ot_multiplier)
+    if (isNaN(otMul) || otMul < 0) { setError('OT multiplier must be a non-negative number'); return }
     setSaving(true)
     try {
       await onSave({
@@ -98,6 +101,7 @@ export function AddEmployeeModal({ onClose, onSave }: AddEmployeeModalProps) {
         phone: form.phone.trim() || null,
         pay_type: form.pay_type,
         rate: Number(form.rate),
+        ot_multiplier: otMul,
       })
       onClose()
     } catch (err: unknown) {
@@ -162,6 +166,20 @@ export function AddEmployeeModal({ onClose, onSave }: AddEmployeeModalProps) {
             placeholder="e.g. 500"
             className={inputClass}
           />
+        </InputField>
+        <InputField label="OT Multiplier">
+          <input
+            type="number"
+            step="0.1"
+            min="0"
+            value={form.ot_multiplier}
+            onChange={e => setForm(f => ({ ...f, ot_multiplier: e.target.value }))}
+            placeholder="1.5"
+            className={inputClass}
+          />
+          <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
+            Rate multiplier for overtime pay (e.g. 1.5 = 1.5× regular rate)
+          </p>
         </InputField>
         <div className="flex justify-end gap-2 pt-2">
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">

@@ -36,14 +36,12 @@ interface TeamMemberModalProps {
 // ─── Constants ──────────────────────────────────────────────────────
 
 const ROLE_HIERARCHY: Record<string, number> = {
-  owner: 4,
-  admin: 3,
+  owner: 3,
   manager: 2,
   staff: 1,
-  cashier: 1,
 }
 
-const ALL_ROLES = ['owner', 'admin', 'manager', 'staff', 'cashier']
+const ALL_ROLES = ['owner', 'manager', 'staff']
 
 const INPUT_CLASS =
   'w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-gray-900 dark:focus:ring-white focus:border-transparent text-sm'
@@ -183,7 +181,7 @@ export default function TeamMemberModal({
 
   const trimmedQuery = branchQuery.trim()
   const exactMatch = branches.some((b) => b.name.toLowerCase() === trimmedQuery.toLowerCase())
-  const canCreateBranch = currentUser?.role === 'owner' || currentUser?.role === 'admin'
+  const canCreateBranch = currentUser?.role === 'owner' || currentUser?.role === 'manager'
   const showCreateOption = trimmedQuery.length > 0 && !exactMatch && canCreateBranch
 
   // ─── Load data on open ────────────────────────────────────────

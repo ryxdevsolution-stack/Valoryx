@@ -149,3 +149,98 @@ def test_super_admin_bypasses_all_permissions(http, sample_user, sample_client, 
         headers=auth_hdr(token),
     )
     assert resp_bill.status_code == 201
+
+
+# 9. New 'edit_bill_price_audit' permission is seeded in the database
+def test_edit_bill_price_audit_permission_is_seeded(http):
+    """The new audit-log bill edit permission must be present in the seeded table."""
+    from models.permission_model import Permission
+    perm = Permission.query.filter_by(permission_name="edit_bill_price_audit").first()
+    assert perm is not None, "edit_bill_price_audit permission was not seeded"
+    assert perm.description == "Correct historical bill prices from the audit-log view (power feature)"
+
+
+def test_owner_auto_grant_inserts_for_owners(http, sample_client):
+    """Owner auto-grant inserts UserPermission rows for owners only."""
+    from extensions import db
+    from models.user_model import User
+    from models.permission_model import Permission, UserPermission
+    from utils.owner_permission_sync import grant_audit_edit_to_owners
+    import uuid, bcrypt
+
+    pw = bcrypt.hashpw(b"x", bcrypt.gensalt()).decode()
+    owner = User(
+        user_id=str(uuid.uuid4()),
+        client_id=sample_client.client_id,
+        role="owner",
+        email=f"owner-{uuid.uuid4().hex[:8]}@valoryx-test.invalid",
+        password_hash=pw,
+        full_name="Test Owner",
+        is_active=True,
+        is_super_admin=False,
+        invite_accepted=True,
+        totp_enabled=False,
+    )
+    staff = User(
+        user_id=str(uuid.uuid4()),
+        client_id=sample_client.client_id,
+        role="staff",
+        email=f"staff-{uuid.uuid4().hex[:8]}@valoryx-test.invalid",
+        password_hash=pw,
+        full_name="Test Staff",
+        is_active=True,
+        is_super_admin=False,
+        invite_accepted=True,
+        totp_enabled=False,
+    )
+    db.session.add_all([owner, staff])
+    db.session.commit()
+
+    perm = Permission.query.filter_by(permission_name="edit_bill_price_audit").first()
+    assert perm is not None
+
+    inserted = grant_audit_edit_to_owners()
+    assert inserted >= 1
+
+    owner_perm = UserPermission.query.filter_by(
+        user_id=owner.user_id, permission_id=perm.permission_id
+    ).first()
+    assert owner_perm is not None, "owner should have been granted edit_bill_price_audit"
+
+    staff_perm = UserPermission.query.filter_by(
+        user_id=staff.user_id, permission_id=perm.permission_id
+    ).first()
+    assert staff_perm is None, "staff should NOT have been granted"
+
+
+def test_owner_auto_grant_is_idempotent(http, sample_client):
+    """Running owner auto-grant twice must not duplicate rows."""
+    from extensions import db
+    from models.user_model import User
+    from models.permission_model import Permission, UserPermission
+    from utils.owner_permission_sync import grant_audit_edit_to_owners
+    import uuid, bcrypt
+
+    owner = User(
+        user_id=str(uuid.uuid4()),
+        client_id=sample_client.client_id,
+        role="owner",
+        email=f"owner2-{uuid.uuid4().hex[:8]}@valoryx-test.invalid",
+        password_hash=bcrypt.hashpw(b"x", bcrypt.gensalt()).decode(),
+        full_name="Owner 2",
+        is_active=True,
+        is_super_admin=False,
+        invite_accepted=True,
+        totp_enabled=False,
+    )
+    db.session.add(owner)
+    db.session.commit()
+
+    grant_audit_edit_to_owners()
+    grant_audit_edit_to_owners()
+
+    perm = Permission.query.filter_by(permission_name="edit_bill_price_audit").first()
+    count = UserPermission.query.filter_by(
+        user_id=owner.user_id, permission_id=perm.permission_id
+    ).count()
+    assert count == 1, f"expected 1 grant row, got {count}"

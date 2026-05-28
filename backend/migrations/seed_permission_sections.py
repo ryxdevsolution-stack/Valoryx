@@ -31,6 +31,9 @@ SECTIONS = [
     ('Bulk Orders',           ['view_bulk_orders', 'create_bulk_order', 'edit_bulk_order',
                                'delete_bulk_order', 'approve_bulk_order', 'receive_bulk_order']),
     ('Notes',                 ['view_notes', 'view_all_notes', 'create_notes', 'edit_notes', 'delete_notes']),
+    ('Employees & Salary',    ['view_employees', 'add_employee', 'edit_employee', 'delete_employee',
+                               'view_attendance', 'mark_attendance',
+                               'view_salary', 'manage_salary_cycles', 'record_advance', 'mark_salary_paid']),
 ]
 
 
@@ -66,4 +69,8 @@ def run(db):
                 linked_perms += result.rowcount
 
         conn.commit()
-        print(f"[Migration] permission_sections: {added_sections} section(s) added, {linked_perms} permission(s) linked")
+        # Only log when something actually changed — avoids noisy "0 added, 80 linked" on every startup.
+        # `linked_perms` increments on every UPDATE row matched (always > 0 once seeded), so it
+        # is not a useful "did work happen?" signal. Use `added_sections` instead.
+        if added_sections > 0:
+            print(f"[Migration] permission_sections: {added_sections} section(s) added, {linked_perms} permission(s) linked")

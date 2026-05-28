@@ -1,5 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
+import ManageMembershipModal from '@/components/admin/ManageMembershipModal';
 import { useClient } from '@/contexts/ClientContext';
 import { useNotification } from '@/hooks/useNotification';
 import api from '@/lib/api';
@@ -136,6 +137,7 @@ export default function ClientManagement() {
   const [totalClients, setTotalClients] = useState(0);
   const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false);
   const [clientToDelete, setClientToDelete] = useState<Client | null>(null);
+  const [membershipClient, setMembershipClient] = useState<Client | null>(null);
   const [deleting, setDeleting] = useState(false);
   const [selectedClients, setSelectedClients] = useState<string[]>([]);
   const [bulkConfirm, setBulkConfirm] = useState<{ op: string; open: boolean }>({ op: '', open: false });
@@ -447,6 +449,14 @@ export default function ClientManagement() {
                         </button>
                         <button
                           type="button"
+                          onClick={() => setMembershipClient(client)}
+                          className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20 transition-colors"
+                          title="Manage Membership"
+                        >
+                          <Crown className="h-4 w-4" />
+                        </button>
+                        <button
+                          type="button"
                           onClick={() => handleToggleStatus(client.client_id)}
                           className={`p-1.5 rounded-lg transition-colors ${
                             client.is_active
@@ -535,6 +545,9 @@ export default function ClientManagement() {
                   </button>
                   <button type="button" onClick={() => navigate(`/admin/users?client_id=${client.client_id}`)} disabled={client.user_count < 1} className={`p-1.5 rounded-lg ${client.user_count < 1 ? 'text-slate-300 dark:text-slate-600 cursor-not-allowed' : 'text-slate-400 hover:text-violet-600 dark:hover:text-violet-400 hover:bg-violet-50 dark:hover:bg-violet-900/20'}`}>
                     <Users className="h-4 w-4" />
+                  </button>
+                  <button type="button" onClick={() => setMembershipClient(client)} className="p-1.5 rounded-lg text-slate-400 hover:text-amber-600 dark:hover:text-amber-400 hover:bg-amber-50 dark:hover:bg-amber-900/20" title="Manage Membership">
+                    <Crown className="h-4 w-4" />
                   </button>
                   <button type="button" onClick={() => handleToggleStatus(client.client_id)} className={`p-1.5 rounded-lg ${client.is_active ? 'text-slate-400 hover:text-amber-600' : 'text-slate-400 hover:text-emerald-600'}`}>
                     {client.is_active ? <UserX className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
@@ -632,6 +645,21 @@ export default function ClientManagement() {
           confirmText={bulkProcessing ? `Processing ${selectedClients.length} client(s)...` : bulkConfirm.op.charAt(0).toUpperCase() + bulkConfirm.op.slice(1)}
           variant={bulkConfirm.op === 'delete' ? 'danger' : 'warning'}
           loading={bulkProcessing}
+        />
+
+        {/* Manage Membership Modal */}
+        <ManageMembershipModal
+          open={!!membershipClient}
+          client={membershipClient as any}
+          onClose={() => setMembershipClient(null)}
+          onSaved={(updated) => {
+            // Patch the row in place — no full refetch needed
+            const u = updated as Partial<Client> & { client_id?: string };
+            if (u.client_id) {
+              setClients(prev => prev.map(c => c.client_id === u.client_id ? { ...c, ...(u as Client) } : c));
+            }
+            setMembershipClient(null);
+          }}
         />
       </div>
     </>

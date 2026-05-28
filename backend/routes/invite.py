@@ -213,7 +213,7 @@ def accept_invite():
 # ---------------------------------------------------------------------------
 @invite_bp.route('/resend/<user_id>', methods=['POST'])
 @authenticate
-@require_role(['owner', 'admin'])
+@require_role(['owner', 'manager'])
 def resend_invite(user_id):
     """
     Resend (or generate a fresh) invite for a pending team member.

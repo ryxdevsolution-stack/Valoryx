@@ -9,6 +9,7 @@ from models.permission_model import (
 )
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
+from utils.permissions import SUPER_ADMIN_ONLY_PERMISSIONS
 
 permissions_bp = Blueprint('permissions', __name__)
 
@@ -23,15 +24,34 @@ def require_super_admin():
 @permissions_bp.route('/all', methods=['GET'])
 @authenticate
 def get_all_permissions():
-    """Get all available permissions organized by sections (super admin only)"""
+    """Get all available permissions organized by sections (super admin only).
+
+    Query params:
+      include_super_admin=true   Include the SUPER_ADMIN_ONLY_PERMISSIONS in the
+                                 response. Default: false (these perms are only
+                                 meaningful to is_super_admin=True users; pass
+                                 this flag from the EditUser/CreateUser screens
+                                 only when the target user is or will be super
+                                 admin).
+    """
     # Check super admin
     error = require_super_admin()
     if error:
         return error
 
+    include_sa = (request.args.get('include_super_admin', 'false').lower() == 'true')
+
     try:
         # Get all sections with their permissions in tree structure
         sections = get_all_sections_with_permissions()
+
+        # Filter super-admin-only perms when the target is not super_admin.
+        if not include_sa:
+            for section in sections:
+                section['permissions'] = [
+                    p for p in section.get('permissions', [])
+                    if p['permission_name'] not in SUPER_ADMIN_ONLY_PERMISSIONS
+                ]
 
         # Flatten permissions for easy access
         all_permissions = []
@@ -223,6 +243,16 @@ def bulk_update_permissions_route():
         user = User.query.filter_by(user_id=user_id).first()
         if not user:
             return jsonify({'error': 'User not found'}), 404
+
+        # Defense in depth: strip super-admin-only perms unless the target IS a
+        # super admin. The role gate (@require_super_admin on backend routes)
+        # is the security boundary; this just keeps the UserPermission table
+        # tidy and prevents false-positive UI on the EditUser screen.
+        if not user.is_super_admin:
+            permission_names = [
+                p for p in permission_names
+                if p not in SUPER_ADMIN_ONLY_PERMISSIONS
+            ]
 
         # Update permissions
         result = bulk_update_permissions(user_id, permission_names, g.user['user_id'])

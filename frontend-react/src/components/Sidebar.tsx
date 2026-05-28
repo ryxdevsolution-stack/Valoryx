@@ -19,6 +19,7 @@ import {
   Truck,
   RotateCcw,
   Banknote,
+  History,
 } from 'lucide-react'
 import { usePWA } from '@/hooks/usePWA'
 import GlobalSearch from '@/components/GlobalSearch'
@@ -37,7 +38,7 @@ const allNavigation: NavItem[] = [
   { name: 'Create Bill', href: '/billing/create', icon: PlusSquare, permissions: ['gst_billing', 'non_gst_billing'] },
   {
     name: 'Bills', href: '/billing', icon: FileText, permissions: ['view_all_bills', 'view_own_bills'],
-    subItems: [{ name: 'Restore Bills', href: '/billing/restore', icon: RotateCcw }],
+    subItems: [{ name: 'Cancelled Bills', href: '/billing/restore', icon: RotateCcw }],
   },
   { name: 'Customers', href: '/customers', icon: Users, permission: 'view_customers' },
   { name: 'Stock Management', href: '/stock', icon: Package, permission: 'view_stock' },
@@ -45,7 +46,7 @@ const allNavigation: NavItem[] = [
   { name: 'Salary', href: '/salary', icon: Banknote, permission: 'view_stock' },
   { name: 'Stock Transfer', href: '/stock-transfer', icon: ArrowLeftRight, ownerOnly: true },
   { name: 'Reports', href: '/reports', icon: TrendingUp, permission: 'view_sales_reports' },
-  { name: 'Audit Logs', href: '/audit', icon: Search, permission: 'view_audit_logs' },
+  { name: 'Auditor Reports', href: '/audit', icon: History, permission: 'view_audit_logs' },
 ]
 
 const adminNavigation = [
@@ -71,7 +72,7 @@ export default function Sidebar() {
   const navigation = useMemo(() => {
     if (!user) return []
     return allNavigation.filter(item => {
-      if ('ownerOnly' in item && item.ownerOnly) return user.role === 'owner' || user.role === 'admin'
+      if ('ownerOnly' in item && item.ownerOnly) return user.role === 'owner' || user.role === 'manager'
       if ('permissions' in item && item.permissions) return item.permissions.some(p => hasPermission(p))
       if (item.permission) return hasPermission(item.permission)
       return false

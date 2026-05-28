@@ -2,6 +2,10 @@ import React, { useState, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
 import api from '@/lib/api';
+import { SaveTemplateDialog } from '@/components/admin/SaveTemplateDialog';
+import { CustomTemplateActions } from '@/components/admin/CustomTemplateActions';
+import { PermissionHelpTooltip } from '@/components/admin/PermissionHelpTooltip';
+import type { PermissionTemplate as ServicePermissionTemplate } from '@/services/permissionTemplateService';
 import {
   Building2,
   Mail,
@@ -19,17 +23,7 @@ import {
   RefreshCw,
   Check,
   Plus,
-  Store,
-  ShoppingCart,
-  Utensils,
-  Coffee,
-  Apple,
-  Pill,
-  Smartphone,
-  Hammer,
-  Gem,
-  Users,
-  Eye
+  Users
 } from 'lucide-react';
 
 interface ClientFormData {
@@ -53,16 +47,20 @@ interface UserFormData {
 }
 
 interface RoleQuotas {
-  admin: number | '';
   manager: number | '';
   staff: number | '';
-  cashier: number | '';
 }
 
 interface PermissionTemplate {
   name: string;
   description: string;
+  business_type?: string;
   permissions: string[];
+  is_custom?: boolean;
+  template_id?: string;
+  created_by?: string;
+  created_by_email?: string | null;
+  created_at?: string;
 }
 
 interface PermissionTemplates {
@@ -93,10 +91,8 @@ export default function CreateClient() {
   });
 
   const [roleQuotas, setRoleQuotas] = useState<RoleQuotas>({
-    admin: '',
     manager: '',
     staff: '',
-    cashier: '',
   });
 
   const [selectedPermissions, setSelectedPermissions] = useState<string[]>([]);
@@ -104,15 +100,23 @@ export default function CreateClient() {
   const [permissionTemplates, setPermissionTemplates] = useState<PermissionTemplates>({});
   const [selectedTemplate, setSelectedTemplate] = useState('');
   const [showPassword, setShowPassword] = useState(false);
+  const [saveDialog, setSaveDialog] = useState<
+    | { mode: 'create' }
+    | { mode: 'edit'; template: PermissionTemplate }
+    | null
+  >(null);
 
   const [errors, setErrors] = useState<any>({});
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState(false);
 
-  const fetchPermissions = useCallback(async () => {
+  const fetchPermissions = useCallback(async (includeSuperAdmin: boolean = false) => {
     try {
-      const response = await api.get('/permissions/all');
+      const url = includeSuperAdmin
+        ? '/permissions/all?include_super_admin=true'
+        : '/permissions/all';
+      const response = await api.get(url);
       setAvailablePermissions(response.data.permissions || []);
     } catch (error) {
       console.error('Error fetching permissions:', error);
@@ -140,10 +144,10 @@ export default function CreateClient() {
     }
 
     if (user && isSuperAdmin()) {
-      fetchPermissions();
+      fetchPermissions(userData.is_super_admin);
       fetchPermissionTemplates();
     }
-  }, [user, authLoading, isSuperAdmin, navigate, fetchPermissions, fetchPermissionTemplates]);
+  }, [user, authLoading, isSuperAdmin, navigate, fetchPermissions, fetchPermissionTemplates, userData.is_super_admin]);
 
   const handleTemplateChange = (templateKey: string) => {
     setSelectedTemplate(templateKey);
@@ -161,6 +165,11 @@ export default function CreateClient() {
         : [...prev, permission]
     );
     setSelectedTemplate(''); // Clear template selection on manual change
+  };
+
+  const handleClearSelection = () => {
+    setSelectedPermissions([]);
+    setSelectedTemplate('');
   };
 
   const generateRandomPassword = () => {
@@ -280,7 +289,7 @@ export default function CreateClient() {
               is_super_admin: false,
               is_active: true
             });
-            setRoleQuotas({ admin: '', manager: '', staff: '', cashier: '' });
+            setRoleQuotas({ manager: '', staff: '' });
             setSelectedPermissions([]);
             setSelectedTemplate('');
             setSuccess(false);
@@ -703,124 +712,136 @@ export default function CreateClient() {
           </div>
 
           {/* Business Type Selection */}
-          <div className="mt-6">
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Select Business Type & Permissions
-            </label>
-            <p className="text-xs text-gray-500 mb-4">
-              Choose a business template that matches your client&apos;s industry. This will automatically assign appropriate permissions.
-            </p>
+          {Object.keys(permissionTemplates).length > 0 && (
+            <div className="mt-6">
+              <label className="block text-sm font-medium text-gray-700 mb-3">
+                Your saved templates ({Object.keys(permissionTemplates).length})
+              </label>
+              <p className="text-xs text-gray-500 mb-4">
+                Click a template to apply its permissions, then tweak below if needed.
+              </p>
 
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
-              {Object.entries(permissionTemplates).map(([key, template]) => {
-                const getIcon = () => {
-                  if (key === 'dress_shop') return Store;
-                  if (key === 'supermarket') return ShoppingCart;
-                  if (key === 'general_store') return Store;
-                  if (key === 'food_store') return Coffee;
-                  if (key === 'restaurant_hotel') return Utensils;
-                  if (key === 'fruit_vegetable_stall') return Apple;
-                  if (key === 'medical_pharmacy') return Pill;
-                  if (key === 'electronics_store') return Smartphone;
-                  if (key === 'hardware_store') return Hammer;
-                  if (key === 'jewelry_store') return Gem;
-                  if (key === 'staff_cashier') return Users;
-                  if (key === 'view_only') return Eye;
-                  return Shield;
-                };
-                const Icon = getIcon();
-                const isSelected = selectedTemplate === key;
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3">
+                {Object.entries(permissionTemplates).map(([key, template]) => {
+                  const isSelected = selectedTemplate === key;
 
-                return (
-                  <button
-                    key={key}
-                    type="button"
-                    onClick={() => handleTemplateChange(key)}
-                    className={`p-4 rounded-lg border-2 text-left transition-all ${
-                      isSelected
-                        ? 'border-blue-600 bg-blue-50 shadow-md'
-                        : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
-                    }`}
-                  >
-                    <div className="flex items-start gap-3">
-                      <div className={`p-2 rounded-lg ${
-                        isSelected ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
-                      }`}>
-                        <Icon className="w-5 h-5" />
-                      </div>
-                      <div className="flex-1 min-w-0">
-                        <h4 className={`text-sm font-semibold ${
-                          isSelected ? 'text-blue-900' : 'text-gray-900'
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => handleTemplateChange(key)}
+                      className={`group relative p-4 rounded-lg border-2 text-left transition-all ${
+                        isSelected
+                          ? 'border-blue-600 bg-blue-50 shadow-md'
+                          : 'border-gray-200 hover:border-blue-300 hover:shadow-sm'
+                      }`}
+                    >
+                      <div className="flex items-start gap-3">
+                        <div className={`p-2 rounded-lg ${
+                          isSelected ? 'bg-blue-600 text-white' : 'bg-gray-100 text-gray-600'
                         }`}>
-                          {template.name}
-                        </h4>
-                        <p className="text-xs text-gray-500 mt-1 line-clamp-2">
-                          {template.description}
-                        </p>
-                        {isSelected && (
-                          <div className="mt-2 flex items-center gap-1 text-xs text-blue-600">
-                            <Check className="w-3 h-3" />
-                            <span>{template.permissions.length} permissions</span>
-                          </div>
-                        )}
+                          <Shield className="w-5 h-5" />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h4 className={`text-sm font-semibold ${
+                            isSelected ? 'text-blue-900' : 'text-gray-900'
+                          }`}>
+                            {template.name}
+                          </h4>
+                          <p className="text-xs text-gray-500 mt-1 line-clamp-2">
+                            {template.description}
+                          </p>
+                          {isSelected && (
+                            <div className="mt-2 flex items-center gap-1 text-xs text-blue-600">
+                              <Check className="w-3 h-3" />
+                              <span>{template.permissions.length} permissions</span>
+                            </div>
+                          )}
+                        </div>
                       </div>
-                    </div>
-                  </button>
-                );
-              })}
-            </div>
-
-            {selectedTemplate && (
-              <div className="mt-4 p-3 bg-blue-50 border border-blue-200 rounded-lg">
-                <div className="flex items-start gap-2">
-                  <Check className="w-4 h-4 text-blue-600 mt-0.5 flex-shrink-0" />
-                  <div className="flex-1">
-                    <p className="text-sm font-medium text-blue-900">
-                      Selected: {permissionTemplates[selectedTemplate]?.name}
-                    </p>
-                    <p className="text-xs text-blue-700 mt-1">
-                      {permissionTemplates[selectedTemplate]?.permissions.length} permissions will be assigned to the admin user
-                    </p>
-                  </div>
-                </div>
+                      {template.is_custom && (
+                        <>
+                          <CustomTemplateActions
+                            template={template as unknown as ServicePermissionTemplate}
+                            onEdit={(t) => setSaveDialog({ mode: 'edit', template: t as unknown as PermissionTemplate })}
+                            onDeleted={(_id) => {
+                              fetchPermissionTemplates();
+                              if (selectedTemplate === key) {
+                                setSelectedTemplate('');
+                                setSelectedPermissions([]);
+                              }
+                            }}
+                          />
+                          {template.created_by_email && (
+                            <p className="text-[10px] text-gray-400 mt-2">
+                              Created by: {template.created_by_email}
+                            </p>
+                          )}
+                        </>
+                      )}
+                    </button>
+                  );
+                })}
               </div>
-            )}
-          </div>
+            </div>
+          )}
 
-          {/* Individual Permissions - Advanced */}
+          {/* Individual Permissions */}
           {Object.keys(groupedPermissions).length > 0 && (
-            <details className="mt-6">
-              <summary className="cursor-pointer text-sm font-medium text-gray-700 hover:text-blue-600 flex items-center gap-2">
-                <span>Advanced: Customize Individual Permissions</span>
-                <span className="text-xs text-gray-500">(Optional - for fine-tuning)</span>
-              </summary>
-              <div className="mt-4 space-y-4">
-                <div className="p-3 bg-yellow-50 border border-yellow-200 rounded-lg">
-                  <p className="text-xs text-yellow-800">
-                    <strong>Note:</strong> Selecting a business type template is recommended. Only customize individual permissions if you need specific control beyond the template.
-                  </p>
-                </div>
+            <div className="mt-6">
+              <h3 className="text-sm font-medium text-gray-900 mb-3">Permissions</h3>
+              <div className="space-y-4">
                 {Object.entries(groupedPermissions).map(([category, permissions]) => (
                   <div key={category} className="border border-gray-200 rounded-lg p-4">
                     <h4 className="font-medium text-gray-900 mb-2 capitalize">{category}</h4>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
                       {(permissions as any[]).map((perm: any) => (
-                        <label key={perm.permission_name} className="flex items-center gap-2 hover:bg-gray-50 p-1 rounded">
+                        <label key={perm.permission_name} className="group flex items-center gap-2 hover:bg-gray-50 p-1 rounded">
                           <input
                             type="checkbox"
                             checked={selectedPermissions.includes(perm.permission_name)}
                             onChange={() => handlePermissionToggle(perm.permission_name)}
                             className="w-4 h-4 text-blue-600 border-gray-300 rounded focus:ring-blue-500"
                           />
-                          <span className="text-sm text-gray-700">{perm.description}</span>
+                          <span className="text-sm text-gray-700 flex-1">{perm.description}</span>
+                          <PermissionHelpTooltip permissionName={perm.permission_name} />
                         </label>
                       ))}
                     </div>
                   </div>
                 ))}
               </div>
-            </details>
+            </div>
           )}
+
+          <div
+            className="sticky bottom-0 -mx-6 -mb-6 mt-6 px-6 py-3 bg-white border-t border-gray-200 rounded-b-lg flex items-center justify-between gap-3"
+            style={{ boxShadow: '0 -2px 8px rgba(0,0,0,0.04)' }}
+          >
+            <div className="flex items-center gap-3 text-sm">
+              <span className="font-medium text-gray-700">
+                🔑 {selectedPermissions.length} permissions selected
+              </span>
+              {selectedPermissions.length > 0 && (
+                <button
+                  type="button"
+                  onClick={handleClearSelection}
+                  className="text-xs text-gray-500 hover:text-red-600 underline"
+                >
+                  Clear selection
+                </button>
+              )}
+            </div>
+            <button
+              type="button"
+              onClick={() => setSaveDialog({ mode: 'create' })}
+              disabled={selectedPermissions.length === 0}
+              className="flex items-center gap-1.5 px-3 py-2 bg-gray-800 text-white rounded-lg text-sm hover:bg-gray-700 disabled:opacity-40 disabled:cursor-not-allowed"
+            >
+              <Save className="h-4 w-4" />
+              Save as template…
+            </button>
+          </div>
         </div>
 
         {/* Role Quotas Section */}
@@ -832,8 +853,8 @@ export default function CreateClient() {
           <p className="text-sm text-gray-500 mb-4">
             Set the maximum number of users the owner can create per role. Leave blank for unlimited.
           </p>
-          <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-            {(['admin', 'manager', 'staff', 'cashier'] as const).map((role) => (
+          <div className="grid grid-cols-2 gap-4">
+            {(['manager', 'staff'] as const).map((role) => (
               <div key={role}>
                 <label className="block text-sm font-medium text-gray-700 mb-1 capitalize">
                   {role}
@@ -855,7 +876,7 @@ export default function CreateClient() {
             ))}
           </div>
           <p className="mt-3 text-xs text-gray-400">
-            Example: Admin = 1, Manager = 2, Staff = 5, Cashier = 3. The owner cannot exceed these limits when adding team members.
+            Example: Manager = 3, Staff = 10. The owner cannot exceed these limits when adding team members.
           </p>
         </div>
 
@@ -904,6 +925,27 @@ export default function CreateClient() {
             )}
           </button>
         </div>
+
+        {saveDialog && (
+          <SaveTemplateDialog
+            open
+            mode={saveDialog.mode}
+            initialValues={saveDialog.mode === 'edit' ? {
+              template_id: saveDialog.template.template_id!,
+              name: saveDialog.template.name,
+              description: saveDialog.template.description,
+            } : undefined}
+            currentPermissions={selectedPermissions}
+            onSaved={(newTemplate) => {
+              fetchPermissionTemplates();
+              if (saveDialog.mode === 'create' && newTemplate.template_id) {
+                setSelectedTemplate(newTemplate.template_id);
+                setSelectedPermissions(newTemplate.permissions);
+              }
+            }}
+            onClose={() => setSaveDialog(null)}
+          />
+        )}
       </form>
     </div>
   );

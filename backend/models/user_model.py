@@ -59,6 +59,19 @@ class User(db.Model):
     google_id = db.Column(db.String(128), nullable=True, unique=True, index=True)
     avatar_url = db.Column(db.String(512), nullable=True)
 
+    # Role hierarchy (v23) — who does this user report to?
+    # Owner: NULL (top of tenant tree). Manager: owner.user_id. Staff: manager.user_id or owner.user_id.
+    reports_to_id = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'), nullable=True, index=True)
+
+    # Self-referential relationship: many users -> one manager
+    reports_to = db.relationship(
+        'User',
+        remote_side='User.user_id',
+        foreign_keys=[reports_to_id],
+        backref='direct_reports',
+        uselist=False,
+    )
+
     def to_dict(self):
         return {
             'user_id': self.user_id,
@@ -79,6 +92,7 @@ class User(db.Model):
             'synced_at': self.synced_at.isoformat() if self.synced_at else None,
             'telegram_chat_id': self.telegram_chat_id,
             'branch_id': str(self.branch_id) if self.branch_id else None,
+            'reports_to_id': str(self.reports_to_id) if self.reports_to_id else None,
             'invite_accepted': self.invite_accepted,
             'must_change_password': self.must_change_password,
             'totp_enabled': self.totp_enabled,

@@ -1,8 +1,10 @@
 
 
 import { useEffect, useState, useMemo, useCallback, memo, useRef } from 'react'
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
+import { getAddedByLabel, setAddedByLabel } from '@/utils/addedByLabel'
 import { useData } from '@/contexts/DataContext'
 import { TableSkeleton } from '@/components/SkeletonLoader'
 import BulkStockOrderModal from '@/components/BulkStockOrderModal'
@@ -11,6 +13,7 @@ import ReceiveStockModal from '@/components/ReceiveStockModal'
 import BarcodeScannerOverlay from '@/components/BarcodeScannerOverlay'
 import LabelPrintDialog, { LabelFields } from '@/components/LabelPrintDialog'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
+import { focusRowById } from '@/utils/focusRow'
 
 interface Stock {
   product_id: string
@@ -30,6 +33,9 @@ interface Stock {
   created_at: string
   updated_at?: string
   client_id: string
+  created_by?: string | null
+  created_by_name?: string | null
+  added_by_label?: string | null
 }
 
 // Pure helper at module level so memo components can use it without being recreated
@@ -51,6 +57,7 @@ const StockDesktopRow = memo(function StockDesktopRow({
 }: StockRowProps) {
   return (
     <tr
+      data-focus-id={stock.product_id}
       className={`transition ${
         isLowStock
           ? 'low-stock-row border-l-4 border-red-500 dark:border-red-600 hover:bg-red-100 dark:hover:bg-red-900/20'
@@ -95,6 +102,9 @@ const StockDesktopRow = memo(function StockDesktopRow({
             ✓ In Stock
           </span>
         )}
+      </td>
+      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 dark:text-gray-400">
+        {stock.added_by_label || stock.created_by_name || '—'}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm">
         <div className="flex gap-3">
@@ -145,7 +155,7 @@ interface StockMobileCardProps {
 
 const StockMobileCard = memo(function StockMobileCard({ stock, isLowStock, onEdit }: StockMobileCardProps) {
   return (
-    <div className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
+    <div data-focus-id={stock.product_id} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
       <div className="flex items-start justify-between gap-2 mb-2">
         <div>
           <p className="text-sm font-semibold text-gray-900 dark:text-white">{stock.product_name}</p>
@@ -178,6 +188,9 @@ const StockMobileCard = memo(function StockMobileCard({ stock, isLowStock, onEdi
 
 export default function StockManagementPage() {
   const { invalidateCache: invalidateDataCache } = useData()
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const location = useLocation()
   const [stocks, setStocks] = useState<Stock[]>([])
   const [loading, setLoading] = useState(true)
   const [showAddForm, setShowAddForm] = useState(false)
@@ -199,6 +212,9 @@ export default function StockManagementPage() {
   const [unitFilter, setUnitFilter] = useState<string>('all')
   const [currentPage, setCurrentPage] = useState(1)
   const ITEMS_PER_PAGE = 25
+
+  // CSV bulk import "Default Added By" field
+  const [importAddedByLabel, setImportAddedByLabel] = useState<string>(() => getAddedByLabel())
 
   // Bulk order states
   const [showBulkOrderModal, setShowBulkOrderModal] = useState(false)
@@ -233,6 +249,8 @@ export default function StockManagementPage() {
       if (toastTimerRef.current) clearTimeout(toastTimerRef.current)
     }
   }, [])
+
+  const [addedByLabel, setAddedByLabelState] = useState<string>(() => getAddedByLabel())
 
   const [formData, setFormData] = useState({
     product_name: '',
@@ -271,6 +289,28 @@ export default function StockManagementPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Deep-link focus: scroll to and highlight the row matching ?focus=<product_id|order_id>
+  useEffect(() => {
+    const focus = searchParams.get('focus')
+    if (!focus) return
+    if (!stocks || stocks.length === 0) return
+
+    // Check if this focus id matches a product
+    const isProduct = stocks.some(s => String(s.product_id) === focus)
+    if (isProduct) {
+      focusRowById(focus)
+    } else {
+      // Assume it's a bulk order id — open the orders modal so the row is in DOM
+      setShowBulkOrderList(true)
+      // focusRowById will be called once the modal renders (no-ops silently if not found)
+      setTimeout(() => focusRowById(focus), 300)
+    }
+
+    const next = new URLSearchParams(searchParams)
+    next.delete('focus')
+    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true })
+  }, [stocks, searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
+
   const fetchStocks = useCallback(async () => {
     try {
       setLoading(true)
@@ -295,7 +335,10 @@ export default function StockManagementPage() {
         is_low_stock: product.is_low_stock ?? false,
         created_at: product.created_at || new Date().toISOString(),
         updated_at: product.updated_at,
-        client_id: product.client_id || ''
+        client_id: product.client_id || '',
+        created_by: product.created_by ?? null,
+        created_by_name: product.created_by_name ?? null,
+        added_by_label: product.added_by_label ?? null,
       }))
 
       // Sort: Low stock items first, then regular stock
@@ -315,11 +358,15 @@ export default function StockManagementPage() {
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (!editingId && !addedByLabel.trim()) {
+      showToast('Please enter your name in "Added By"', 'error')
+      return
+    }
     setSubmitting(true)
     try {
       if (editingId) {
         // Update existing stock
-        const response = await api.put(`/stock/${editingId}`, formData)
+        await api.put(`/stock/${editingId}`, formData)
         showToast('Stock updated successfully!', 'success')
         setShowAddForm(false)
         setEditingId(null)
@@ -329,7 +376,8 @@ export default function StockManagementPage() {
         fetchStocks()
       } else {
         // Add new stock
-        await api.post('/stock', formData)
+        await api.post('/stock', { ...formData, added_by_label: addedByLabel.trim() })
+        setAddedByLabel(addedByLabel)
         showToast('Stock added successfully!', 'success')
         // Reset 5-min DataContext cache so CreateBill/other pages get fresh stock
         invalidateDataCache('products')
@@ -493,6 +541,11 @@ export default function StockManagementPage() {
     const files = event.target.files
     if (!files || files.length === 0) return
 
+    if (!importAddedByLabel.trim()) {
+      showToast('Please enter a "Default Added By" name before importing', 'error')
+      return
+    }
+
     const fileArray = Array.from(files)
     setUploadFiles(fileArray)
     setImportResults([])
@@ -508,6 +561,7 @@ export default function StockManagementPage() {
 
       const formData = new FormData()
       formData.append('file', file)
+      formData.append('default_added_by_label', importAddedByLabel.trim())
 
       try {
         setUploadStatus('uploading')
@@ -539,6 +593,7 @@ export default function StockManagementPage() {
         })
 
         if (i === fileArray.length - 1) {
+          setAddedByLabel(importAddedByLabel)
           showToast(`Successfully imported ${fileArray.length} file(s)!`, 'success')
         }
       } catch (error: any) {
@@ -1077,6 +1132,23 @@ export default function StockManagementPage() {
                   className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent font-mono"
                 />
               </div>
+              {!editingId && (
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                    Added By *
+                  </label>
+                  <input
+                    type="text"
+                    required
+                    value={addedByLabel}
+                    onChange={(e) => setAddedByLabelState(e.target.value)}
+                    onKeyDown={handleEnterKey}
+                    placeholder="Your name (e.g., Ramesh)"
+                    className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                  />
+                  <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Who is adding this stock item</p>
+                </div>
+              )}
             </div>
             <div className="flex gap-3">
               <button
@@ -1146,6 +1218,22 @@ export default function StockManagementPage() {
                 Download Excel Template
               </button>
             </div>
+          </div>
+
+          {/* Default Added By */}
+          <div className="mb-6 p-4 bg-orange-50 dark:bg-orange-900/30 border border-orange-200 dark:border-orange-800 rounded-lg">
+            <h3 className="font-semibold text-orange-900 dark:text-orange-300 mb-2">👤 Default Added By *</h3>
+            <p className="text-sm text-orange-700 dark:text-orange-400 mb-3">
+              Name used when a CSV row does not have its own <code className="font-mono bg-orange-100 dark:bg-orange-900 px-1 rounded">added_by_label</code> value.
+            </p>
+            <input
+              type="text"
+              required
+              value={importAddedByLabel}
+              onChange={(e) => setImportAddedByLabel(e.target.value)}
+              placeholder="Your name (e.g., Ramesh)"
+              className="w-full max-w-sm px-4 py-2 border border-orange-300 dark:border-orange-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-orange-500 focus:border-transparent"
+            />
           </div>
 
           {/* Upload File */}
@@ -1361,7 +1449,8 @@ export default function StockManagementPage() {
             <h3 className="font-semibold text-yellow-900 dark:text-yellow-300 mb-2">ℹ️ Important Notes</h3>
             <ul className="text-sm text-yellow-800 dark:text-yellow-400 space-y-1">
               <li>• Required columns: <strong>product_name, quantity, rate</strong></li>
-              <li>• Optional columns: category, unit, low_stock_alert, item_code, barcode, gst_percentage, hsn_code, purchase_price, mrp</li>
+              <li>• Optional columns: category, unit, low_stock_alert, item_code, barcode, gst_percentage, hsn_code, purchase_price, mrp, added_by_label</li>
+              <li>• <strong>added_by_label</strong>: per-row name; if blank, "Default Added By" above is used</li>
               <li>• If product exists, quantity will be <strong>added</strong> (not replaced)</li>
               <li>• Negative values are not allowed</li>
               <li>• Maximum file size: 5MB</li>
@@ -1518,6 +1607,9 @@ export default function StockManagementPage() {
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Status
+                </th>
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
+                  Added By
                 </th>
                 <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wider">
                   Actions

@@ -163,6 +163,9 @@ def add_stock():
         barcode  = _to_str_or_none(data.get('barcode'))   # optional — no auto-gen
         item_code_in = _to_str_or_none(data.get('item_code'))
 
+        # Added-by label (v19) — user-typed name for shared-login attribution
+        added_by_label = (data.get('added_by_label') or '').strip() or None
+
         # Apparel / Legal Metrology (v13) — all optional
         apparel = {
             'brand_name':          _to_str_or_none(data.get('brand_name')),
@@ -242,6 +245,8 @@ def add_stock():
             gst_percentage=gst_percentage,
             hsn_code=hsn_code,
             created_at=datetime.utcnow(),
+            created_by=g.user['user_id'],
+            added_by_label=added_by_label,
             **apparel,
         )
 
@@ -566,6 +571,9 @@ def bulk_import_stock():
         except Exception as e:
             return jsonify({'error': 'Failed to read file', 'message': str(e)}), 400
 
+        # Read default added_by_label from form data (dialog-level default)
+        default_added_by_label = (request.form.get('default_added_by_label') or '').strip() or None
+
         # Validate required columns
         required_columns = ['product_name', 'quantity', 'rate']
         missing_columns = [col for col in required_columns if col not in df.columns]
@@ -661,6 +669,15 @@ def bulk_import_stock():
                 gst_percentage = float(row['gst_percentage']) if 'gst_percentage' in row and not pd.isna(row['gst_percentage']) else 0
                 hsn_code = str(row['hsn_code']).strip() if 'hsn_code' in row and not pd.isna(row['hsn_code']) else ''
 
+                # Resolve added_by_label: row value > dialog default; reject if both missing
+                row_label = str(row['added_by_label']).strip() if 'added_by_label' in row and not pd.isna(row.get('added_by_label')) else ''
+                row_added_by_label = row_label or default_added_by_label
+                if not row_added_by_label:
+                    savepoint.rollback()
+                    error_count += 1
+                    errors.append(f"Row {index + 2}: added_by_label is required (fill the column or provide a dialog default)")
+                    continue
+
                 # Validate quantity and rate
                 if quantity < 0 or rate < 0:
                     savepoint.rollback()
@@ -720,7 +737,9 @@ def bulk_import_stock():
                         barcode=barcode,
                         gst_percentage=gst_percentage,
                         hsn_code=hsn_code,
-                        created_at=datetime.utcnow()
+                        created_at=datetime.utcnow(),
+                        created_by=g.user['user_id'],
+                        added_by_label=row_added_by_label,
                     )
                     db.session.add(new_product)
                     log_action('CREATE', 'stock_entry', new_product.product_id, None, new_product.to_dict())
@@ -802,7 +821,8 @@ def download_template():
             'unit': ['pcs', 'pcs', 'pcs', 'pcs', 'pcs', 'pcs'],
             'low_stock_alert': [5, 10, 8, 5, 20, 15],
             'purchase_price': [40000.00, 350.00, 1200.00, 12000.00, 6.00, 18.00],
-            'mrp': [55000.00, 599.00, 1799.00, 17999.00, 15.00, 35.00]
+            'mrp': [55000.00, 599.00, 1799.00, 17999.00, 15.00, 35.00],
+            'added_by_label': ['Ramesh', 'Priya', 'Ramesh', 'Priya', 'Ramesh', 'Priya'],
         }
 
         df = pd.DataFrame(data)

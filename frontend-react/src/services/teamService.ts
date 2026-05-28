@@ -85,8 +85,8 @@ export interface PlanInfo {
   can_add_member: boolean
   allowed_billing: string[]
   slots_remaining: number
-  role_quotas: Record<string, number>        // {"admin": 1, "manager": 2, ...}
-  role_usage: Record<string, RoleUsageEntry> // {"admin": {quota,used,remaining,at_limit}}
+  role_quotas: Record<string, number>        // {"manager": 3, "staff": 10, ...}
+  role_usage: Record<string, RoleUsageEntry> // {"manager": {quota,used,remaining,at_limit}}
 }
 
 export interface PermissionPreset {

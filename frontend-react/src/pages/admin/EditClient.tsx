@@ -48,10 +48,8 @@ interface UserWithPermissions {
 }
 
 interface RoleQuotas {
-  admin: number | '';
   manager: number | '';
   staff: number | '';
-  cashier: number | '';
 }
 
 interface ClientDetails {
@@ -98,7 +96,7 @@ export default function ClientDetailsPage() {
   const [saving, setSaving] = useState(false);
 
   // Role quota state (separate from formData for cleaner number/empty handling)
-  const [roleQuotas, setRoleQuotas] = useState<RoleQuotas>({ admin: '', manager: '', staff: '', cashier: '' });
+  const [roleQuotas, setRoleQuotas] = useState<RoleQuotas>({ manager: '', staff: '' });
 
   // User management states
   const [clientUsers, setClientUsers] = useState<UserWithPermissions[]>([]);
@@ -126,10 +124,12 @@ export default function ClientDetailsPage() {
     }
   }, [clientId]);
 
-  const fetchAllPermissions = useCallback(async () => {
+  const fetchAllPermissions = useCallback(async (includeSuperAdmin: boolean = false) => {
     try {
-      const response = await api.get('/permissions/all');
-      console.log('Permissions response:', response.data);
+      const url = includeSuperAdmin
+        ? '/permissions/all?include_super_admin=true'
+        : '/permissions/all';
+      const response = await api.get(url);
       setAllPermissions(response.data.permissions || []);
       setPermissionsByCategory(response.data.categorized || {});
     } catch (err: any) {
@@ -150,10 +150,8 @@ export default function ClientDetailsPage() {
       // Populate quota inputs from saved values (empty string = unlimited)
       const q = response.data.role_quotas || {};
       setRoleQuotas({
-        admin:   q.admin   != null ? q.admin   : '',
         manager: q.manager != null ? q.manager : '',
         staff:   q.staff   != null ? q.staff   : '',
-        cashier: q.cashier != null ? q.cashier : '',
       });
       fetchClientUsers();
       fetchAllPermissions();
@@ -303,6 +301,8 @@ export default function ClientDetailsPage() {
   const openPermissionsModal = (user: UserWithPermissions) => {
     setSelectedUser(user);
     setShowPermissionsModal(true);
+    // Re-fetch perms list with/without super-admin-only perms based on target user.
+    fetchAllPermissions(user.is_super_admin === true);
   };
 
   if (authLoading || loading) {
@@ -404,10 +404,8 @@ export default function ClientDetailsPage() {
                     // Reset quota inputs back to saved values
                     const q = client.role_quotas || {};
                     setRoleQuotas({
-                      admin:   q.admin   != null ? q.admin   : '',
                       manager: q.manager != null ? q.manager : '',
                       staff:   q.staff   != null ? q.staff   : '',
-                      cashier: q.cashier != null ? q.cashier : '',
                     });
                   }}
                   className="flex items-center gap-2 px-4 py-2 border border-slate-300 dark:border-slate-600 rounded-lg hover:bg-slate-50 dark:hover:bg-slate-700 transition text-slate-700 dark:text-slate-300"
@@ -563,8 +561,8 @@ export default function ClientDetailsPage() {
                     <p className="text-xs text-slate-500 dark:text-slate-400 mb-4">
                       Set the maximum number of users allowed per role. Leave blank for unlimited.
                     </p>
-                    <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                      {(['admin', 'manager', 'staff', 'cashier'] as const).map((role) => {
+                    <div className="grid grid-cols-2 gap-4">
+                      {(['manager', 'staff'] as const).map((role) => {
                         const used = clientUsers.filter(u => u.role === role && u.is_active).length;
                         return (
                           <div key={role}>

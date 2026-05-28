@@ -4,6 +4,17 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { toast } from '@/utils/toast'
+import { PermissionGate } from '@/components/PermissionGate'
+import EditBillPriceDialog from '@/components/audit/EditBillPriceDialog'
+
+interface BillLine {
+  product_id: string
+  product_name: string
+  rate: number | string
+  quantity: number | string
+  discount?: number
+  tax_percent?: number
+}
 
 interface GSTBill {
   bill_id: string
@@ -17,6 +28,36 @@ interface GSTBill {
   payment_type: string
   created_at: string
   status?: string
+  items: BillLine[]
+  audit_overrides?: BillLine[] | null
+}
+
+// Compute the totals to DISPLAY on the audit page.
+// If an audit_overrides annotation exists, recompute from those items so the auditor
+// sees the corrected numbers (the bill itself stays unchanged elsewhere in the app).
+function effectiveTotals(bill: GSTBill): { subtotal: number; gst_amount: number; final_amount: number; isAudited: boolean } {
+  if (!bill.audit_overrides || bill.audit_overrides.length === 0) {
+    return {
+      subtotal: Number(bill.subtotal) || 0,
+      gst_amount: Number(bill.gst_amount) || 0,
+      final_amount: Number(bill.final_amount) || 0,
+      isAudited: false,
+    }
+  }
+  let subtotal = 0
+  let gst_amount = 0
+  for (const it of bill.audit_overrides) {
+    const rate = Number(it.rate) || 0
+    const qty = Number(it.quantity) || 0
+    const disc = Number(it.discount ?? 0)
+    const tax = Number(it.tax_percent ?? bill.gst_percentage ?? 0)
+    const lineSub = rate * qty
+    const lineTaxable = lineSub - (lineSub * disc / 100)
+    const lineTax = lineTaxable * tax / 100
+    subtotal += lineSub
+    gst_amount += lineTax
+  }
+  return { subtotal, gst_amount, final_amount: subtotal + gst_amount, isAudited: true }
 }
 
 export default function AuditorReportsPage() {
@@ -25,6 +66,7 @@ export default function AuditorReportsPage() {
   const [dateRange, setDateRange] = useState({ start_date: '', end_date: '' })
   const [showPreview, setShowPreview] = useState(false)
   const [exporting, setExporting] = useState(false)
+  const [editingBill, setEditingBill] = useState<GSTBill | null>(null)
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -106,6 +148,12 @@ export default function AuditorReportsPage() {
   const fetchGSTBills = useCallback((showAlert = true) =>
     fetchGSTBillsWithDates(dateRange.start_date, dateRange.end_date, showAlert, 1),
     [fetchGSTBillsWithDates, dateRange]
+  )
+
+  // Alias used by EditBillPriceDialog's onSaved callback to reload the current page
+  const loadBills = useCallback(() =>
+    fetchGSTBillsWithDates(dateRange.start_date, dateRange.end_date, false, currentPage),
+    [fetchGSTBillsWithDates, dateRange, currentPage]
   )
 
   const handleExportPDF = async () => {
@@ -210,13 +258,15 @@ export default function AuditorReportsPage() {
     }
   }
 
-  // Single pass over gstBills instead of 3 separate reduce() calls on every render.
+  // Single pass over gstBills. Uses effectiveTotals so audit-noted bills contribute
+  // their corrected values to the summary cards.
   const { totalSubtotal, totalGSTAmount, totalFinalAmount } = useMemo(() => {
     let totalSubtotal = 0, totalGSTAmount = 0, totalFinalAmount = 0
     for (const b of gstBills) {
-      totalSubtotal   += parseFloat(String(b.subtotal))
-      totalGSTAmount  += parseFloat(String(b.gst_amount))
-      totalFinalAmount += parseFloat(String(b.final_amount))
+      const t = effectiveTotals(b)
+      totalSubtotal   += t.subtotal
+      totalGSTAmount  += t.gst_amount
+      totalFinalAmount += t.final_amount
     }
     return { totalSubtotal, totalGSTAmount, totalFinalAmount }
   }, [gstBills])
@@ -347,13 +397,26 @@ export default function AuditorReportsPage() {
                     <th className="px-3 py-2 text-center text-[10px] font-bold text-white uppercase">GST %</th>
                     <th className="px-3 py-2 text-right text-[10px] font-bold text-white uppercase">GST Amount</th>
                     <th className="px-3 py-2 text-right text-[10px] font-bold text-white uppercase">Final Amount</th>
+                    <th className="px-3 py-2 text-center text-[10px] font-bold text-white uppercase">Actions</th>
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
-                  {gstBills.map((bill, index) => (
+                  {gstBills.map((bill, index) => {
+                    const eff = effectiveTotals(bill)
+                    return (
                     <tr key={bill.bill_id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
                       <td className="px-3 py-2.5 whitespace-nowrap">
-                        <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{index + 1}</span>
+                        <div className="flex items-center gap-1.5">
+                          <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{index + 1}</span>
+                          {eff.isAudited && (
+                            <span
+                              title="Has an audit-only correction. Bill itself is unchanged."
+                              className="rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300"
+                            >
+                              audit note
+                            </span>
+                          )}
+                        </div>
                       </td>
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         <span className="text-xs text-gray-600 dark:text-gray-400">
@@ -365,24 +428,48 @@ export default function AuditorReportsPage() {
                       </td>
                       <td className="px-3 py-2.5 text-right whitespace-nowrap">
                         <span className="text-xs font-medium text-gray-800 dark:text-gray-200">
-                          ₹{parseFloat(String(bill.subtotal)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          ₹{eff.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </span>
+                        {eff.isAudited && (
+                          <div className="text-[9px] text-gray-500 dark:text-gray-400">
+                            (bill: ₹{parseFloat(String(bill.subtotal)).toLocaleString('en-IN', { minimumFractionDigits: 2 })})
+                          </div>
+                        )}
                       </td>
                       <td className="px-3 py-2.5 text-center whitespace-nowrap">
                         <span className="text-xs font-medium text-blue-600 dark:text-blue-400">{bill.gst_percentage}%</span>
                       </td>
                       <td className="px-3 py-2.5 text-right whitespace-nowrap">
                         <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                          ₹{parseFloat(String(bill.gst_amount)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          ₹{eff.gst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 text-right whitespace-nowrap">
                         <span className="text-xs font-bold text-gray-800 dark:text-gray-200">
-                          ₹{parseFloat(String(bill.final_amount)).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          ₹{eff.final_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </span>
+                        {eff.isAudited && (
+                          <div className="text-[9px] text-gray-500 dark:text-gray-400">
+                            (bill: ₹{parseFloat(String(bill.final_amount)).toLocaleString('en-IN', { minimumFractionDigits: 2 })})
+                          </div>
+                        )}
+                      </td>
+                      <td className="px-3 py-2.5 text-center whitespace-nowrap">
+                        <PermissionGate permission="edit_bill_price_audit">
+                          <button
+                            type="button"
+                            disabled={bill.status === 'cancelled'}
+                            title={bill.status === 'cancelled' ? 'Cancelled bills cannot be edited' : 'Edit prices'}
+                            onClick={() => setEditingBill(bill)}
+                            className="rounded border px-2 py-1 text-xs hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                          >
+                            Edit
+                          </button>
+                        </PermissionGate>
                       </td>
                     </tr>
-                  ))}
+                    )
+                  })}
                 </tbody>
               </table>
               </div>
@@ -419,27 +506,48 @@ export default function AuditorReportsPage() {
 
             {/* Mobile card list */}
             <div className="md:hidden space-y-3">
-              {gstBills.map((bill, index) => (
+              {gstBills.map((bill, index) => {
+                const eff = effectiveTotals(bill)
+                return (
                 <div
                   key={bill.bill_id ?? index}
                   className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
                 >
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div>
-                      <p className="text-sm font-semibold text-gray-900 dark:text-white">#{bill.bill_number}</p>
+                      <p className="text-sm font-semibold text-gray-900 dark:text-white flex items-center gap-2">
+                        #{bill.bill_number}
+                        {eff.isAudited && (
+                          <span className="rounded bg-blue-100 px-1.5 py-0.5 text-[9px] font-semibold text-blue-700 dark:bg-blue-900/40 dark:text-blue-300">
+                            audit note
+                          </span>
+                        )}
+                      </p>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{bill.customer_name || 'Walk-in'}</p>
                     </div>
-                    <span className="text-sm font-bold text-gray-900 dark:text-white">₹{bill.final_amount?.toLocaleString()}</span>
+                    <span className="text-sm font-bold text-gray-900 dark:text-white">₹{eff.final_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                     <span>{bill.customer_phone}</span>
-                    <span>GST: ₹{bill.gst_amount?.toLocaleString()}</span>
+                    <span>GST: ₹{eff.gst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                     {bill.created_at ? new Date(bill.created_at).toLocaleDateString() : ''}
                   </p>
+                  <PermissionGate permission="edit_bill_price_audit">
+                    <button
+                      type="button"
+                      disabled={bill.status === 'cancelled'}
+                      title={bill.status === 'cancelled' ? 'Cancelled bills cannot be edited' : 'Edit prices'}
+                      onClick={() => setEditingBill(bill)}
+                      className="mt-2 rounded border px-2 py-1 text-xs hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                      Edit
+                    </button>
+                  </PermissionGate>
                 </div>
-              ))}
+                )
+              })}
             </div>
           </>
         )}
@@ -630,6 +738,20 @@ export default function AuditorReportsPage() {
           </div>
         </div>
       )}
+      <EditBillPriceDialog
+        open={!!editingBill}
+        bill={editingBill}
+        onClose={() => setEditingBill(null)}
+        onSaved={(updatedBill) => {
+          // Optimistic update: patch the row in place using the server's response.
+          // No refetch round-trip → no caching/race issues, instant UI update.
+          const u = updatedBill as Partial<GSTBill> & { bill_id?: string }
+          if (u && u.bill_id) {
+            setGstBills(prev => prev.map(b => b.bill_id === u.bill_id ? { ...b, ...(u as GSTBill) } : b))
+          }
+          setEditingBill(null)
+        }}
+      />
     </DashboardLayout>
   )
 }

@@ -250,7 +250,7 @@ function BranchModal({
     const trimmedName = formData.name.trim()
     if (!trimmedName) { setFormError('Branch name is required.'); return }
     if (isCreating && !formData.manager_user_id) {
-      setFormError('You must assign an admin or manager before creating a branch.')
+      setFormError('You must assign a manager before creating a branch.')
       return
     }
     try {
@@ -349,7 +349,7 @@ function BranchModal({
                 <div className="p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-700 rounded-lg">
                   <div className="flex items-start gap-2 text-sm text-amber-700 dark:text-amber-300">
                     <AlertCircle className="h-4 w-4 flex-shrink-0 mt-0.5" />
-                    <span>No available admin/manager users. Invite a new user with the <strong>admin</strong> or <strong>manager</strong> role first, then come back to assign them to this branch.</span>
+                    <span>No available manager users. Invite a new user with the <strong>manager</strong> role first, then come back to assign them to this branch.</span>
                   </div>
                   <button
                     type="button"
@@ -376,7 +376,7 @@ function BranchModal({
                 </select>
               )}
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
-                Active and pending-invite admin/manager users not yet assigned to any branch are shown.
+                Active and pending-invite manager users not yet assigned to any branch are shown.
               </p>
             </div>
           )}
@@ -455,7 +455,7 @@ function BranchCard({
                 return <span className="font-medium text-gray-700 dark:text-gray-300">{branch.manager_name}</span>
               }
               // Find the highest-role member as de facto manager
-              const roleOrder = ['owner', 'admin', 'manager']
+              const roleOrder = ['owner', 'manager']
               const lead = branch.members
                 ?.sort((a, b) => roleOrder.indexOf(a.role) - roleOrder.indexOf(b.role))
                 ?.[0]
@@ -506,8 +506,6 @@ function BranchCard({
                 <span className={`flex-shrink-0 text-[10px] font-semibold px-1.5 py-0.5 rounded ${
                   member.role === 'owner'
                     ? 'bg-purple-100 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300'
-                    : member.role === 'admin'
-                    ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
                     : member.role === 'manager'
                     ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
                     : 'bg-gray-100 dark:bg-gray-600 text-gray-600 dark:text-gray-300'

@@ -1,8 +1,11 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react'
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import BarcodeScannerModal from '@/components/billing/BarcodeScannerModal'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
+import { getAddedByLabel, setAddedByLabel } from '@/utils/addedByLabel'
+import { focusRowById } from '@/utils/focusRow'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -47,12 +50,16 @@ interface Delivery {
   transport_fee: number
   notes: string | null
   status: 'draft' | 'confirmed' | 'completed'
+  completed_by?: string | null
+  completed_by_name?: string | null
+  confirmed_by_name?: string | null
   products_confirmed: boolean
   confirmed_at: string | null
   delivery_note_filename: string | null
   has_delivery_note: boolean
   delivery_note_type: string | null
   completed_at: string | null
+  added_by_label?: string | null
   items: DeliveryItem[]
   created_at: string
 }
@@ -81,6 +88,10 @@ const STATUS_LABEL: Record<string, string> = {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function SuppliersPage() {
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const location = useLocation()
+
   const [tab, setTab] = useState<'suppliers' | 'deliveries'>('suppliers')
 
   // ── suppliers state
@@ -104,6 +115,7 @@ export default function SuppliersPage() {
 
   // ── delivery wizard state
   const [step, setStep] = useState(1)   // 1=details 2=products 3=confirm+upload
+  const [delAddedByLabel, setDelAddedByLabel] = useState<string>(() => getAddedByLabel())
   const [delForm, setDelForm] = useState({
     supplier_id: '', branch_id: '', invoice_number: '',
     delivery_date: '', transport_fee: '', notes: '',
@@ -164,6 +176,37 @@ export default function SuppliersPage() {
 
   useEffect(() => { fetchSuppliers() }, [fetchSuppliers])
   useEffect(() => { if (tab === 'deliveries') fetchDeliveries() }, [tab, fetchDeliveries])
+
+  // Deep-link focus: scroll to and highlight the supplier card or delivery row
+  // matching ?focus=<id> (with optional ?tab=deliveries for delivery deep-links).
+  // Two-pass approach:
+  //   Pass 1 – URL has ?focus + ?tab=deliveries → switch tab to 'deliveries' so fetch fires.
+  //            The URL params are kept so Pass 2 can complete the focus.
+  //   Pass 2 – deliveries are now loaded → focus the row and clear the URL params.
+  useEffect(() => {
+    const focus = searchParams.get('focus')
+    if (!focus) return
+
+    const tabParam = searchParams.get('tab')
+    const targetTab: 'suppliers' | 'deliveries' = tabParam === 'deliveries' ? 'deliveries' : 'suppliers'
+
+    if (targetTab === 'deliveries') {
+      // Switch to deliveries tab to trigger fetch (if not already there)
+      if (tab !== 'deliveries') { setTab('deliveries'); return }
+      // Wait until deliveries are loaded
+      if (!deliveries || deliveries.length === 0) return
+      focusRowById(focus)
+    } else {
+      if (!suppliers || suppliers.length === 0) return
+      setTab('suppliers')
+      focusRowById(focus)
+    }
+
+    const next = new URLSearchParams(searchParams)
+    next.delete('focus')
+    next.delete('tab')
+    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true })
+  }, [suppliers, deliveries, tab, searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Filtered lists ───────────────────────────────────────────────────────
   const filteredSuppliers = useMemo(() =>
@@ -291,6 +334,7 @@ export default function SuppliersPage() {
 
   async function saveStep1() {
     if (!delForm.supplier_id) { showToast('Select a supplier', 'error'); return }
+    if (!delAddedByLabel.trim()) { showToast('Please enter your name in "Added By"', 'error'); return }
     setSavingDraft(true)
     try {
       const payload = {
@@ -300,6 +344,7 @@ export default function SuppliersPage() {
         delivery_date:  delForm.delivery_date || null,
         transport_fee:  parseFloat(delForm.transport_fee) || 0,
         notes:          delForm.notes || null,
+        added_by_label: delAddedByLabel.trim(),
       }
       if (currentDeliveryId) {
         // Updating an existing draft
@@ -308,6 +353,7 @@ export default function SuppliersPage() {
         // Creating a new draft
         const res = await api.post('/suppliers/deliveries', { ...payload, items: [] })
         setCurrentDeliveryId(res.data.data.delivery_id)
+        setAddedByLabel(delAddedByLabel)
       }
       setStep(2)
     } catch (e: any) {
@@ -583,7 +629,7 @@ export default function SuppliersPage() {
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {filteredSuppliers.map(s => (
-                  <div key={s.supplier_id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-5 hover:shadow-md hover:border-gray-300 dark:hover:border-gray-600 transition-all group">
+                  <div key={s.supplier_id} data-focus-id={s.supplier_id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-5 hover:shadow-md hover:border-gray-300 dark:hover:border-gray-600 transition-all group">
 
                     {/* Card header */}
                     <div className="flex items-start justify-between gap-2 mb-4">
@@ -708,12 +754,13 @@ export default function SuppliersPage() {
                       <th className="px-4 py-3 text-left">Items</th>
                       <th className="px-4 py-3 text-left">Status</th>
                       <th className="px-4 py-3 text-left">Note</th>
+                      <th className="px-4 py-3 text-left">Added By</th>
                       <th className="px-4 py-3 text-left"></th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-gray-700">
                     {filteredDeliveries.map(d => (
-                      <tr key={d.delivery_id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                      <tr key={d.delivery_id} data-focus-id={d.delivery_id} className="hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
                         <td className="px-4 py-3 font-medium text-gray-900 dark:text-white">{d.supplier_name || '—'}</td>
                         <td className="px-4 py-3 text-gray-600 dark:text-gray-400">{d.invoice_number || '—'}</td>
                         <td className="px-4 py-3 text-gray-500 dark:text-gray-400">{d.delivery_date || '—'}</td>
@@ -729,6 +776,9 @@ export default function SuppliersPage() {
                           ) : (
                             <span className="text-gray-300 dark:text-gray-600 text-xs">—</span>
                           )}
+                        </td>
+                        <td className="px-4 py-3 text-gray-600 dark:text-gray-400 text-xs">
+                          {d.added_by_label || d.completed_by_name || d.confirmed_by_name || <span className="text-gray-400 dark:text-gray-600">—</span>}
                         </td>
                         <td className="px-4 py-3">
                           <button onClick={() => openDelivery(d.delivery_id)}
@@ -945,6 +995,18 @@ export default function SuppliersPage() {
                       <textarea value={delForm.notes} onChange={e => setDelForm(f => ({ ...f, notes: e.target.value }))}
                         rows={2} placeholder="Any notes for this delivery…"
                         className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                    </div>
+                    <div className="col-span-2">
+                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Added By *</label>
+                      <input
+                        type="text"
+                        required
+                        value={delAddedByLabel}
+                        onChange={e => setDelAddedByLabel(e.target.value)}
+                        placeholder="Your name (e.g., Ramesh)"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Who is creating this delivery</p>
                     </div>
                   </div>
                 </div>

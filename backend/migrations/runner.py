@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 15
+CURRENT_SCHEMA_VERSION = 24
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -992,6 +992,368 @@ def _m015_attendance_status_column(db):
     logging.info("[Migration] v15: attendance status/reason columns added")
 
 
+def _m017_audit_overrides_column(db):
+    """v17: Add audit_overrides JSON column to both bill tables.
+
+    Stores per-bill audit annotations (corrected line items) without
+    altering the original `items` column. NULL when no audit correction exists.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return  # table doesn't exist yet — skip
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    # JSONB on Postgres / TEXT on SQLite (FlexibleJSON-compatible)
+    if dialect == 'postgresql':
+        col_def = 'JSONB NULL'
+    else:
+        col_def = 'TEXT NULL'
+
+    _add_col('gst_billing', 'audit_overrides', col_def)
+    _add_col('non_gst_billing', 'audit_overrides', col_def)
+
+    db.session.commit()
+    logging.info("[Migration] v17: audit_overrides column added to bill tables")
+
+
+def _m018_stock_entry_created_by(db):
+    """v18: Add created_by FK on stock_entry to track who added each stock item.
+
+    Nullable — existing rows stay NULL ("Unknown" in UI).
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    if dialect == 'postgresql':
+        col_def = 'UUID NULL'
+    else:
+        col_def = 'VARCHAR(36) NULL'
+
+    _add_col('stock_entry', 'created_by', col_def)
+
+    db.session.commit()
+    logging.info("[Migration] v18: stock_entry.created_by added")
+
+
+def _m019_added_by_label(db):
+    """v19: Add added_by_label text column to stock_entry, supplier_deliveries, bulk_stock_order.
+
+    User-typed name for shared-login attribution (alongside the server-set created_by user_id).
+    Nullable — legacy rows stay NULL.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    col_def = 'VARCHAR(120) NULL'
+    _add_col('stock_entry', 'added_by_label', col_def)
+    _add_col('supplier_deliveries', 'added_by_label', col_def)
+    _add_col('bulk_stock_order', 'added_by_label', col_def)
+
+    db.session.commit()
+    logging.info("[Migration] v19: added_by_label added to stock_entry, supplier_deliveries, bulk_stock_order")
+
+
+def _m020_clarify_permission_descriptions(db):
+    """v20: Rewrite 12 ambiguous permission descriptions.
+
+    Idempotent: each UPDATE is guarded by WHERE description = '<old>',
+    so re-running on already-updated rows is a no-op and admin-edited
+    rows are not overwritten.
+    """
+    rewrites = [
+        ('set_tax_rate',           'Set custom tax/GST rates',
+                                   'Override the tax/GST rate on individual bills at checkout'),
+        ('view_all_bills',         'View all bills in the system',
+                                   'View bills created by every user'),
+        ('view_own_bills',         'View only own created bills',
+                                   'View only bills this user personally created'),
+        ('edit_bill_price_audit',  'Edit bill prices from the audit log',
+                                   'Correct historical bill prices from the audit-log view (power feature)'),
+        ('custom_report_filters',  'Use custom filters in reports',
+                                   'Build saved custom date/branch/category filters in reports'),
+        ('assign_permissions',     'Assign permissions to users',
+                                   'Grant or revoke permissions on any user (on this screen)'),
+        ('edit_tax_settings',      'Edit tax and GST settings',
+                                   'Edit company-wide default GST rates and tax configuration'),
+        ('view_audit_logs',        'View audit trail logs',
+                                   'View the audit-trail page showing who changed what and when'),
+        ('manage_clients',         'Manage client organizations',
+                                   'Manage other tenant organizations (super-admin only)'),
+        ('approve_bulk_order',     'Approve bulk stock orders',
+                                   'Approve a bulk-order draft so it can be sent to the supplier'),
+        ('receive_bulk_order',     'Mark bulk orders as received',
+                                   'Confirm physical receipt of stock and add it to inventory'),
+        ('manage_permissions',     'Manage user permissions',
+                                   'Legacy alias for permission management — kept for backward compatibility'),
+    ]
+    total_updated = 0
+    for perm_name, old_desc, new_desc in rewrites:
+        result = db.session.execute(
+            text("UPDATE permissions SET description = :new "
+                 "WHERE permission_name = :name AND description = :old"),
+            {'new': new_desc, 'name': perm_name, 'old': old_desc}
+        )
+        total_updated += result.rowcount
+    db.session.commit()
+    logging.info(f"[Migration] v20: {total_updated} permission description(s) clarified")
+
+
+def _m021_revoke_super_admin_perms_from_regular_users(db):
+    """v21: Revoke super-admin-only perms from any non-super-admin user who has them.
+
+    Cleans up the leak where the owner-role default + the full_access template
+    used to grant manage_clients/system_backup/system_restore/maintenance_mode
+    to regular owners. The routes that consume these are role-gated, so this
+    is housekeeping rather than a security patch — but it stops false-positive
+    UI on the EditUser screen and removes a latent risk if a future route
+    forgets its @require_super_admin decorator.
+
+    Idempotent: if no matching rows exist, this is a no-op.
+    """
+    sa_perms = ('manage_clients', 'system_backup', 'system_restore', 'maintenance_mode')
+
+    # Build the IN-clause placeholders for both perm_names and the WHERE NOT super_admin condition.
+    # Cross-dialect: works on both SQLite and PostgreSQL.
+    placeholders = ', '.join(f':p{i}' for i in range(len(sa_perms)))
+    params = {f'p{i}': name for i, name in enumerate(sa_perms)}
+
+    # Cross-dialect WHERE clause: works on both SQLite (BOOLEAN stored as INTEGER 0/1)
+    # and PostgreSQL (real BOOLEAN type — rejects integer comparison).
+    # `IS NOT TRUE` evaluates correctly on Postgres for both FALSE and NULL,
+    # and SQLite treats it the same.
+    result = db.session.execute(
+        text(f"""
+            DELETE FROM user_permissions
+            WHERE permission_id IN (
+                SELECT permission_id FROM permissions
+                WHERE permission_name IN ({placeholders})
+            )
+            AND user_id IN (
+                SELECT user_id FROM users
+                WHERE is_super_admin IS NOT TRUE
+            )
+        """),
+        params,
+    )
+    revoked = result.rowcount or 0
+    db.session.commit()
+    logging.info(f"[Migration] v21: revoked {revoked} super-admin-only perm row(s) from regular users")
+
+
+def _m022_create_permission_templates(db):
+    """v22: Create permission_templates table for custom (user-defined) templates.
+
+    Stored as JSON-encoded permission_names list.
+    Soft delete via deleted_at column.
+    Partial UNIQUE(LOWER(name)) WHERE deleted_at IS NULL enforces case-insensitive
+    name uniqueness across active templates only — soft-deleted rows don't block
+    re-using the name.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    if 'permission_templates' not in inspector.get_table_names():
+        if dialect == 'postgresql':
+            db.session.execute(text("""
+                CREATE TABLE permission_templates (
+                    template_id  UUID PRIMARY KEY,
+                    name         VARCHAR(40) NOT NULL,
+                    description  VARCHAR(200),
+                    permissions  TEXT NOT NULL,
+                    created_by   UUID NOT NULL,
+                    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    deleted_at   TIMESTAMP
+                )
+            """))
+        else:  # sqlite
+            db.session.execute(text("""
+                CREATE TABLE permission_templates (
+                    template_id  VARCHAR(36) PRIMARY KEY,
+                    name         VARCHAR(40) NOT NULL,
+                    description  VARCHAR(200),
+                    permissions  TEXT NOT NULL,
+                    created_by   VARCHAR(36) NOT NULL,
+                    created_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    updated_at   TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    deleted_at   TIMESTAMP
+                )
+            """))
+
+        # Partial unique index on LOWER(name) — works in both SQLite and PostgreSQL.
+        db.session.execute(text("""
+            CREATE UNIQUE INDEX IF NOT EXISTS idx_permission_templates_name_unique
+            ON permission_templates (LOWER(name))
+            WHERE deleted_at IS NULL
+        """))
+
+        # Soft-delete filter helper.
+        db.session.execute(text("""
+            CREATE INDEX IF NOT EXISTS idx_permission_templates_deleted_at
+            ON permission_templates (deleted_at)
+        """))
+
+        db.session.commit()
+        logging.info("[Migration] v22: permission_templates table created")
+    else:
+        logging.info("[Migration] v22: permission_templates table already exists, skipping")
+
+
+def _m023_role_hierarchy_redesign(db):
+    """v23: Collapse 5 roles to 3 (owner/manager/staff), add reports_to_id, invalidate sessions.
+
+    Atomic steps:
+      1. ALTER TABLE users ADD COLUMN reports_to_id (FK users.user_id, nullable, indexed).
+      2. UPDATE users SET role='manager' WHERE role='admin'.
+      3. UPDATE users SET role='staff'   WHERE role='cashier'.
+      4. For each client: backfill non-owner users.reports_to_id to that client's owner.user_id.
+         Owner's own reports_to_id stays NULL.
+      5. Normalize client_entry.role_quotas JSON: fold admin into manager, cashier into staff.
+      6. DELETE FROM user_sessions — force everyone to re-log in (one-time UX friction in
+         exchange for not keeping a backward-compat role-name shim forever).
+
+    Idempotent — re-running on already-migrated data is a no-op.
+    """
+    import json as _json
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    # 1. Add reports_to_id column (idempotent via guard).
+    cols = {c['name'] for c in inspector.get_columns('users')}
+    if 'reports_to_id' not in cols:
+        col_def = 'UUID NULL' if dialect == 'postgresql' else 'VARCHAR(36) NULL'
+        db.session.execute(text(f"ALTER TABLE users ADD COLUMN reports_to_id {col_def}"))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_users_reports_to_id ON users (reports_to_id)"
+        ))
+
+    # 2 + 3: Role renames.
+    db.session.execute(text("UPDATE users SET role = 'manager' WHERE role = 'admin'"))
+    db.session.execute(text("UPDATE users SET role = 'staff'   WHERE role = 'cashier'"))
+
+    # 4: Backfill reports_to_id. For each client, find the owner, then set
+    # every non-owner user in that client to point at the owner.
+    owners = db.session.execute(text(
+        "SELECT user_id, client_id FROM users WHERE role = 'owner'"
+    )).fetchall()
+    for owner_uid, client_id in owners:
+        # NOTE: cannot use "OR reports_to_id = ''" on PostgreSQL — UUID columns
+        # reject empty-string comparison. NULL is the only "unset" state on PG.
+        db.session.execute(text(
+            "UPDATE users SET reports_to_id = :owner "
+            "WHERE client_id = :cid AND role != 'owner' "
+            "AND reports_to_id IS NULL"
+        ), {'owner': str(owner_uid), 'cid': str(client_id)})
+
+    # 5: Normalize role_quotas JSON.
+    # NOTE: cannot use "AND role_quotas != ''" — PostgreSQL JSONB rejects empty-string
+    # comparison. NULL is the only "absent" state on PG.
+    rows = db.session.execute(text(
+        "SELECT client_id, role_quotas FROM client_entry "
+        "WHERE role_quotas IS NOT NULL"
+    )).fetchall()
+    for client_id, quotas_raw in rows:
+        try:
+            quotas = quotas_raw if isinstance(quotas_raw, dict) else _json.loads(quotas_raw)
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(quotas, dict):
+            continue
+        if 'admin' not in quotas and 'cashier' not in quotas:
+            continue  # nothing to normalize
+        new_quotas = {
+            'manager': (quotas.get('manager', 0) or 0) + (quotas.pop('admin', 0) or 0),
+            'staff':   (quotas.get('staff', 0) or 0)   + (quotas.pop('cashier', 0) or 0),
+        }
+        # Keep only manager and staff in the final dict.
+        new_quotas = {k: v for k, v in new_quotas.items() if v > 0}
+        if dialect == 'postgresql':
+            db.session.execute(text(
+                "UPDATE client_entry SET role_quotas = CAST(:q AS JSONB) WHERE client_id = :cid"
+            ), {'q': _json.dumps(new_quotas), 'cid': str(client_id)})
+        else:
+            db.session.execute(text(
+                "UPDATE client_entry SET role_quotas = :q WHERE client_id = :cid"
+            ), {'q': _json.dumps(new_quotas), 'cid': str(client_id)})
+
+    # 6: Invalidate all sessions — one-time, forces re-login.
+    db.session.execute(text("DELETE FROM user_sessions"))
+
+    db.session.commit()
+    logging.info(f"[Migration] v23: role hierarchy redesign applied (admin→manager, cashier→staff, reports_to_id backfilled, quotas normalized, sessions cleared)")
+
+
+def _m024_ot_columns(db):
+    """v24: Add OT tracking columns.
+
+    - employees.ot_multiplier DECIMAL(4,2) — payout rate for OT (default 1.5)
+    - employee_attendance.auto_ot_minutes INTEGER — auto-computed at check-out
+                                                    (max(0, total_minutes - cycle.full_day_mins))
+    - employee_attendance.approved_ot_minutes INTEGER NULL — manager-approved OT
+                                                              (NULL = pending, 0 = rejected,
+                                                               N = approved)
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    _add_col('employees', 'ot_multiplier', 'DECIMAL(4,2) NULL')
+    _add_col('employee_attendance', 'auto_ot_minutes', 'INTEGER NOT NULL DEFAULT 0')
+    _add_col('employee_attendance', 'approved_ot_minutes', 'INTEGER NULL')
+
+    db.session.commit()
+    logging.info("[Migration] v24: OT columns added to employees + employee_attendance")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -1010,6 +1372,14 @@ MIGRATIONS = [
     (13, _m013_apparel_label_fields),
     (14, _m014_employee_salary_tables),
     (15, _m015_attendance_status_column),
+    (17, _m017_audit_overrides_column),
+    (18, _m018_stock_entry_created_by),
+    (19, _m019_added_by_label),
+    (20, _m020_clarify_permission_descriptions),
+    (21, _m021_revoke_super_admin_perms_from_regular_users),
+    (22, _m022_create_permission_templates),
+    (23, _m023_role_hierarchy_redesign),
+    (24, _m024_ot_columns),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

@@ -279,7 +279,11 @@ api.interceptors.response.use(
 
     decrementLoading(error.config)
 
-    if (error.response?.status === 403 && error.response?.data?.code === 'TRIAL_EXPIRED') {
+    if (
+      error.response?.status === 403 &&
+      (error.response?.data?.code === 'TRIAL_EXPIRED' ||
+       error.response?.data?.code === 'SUBSCRIPTION_EXPIRED')
+    ) {
       // Don't redirect if already on upgrade page or if this is a subscription API call
       const isOnUpgrade = window.location.href.includes('/upgrade') || window.location.href.includes('/pricing')
       const isSubscriptionCall = error.config?.url?.includes('/subscription/')

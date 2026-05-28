@@ -1,12 +1,15 @@
 import { useState, useEffect, useCallback } from 'react'
+import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useClient } from '@/contexts/ClientContext'
 import { Users2 } from 'lucide-react'
+import { focusRowById } from '@/utils/focusRow'
 import EmployeePanel from '@/components/salary/EmployeePanel'
 import AttendancePanel from '@/components/salary/AttendancePanel'
 import SalaryPanel from '@/components/salary/SalaryPanel'
+import PendingOTPanel from '@/components/salary/PendingOTPanel'
 import {
   AddEmployeeModal,
   MarkAttendanceModal,
@@ -25,6 +28,7 @@ export interface Employee {
   phone: string | null
   pay_type: 'hourly' | 'daily'
   rate: number
+  ot_multiplier: number | null
   branch_id: string | null
   is_active: boolean
 }
@@ -65,6 +69,14 @@ export interface DailyBreakdown {
   hours_worked: number
   days_counted: number
   amount_earned: number
+  ot_minutes: number
+  ot_pay: number
+}
+
+export interface OTSummary {
+  total_ot_minutes: number
+  total_ot_pay: number
+  ot_multiplier: number
 }
 
 export interface SalaryAdvance {
@@ -89,6 +101,7 @@ export interface SalaryCycle {
   full_day_mins: number
   daily_breakdown?: DailyBreakdown[]
   advances?: SalaryAdvance[]
+  ot_summary?: OTSummary
 }
 
 // ─── Modal state enum ─────────────────────────────────────────────────────────
@@ -115,6 +128,9 @@ interface Toast {
 export default function SalaryPage() {
   const { hasPermission } = usePermissions()
   const { user } = useClient()
+  const [searchParams] = useSearchParams()
+  const navigate = useNavigate()
+  const location = useLocation()
 
   const [employees, setEmployees] = useState<Employee[]>([])
   const [empLoading, setEmpLoading] = useState(false)
@@ -126,7 +142,6 @@ export default function SalaryPage() {
 
   const hasManagerAccess =
     user?.role === 'owner' ||
-    user?.role === 'admin' ||
     user?.role === 'manager' ||
     hasPermission('view_stock')
 
@@ -150,6 +165,17 @@ export default function SalaryPage() {
   useEffect(() => {
     fetchEmployees()
   }, [fetchEmployees])
+
+  // Deep-link focus: scroll to and highlight the employee row matching ?focus=<employee_id>
+  useEffect(() => {
+    const focus = searchParams.get('focus')
+    if (!focus) return
+    if (!employees || employees.length === 0) return
+    focusRowById(focus)
+    const next = new URLSearchParams(searchParams)
+    next.delete('focus')
+    navigate({ pathname: location.pathname, search: next.toString() }, { replace: true })
+  }, [employees, searchParams]) // eslint-disable-line react-hooks/exhaustive-deps
 
   // ─── Handlers ───────────────────────────────────────────────────────────────
 
@@ -256,6 +282,7 @@ export default function SalaryPage() {
             employee={selected}
             onMarkAttendance={(prefillDate) => setModal({ type: 'mark-attendance', prefillDate })}
             onMarkDayOff={(workDate) => setModal({ type: 'mark-day-off', workDate })}
+            onCreateCycle={() => setModal({ type: 'new-cycle' })}
             hasManagerAccess={hasManagerAccess}
             refreshSignal={attendanceRefresh}
           />
@@ -276,6 +303,16 @@ export default function SalaryPage() {
           <EmptySlate message="Select an employee to view salary" />
         )}
       </div>
+
+      {/* Pending OT approvals — shown below the main panels when manager is viewing an employee */}
+      {selected && hasManagerAccess && (
+        <div className="mt-4">
+          <PendingOTPanel
+            employeeId={selected.employee_id}
+            onApproved={() => setCycleRefresh(v => v + 1)}
+          />
+        </div>
+      )}
 
       {/* Modals */}
       {modal?.type === 'add-employee' && (

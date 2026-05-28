@@ -23,6 +23,9 @@ interface BulkOrder {
   expected_delivery_date?: string
   status: string
   notes?: string
+  created_by?: string | null
+  created_by_name?: string | null
+  added_by_label?: string | null
   items: OrderItem[]
 }
 
@@ -229,6 +232,9 @@ export default function BulkStockOrderList({ isOpen, onClose, onReceive }: Props
                               <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">
                                 Status
                               </th>
+                              <th className="px-4 py-2 text-left text-xs font-medium text-gray-500 dark:text-gray-400">
+                                Added By
+                              </th>
                             </tr>
                           </thead>
                           <tbody className="divide-y divide-gray-200 dark:divide-gray-700">
@@ -257,6 +263,9 @@ export default function BulkStockOrderList({ isOpen, onClose, onReceive }: Props
                                   ) : (
                                     <span className="text-gray-500 dark:text-gray-400">Pending</span>
                                   )}
+                                </td>
+                                <td className="px-4 py-3 text-sm text-gray-500 dark:text-gray-400">
+                                  {order.added_by_label || order.created_by_name || '—'}
                                 </td>
                               </tr>
                             ))}
