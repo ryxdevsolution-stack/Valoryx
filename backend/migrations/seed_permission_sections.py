@@ -1,6 +1,11 @@
 """
 Seed permission_sections and link existing permissions to their sections.
-Safe to run multiple times (idempotent) — uses INSERT OR IGNORE + UPDATE.
+Safe to run multiple times (idempotent) — uses ON CONFLICT DO NOTHING + UPDATE.
+
+Cross-dialect SQL:
+  - ON CONFLICT DO NOTHING works on PostgreSQL natively and on SQLite >= 3.24
+    (which the project requires anyway). Replaces SQLite-only INSERT OR IGNORE.
+  - CURRENT_TIMESTAMP is SQL-standard. Replaces SQLite-only datetime('now').
 """
 from sqlalchemy import text
 import uuid
@@ -54,9 +59,10 @@ def run(db):
             else:
                 section_id = str(uuid.uuid4())
                 conn.execute(text(
-                    "INSERT OR IGNORE INTO permission_sections "
+                    "INSERT INTO permission_sections "
                     "(section_id, section_name, display_order, created_at) "
-                    "VALUES (:id, :name, :order, datetime('now'))"
+                    "VALUES (:id, :name, :order, CURRENT_TIMESTAMP) "
+                    "ON CONFLICT DO NOTHING"
                 ), {'id': section_id, 'name': section_name, 'order': i})
                 added_sections += 1
 
