@@ -143,7 +143,7 @@ export default function SalaryPage() {
   const hasManagerAccess =
     user?.role === 'owner' ||
     user?.role === 'manager' ||
-    hasPermission('view_stock')
+    hasPermission('view_employees')
 
   function showToast(msg: string, kind: 'success' | 'error' = 'success') {
     setToast({ msg, kind })

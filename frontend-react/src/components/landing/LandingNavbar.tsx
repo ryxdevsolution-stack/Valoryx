@@ -79,7 +79,9 @@ export default function LandingNavbar() {
               </Link>
 
               <a
-                href="#"
+                href={siteConfig.downloadUrl}
+                download
+                rel="noopener"
                 className="inline-flex items-center gap-2 font-semibold px-5 py-2.5 rounded-xl border border-primary-500 text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-950/30 transition-all duration-300"
               >
                 <Download className="w-4 h-4" />
@@ -149,7 +151,9 @@ export default function LandingNavbar() {
                   Login
                 </Link>
                 <a
-                  href="#"
+                  href={siteConfig.downloadUrl}
+                  download
+                  rel="noopener"
                   className="flex items-center justify-center gap-2 w-full text-center font-semibold text-primary-600 dark:text-primary-400 py-3 rounded-xl border border-primary-500"
                   onClick={() => setIsMobileMenuOpen(false)}
                 >

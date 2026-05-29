@@ -2,6 +2,7 @@ from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.notes_model import Note
 from utils.auth_middleware import authenticate
+from utils.permission_middleware import require_permission
 from datetime import datetime
 import logging
 
@@ -11,6 +12,7 @@ notes_bp = Blueprint('notes', __name__)
 
 @notes_bp.route('/notes', methods=['GET'])
 @authenticate
+@require_permission('view_notes')
 def get_notes():
     """Get all notes for the current user"""
     try:
@@ -33,6 +35,7 @@ def get_notes():
 
 @notes_bp.route('/notes/<note_id>', methods=['GET'])
 @authenticate
+@require_permission('view_notes')
 def get_note(note_id):
     """Get a specific note"""
     try:
@@ -57,6 +60,7 @@ def get_note(note_id):
 
 @notes_bp.route('/notes', methods=['POST'])
 @authenticate
+@require_permission('create_notes')
 def create_note():
     """Create a new note"""
     try:
@@ -109,6 +113,7 @@ def create_note():
 
 @notes_bp.route('/notes/<note_id>', methods=['PUT'])
 @authenticate
+@require_permission('edit_notes')
 def update_note(note_id):
     """Update an existing note"""
     try:
@@ -155,6 +160,7 @@ def update_note(note_id):
 
 @notes_bp.route('/notes/<note_id>', methods=['DELETE'])
 @authenticate
+@require_permission('delete_notes')
 def delete_note(note_id):
     """Delete a note"""
     try:

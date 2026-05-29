@@ -50,6 +50,8 @@ export const siteConfig = {
   description: 'GST-compliant invoicing, real-time inventory, and powerful analytics. Everything you need to run your retail or service business efficiently.',
   logoPath: `${import.meta.env.BASE_URL}valoryx-logo.png`,
   appUrl: 'app.ryxbilling.com',
+  downloadUrl:
+    'https://github.com/ryxdevsolution-stack/Valoryx/releases/latest/download/Valoryx-Setup-1.1.5.exe',
 
   // Routes
   routes: {

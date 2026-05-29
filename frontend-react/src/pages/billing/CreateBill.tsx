@@ -116,6 +116,7 @@ export default function UnifiedBillingPage() {
   const quantityInputRef = useRef<HTMLInputElement>(null)
   const gstInputRef = useRef<HTMLInputElement>(null)
   const rateInputRef = useRef<HTMLInputElement>(null)
+  const lineDiscountInputRef = useRef<HTMLInputElement>(null)
   const customerCodeRef = useRef<HTMLInputElement>(null)
   const customerNameRef = useRef<HTMLInputElement>(null)
   const customerPhoneRef = useRef<HTMLInputElement>(null)
@@ -1124,14 +1125,18 @@ export default function UnifiedBillingPage() {
         rateInputRef.current?.focus()
         rateInputRef.current?.select()
       } else if (field === 'rate') {
-        // For non-GST only users, skip GST field and add item directly
+        // For non-GST only users, skip GST field and go straight to Disc %
         if (nonGstOnly) {
-          addItem()
+          lineDiscountInputRef.current?.focus()
+          lineDiscountInputRef.current?.select()
         } else {
           gstInputRef.current?.focus()
           gstInputRef.current?.select()
         }
       } else if (field === 'gst') {
+        lineDiscountInputRef.current?.focus()
+        lineDiscountInputRef.current?.select()
+      } else if (field === 'discount') {
         addItem()
       }
     }
@@ -1996,6 +2001,7 @@ export default function UnifiedBillingPage() {
                     Disc %
                   </label>
                   <input
+                    ref={lineDiscountInputRef}
                     type="number"
                     min="0"
                     max="100"
@@ -2008,10 +2014,15 @@ export default function UnifiedBillingPage() {
                         discount_percentage: Math.min(Math.max(parseFloat(e.target.value) || 0, 0), 100),
                       })
                     }
-                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem() } }}
+                    onKeyDown={(e) => handleKeyPress(e, 'discount')}
                     className="w-full px-3 py-2.5 text-base border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium"
                     title="Customer discount %"
                   />
+                  {(currentItem.discount_percentage || 0) > 0 && currentItem.rate > 0 && (
+                    <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 tabular-nums">
+                      Net ₹{(currentItem.rate * (1 - (currentItem.discount_percentage || 0) / 100)).toFixed(2)}
+                    </p>
+                  )}
                 </div>
                 <div>
                   <button

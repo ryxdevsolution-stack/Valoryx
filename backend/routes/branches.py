@@ -5,6 +5,7 @@ from extensions import db
 from models.branch_model import Branch
 from models.user_model import User
 from utils.auth_middleware import authenticate
+from utils.permission_middleware import require_permission
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager
 
@@ -22,6 +23,7 @@ def _bust_branch_cache(client_id):
 
 @branch_bp.route('', methods=['GET'])
 @authenticate
+@require_permission('view_branches')
 def list_branches():
     """List all active branches. Includes manager info."""
     try:
@@ -87,6 +89,7 @@ def list_branches():
 
 @branch_bp.route('', methods=['POST'])
 @authenticate
+@require_permission('add_branch')
 def create_branch():
     """
     Create a new branch.
@@ -179,6 +182,7 @@ def create_branch():
 
 @branch_bp.route('/<branch_id>', methods=['PUT'])
 @authenticate
+@require_permission('edit_branch')
 def update_branch(branch_id):
     """Update branch name/location, and optionally reassign manager."""
     try:
@@ -242,6 +246,7 @@ def update_branch(branch_id):
 
 @branch_bp.route('/<branch_id>', methods=['DELETE'])
 @authenticate
+@require_permission('delete_branch')
 def delete_branch(branch_id):
     """Soft-delete a branch."""
     try:
@@ -278,6 +283,7 @@ def delete_branch(branch_id):
 
 @branch_bp.route('/available-managers', methods=['GET'])
 @authenticate
+@require_permission('view_branches')
 def list_available_managers():
     """
     Returns admin/manager users who are not yet assigned to any branch.

@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 25
+CURRENT_SCHEMA_VERSION = 26
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -1392,6 +1392,127 @@ def _m025_discount_columns(db):
     logging.info("[Migration] v25: discount columns added to stock + supplier/bulk-order items")
 
 
+def _m026_add_missing_permissions(db):
+    """
+    Add permission sections and permission rows for feature areas that were
+    previously unprotected: Employees, Payroll, Expenses, Suppliers, Branches,
+    Stock Transfers, Shop Settings.
+
+    Data-only — does NOT auto-grant to existing users. Super admin will use
+    the existing permissions UI to grant new keys to owners; owners then
+    cascade to staff via /api/team/<user_id>/permissions.
+
+    Idempotent: re-running is a no-op (uses check-before-insert pattern, the
+    same approach as _m007 to stay dialect-agnostic between SQLite/Postgres).
+    """
+    import uuid as _uuid
+
+    inspector = sa_inspect(db.engine)
+    tables = inspector.get_table_names()
+    if 'permission_sections' not in tables or 'permissions' not in tables:
+        logging.info("[Migration] v26: permission tables missing — skipping (fresh install will use db.create_all)")
+        return
+
+    # (section_name, display_order, [(permission_name, description, display_order), ...])
+    new_data = [
+        ('Employees', 6, [
+            ('view_employees',   'View employee list',           1),
+            ('add_employee',     'Add new employees',             2),
+            ('edit_employee',    'Edit employee details',         3),
+            ('delete_employee',  'Delete / deactivate employees', 4),
+            ('view_attendance',  'View attendance records',       5),
+            ('mark_attendance',  'Mark / edit attendance',        6),
+        ]),
+        ('Payroll', 7, [
+            ('view_salary',           'View salary cycles',                1),
+            ('manage_salary_cycles',  'Open / close / edit salary cycles', 2),
+            ('record_advance',        'Record salary advances',            3),
+            ('mark_salary_paid',      'Mark cycle as paid',                4),
+        ]),
+        ('Expenses', 8, [
+            ('view_expenses',              'View expense entries',           1),
+            ('add_expense',                'Add new expense',                2),
+            ('edit_expense',               'Edit expense entries',           3),
+            ('delete_expense',             'Delete expense entries',         4),
+            ('manage_expense_categories',  'Manage expense categories',      5),
+        ]),
+        ('Suppliers', 9, [
+            ('view_suppliers',     'View supplier list',                1),
+            ('add_supplier',       'Add new suppliers',                 2),
+            ('edit_supplier',      'Edit supplier details',             3),
+            ('delete_supplier',    'Delete / deactivate suppliers',     4),
+            ('manage_deliveries',  'Manage supplier deliveries',        5),
+        ]),
+        ('Branches', 10, [
+            ('view_branches',   'View branches',          1),
+            ('add_branch',      'Add new branches',        2),
+            ('edit_branch',     'Edit branch details',     3),
+            ('delete_branch',   'Delete branches',         4),
+        ]),
+        ('Stock Transfers', 11, [
+            ('view_stock_transfers',     'View stock transfer list',      1),
+            ('create_stock_transfer',    'Create / request transfers',    2),
+            ('approve_stock_transfer',   'Approve transfer requests',     3),
+            ('receive_stock_transfer',   'Confirm receipt of transfers',  4),
+        ]),
+        ('Shop Settings', 12, [
+            ('view_shop_settings',  'View shop settings',  1),
+            ('edit_shop_settings',  'Edit shop settings',  2),
+        ]),
+    ]
+
+    sections_added = 0
+    perms_added = 0
+
+    with db.engine.connect() as conn:
+        for section_name, section_order, perms in new_data:
+            # Get-or-create section
+            row = conn.execute(
+                text("SELECT section_id FROM permission_sections WHERE section_name = :name"),
+                {'name': section_name}
+            ).fetchone()
+
+            if row:
+                section_id = str(row[0])
+            else:
+                section_id = str(_uuid.uuid4())
+                conn.execute(
+                    text("INSERT INTO permission_sections "
+                         "(section_id, section_name, display_order) "
+                         "VALUES (:id, :name, :order)"),
+                    {'id': section_id, 'name': section_name, 'order': section_order}
+                )
+                sections_added += 1
+
+            # Insert permissions only if missing
+            for perm_name, description, display_order in perms:
+                exists = conn.execute(
+                    text("SELECT 1 FROM permissions WHERE permission_name = :pname"),
+                    {'pname': perm_name}
+                ).fetchone()
+                if exists:
+                    continue
+                conn.execute(
+                    text("INSERT INTO permissions "
+                         "(permission_id, permission_name, description, section_id, display_order) "
+                         "VALUES (:id, :name, :desc, :sid, :order)"),
+                    {
+                        'id': str(_uuid.uuid4()),
+                        'name': perm_name,
+                        'desc': description,
+                        'sid': section_id,
+                        'order': display_order,
+                    }
+                )
+                perms_added += 1
+
+        conn.commit()
+
+    logging.info(
+        f"[Migration] v26: {sections_added} new section(s), {perms_added} new permission(s) added"
+    )
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -1419,6 +1540,7 @@ MIGRATIONS = [
     (23, _m023_role_hierarchy_redesign),
     (24, _m024_ot_columns),
     (25, _m025_discount_columns),
+    (26, _m026_add_missing_permissions),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

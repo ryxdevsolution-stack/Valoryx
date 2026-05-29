@@ -410,16 +410,10 @@ def register():
         db.session.add(new_user)
         db.session.flush()
 
-        # Assign default owner permissions (same set as Google OAuth)
-        default_perms = [
-            'view_dashboard', 'gst_billing', 'non_gst_billing',
-            'view_all_bills', 'view_own_bills', 'view_customers',
-            'view_stock', 'add_product', 'edit_product_details',
-            'view_sales_reports', 'export_reports', 'view_audit_logs',
-            'edit_bill_details', 'print_bills',
-        ]
-        perms = Permission.query.filter(Permission.permission_name.in_(default_perms)).all()
-        for perm in perms:
+        # Owners receive every permission in the system — same as trial signup.
+        # Super admin can revoke specific perms later via the permissions UI.
+        all_perms = Permission.query.all()
+        for perm in all_perms:
             db.session.add(UserPermission(
                 id=str(uuid.uuid4()),
                 user_id=new_user.user_id,

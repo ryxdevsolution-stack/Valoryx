@@ -8,6 +8,7 @@ from models.stock_model import StockEntry
 from models.branch_model import Branch
 from models.branch_inventory_model import BranchInventory
 from utils.auth_middleware import authenticate
+from utils.permission_middleware import require_permission
 from utils.cache_helper import get_cache_manager
 
 TRANSFER_CACHE_TTL = 30  # seconds — short enough to see new transfers quickly
@@ -138,6 +139,7 @@ def _sync_stock_totals(client_id, product_ids):
 
 @stock_transfer_bp.route('', methods=['POST'])
 @authenticate
+@require_permission('create_stock_transfer')
 def create_transfer():
     """
     Owner dispatches stock to a branch.
@@ -270,6 +272,7 @@ def create_transfer():
 
 @stock_transfer_bp.route('/request', methods=['POST'])
 @authenticate
+@require_permission('create_stock_transfer')
 def create_request():
     """
     Branch manager requests stock from another branch.
@@ -371,6 +374,7 @@ def create_request():
 
 @stock_transfer_bp.route('', methods=['GET'])
 @authenticate
+@require_permission('view_stock_transfers')
 def list_transfers():
     """List transfers. Owner sees all; branch manager sees only their branch's transfers."""
     client_id   = g.user['client_id']
@@ -454,6 +458,7 @@ def list_transfers():
 
 @stock_transfer_bp.route('/<transfer_id>', methods=['GET'])
 @authenticate
+@require_permission('view_stock_transfers')
 def get_transfer(transfer_id):
     try:
         client_id = g.user['client_id']
@@ -471,6 +476,7 @@ def get_transfer(transfer_id):
 
 @stock_transfer_bp.route('/<transfer_id>/approve', methods=['POST'])
 @authenticate
+@require_permission('approve_stock_transfer')
 def approve_transfer(transfer_id):
     """
     Owner approves a branch stock request.
@@ -540,6 +546,7 @@ def approve_transfer(transfer_id):
 
 @stock_transfer_bp.route('/<transfer_id>/receive', methods=['POST'])
 @authenticate
+@require_permission('receive_stock_transfer')
 def receive_transfer(transfer_id):
     """
     Branch manager confirms receipt of an in_transit transfer.
@@ -592,6 +599,7 @@ def receive_transfer(transfer_id):
 
 @stock_transfer_bp.route('/<transfer_id>/reject', methods=['POST'])
 @authenticate
+@require_permission('approve_stock_transfer')
 def reject_transfer(transfer_id):
     """
     Owner rejects a stock request (status: requested).
@@ -662,6 +670,7 @@ def reject_transfer(transfer_id):
 
 @stock_transfer_bp.route('/branches/<branch_id>/inventory', methods=['GET'])
 @authenticate
+@require_permission('view_stock_transfers')
 def get_branch_inventory(branch_id):
     """Get inventory at a specific branch."""
     try:

@@ -36,9 +36,17 @@ SECTIONS = [
     ('Bulk Orders',           ['view_bulk_orders', 'create_bulk_order', 'edit_bulk_order',
                                'delete_bulk_order', 'approve_bulk_order', 'receive_bulk_order']),
     ('Notes',                 ['view_notes', 'view_all_notes', 'create_notes', 'edit_notes', 'delete_notes']),
-    ('Employees & Salary',    ['view_employees', 'add_employee', 'edit_employee', 'delete_employee',
-                               'view_attendance', 'mark_attendance',
-                               'view_salary', 'manage_salary_cycles', 'record_advance', 'mark_salary_paid']),
+    ('Employees',             ['view_employees', 'add_employee', 'edit_employee', 'delete_employee',
+                               'view_attendance', 'mark_attendance']),
+    ('Payroll',               ['view_salary', 'manage_salary_cycles', 'record_advance', 'mark_salary_paid']),
+    ('Expenses',              ['view_expenses', 'add_expense', 'edit_expense', 'delete_expense',
+                               'manage_expense_categories']),
+    ('Suppliers',             ['view_suppliers', 'add_supplier', 'edit_supplier', 'delete_supplier',
+                               'manage_deliveries']),
+    ('Branches',              ['view_branches', 'add_branch', 'edit_branch', 'delete_branch']),
+    ('Stock Transfers',       ['view_stock_transfers', 'create_stock_transfer',
+                               'approve_stock_transfer', 'receive_stock_transfer']),
+    ('Shop Settings',         ['view_shop_settings', 'edit_shop_settings']),
 ]
 
 

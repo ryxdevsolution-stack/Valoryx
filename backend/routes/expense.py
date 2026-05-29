@@ -5,6 +5,7 @@ from sqlalchemy import func, and_, extract
 from extensions import db
 from models.expense_model import Expense, ExpenseSummary
 from utils.auth_middleware import authenticate
+from utils.permission_middleware import require_permission
 from utils.audit_logger import log_action
 from utils.cache import cache, invalidate_cache
 from decimal import Decimal
@@ -14,6 +15,7 @@ expense_bp = Blueprint('expense', __name__)
 
 @expense_bp.route('/create', methods=['POST'])
 @authenticate
+@require_permission('add_expense')
 def create_expense():
     """Create a new expense entry"""
     try:
@@ -69,6 +71,7 @@ def create_expense():
 
 @expense_bp.route('/list', methods=['GET'])
 @authenticate
+@require_permission('view_expenses')
 def list_expenses():
     """List expenses with filtering (cached)"""
     try:
@@ -125,6 +128,7 @@ def list_expenses():
 
 @expense_bp.route('/<expense_id>', methods=['GET'])
 @authenticate
+@require_permission('view_expenses')
 def get_expense(expense_id):
     """Get single expense details"""
     try:
@@ -149,6 +153,7 @@ def get_expense(expense_id):
 
 @expense_bp.route('/<expense_id>', methods=['PUT'])
 @authenticate
+@require_permission('edit_expense')
 def update_expense(expense_id):
     """Update an expense entry"""
     try:
@@ -208,6 +213,7 @@ def update_expense(expense_id):
 
 @expense_bp.route('/<expense_id>', methods=['DELETE'])
 @authenticate
+@require_permission('delete_expense')
 def delete_expense(expense_id):
     """Delete an expense entry"""
     try:
@@ -247,6 +253,7 @@ def delete_expense(expense_id):
 
 @expense_bp.route('/summary', methods=['GET'])
 @authenticate
+@require_permission('view_expenses')
 def get_expense_summary():
     """Get expense summary by time period (cached)"""
     try:
@@ -358,6 +365,7 @@ def get_expense_summary():
 
 @expense_bp.route('/categories', methods=['GET'])
 @authenticate
+@require_permission('view_expenses')
 def get_expense_categories():
     """Get list of expense categories used by client"""
     try:

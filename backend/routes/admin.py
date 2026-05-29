@@ -1249,20 +1249,24 @@ def create_client():
         db.session.add(new_user)
         db.session.flush()  # Get the user_id before assigning permissions
 
-        # Assign permissions if provided (use cached map — no per-perm query)
-        permissions = data.get('permissions', [])
-        if permissions:
-            _perm_map = {p.permission_name: p for p in _get_all_permissions()}
-            for perm_name in permissions:
-                permission = _perm_map.get(perm_name)
-                if permission:
-                    user_permission = UserPermission(
-                        id=str(uuid.uuid4()),
-                        user_id=new_user.user_id,
-                        permission_id=permission.permission_id,
-                        granted_by=g.user['user_id']
-                    )
-                    db.session.add(user_permission)
+        # Assign permissions. If the request didn't specify any, default to ALL
+        # permissions — matches the trial-signup / OAuth behavior so a super-
+        # admin-created owner isn't accidentally locked out of the app.
+        permissions = data.get('permissions')
+        _perm_map = {p.permission_name: p for p in _get_all_permissions()}
+        if not permissions:
+            permissions_to_grant = list(_perm_map.values())
+        else:
+            permissions_to_grant = [_perm_map[name] for name in permissions if name in _perm_map]
+
+        for permission in permissions_to_grant:
+            user_permission = UserPermission(
+                id=str(uuid.uuid4()),
+                user_id=new_user.user_id,
+                permission_id=permission.permission_id,
+                granted_by=g.user['user_id']
+            )
+            db.session.add(user_permission)
 
         # Commit both client and user
         db.session.commit()

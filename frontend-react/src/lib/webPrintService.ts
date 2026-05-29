@@ -251,7 +251,7 @@ export function generateReceiptHtml(
     // Show the discount as a sub-line so a discounted line reads correctly
     // (the col-rate shows the list rate; amt is already net of the discount).
     const discNote = disc > 0
-      ? `<div class="item-discount-note">${disc}% off applied</div>`
+      ? `<div class="item-discount-note">${disc}% discount</div>`
       : '';
 
     itemsHtml += `

@@ -3,6 +3,7 @@ from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.client_model import ClientEntry
 from utils.auth_middleware import authenticate
+from utils.permission_middleware import require_permission
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager
 
@@ -38,6 +39,7 @@ _READ_ONLY_FIELDS = {'logo_url'}
 
 @shop_settings_bp.route('', methods=['GET'])
 @authenticate
+@require_permission('view_shop_settings')
 def get_shop_settings():
     """
     GET /api/shop-settings
@@ -72,18 +74,14 @@ def get_shop_settings():
 
 @shop_settings_bp.route('', methods=['PUT'])
 @authenticate
+@require_permission('edit_shop_settings')
 def update_shop_settings():
     """
     PUT /api/shop-settings
     Update receipt / shop display settings.
-    Only owner or manager roles may update.
     """
     try:
         client_id = g.user['client_id']
-        role = g.user.get('role', '')
-
-        if role not in ('owner', 'manager', 'admin', 'super admin'):
-            return jsonify({'success': False, 'error': 'Only owner, manager or admin can update shop settings'}), 403
 
         client = ClientEntry.query.filter_by(client_id=client_id).first()
         if not client:

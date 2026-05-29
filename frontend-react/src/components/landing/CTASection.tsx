@@ -198,7 +198,9 @@ export default function CTASection() {
 
             {/* Download CTA */}
             <a
-              href="#"
+              href={siteConfig.downloadUrl}
+              download
+              rel="noopener"
               className="group inline-flex items-center justify-center gap-2 px-8 py-4 rounded-xl border border-white/20 hover:border-white/40 text-white font-semibold backdrop-blur-sm transition-all duration-300 hover:bg-white/5"
             >
               <Download className="w-5 h-5 group-hover:scale-110 transition-transform" />

@@ -42,9 +42,9 @@ const allNavigation: NavItem[] = [
   },
   { name: 'Customers', href: '/customers', icon: Users, permission: 'view_customers' },
   { name: 'Stock Management', href: '/stock', icon: Package, permission: 'view_stock' },
-  { name: 'Suppliers', href: '/suppliers', icon: Truck, permission: 'view_stock' },
-  { name: 'Salary', href: '/salary', icon: Banknote, permission: 'view_stock' },
-  { name: 'Stock Transfer', href: '/stock-transfer', icon: ArrowLeftRight, ownerOnly: true },
+  { name: 'Suppliers', href: '/suppliers', icon: Truck, permission: 'view_suppliers' },
+  { name: 'Salary', href: '/salary', icon: Banknote, permission: 'view_employees' },
+  { name: 'Stock Transfer', href: '/stock-transfer', icon: ArrowLeftRight, permission: 'view_stock_transfers' },
   { name: 'Reports', href: '/reports', icon: TrendingUp, permission: 'view_sales_reports' },
   { name: 'Auditor Reports', href: '/audit', icon: History, permission: 'view_audit_logs' },
 ]

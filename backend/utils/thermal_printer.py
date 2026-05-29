@@ -395,7 +395,7 @@ class ThermalPrinter:
 
             # Discount sub-line (rate shown is the list rate; amt is already net)
             disc_note = (
-                f"""<div class="item-discount-note">{disc_pct:g}% off applied</div>"""
+                f"""<div class="item-discount-note">{disc_pct:g}% discount</div>"""
                 if disc_pct > 0 else ""
             )
 

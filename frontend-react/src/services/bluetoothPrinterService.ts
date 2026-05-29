@@ -417,7 +417,7 @@ export class BluetoothPrinterService {
       // Per-line discount note (rate shown is the list rate; amount is net).
       const disc = Number(item.discount_percentage || 0);
       if (disc > 0) {
-        push(text(`  ${disc}% off applied`), lf);
+        push(text(`  ${disc}% discount`), lf);
       }
     }
 

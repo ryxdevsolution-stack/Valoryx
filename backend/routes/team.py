@@ -84,6 +84,24 @@ _ALL_PERMISSIONS = [
     'delete_bulk_order', 'approve_bulk_order', 'receive_bulk_order',
     # Notes
     'view_notes', 'view_all_notes', 'create_notes', 'edit_notes', 'delete_notes',
+    # Employees
+    'view_employees', 'add_employee', 'edit_employee', 'delete_employee',
+    'view_attendance', 'mark_attendance',
+    # Payroll
+    'view_salary', 'manage_salary_cycles', 'record_advance', 'mark_salary_paid',
+    # Expenses
+    'view_expenses', 'add_expense', 'edit_expense', 'delete_expense',
+    'manage_expense_categories',
+    # Suppliers
+    'view_suppliers', 'add_supplier', 'edit_supplier', 'delete_supplier',
+    'manage_deliveries',
+    # Branches
+    'view_branches', 'add_branch', 'edit_branch', 'delete_branch',
+    # Stock Transfers
+    'view_stock_transfers', 'create_stock_transfer',
+    'approve_stock_transfer', 'receive_stock_transfer',
+    # Shop Settings
+    'view_shop_settings', 'edit_shop_settings',
     # System Administration (manage_clients, system_backup, system_restore,
     # maintenance_mode) intentionally excluded — see utils.permissions.SUPER_ADMIN_ONLY_PERMISSIONS.
 ]
@@ -119,6 +137,15 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
         'view_bulk_orders', 'create_bulk_order', 'receive_bulk_order',
         # Notes
         'view_notes', 'create_notes', 'edit_notes',
+        # Employees (view + attendance only — no CRUD)
+        'view_employees', 'view_attendance', 'mark_attendance',
+        # Expenses (full — managers handle day-to-day expenses)
+        'view_expenses', 'add_expense', 'edit_expense', 'delete_expense',
+        # Suppliers (view only)
+        'view_suppliers',
+        # Stock Transfers
+        'view_stock_transfers', 'create_stock_transfer',
+        'approve_stock_transfer', 'receive_stock_transfer',
     ],
 
     'staff': [
@@ -142,6 +169,18 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
 def _can_manage(actor_role: str, target_role: str) -> bool:
     """Return True if actor outranks the target (strictly greater)."""
     return ROLE_HIERARCHY.get(actor_role, 0) > ROLE_HIERARCHY.get(target_role, 0)
+
+
+def _disallowed_grants(actor_user_id, requested_perms, is_super_admin: bool) -> list:
+    """
+    No-escalation check: a non-superadmin can only grant permissions they
+    themselves hold. Returns the list of perms the actor is trying to grant
+    but doesn't own. Empty list means the request is fully grantable.
+    """
+    if is_super_admin:
+        return []
+    actor_perms = set(get_user_permissions(actor_user_id))
+    return sorted(set(requested_perms) - actor_perms)
 
 
 # ---------------------------------------------------------------------------
@@ -555,6 +594,19 @@ def create_team_member():
         # Assign permissions if provided
         permissions_list = data.get('permissions', [])
         if permissions_list and isinstance(permissions_list, list):
+            # ── No-escalation: actor can only grant perms they hold ──
+            not_grantable = _disallowed_grants(
+                g.user['user_id'], permissions_list, g.user.get('is_super_admin', False)
+            )
+            if not_grantable:
+                db.session.rollback()
+                return jsonify({
+                    'success': False,
+                    'error': 'PERMISSION_NOT_GRANTABLE',
+                    'message': f'You cannot grant permissions you do not hold: {", ".join(not_grantable)}',
+                    'permissions': not_grantable,
+                }), 403
+
             # ── Validate billing permissions against plan ──
             billing_perms = {'gst_billing', 'non_gst_billing'}
             requested_billing = billing_perms & set(permissions_list)
@@ -1051,6 +1103,18 @@ def update_member_permissions(user_id):
         permissions_list = data['permissions']
         if not isinstance(permissions_list, list):
             return jsonify({'success': False, 'error': 'permissions must be an array'}), 400
+
+        # ── No-escalation: actor can only grant perms they hold ──
+        not_grantable = _disallowed_grants(
+            g.user['user_id'], permissions_list, g.user.get('is_super_admin', False)
+        )
+        if not_grantable:
+            return jsonify({
+                'success': False,
+                'error': 'PERMISSION_NOT_GRANTABLE',
+                'message': f'You cannot grant permissions you do not hold: {", ".join(not_grantable)}',
+                'permissions': not_grantable,
+            }), 403
 
         # ── Validate billing permissions against plan ──
         plan_name, rules, is_trial = _get_plan_rules(client_id)

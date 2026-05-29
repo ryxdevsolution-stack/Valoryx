@@ -30,6 +30,7 @@ from werkzeug.utils import secure_filename
 
 from extensions import db
 from utils.auth_middleware import authenticate
+from utils.permission_middleware import require_permission
 from utils.cache_helper import get_cache_manager
 
 logger = logging.getLogger(__name__)
@@ -96,6 +97,7 @@ def _invalidate_delivery_cache(client_id: str):
 
 @suppliers_bp.route('/', methods=['GET'])
 @authenticate
+@require_permission('view_suppliers')
 def list_suppliers():
     client_id = g.user['client_id']
     cache_key = f'suppliers:list:{client_id}'
@@ -115,6 +117,7 @@ def list_suppliers():
 
 @suppliers_bp.route('/', methods=['POST'])
 @authenticate
+@require_permission('add_supplier')
 def create_supplier():
     client_id = g.user['client_id']
     body = request.get_json(silent=True) or {}
@@ -146,6 +149,7 @@ def create_supplier():
 
 @suppliers_bp.route('/<supplier_id>', methods=['PUT'])
 @authenticate
+@require_permission('edit_supplier')
 def update_supplier(supplier_id):
     client_id = g.user['client_id']
     supplier = _get_supplier_or_404(supplier_id, client_id)
@@ -174,6 +178,7 @@ def update_supplier(supplier_id):
 
 @suppliers_bp.route('/<supplier_id>', methods=['DELETE'])
 @authenticate
+@require_permission('delete_supplier')
 def delete_supplier(supplier_id):
     client_id = g.user['client_id']
     supplier = _get_supplier_or_404(supplier_id, client_id)
@@ -190,6 +195,7 @@ def delete_supplier(supplier_id):
 
 @suppliers_bp.route('/deliveries', methods=['GET'])
 @authenticate
+@require_permission('view_suppliers')
 def list_deliveries():
     client_id = g.user['client_id']
     status    = request.args.get('status')
@@ -222,6 +228,7 @@ def list_deliveries():
 
 @suppliers_bp.route('/deliveries', methods=['POST'])
 @authenticate
+@require_permission('manage_deliveries')
 def create_delivery():
     client_id = g.user['client_id']
     body = request.get_json(silent=True) or {}
@@ -292,6 +299,7 @@ def create_delivery():
 
 @suppliers_bp.route('/deliveries/<delivery_id>', methods=['GET'])
 @authenticate
+@require_permission('view_suppliers')
 def get_delivery(delivery_id):
     client_id = g.user['client_id']
     delivery = _get_delivery_or_404(delivery_id, client_id)
@@ -302,6 +310,7 @@ def get_delivery(delivery_id):
 
 @suppliers_bp.route('/deliveries/<delivery_id>', methods=['PUT'])
 @authenticate
+@require_permission('manage_deliveries')
 def update_delivery(delivery_id):
     """Update delivery details + items — only allowed while status is 'draft'"""
     client_id = g.user['client_id']
@@ -363,6 +372,7 @@ def update_delivery(delivery_id):
 
 @suppliers_bp.route('/deliveries/<delivery_id>/confirm-products', methods=['POST'])
 @authenticate
+@require_permission('manage_deliveries')
 def confirm_products(delivery_id):
     """Mark that the user has physically verified all products are present."""
     client_id = g.user['client_id']
@@ -385,6 +395,7 @@ def confirm_products(delivery_id):
 
 @suppliers_bp.route('/deliveries/<delivery_id>/upload-note', methods=['POST'])
 @authenticate
+@require_permission('manage_deliveries')
 def upload_delivery_note(delivery_id):
     """Upload delivery note image or PDF."""
     client_id = g.user['client_id']
@@ -444,6 +455,7 @@ def upload_delivery_note(delivery_id):
 
 @suppliers_bp.route('/deliveries/<delivery_id>/download-note', methods=['GET'])
 @authenticate
+@require_permission('view_suppliers')
 def download_delivery_note(delivery_id):
     """Serve the uploaded delivery note file."""
     client_id = g.user['client_id']
@@ -462,6 +474,7 @@ def download_delivery_note(delivery_id):
 
 @suppliers_bp.route('/deliveries/<delivery_id>/complete', methods=['POST'])
 @authenticate
+@require_permission('manage_deliveries')
 def complete_delivery(delivery_id):
     """
     Complete the delivery:
@@ -592,6 +605,7 @@ def complete_delivery(delivery_id):
 
 @suppliers_bp.route('/deliveries/<delivery_id>', methods=['DELETE'])
 @authenticate
+@require_permission('manage_deliveries')
 def delete_delivery(delivery_id):
     """Delete a draft delivery only."""
     client_id = g.user['client_id']
