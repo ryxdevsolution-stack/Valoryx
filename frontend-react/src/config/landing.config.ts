@@ -51,7 +51,7 @@ export const siteConfig = {
   logoPath: `${import.meta.env.BASE_URL}valoryx-logo.png`,
   appUrl: 'app.ryxbilling.com',
   downloadUrl:
-    'https://github.com/ryxdevsolution-stack/Valoryx/releases/latest/download/Valoryx-Setup-1.1.5.exe',
+    'https://github.com/ryxdevsolution-stack/Valoryx/releases/latest/download/Valoryx-Setup-1.1.6.exe',
 
   // Routes
   routes: {
