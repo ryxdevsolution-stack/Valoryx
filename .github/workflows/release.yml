@@ -55,6 +55,27 @@ jobs:
           cd backend
           pip install -r requirements.txt
 
+      - name: Materialize backend/env.local from secret
+        shell: bash
+        env:
+          BACKEND_ENV_LOCAL_B64: ${{ secrets.BACKEND_ENV_LOCAL_B64 }}
+        run: |
+          if [ -z "${BACKEND_ENV_LOCAL_B64}" ]; then
+            echo "ERROR: BACKEND_ENV_LOCAL_B64 secret is not set in repo settings."
+            echo "       The installer needs backend/env.local with JWT_SECRET, SECRET_KEY,"
+            echo "       DB_URL, SUPABASE_* etc. Without it the Flask backend crashes at startup."
+            exit 1
+          fi
+          echo "${BACKEND_ENV_LOCAL_B64}" | base64 -d > backend/env.local
+          # Cheap sanity check without printing values
+          for key in JWT_SECRET SECRET_KEY DB_URL; do
+            if ! grep -q "^${key}=" backend/env.local; then
+              echo "ERROR: backend/env.local is missing ${key}"
+              exit 1
+            fi
+          done
+          echo "OK: backend/env.local materialized with required keys"
+
       - name: Build embedded Python runtime
         run: npm run build:python
 
