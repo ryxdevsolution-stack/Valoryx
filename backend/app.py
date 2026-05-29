@@ -1172,6 +1172,29 @@ if __name__ == '__main__':
             print(f"[WARNING]  db.create_all() skipped: {e}")
             print("Database tables likely already exist - continuing...")
 
+        # Tables without SQLAlchemy models (employees, employee_attendance,
+        # salary_cycles, salary_advances) live only as raw SQL in migration v14.
+        # db.create_all() above cannot create them. Run the relevant migration
+        # functions directly on every startup — they're idempotent (CREATE TABLE
+        # IF NOT EXISTS, _add_col with guards) so re-running is safe and fast.
+        try:
+            from migrations.runner import (
+                _m014_employee_salary_tables,
+                _m015_attendance_status_column,
+                _m024_ot_columns,
+            )
+            _m014_employee_salary_tables(db)
+            _m015_attendance_status_column(db)
+            _m024_ot_columns(db)
+            db.session.commit()
+            print("[SQLite] ✓ Employee/salary tables ensured")
+        except Exception as e:
+            try:
+                db.session.rollback()
+            except Exception:
+                pass
+            print(f"[WARNING] Employee tables setup failed: {e}")
+
         # Phase 1.5: Run pending column migrations (safe to re-run)
         try:
             from sqlalchemy import text, inspect as sa_inspect
