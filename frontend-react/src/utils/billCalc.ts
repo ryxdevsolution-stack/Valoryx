@@ -20,6 +20,17 @@ export interface BillTotals {
   bill_total: number;
 }
 
+/**
+ * Net cost after a supplier/purchase discount, for profit display only.
+ * The gross cost is kept on the product master; this derives the effective cost.
+ * Returns undefined when no gross cost is known. Discount is clamped to 0-100.
+ */
+export function netCost(grossCost: number | null | undefined, purchaseDiscountPct: number = 0): number | undefined {
+  if (grossCost == null || Number.isNaN(Number(grossCost))) return undefined;
+  const disc = Math.min(Math.max(purchaseDiscountPct || 0, 0), 100);
+  return Number((Number(grossCost) * (1 - disc / 100)).toFixed(2));
+}
+
 export function calcLine(input: LineInput): LineTotals {
   const line_subtotal = (input.rate || 0) * (input.quantity || 0);
   const line_discount_amount = line_subtotal * ((input.discount || 0) / 100);

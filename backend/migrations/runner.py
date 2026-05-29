@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 24
+CURRENT_SCHEMA_VERSION = 25
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -1354,6 +1354,44 @@ def _m024_ot_columns(db):
     logging.info("[Migration] v24: OT columns added to employees + employee_attendance")
 
 
+def _m025_discount_columns(db):
+    """v25: Add optional percentage discount columns to stock + transactional tables.
+
+    Two nullable columns (default 0) on three tables:
+      - stock_entry              (product master — read at billing time)
+      - supplier_delivery_items  (per-delivery history)
+      - bulk_stock_order_item    (per-order history)
+
+    Columns:
+      - purchase_discount_percentage — supplier discount; profit calc only (cost_price stays gross)
+      - selling_discount_percentage  — customer discount; auto-fills the bill line
+
+    All nullable with default 0 — zero-risk to existing rows.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    for table in ('stock_entry', 'supplier_delivery_items', 'bulk_stock_order_item'):
+        _add_col(table, 'purchase_discount_percentage', 'DECIMAL(5,2) NULL DEFAULT 0')
+        _add_col(table, 'selling_discount_percentage',  'DECIMAL(5,2) NULL DEFAULT 0')
+
+    db.session.commit()
+    logging.info("[Migration] v25: discount columns added to stock + supplier/bulk-order items")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -1380,6 +1418,7 @@ MIGRATIONS = [
     (22, _m022_create_permission_templates),
     (23, _m023_role_hierarchy_redesign),
     (24, _m024_ot_columns),
+    (25, _m025_discount_columns),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

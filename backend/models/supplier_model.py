@@ -149,6 +149,8 @@ class SupplierDeliveryItem(db.Model):
     cost_price   = db.Column(FlexibleNumeric, nullable=True)   # purchase price from supplier
     selling_price= db.Column(FlexibleNumeric, nullable=True)   # rate to sell at
     mrp          = db.Column(FlexibleNumeric, nullable=True)
+    purchase_discount_percentage = db.Column(FlexibleNumeric, nullable=True, default=0)  # v25: supplier discount
+    selling_discount_percentage  = db.Column(FlexibleNumeric, nullable=True, default=0)  # v25: customer discount
     unit         = db.Column(db.String(20),  default='pcs')
     barcode      = db.Column(db.String(100), nullable=True)
     item_code    = db.Column(db.String(50),  nullable=True)
@@ -167,6 +169,8 @@ class SupplierDeliveryItem(db.Model):
             'cost_price':    float(self.cost_price)    if self.cost_price    else None,
             'selling_price': float(self.selling_price) if self.selling_price else None,
             'mrp':           float(self.mrp)           if self.mrp           else None,
+            'purchase_discount_percentage': float(self.purchase_discount_percentage) if self.purchase_discount_percentage else 0,
+            'selling_discount_percentage':  float(self.selling_discount_percentage)  if self.selling_discount_percentage  else 0,
             'unit':          self.unit,
             'barcode':       self.barcode,
             'item_code':     self.item_code,

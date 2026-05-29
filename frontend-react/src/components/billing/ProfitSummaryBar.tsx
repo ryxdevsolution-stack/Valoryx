@@ -6,6 +6,7 @@ interface BillItem {
   quantity: number
   rate: number
   cost_price?: number
+  discount_percentage?: number  // per-line customer discount %
 }
 
 interface ProfitSummaryBarProps {
@@ -22,8 +23,11 @@ function ProfitSummaryBar({ items, userRole }: ProfitSummaryBarProps) {
       return sum + Number(item.cost_price || 0) * item.quantity
     }, 0)
 
+    // Revenue is net of the per-line customer discount (off rate, before GST),
+    // so profit/margin match what the customer actually pays.
     const revenue = items.reduce((sum, item) => {
-      return sum + item.rate * item.quantity
+      const disc = Math.min(Math.max(Number(item.discount_percentage || 0), 0), 100)
+      return sum + item.rate * item.quantity * (1 - disc / 100)
     }, 0)
 
     const p = revenue - cost

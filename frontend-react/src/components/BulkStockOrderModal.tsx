@@ -20,6 +20,8 @@ interface OrderItem {
   cost_price: number | string
   selling_price: number | string
   mrp?: number | string
+  purchase_discount_percentage?: number | string
+  selling_discount_percentage?: number | string
   barcode?: string
   item_code?: string
   gst_percentage?: number
@@ -125,6 +127,8 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
           cost_price: '',
           selling_price: '',
           mrp: '',
+          purchase_discount_percentage: '',
+          selling_discount_percentage: '',
           gst_percentage: 0,
         }
       ]
@@ -622,6 +626,8 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                           <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">Cost ₹</th>
                           <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">Sell ₹</th>
                           <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">MRP ₹</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-20" title="Supplier discount — profit calc only">Purch Disc %</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-20" title="Customer discount — auto-fills the bill line">Cust Disc %</th>
                           <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-28">Barcode</th>
                           <th className="px-3 py-2 w-10"></th>
                         </tr>
@@ -677,6 +683,32 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                                 value={item.mrp}
                                 onChange={(e) => updateItem(index, 'mrp', e.target.value)}
                                 placeholder="Later"
+                                className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 placeholder:text-gray-300 dark:placeholder:text-gray-500"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.01"
+                                value={item.purchase_discount_percentage ?? ''}
+                                onChange={(e) => updateItem(index, 'purchase_discount_percentage', e.target.value)}
+                                placeholder="0%"
+                                title="Supplier discount — profit calc only"
+                                className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 placeholder:text-gray-300 dark:placeholder:text-gray-500"
+                              />
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <input
+                                type="number"
+                                min="0"
+                                max="100"
+                                step="0.01"
+                                value={item.selling_discount_percentage ?? ''}
+                                onChange={(e) => updateItem(index, 'selling_discount_percentage', e.target.value)}
+                                placeholder="0%"
+                                title="Customer discount — auto-fills the bill line"
                                 className="w-full px-2 py-1.5 text-xs border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 placeholder:text-gray-300 dark:placeholder:text-gray-500"
                               />
                             </td>
@@ -769,6 +801,32 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                               value={item.selling_price}
                               onChange={(e) => updateItem(index, 'selling_price', e.target.value)}
                               placeholder="Later"
+                              className="w-full px-2 py-1.5 text-sm border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 placeholder:text-gray-300 dark:placeholder:text-gray-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-gray-400 mb-1" title="Supplier discount — profit calc only">Purch Disc %</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.01"
+                              value={item.purchase_discount_percentage ?? ''}
+                              onChange={(e) => updateItem(index, 'purchase_discount_percentage', e.target.value)}
+                              placeholder="0%"
+                              className="w-full px-2 py-1.5 text-sm border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 placeholder:text-gray-300 dark:placeholder:text-gray-500"
+                            />
+                          </div>
+                          <div>
+                            <label className="block text-[10px] text-gray-400 mb-1" title="Customer discount — auto-fills the bill line">Cust Disc %</label>
+                            <input
+                              type="number"
+                              min="0"
+                              max="100"
+                              step="0.01"
+                              value={item.selling_discount_percentage ?? ''}
+                              onChange={(e) => updateItem(index, 'selling_discount_percentage', e.target.value)}
+                              placeholder="0%"
                               className="w-full px-2 py-1.5 text-sm border border-gray-200 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded focus:ring-1 focus:ring-blue-500 placeholder:text-gray-300 dark:placeholder:text-gray-500"
                             />
                           </div>

@@ -23,6 +23,9 @@ export interface Product {
   barcode?: string;
   gst_percentage: number;
   hsn_code?: string;
+  // Optional percentage discounts (v25)
+  purchase_discount_percentage?: number;  // supplier discount; profit calc only
+  selling_discount_percentage?: number;   // customer discount; auto-applies on the bill line
   // Apparel hang-tag / Legal Metrology fields
   brand_name?: string;
   size_variant?: string;
@@ -58,6 +61,8 @@ export interface CreateProductRequest {
   barcode?: string;
   gst_percentage?: number;
   hsn_code?: string;
+  purchase_discount_percentage?: number;
+  selling_discount_percentage?: number;
 }
 
 export interface UpdateProductRequest extends Partial<CreateProductRequest> {

@@ -33,6 +33,8 @@ interface DeliveryItem {
   cost_price: string
   selling_price: string
   mrp: string
+  purchase_discount_percentage: string
+  selling_discount_percentage: string
   unit: string
   barcode: string
   item_code: string
@@ -71,7 +73,8 @@ const EMPTY_SUPPLIER: Omit<Supplier, 'supplier_id' | 'is_active' | 'created_at'>
 
 const EMPTY_ITEM: DeliveryItem = {
   product_name: '', category: '', quantity: 1, cost_price: '',
-  selling_price: '', mrp: '', unit: 'pcs', barcode: '',
+  selling_price: '', mrp: '', purchase_discount_percentage: '', selling_discount_percentage: '',
+  unit: 'pcs', barcode: '',
   item_code: '', gst_percentage: '', hsn_code: '',
 }
 
@@ -307,6 +310,8 @@ export default function SuppliersPage() {
           cost_price:    i.cost_price    ? String(i.cost_price)    : '',
           selling_price: i.selling_price ? String(i.selling_price) : '',
           mrp:           i.mrp           ? String(i.mrp)           : '',
+          purchase_discount_percentage: i.purchase_discount_percentage ? String(i.purchase_discount_percentage) : '',
+          selling_discount_percentage:  i.selling_discount_percentage  ? String(i.selling_discount_percentage)  : '',
           gst_percentage: i.gst_percentage ? String(i.gst_percentage) : '',
         }))
       : [{ ...EMPTY_ITEM }]
@@ -378,6 +383,8 @@ export default function SuppliersPage() {
           cost_price:     i.cost_price    ? parseFloat(i.cost_price)    : null,
           selling_price:  i.selling_price ? parseFloat(i.selling_price) : null,
           mrp:            i.mrp           ? parseFloat(i.mrp)           : null,
+          purchase_discount_percentage: i.purchase_discount_percentage ? parseFloat(i.purchase_discount_percentage) : 0,
+          selling_discount_percentage:  i.selling_discount_percentage  ? parseFloat(i.selling_discount_percentage)  : 0,
           gst_percentage: i.gst_percentage ? parseFloat(i.gst_percentage) : 0,
         })),
       })
@@ -485,6 +492,8 @@ export default function SuppliersPage() {
         cost_price:     p.cost_price != null ? String(p.cost_price)   : item.cost_price,
         selling_price:  p.rate      != null ? String(p.rate)          : item.selling_price,
         mrp:            p.mrp       != null ? String(p.mrp)           : item.mrp,
+        purchase_discount_percentage: p.purchase_discount_percentage != null ? String(p.purchase_discount_percentage) : item.purchase_discount_percentage,
+        selling_discount_percentage:  p.selling_discount_percentage  != null ? String(p.selling_discount_percentage)  : item.selling_discount_percentage,
         unit:           p.unit          || item.unit,
         category:       p.category      || item.category,
         barcode:        barcode,
@@ -518,6 +527,8 @@ export default function SuppliersPage() {
       const qtyIdx    = idx(['quantity','qty','received_qty'])
       const costIdx   = idx(['cost_price','cost','purchase_price','unit_price','price'])
       const sellIdx   = idx(['selling_price','sell_price','sale_price','mrp'])
+      const purchDiscIdx = idx(['purchase_discount_percentage','purchase_discount','purchase_disc'])
+      const sellDiscIdx  = idx(['selling_discount_percentage','customer_discount','selling_discount','customer_disc'])
       const barcodeIdx= idx(['barcode','ean','upc','code'])
       const unitIdx   = idx(['unit','uom'])
       const catIdx    = idx(['category','cat'])
@@ -535,6 +546,8 @@ export default function SuppliersPage() {
           quantity:      qtyIdx   >= 0 ? (parseInt(cols[qtyIdx])   || 1)    : 1,
           cost_price:    costIdx  >= 0 ? (cols[costIdx]  || '')             : '',
           selling_price: sellIdx  >= 0 ? (cols[sellIdx]  || '')             : '',
+          purchase_discount_percentage: purchDiscIdx >= 0 ? (cols[purchDiscIdx] || '') : '',
+          selling_discount_percentage:  sellDiscIdx  >= 0 ? (cols[sellDiscIdx]  || '') : '',
           unit:          unitIdx  >= 0 ? (cols[unitIdx]  || 'pcs')          : 'pcs',
           category:      catIdx   >= 0 ? (cols[catIdx]   || '')             : '',
           barcode:       barcodeIdx >= 0 ? (cols[barcodeIdx] || '')         : '',
@@ -1039,7 +1052,7 @@ export default function SuppliersPage() {
                     <table className="w-full text-xs border-collapse">
                       <thead>
                         <tr className="bg-gray-50 dark:bg-gray-900/50 text-gray-500 dark:text-gray-400 uppercase">
-                          {['Product Name *', 'Qty *', 'Cost Price', 'Selling Price', 'Unit', 'Category', 'Barcode', ''].map(h => (
+                          {['Product Name *', 'Qty *', 'Cost Price', 'Selling Price', 'Purchase Disc %', 'Customer Disc %', 'Unit', 'Category', 'Barcode', ''].map(h => (
                             <th key={h} className="px-2 py-2 text-left font-medium whitespace-nowrap border-b border-gray-200 dark:border-gray-700">{h}</th>
                           ))}
                         </tr>
@@ -1065,6 +1078,16 @@ export default function SuppliersPage() {
                               <input type="number" min="0" step="0.01" value={item.selling_price} onChange={e => updateItem(idx, 'selling_price', e.target.value)}
                                 placeholder="₹0"
                                 className="w-20 px-2 py-1 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <input type="number" min="0" max="100" step="0.01" value={item.purchase_discount_percentage} onChange={e => updateItem(idx, 'purchase_discount_percentage', e.target.value)}
+                                placeholder="0%" title="Supplier discount — profit calc only"
+                                className="w-16 px-2 py-1 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
+                            </td>
+                            <td className="px-2 py-1.5">
+                              <input type="number" min="0" max="100" step="0.01" value={item.selling_discount_percentage} onChange={e => updateItem(idx, 'selling_discount_percentage', e.target.value)}
+                                placeholder="0%" title="Customer discount — auto-fills the bill line"
+                                className="w-16 px-2 py-1 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
                             </td>
                             <td className="px-2 py-1.5">
                               <select value={item.unit} onChange={e => updateItem(idx, 'unit', e.target.value)}

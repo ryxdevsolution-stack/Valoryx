@@ -826,8 +826,13 @@ def create_unified_bill():
             if non_gst_only:
                 item_gst_pct = 0
 
-            # Calculate amounts
-            item_subtotal = item_qty * item_rate
+            # Per-line customer discount (v25): comes off the rate, BEFORE GST.
+            # Clamp to [0, 100] — never trust the client's range.
+            item_discount_pct = float(item.get('discount_percentage', 0) or 0)
+            item_discount_pct = max(0.0, min(item_discount_pct, 100.0))
+
+            # Calculate amounts on the discounted taxable value
+            item_subtotal = item_qty * item_rate * (1 - item_discount_pct / 100)
             item_gst_amt = (item_subtotal * item_gst_pct) / 100
             item_total = item_subtotal + item_gst_amt
 
@@ -853,6 +858,7 @@ def create_unified_bill():
                 'rate': item_rate,
                 'mrp': item_mrp if item_mrp else item_rate,  # Use rate as MRP if not available
                 'gst_percentage': item_gst_pct,
+                'discount_percentage': item_discount_pct,
                 'gst_amount': round(item_gst_amt, 2),
                 'amount': round(item_total, 2)
             })

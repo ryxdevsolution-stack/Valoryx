@@ -214,12 +214,14 @@ class ThermalPrinter:
             rate = float(item.get('rate', 0))
             qty = int(item.get('quantity', 0))
             gst_pct = float(item.get('gst_percentage', 0))
+            # Per-line customer discount (off rate, before GST); clamp to [0, 100]
+            disc_pct = max(0.0, min(float(item.get('discount_percentage', 0) or 0), 100.0))
 
             if mrp > rate:
                 total_savings += (mrp - rate) * qty
 
             if gst_pct > 0:
-                taxable_amt = qty * rate
+                taxable_amt = qty * rate * (1 - disc_pct / 100)
                 gst_for_item = taxable_amt * gst_pct / 100
                 if gst_pct not in gst_breakdown:
                     gst_breakdown[gst_pct] = {'taxable': 0, 'gst': 0}
@@ -300,7 +302,8 @@ class ThermalPrinter:
             font-size: {FONT_SIZE_SMALL};
             margin: 0.5mm 0;
         }}
-        .col-item {{ flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }}
+        .col-item {{ flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; }}
+        .item-discount-note {{ font-size: {FONT_SIZE_SMALL}; font-style: italic; opacity: 0.75; }}
         .col-qty {{ width: 8mm; text-align: center; }}
         .col-mrp {{ width: 12mm; text-align: right; }}
         .col-rate {{ width: 12mm; text-align: right; }}
@@ -383,15 +386,22 @@ class ThermalPrinter:
             name = item.get('product_name', 'Item')
             if len(name) > ITEM_NAME_MAX:
                 name = name[:ITEM_NAME_MAX-2] + ".."
+            disc_pct = max(0.0, min(float(item.get('discount_percentage', 0) or 0), 100.0))
 
             # Format numbers cleanly
             mrp_str = f"{mrp:.2f}" if mrp < 100 else f"{mrp:.0f}"
             rate_str = f"{rate:.2f}" if rate < 100 else f"{rate:.0f}"
             amt_str = f"{amt:.2f}" if amt < 100 else f"{amt:.0f}"
 
+            # Discount sub-line (rate shown is the list rate; amt is already net)
+            disc_note = (
+                f"""<div class="item-discount-note">{disc_pct:g}% off applied</div>"""
+                if disc_pct > 0 else ""
+            )
+
             html += f"""
     <div class="item-row">
-        <span class="col-item">{name}</span>
+        <span class="col-item">{name}{disc_note}</span>
         <span class="col-qty">{qty}</span>
         <span class="col-mrp">{mrp_str}</span>
         <span class="col-rate">{rate_str}</span>

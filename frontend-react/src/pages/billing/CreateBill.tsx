@@ -18,6 +18,7 @@ import { getShopSettings } from '@/services/shopSettingsService'
 import type { ShopSettings } from '@/services/shopSettingsService'
 import { generateBillPDF } from '@/lib/pdfService'
 import { toast } from '@/utils/toast'
+import { calcLine, netCost } from '@/utils/billCalc'
 
 interface Product {
   product_id: string
@@ -32,6 +33,8 @@ interface Product {
   available_quantity: number
   cost_price?: number | string
   mrp?: number | string
+  purchase_discount_percentage?: number | string
+  selling_discount_percentage?: number | string
 }
 
 interface BillItem {
@@ -47,9 +50,25 @@ interface BillItem {
   amount: number
   cost_price?: number
   mrp?: number
+  discount_percentage?: number  // per-line customer discount %; off the rate, before GST
   limitedByStock?: boolean
   requestedQuantity?: number
   saveToStock?: boolean  // NEW: User can choose to save product to stock after billing
+}
+
+// Per-line money math. The customer discount comes off the rate, BEFORE GST,
+// so GST is charged on the already-discounted amount. Delegates to the shared,
+// unit-tested calcLine() so every add/update path matches the bill-calc utility.
+function computeLineAmounts(quantity: number, rate: number, gstPct: number, discountPct: number = 0) {
+  const safeDisc = Math.min(Math.max(discountPct || 0, 0), 100)
+  const t = calcLine({ rate, quantity, discount: safeDisc, tax_percent: gstPct })
+  return { gstAmt: Number(t.line_tax_amount.toFixed(2)), amount: Number(t.line_total.toFixed(2)) }
+}
+
+// Cost net of the supplier/purchase discount — used for profit display only.
+function netCostFromProduct(product: any): number | undefined {
+  if (product?.cost_price == null || product.cost_price === '') return undefined
+  return netCost(Number(product.cost_price), Number(product.purchase_discount_percentage || 0))
 }
 
 interface PaymentSplit {
@@ -209,6 +228,7 @@ export default function UnifiedBillingPage() {
     gst_percentage: 0,
     cost_price: undefined as number | undefined,
     mrp: undefined as number | undefined,
+    discount_percentage: 0,
   })
   const [availableStock, setAvailableStock] = useState<number>(0)
   const [stockWarning, setStockWarning] = useState<string>('')
@@ -737,8 +757,9 @@ export default function UnifiedBillingPage() {
       quantity: '' as number | string,
       rate: defaultRate,
       gst_percentage: gstPercentage,
-      cost_price: product.cost_price ? Number(product.cost_price) : undefined,
+      cost_price: netCostFromProduct(product),
       mrp: product.mrp ? Number(product.mrp) : undefined,
+      discount_percentage: Number(product.selling_discount_percentage || 0),
     })
     setProductSearch(product.product_name)
     setShowProductDropdown(false)
@@ -764,6 +785,7 @@ export default function UnifiedBillingPage() {
       gst_percentage: 0,
       cost_price: undefined,
       mrp: undefined,
+      discount_percentage: 0,
     })
     setShowProductDropdown(false)
     setNewProductName('') // Reset for next use
@@ -825,24 +847,21 @@ export default function UnifiedBillingPage() {
         return
       }
 
-      const subtotal = newQuantity * existingItem.rate
-      const gstAmt = (subtotal * existingItem.gst_percentage) / 100
-      const total = subtotal + gstAmt
+      const { gstAmt, amount } = computeLineAmounts(newQuantity, existingItem.rate, existingItem.gst_percentage, existingItem.discount_percentage)
 
       updatedItems[existingItemIndex] = {
         ...existingItem,
         quantity: newQuantity,
-        gst_amount: Number(gstAmt.toFixed(2)),
-        amount: Number(total.toFixed(2)),
+        gst_amount: gstAmt,
+        amount,
       }
 
       updateActiveTab({ items: updatedItems })
       console.log(`[BARCODE] Incremented quantity for ${existingItem.product_name} to ${newQuantity}`)
     } else {
-      // New product - add to bill
-      const subtotal = qty * rate
-      const gstAmt = (subtotal * productGstPct) / 100
-      const total = subtotal + gstAmt
+      // New product - add to bill (pre-fill the product's customer discount)
+      const sellingDiscount = Number(product.selling_discount_percentage || 0)
+      const { gstAmt, amount } = computeLineAmounts(qty, rate, productGstPct, sellingDiscount)
 
       const newItem: BillItem = {
         product_id: product.product_id,
@@ -853,10 +872,11 @@ export default function UnifiedBillingPage() {
         quantity: qty,
         rate: rate,
         gst_percentage: productGstPct,
-        gst_amount: Number(gstAmt.toFixed(2)),
-        amount: Number(total.toFixed(2)),
-        cost_price: product.cost_price ? Number(product.cost_price) : undefined,
+        gst_amount: gstAmt,
+        amount,
+        cost_price: netCostFromProduct(product),
         mrp: product.mrp ? Number(product.mrp) : undefined,
+        discount_percentage: sellingDiscount,
       }
 
       updateActiveTab({ items: [...activeTab.items, newItem] })
@@ -980,24 +1000,20 @@ export default function UnifiedBillingPage() {
       const updatedItems = [...activeTab.items]
       const existingItem = updatedItems[existingItemIndex]
       const newQuantity = existingItem.quantity + actualQuantity
-      const subtotal = newQuantity * existingItem.rate
-      const gstAmt = (subtotal * existingItem.gst_percentage) / 100
-      const total = subtotal + gstAmt
+      const { gstAmt, amount } = computeLineAmounts(newQuantity, existingItem.rate, existingItem.gst_percentage, existingItem.discount_percentage)
 
       updatedItems[existingItemIndex] = {
         ...existingItem,
         quantity: newQuantity,
-        gst_amount: Number(gstAmt.toFixed(2)),
-        amount: Number(total.toFixed(2)),
+        gst_amount: gstAmt,
+        amount,
         limitedByStock: limitedByStock || existingItem.limitedByStock,
         requestedQuantity: limitedByStock ? requestedQuantity : existingItem.requestedQuantity,
       }
 
       updateActiveTab({ items: updatedItems })
     } else {
-      const subtotal = actualQuantity * currentItem.rate
-      const gstAmt = (subtotal * currentItem.gst_percentage) / 100
-      const total = subtotal + gstAmt
+      const { gstAmt, amount } = computeLineAmounts(actualQuantity, currentItem.rate, currentItem.gst_percentage, currentItem.discount_percentage)
 
       // For new products, always use nosave- prefix (no stock saving)
       // For existing stock products, keep the original UUID
@@ -1010,8 +1026,8 @@ export default function UnifiedBillingPage() {
         product_id: productId,
         product_name: productNameToUse,
         quantity: actualQuantity,
-        gst_amount: Number(gstAmt.toFixed(2)),
-        amount: Number(total.toFixed(2)),
+        gst_amount: gstAmt,
+        amount,
         limitedByStock,
         requestedQuantity: limitedByStock ? requestedQuantity : undefined,
         // saveToStock removed - quick products are not saved to stock
@@ -1031,6 +1047,7 @@ export default function UnifiedBillingPage() {
       gst_percentage: 0,
       cost_price: undefined,
       mrp: undefined,
+      discount_percentage: 0,
     })
     setProductSearch('')
     setShowProductDropdown(false)
@@ -1128,14 +1145,30 @@ export default function UnifiedBillingPage() {
   const updateItemQuantity = (index: number, newQty: number) => {
     const updatedItems = [...activeTab.items]
     const item = updatedItems[index]
-    const subtotal = newQty * item.rate
-    const gstAmt = (subtotal * item.gst_percentage) / 100
+    const { gstAmt, amount } = computeLineAmounts(newQty, item.rate, item.gst_percentage, item.discount_percentage)
 
     updatedItems[index] = {
       ...item,
       quantity: newQty,
-      gst_amount: Number(gstAmt.toFixed(2)),
-      amount: Number((subtotal + gstAmt).toFixed(2)),
+      gst_amount: gstAmt,
+      amount,
+    }
+
+    updateActiveTab({ items: updatedItems })
+  }
+
+  // Edit the per-line customer discount %; recomputes the line off the rate, before GST.
+  const updateItemDiscount = (index: number, newDiscount: number) => {
+    const updatedItems = [...activeTab.items]
+    const item = updatedItems[index]
+    const safeDisc = Math.min(Math.max(Number(newDiscount) || 0, 0), 100)
+    const { gstAmt, amount } = computeLineAmounts(item.quantity, item.rate, item.gst_percentage, safeDisc)
+
+    updatedItems[index] = {
+      ...item,
+      discount_percentage: safeDisc,
+      gst_amount: gstAmt,
+      amount,
     }
 
     updateActiveTab({ items: updatedItems })
@@ -1145,13 +1178,20 @@ export default function UnifiedBillingPage() {
   // Previous pattern: getRoundedGrandTotal → calculateGrandTotal → calculateSubtotal + calculateTotalGST
   // = 4 separate array passes per render. Now: 1 pass, result cached until deps change.
   const billTotals = useMemo(() => {
-    const subtotal = activeTab.items.reduce((sum, item) => sum + item.quantity * item.rate, 0)
+    // subtotal = sum of discounted taxable values (amount - GST), so per-line
+    // customer discounts are already baked in.
+    const subtotal = activeTab.items.reduce((sum, item) => sum + (item.amount - item.gst_amount), 0)
     const totalGST = activeTab.items.reduce((sum, item) => sum + item.gst_amount, 0)
     const subtotalWithGST = subtotal + totalGST
 
+    // Per-line discounts replace the bill-level discount: if any line is discounted,
+    // the bill-level discount % is ignored to avoid double-discounting.
+    const hasLineDiscount = activeTab.items.some(item => (item.discount_percentage || 0) > 0)
+    const effectiveBillDiscountPct = hasLineDiscount ? 0 : activeTab.discountPercentage
+
     const grandTotal = activeTab.useNegotiablePrice && activeTab.negotiableAmount > 0
       ? Math.max(0, subtotalWithGST - activeTab.negotiableAmount)
-      : Math.max(0, subtotalWithGST - (subtotalWithGST * activeTab.discountPercentage) / 100)
+      : Math.max(0, subtotalWithGST - (subtotalWithGST * effectiveBillDiscountPct) / 100)
 
     const rounded = Math.round(grandTotal)
 
@@ -1160,7 +1200,8 @@ export default function UnifiedBillingPage() {
       totalGST,
       grandTotal: rounded,
       roundOff: rounded - grandTotal,
-      discountAmount: (subtotalWithGST * activeTab.discountPercentage) / 100,
+      discountAmount: (subtotalWithGST * effectiveBillDiscountPct) / 100,
+      hasLineDiscount,
       balance: activeTab.amountReceived - rounded,
     }
   }, [activeTab.items, activeTab.discountPercentage, activeTab.negotiableAmount,
@@ -1198,6 +1239,7 @@ export default function UnifiedBillingPage() {
       gst_percentage: 0,
       cost_price: undefined,
       mrp: undefined,
+      discount_percentage: 0,
     })
     setIsNewProduct(false)
     setProductSearch('')
@@ -1272,7 +1314,9 @@ export default function UnifiedBillingPage() {
         items: cleanedItems,
         payment_type: paymentData,
         amount_received: isPending ? 0 : activeTab.amountReceived,
-        discount_percentage: activeTab.useNegotiablePrice ? 0 : activeTab.discountPercentage,
+        // Per-item discounts replace the bill-level discount; send 0 so the backend
+        // doesn't double-apply on top of the already-discounted line amounts.
+        discount_percentage: (activeTab.useNegotiablePrice || billTotals.hasLineDiscount) ? 0 : activeTab.discountPercentage,
         negotiable_amount: activeTab.useNegotiablePrice ? activeTab.negotiableAmount : null,
         bill_date: billDate.toISOString(),
         payment_status: isPending ? 'pending' : 'paid',
@@ -1947,6 +1991,28 @@ export default function UnifiedBillingPage() {
                     />
                   </div>
                 )}
+                <div className="w-20">
+                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1" title="Customer discount % — off the rate, before GST. Pre-fills from the product.">
+                    Disc %
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="0.01"
+                    placeholder="0"
+                    value={currentItem.discount_percentage || ''}
+                    onChange={(e) =>
+                      setCurrentItem({
+                        ...currentItem,
+                        discount_percentage: Math.min(Math.max(parseFloat(e.target.value) || 0, 0), 100),
+                      })
+                    }
+                    onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addItem() } }}
+                    className="w-full px-3 py-2.5 text-base border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium"
+                    title="Customer discount %"
+                  />
+                </div>
                 <div>
                   <button
                     type="button"
@@ -2027,6 +2093,9 @@ export default function UnifiedBillingPage() {
                     <th className="px-1 py-1 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-20">
                       Rate
                     </th>
+                    <th className="px-1 py-1 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-16" title="Customer discount % — off the rate, before GST">
+                      Disc %
+                    </th>
                     {showGstColumns() && (
                       <>
                         <th className="px-1 py-1 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-14">
@@ -2050,7 +2119,7 @@ export default function UnifiedBillingPage() {
                   {activeTab.items.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={showGstColumns() ? 10 : 8}
+                        colSpan={showGstColumns() ? 11 : 9}
                         className="px-2 py-12 text-center text-gray-400 dark:text-gray-500 border-b border-gray-200 dark:border-gray-700"
                       >
                         <div className="flex flex-col items-center gap-1">
@@ -2186,6 +2255,21 @@ export default function UnifiedBillingPage() {
                         </td>
                         <td className="px-1 py-0.5 text-xs text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 text-right font-semibold">
                           ₹{Number(item.rate).toFixed(2)}
+                        </td>
+                        <td className="px-1 py-0.5 text-xs border-r border-gray-200 dark:border-gray-700">
+                          <input
+                            type="number"
+                            min="0"
+                            max="100"
+                            step="0.01"
+                            title="Customer discount % (off rate, before GST)"
+                            value={item.discount_percentage || ''}
+                            placeholder="0"
+                            onChange={(e) =>
+                              updateItemDiscount(index, parseFloat(e.target.value) || 0)
+                            }
+                            className="w-full px-1 py-0.5 text-center border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium text-xs"
+                          />
                         </td>
                         {showGstColumns() && (
                           <>
@@ -2333,7 +2417,9 @@ export default function UnifiedBillingPage() {
                       max="100"
                       step="0.01"
                       placeholder="Enter %"
-                      value={activeTab.discountPercentage || ''}
+                      disabled={billTotals.hasLineDiscount}
+                      title={billTotals.hasLineDiscount ? 'Disabled — per-item discounts are in use' : 'Bill-level discount %'}
+                      value={billTotals.hasLineDiscount ? '' : (activeTab.discountPercentage || '')}
                       onChange={(e) =>
                         updateActiveTab({ discountPercentage: parseFloat(e.target.value) || 0 })
                       }
@@ -2354,7 +2440,7 @@ export default function UnifiedBillingPage() {
                           }
                         }
                       }}
-                      className="w-28 px-3 py-2 text-sm font-bold border-2 border-blue-400 dark:border-blue-600 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
+                      className={`w-28 px-3 py-2 text-sm font-bold border-2 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 ${billTotals.hasLineDiscount ? 'border-gray-300 dark:border-gray-600 opacity-50 cursor-not-allowed' : 'border-blue-400 dark:border-blue-600'}`}
                     />
                   )}
                   <button
@@ -2372,6 +2458,11 @@ export default function UnifiedBillingPage() {
                     {activeTab.useNegotiablePrice ? '% Off' : '₹ Price'}
                   </button>
                 </div>
+                {billTotals.hasLineDiscount && !activeTab.useNegotiablePrice && (
+                  <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
+                    Bill-level discount is off — per-item discounts are in use.
+                  </p>
+                )}
               </div>
 
               <div className="flex items-center justify-between">
@@ -2789,6 +2880,7 @@ export default function UnifiedBillingPage() {
                           quantity: item.quantity,
                           rate: item.rate,
                           amount: item.amount,
+                          discount_percentage: item.discount_percentage || 0,
                         })),
                         subtotal: billTotals.subtotal,
                         gstAmount: billTotals.totalGST,

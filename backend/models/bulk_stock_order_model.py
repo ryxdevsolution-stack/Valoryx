@@ -83,6 +83,8 @@ class BulkStockOrderItem(db.Model):
     cost_price = db.Column(FlexibleNumeric, nullable=True)  # Purchase price
     selling_price = db.Column(FlexibleNumeric, nullable=True)  # Rate to sell at
     mrp = db.Column(FlexibleNumeric, nullable=True)
+    purchase_discount_percentage = db.Column(FlexibleNumeric, nullable=True, default=0)  # v25: supplier discount
+    selling_discount_percentage = db.Column(FlexibleNumeric, nullable=True, default=0)  # v25: customer discount
     barcode = db.Column(db.String(100), nullable=True)
     item_code = db.Column(db.String(50), nullable=True)
     gst_percentage = db.Column(FlexibleNumeric, default=0)
@@ -105,6 +107,8 @@ class BulkStockOrderItem(db.Model):
             'cost_price': float(self.cost_price) if self.cost_price else None,
             'selling_price': float(self.selling_price) if self.selling_price else None,
             'mrp': float(self.mrp) if self.mrp else None,
+            'purchase_discount_percentage': float(self.purchase_discount_percentage) if self.purchase_discount_percentage else 0,
+            'selling_discount_percentage': float(self.selling_discount_percentage) if self.selling_discount_percentage else 0,
             'barcode': self.barcode,
             'item_code': self.item_code,
             'gst_percentage': float(self.gst_percentage) if self.gst_percentage else 0,

@@ -32,6 +32,9 @@ export interface BillItem {
   gst_amount: number;
   amount: number;
   category?: string;
+  // Per-line customer discount % (v25); pre-filled from the product's selling_discount_percentage,
+  // editable per bill. Applied off the rate, before GST.
+  discount_percentage?: number;
 }
 
 // ============================================================================

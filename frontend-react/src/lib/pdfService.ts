@@ -175,11 +175,19 @@ export async function generateBillPDF(
   // ── GST column header ────────────────────────────────────────────────────
   const gstColHeader = isGST ? '<th class="tc gst-th">GST %</th>' : ''
 
+  // ── Disc % column — only render when at least one line is discounted ───────
+  const hasItemDiscount = bill.items.some(it => Number(it.discount_percentage || 0) > 0)
+  const discColHeader = hasItemDiscount ? '<th class="tc">Disc %</th>' : ''
+
   // ── Items rows ───────────────────────────────────────────────────────────
   const itemRows = bill.items
     .map((item, i) => {
       const gstCell = isGST
         ? `<td class="tc muted">${item.gst_percentage}%</td>`
+        : ''
+      const disc = Number(item.discount_percentage || 0)
+      const discCell = hasItemDiscount
+        ? `<td class="tc muted">${disc > 0 ? `${disc}%` : '−'}</td>`
         : ''
       return `
       <tr class="${i % 2 === 0 ? '' : 'row-alt'}">
@@ -189,6 +197,7 @@ export async function generateBillPDF(
         </td>
         <td class="tc">${item.quantity}</td>
         <td class="tr">${formatCurrency(item.rate)}</td>
+        ${discCell}
         ${gstCell}
         <td class="tr fw">${formatCurrency(item.amount)}</td>
       </tr>`
@@ -543,6 +552,7 @@ body{
           <th style="text-align:left">Item</th>
           <th class="tc">Qty</th>
           <th class="tr">Rate</th>
+          ${discColHeader}
           ${gstColHeader}
           <th class="tr">Amt</th>
         </tr>

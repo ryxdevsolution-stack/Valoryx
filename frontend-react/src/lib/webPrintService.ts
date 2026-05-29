@@ -29,6 +29,7 @@ export interface BillItem {
   amount: number;
   mrp?: number;
   gst_percentage?: number;
+  discount_percentage?: number;  // per-line customer discount %
 }
 
 export interface BillData {
@@ -246,10 +247,16 @@ export function generateReceiptHtml(
     const rate = Number(item.rate);
     const qty = Number(item.quantity);
     const amt = Number(item.amount);
+    const disc = Number(item.discount_percentage || 0);
+    // Show the discount as a sub-line so a discounted line reads correctly
+    // (the col-rate shows the list rate; amt is already net of the discount).
+    const discNote = disc > 0
+      ? `<div class="item-discount-note">${disc}% off applied</div>`
+      : '';
 
     itemsHtml += `
     <div class="item-row">
-      <span class="col-product">${escapeHtml(name)}</span>
+      <span class="col-product">${escapeHtml(name)}${discNote}</span>
       <span class="col-qty">${qty}</span>
       <span class="col-mrp">${formatNumber(mrp)}</span>
       <span class="col-rate">${formatNumber(rate)}</span>
@@ -310,6 +317,7 @@ export function generateReceiptHtml(
     .col-mrp { width: 10mm; text-align: right; flex-shrink: 0; }
     .col-rate { width: 10mm; text-align: right; flex-shrink: 0; }
     .col-amt { width: 12mm; text-align: right; font-weight: 700; flex-shrink: 0; }
+    .item-discount-note { font-size: ${FONT_SIZE_SMALL}; font-style: italic; opacity: 0.75; }
   </style>
 </head>
 <body>

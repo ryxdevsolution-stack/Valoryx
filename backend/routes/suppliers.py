@@ -43,6 +43,14 @@ ALLOWED_EXTENSIONS = {'jpg', 'jpeg', 'png', 'webp', 'gif', 'pdf'}
 MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 
+def _clamp_pct(value) -> float:
+    """Clamp a percentage to [0, 100]; blank/invalid → 0."""
+    try:
+        return max(0.0, min(float(value or 0), 100.0))
+    except (TypeError, ValueError):
+        return 0.0
+
+
 def _delivery_notes_path(client_id: str) -> str:
     path = os.path.join(DELIVERY_NOTES_DIR, client_id)
     os.makedirs(path, exist_ok=True)
@@ -267,6 +275,8 @@ def create_delivery():
             cost_price    = item.get('cost_price') or None,
             selling_price = item.get('selling_price') or None,
             mrp           = item.get('mrp') or None,
+            purchase_discount_percentage = _clamp_pct(item.get('purchase_discount_percentage')),
+            selling_discount_percentage  = _clamp_pct(item.get('selling_discount_percentage')),
             unit          = (item.get('unit') or 'pcs').strip(),
             barcode       = (item.get('barcode') or '').strip() or None,
             item_code     = (item.get('item_code') or '').strip() or None,
@@ -336,6 +346,8 @@ def update_delivery(delivery_id):
                 cost_price    = item.get('cost_price') or None,
                 selling_price = item.get('selling_price') or None,
                 mrp           = item.get('mrp') or None,
+                purchase_discount_percentage = _clamp_pct(item.get('purchase_discount_percentage')),
+                selling_discount_percentage  = _clamp_pct(item.get('selling_discount_percentage')),
                 unit          = (item.get('unit') or 'pcs').strip(),
                 barcode       = (item.get('barcode') or '').strip() or None,
                 item_code     = (item.get('item_code') or '').strip() or None,
@@ -510,6 +522,10 @@ def complete_delivery(delivery_id):
                 stock.quantity += qty
                 if item.cost_price and float(item.cost_price) > 0:
                     stock.cost_price = item.cost_price
+                if item.purchase_discount_percentage is not None:
+                    stock.purchase_discount_percentage = item.purchase_discount_percentage
+                if item.selling_discount_percentage is not None:
+                    stock.selling_discount_percentage = item.selling_discount_percentage
                 stock.updated_at = _now
                 item.product_id = stock.product_id
                 continue
@@ -521,6 +537,10 @@ def complete_delivery(delivery_id):
                     stock.cost_price = item.cost_price
                 if item.selling_price and float(item.selling_price) > 0:
                     stock.rate = item.selling_price
+                if item.purchase_discount_percentage is not None:
+                    stock.purchase_discount_percentage = item.purchase_discount_percentage
+                if item.selling_discount_percentage is not None:
+                    stock.selling_discount_percentage = item.selling_discount_percentage
                 stock.updated_at = _now
                 item.product_id = stock.product_id
             else:
@@ -539,6 +559,8 @@ def complete_delivery(delivery_id):
                     item_code       = item.item_code or _generate_item_code(pname, client_id),
                     barcode         = item.barcode or None,
                     gst_percentage  = item.gst_percentage or 0,
+                    purchase_discount_percentage = item.purchase_discount_percentage or 0,
+                    selling_discount_percentage  = item.selling_discount_percentage or 0,
                     hsn_code        = item.hsn_code or None,
                     created_by      = g.user.get('user_id'),
                     added_by_label  = delivery.added_by_label,

@@ -111,6 +111,8 @@ def create_bulk_order():
                 cost_price=item_data.get('cost_price'),
                 selling_price=item_data.get('selling_price'),
                 mrp=item_data.get('mrp'),
+                purchase_discount_percentage=max(0.0, min(float(item_data.get('purchase_discount_percentage') or 0), 100.0)),
+                selling_discount_percentage=max(0.0, min(float(item_data.get('selling_discount_percentage') or 0), 100.0)),
                 barcode=item_data.get('barcode'),
                 item_code=item_data.get('item_code'),
                 gst_percentage=item_data.get('gst_percentage', 0),
@@ -330,6 +332,10 @@ def receive_bulk_order(order_id):
                     existing_product.rate = order_item.selling_price
                 if order_item.mrp:
                     existing_product.mrp = order_item.mrp
+                if order_item.purchase_discount_percentage is not None:
+                    existing_product.purchase_discount_percentage = order_item.purchase_discount_percentage
+                if order_item.selling_discount_percentage is not None:
+                    existing_product.selling_discount_percentage = order_item.selling_discount_percentage
 
                 existing_product.updated_at = datetime.utcnow()
 
@@ -352,6 +358,8 @@ def receive_bulk_order(order_id):
                     item_code=order_item.item_code or generate_item_code(client_id, order_item.product_name),
                     barcode=order_item.barcode,
                     gst_percentage=order_item.gst_percentage or 0,
+                    purchase_discount_percentage=order_item.purchase_discount_percentage or 0,
+                    selling_discount_percentage=order_item.selling_discount_percentage or 0,
                     hsn_code=order_item.hsn_code,
                     created_at=datetime.utcnow(),
                     created_by=g.user['user_id'],

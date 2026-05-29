@@ -206,11 +206,15 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                 const mrp = Number(item.mrp) > 0 ? Number(item.mrp) : Number(item.rate);
                 const rate = Number(item.rate);
                 const amt = Number(item.amount);
+                const disc = Number((item as { discount_percentage?: number }).discount_percentage || 0);
                 const formatNum = (v: number) => v < 100 ? v.toFixed(2) : Math.round(v).toString();
 
                 return (
                   <div key={index} style={{ fontSize: '7pt', display: 'flex', alignItems: 'center', marginBottom: '0.5mm', color: '#000000' }}>
-                    <span style={{ flex: 1, minWidth: 0, wordWrap: 'break-word', wordBreak: 'break-word', overflowWrap: 'break-word' }}>{name}</span>
+                    <span style={{ flex: 1, minWidth: 0, wordWrap: 'break-word', wordBreak: 'break-word', overflowWrap: 'break-word' }}>
+                      {name}
+                      {disc > 0 && <span style={{ fontStyle: 'italic', opacity: 0.75 }}> ({disc}% off)</span>}
+                    </span>
                     <span style={{ width: '8mm', textAlign: 'center', flexShrink: 0 }}>{item.quantity}</span>
                     <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(mrp)}</span>
                     <span style={{ width: '10mm', textAlign: 'right', flexShrink: 0 }}>{formatNum(rate)}</span>

@@ -17,6 +17,7 @@ export interface ReceiptItem {
   quantity: number;
   rate: number;
   amount: number;
+  discount_percentage?: number;  // per-line customer discount %
 }
 
 export interface ReceiptData {
@@ -413,6 +414,11 @@ export class BluetoothPrinterService {
         ),
         lf,
       );
+      // Per-line discount note (rate shown is the list rate; amount is net).
+      const disc = Number(item.discount_percentage || 0);
+      if (disc > 0) {
+        push(text(`  ${disc}% off applied`), lf);
+      }
     }
 
     // 12. Separator

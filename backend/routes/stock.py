@@ -156,6 +156,9 @@ def add_stock():
         pricing         = _to_num(data.get('pricing'))
         gst_percentage  = _to_num(data.get('gst_percentage'), default=0)
         low_stock_alert = _to_int(data.get('low_stock_alert'), default=10)
+        # Optional percentage discounts (v25); blank → 0, clamped to [0, 100]
+        purchase_discount = max(0.0, min(float(_to_num(data.get('purchase_discount_percentage'), default=0) or 0), 100.0))
+        selling_discount  = max(0.0, min(float(_to_num(data.get('selling_discount_percentage'), default=0) or 0), 100.0))
 
         # ── Optional string fields (empty → None) ────────────────────────────
         unit     = _to_str_or_none(data.get('unit')) or 'pcs'
@@ -196,6 +199,8 @@ def add_stock():
             existing_product.unit = unit
             existing_product.low_stock_alert = low_stock_alert
             existing_product.gst_percentage = gst_percentage
+            if purchase_discount is not None: existing_product.purchase_discount_percentage = purchase_discount
+            if selling_discount is not None:  existing_product.selling_discount_percentage = selling_discount
             if hsn_code is not None:        existing_product.hsn_code = hsn_code
 
             # item_code: explicit > existing > auto-generated
@@ -243,6 +248,8 @@ def add_stock():
             item_code=item_code,
             barcode=barcode,
             gst_percentage=gst_percentage,
+            purchase_discount_percentage=purchase_discount,
+            selling_discount_percentage=selling_discount,
             hsn_code=hsn_code,
             created_at=datetime.utcnow(),
             created_by=g.user['user_id'],
@@ -411,6 +418,10 @@ def update_stock(product_id):
             product.low_stock_alert = _to_int(data['low_stock_alert'], default=product.low_stock_alert)
         if 'gst_percentage' in data:
             product.gst_percentage = _to_num(data['gst_percentage'], default=0)
+        if 'purchase_discount_percentage' in data:
+            product.purchase_discount_percentage = max(0.0, min(float(_to_num(data['purchase_discount_percentage'], default=0) or 0), 100.0))
+        if 'selling_discount_percentage' in data:
+            product.selling_discount_percentage = max(0.0, min(float(_to_num(data['selling_discount_percentage'], default=0) or 0), 100.0))
 
         # item_code: keep old if empty, auto-generate if still missing
         if 'item_code' in data:
@@ -669,6 +680,12 @@ def bulk_import_stock():
                 gst_percentage = float(row['gst_percentage']) if 'gst_percentage' in row and not pd.isna(row['gst_percentage']) else 0
                 hsn_code = str(row['hsn_code']).strip() if 'hsn_code' in row and not pd.isna(row['hsn_code']) else ''
 
+                # Optional percentage discounts (v25); missing column → 0, clamped to [0, 100]
+                purchase_discount = float(row['purchase_discount_percentage']) if 'purchase_discount_percentage' in row and not pd.isna(row['purchase_discount_percentage']) else 0
+                selling_discount = float(row['selling_discount_percentage']) if 'selling_discount_percentage' in row and not pd.isna(row['selling_discount_percentage']) else 0
+                purchase_discount = max(0.0, min(purchase_discount, 100.0))
+                selling_discount = max(0.0, min(selling_discount, 100.0))
+
                 # Resolve added_by_label: row value > dialog default; reject if both missing
                 row_label = str(row['added_by_label']).strip() if 'added_by_label' in row and not pd.isna(row.get('added_by_label')) else ''
                 row_added_by_label = row_label or default_added_by_label
@@ -707,6 +724,8 @@ def bulk_import_stock():
                     existing_product.low_stock_alert = low_stock_alert
                     existing_product.gst_percentage = gst_percentage
                     existing_product.hsn_code = hsn_code
+                    existing_product.purchase_discount_percentage = purchase_discount
+                    existing_product.selling_discount_percentage = selling_discount
 
                     if not existing_product.item_code:
                         existing_product.item_code = item_code
@@ -736,6 +755,8 @@ def bulk_import_stock():
                         item_code=item_code,
                         barcode=barcode,
                         gst_percentage=gst_percentage,
+                        purchase_discount_percentage=purchase_discount,
+                        selling_discount_percentage=selling_discount,
                         hsn_code=hsn_code,
                         created_at=datetime.utcnow(),
                         created_by=g.user['user_id'],

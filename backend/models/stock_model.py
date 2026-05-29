@@ -22,6 +22,10 @@ class StockEntry(db.Model):
     cost_price = db.Column(FlexibleNumeric, nullable=True)  # Cost price for profit calculation
     mrp = db.Column(FlexibleNumeric, nullable=True)  # Maximum Retail Price (for display on print)
     pricing = db.Column(FlexibleNumeric, nullable=True, default=None)  # Pricing field from stock updation
+    # Optional percentage discounts (v25). Purchase = supplier discount (profit calc only,
+    # cost_price stays gross). Selling = customer discount that auto-fills the bill line.
+    purchase_discount_percentage = db.Column(FlexibleNumeric, nullable=True, default=0)
+    selling_discount_percentage = db.Column(FlexibleNumeric, nullable=True, default=0)
     unit = db.Column(db.String(20), default='pcs')
     low_stock_alert = db.Column(db.Integer, default=10)
     item_code = db.Column(db.String(50), nullable=True, index=True)  # Added index
@@ -57,6 +61,8 @@ class StockEntry(db.Model):
             'cost_price': float(self.cost_price) if self.cost_price else None,
             'mrp': float(self.mrp) if self.mrp else None,
             'pricing': float(self.pricing) if self.pricing else None,
+            'purchase_discount_percentage': float(self.purchase_discount_percentage) if self.purchase_discount_percentage else 0,
+            'selling_discount_percentage': float(self.selling_discount_percentage) if self.selling_discount_percentage else 0,
             'unit': self.unit,
             'low_stock_alert': self.low_stock_alert,
             'item_code': self.item_code,

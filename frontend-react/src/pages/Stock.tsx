@@ -29,6 +29,8 @@ interface Stock {
   barcode: string
   gst_percentage: number | string
   hsn_code: string
+  purchase_discount_percentage?: number | string | null
+  selling_discount_percentage?: number | string | null
   is_low_stock: boolean
   created_at: string
   updated_at?: string
@@ -265,6 +267,8 @@ export default function StockManagementPage() {
     barcode: '',
     gst_percentage: 0,
     hsn_code: '',
+    purchase_discount_percentage: '' as number | string,
+    selling_discount_percentage: '' as number | string,
   })
 
   // Duplicate detection - memoized for performance
@@ -397,6 +401,8 @@ export default function StockManagementPage() {
           barcode: '',
           gst_percentage: 0,
           hsn_code: '',
+          purchase_discount_percentage: '',
+          selling_discount_percentage: '',
         })
       }
     } catch (error: any) {
@@ -421,6 +427,8 @@ export default function StockManagementPage() {
       barcode: stock.barcode || '',
       gst_percentage: Number(stock.gst_percentage),
       hsn_code: stock.hsn_code || '',
+      purchase_discount_percentage: stock.purchase_discount_percentage ? Number(stock.purchase_discount_percentage) : '',
+      selling_discount_percentage: stock.selling_discount_percentage ? Number(stock.selling_discount_percentage) : '',
     })
     setShowAddForm(true)
     setShowBulkImport(false)
@@ -442,6 +450,8 @@ export default function StockManagementPage() {
       barcode: '',
       gst_percentage: 0,
       hsn_code: '',
+      purchase_discount_percentage: '',
+      selling_discount_percentage: '',
     })
   }, [])
 
@@ -461,6 +471,8 @@ export default function StockManagementPage() {
       barcode: '',
       gst_percentage: 0,
       hsn_code: '',
+      purchase_discount_percentage: '',
+      selling_discount_percentage: '',
     })
   }
 
@@ -1018,6 +1030,44 @@ export default function StockManagementPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Purchase Discount (%)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={formData.purchase_discount_percentage}
+                  onChange={(e) =>
+                    setFormData({ ...formData, purchase_discount_percentage: e.target.value === '' ? '' : parseFloat(e.target.value) })
+                  }
+                  onKeyDown={handleEnterKey}
+                  placeholder="0"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Discount from supplier. Lowers effective cost for profit only — does not change the customer's price.</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
+                  Customer Discount (%)
+                </label>
+                <input
+                  type="number"
+                  min="0"
+                  max="100"
+                  step="0.01"
+                  value={formData.selling_discount_percentage}
+                  onChange={(e) =>
+                    setFormData({ ...formData, selling_discount_percentage: e.target.value === '' ? '' : parseFloat(e.target.value) })
+                  }
+                  onKeyDown={handleEnterKey}
+                  placeholder="0"
+                  className="w-full px-4 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                />
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Default discount offered to customers. Auto-fills the bill line when this product is added (editable per bill).</p>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
                   MRP (₹)
                 </label>
                 <input
@@ -1449,7 +1499,7 @@ export default function StockManagementPage() {
             <h3 className="font-semibold text-yellow-900 dark:text-yellow-300 mb-2">ℹ️ Important Notes</h3>
             <ul className="text-sm text-yellow-800 dark:text-yellow-400 space-y-1">
               <li>• Required columns: <strong>product_name, quantity, rate</strong></li>
-              <li>• Optional columns: category, unit, low_stock_alert, item_code, barcode, gst_percentage, hsn_code, purchase_price, mrp, added_by_label</li>
+              <li>• Optional columns: category, unit, low_stock_alert, item_code, barcode, gst_percentage, hsn_code, purchase_price, mrp, purchase_discount_percentage, selling_discount_percentage, added_by_label</li>
               <li>• <strong>added_by_label</strong>: per-row name; if blank, "Default Added By" above is used</li>
               <li>• If product exists, quantity will be <strong>added</strong> (not replaced)</li>
               <li>• Negative values are not allowed</li>
