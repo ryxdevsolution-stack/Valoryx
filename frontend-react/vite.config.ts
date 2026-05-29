@@ -74,6 +74,11 @@ export default defineConfig({
       drop: ['console', 'debugger'],
     },
     rollupOptions: {
+      // virtual:pwa-register only exists when vite-plugin-pwa is loaded.
+      // In Electron builds the plugin is omitted, so mark the virtual module
+      // external — the runtime guard in main.tsx prevents the import from
+      // ever executing on the Electron path.
+      external: isElectron ? ['virtual:pwa-register'] : [],
       output: {
         manualChunks: {
           vendor: ['react', 'react-dom', 'react-router-dom'],
