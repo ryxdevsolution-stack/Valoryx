@@ -500,6 +500,14 @@ ipcMain.handle('install-update', () => {
   console.log('[Updater] User requested install — quitting and installing…');
   app.isQuitting = true;
   stopBackend();
+  // Tear down tray and windows fully — otherwise NSIS shows
+  // "Valoryx cannot be closed, please close it manually" because
+  // the tray + window-all-closed handler keep the process alive,
+  // locking Valoryx.exe so the installer can't replace it.
+  if (tray && !tray.isDestroyed()) tray.destroy();
+  BrowserWindow.getAllWindows().forEach((w) => {
+    try { w.destroy(); } catch (_) { /* already gone */ }
+  });
   autoUpdater.quitAndInstall(false, true);
 });
 

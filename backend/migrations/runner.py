@@ -1563,19 +1563,15 @@ def run_migrations_if_needed(app, db):
             )
             return
 
-        # Fresh install — tables don't exist yet (db.create_all() runs after this).
-        # Stamp current version so migrations are skipped; db.create_all() creates
-        # the full schema with all columns.
-        inspector = sa_inspect(db.engine)
-        existing_tables = inspector.get_table_names()
-        if 'users' not in existing_tables:
-            _set_stored_version(db, CURRENT_SCHEMA_VERSION)
-            logging.info(
-                f"[Migration] Fresh install detected — stamped v{CURRENT_SCHEMA_VERSION}. "
-                "db.create_all() will create full schema."
-            )
-            return
-
+        # Fresh installs run every migration too. The previous shortcut
+        # (stamp current version + return, trusting db.create_all) silently
+        # omitted tables that exist ONLY as raw SQL in migrations with no
+        # SQLAlchemy model — e.g. employees, employee_attendance, salary_cycles,
+        # salary_advances from _m014. db.create_all only knows about registered
+        # models, so those tables never got created on fresh installs and the
+        # first request that touched them crashed.
+        # Every migration uses IF NOT EXISTS / _add_col guards, so running them
+        # on a fresh DB is safe and idempotent — costs a few seconds at first launch.
         logging.info(
             f"[Migration] Schema v{stored} → v{CURRENT_SCHEMA_VERSION}. Running migrations…"
         )
