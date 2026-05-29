@@ -55,8 +55,36 @@ jobs:
           cd backend
           pip install -r requirements.txt
 
-      - name: Build application
-        run: npm run electron:build:win
+      - name: Build embedded Python runtime
+        run: npm run build:python
+
+      - name: Build frontend for Electron
+        shell: bash
+        run: |
+          cd frontend-react
+          npm run build:electron
+
+      - name: Verify Electron bundle has relative asset paths
+        shell: bash
+        run: |
+          if grep -q 'src="/assets/' backend/static/frontend/index.html; then
+            echo "ERROR: index.html has absolute /assets/ paths — Electron file:// will 404."
+            echo "       build:electron likely did not run with ELECTRON_BUILD=true."
+            exit 1
+          fi
+          echo "OK: index.html uses relative asset paths."
+
+      - name: Verify embedded Python is present
+        shell: bash
+        run: |
+          if [ ! -f python/python.exe ]; then
+            echo "ERROR: python/python.exe missing — embedded Python step failed."
+            exit 1
+          fi
+          echo "OK: python/python.exe present ($(du -sh python | cut -f1))"
+
+      - name: Package installer
+        run: npx electron-builder --win
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
