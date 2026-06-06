@@ -1,77 +1,56 @@
-
-
 import { useState } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
-import { ChevronDown, HelpCircle } from 'lucide-react'
-import { faqs, siteConfig } from '@/config/landing.config'
-import { viewportOnce, getStaggerDelay } from '@/lib/landing/animations'
+import { ChevronDown } from 'lucide-react'
+import { faqs, siteConfig, FAQ } from '@/config/landing.config'
+import { fadeInUp, staggerContainer, viewportWithMargin } from '@/lib/landing/animations'
 
+/** FAQ accordion — Rescale "Burning questions" section, light theme. */
 export default function FAQSection() {
   const [openIndex, setOpenIndex] = useState<number | null>(0)
 
   return (
-    <section id="faq" className="py-20 lg:py-32 relative overflow-hidden">
-      {/* Background */}
-      <div className="absolute inset-0 bg-white dark:bg-gray-950" />
-
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-        <div className="max-w-4xl mx-auto">
-          {/* Section Header */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={viewportOnce}
-            transition={{ duration: 0.6 }}
-            className="text-center mb-16"
+    <section id="faq" className="relative bg-canvas py-20 sm:py-28">
+      <div className="mx-auto max-w-3xl px-4 sm:px-6">
+        <motion.div
+          variants={staggerContainer}
+          initial="hidden"
+          whileInView="visible"
+          viewport={viewportWithMargin}
+          className="mb-12 text-center"
+        >
+          <motion.span
+            variants={fadeInUp}
+            className="inline-flex items-center rounded-full border border-ink/10 bg-white px-4 py-1.5 font-body text-xs font-semibold uppercase tracking-wide text-ink-faint"
           >
-            <span className="inline-flex items-center gap-2 px-4 py-1.5 rounded-full bg-indigo-100 dark:bg-indigo-900/30 text-indigo-700 dark:text-indigo-300 text-sm font-semibold mb-4">
-              <HelpCircle className="w-4 h-4" />
-              FAQ
-            </span>
-            <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-6">
-              Frequently Asked{' '}
-              <span className="text-transparent bg-clip-text bg-gradient-to-r from-indigo-500 to-purple-600">
-                Questions
-              </span>
-            </h2>
-            <p className="text-lg text-gray-600 dark:text-gray-400 leading-relaxed">
-              Got questions? We&apos;ve got answers. If you can&apos;t find what you&apos;re looking for,
-              feel free to contact our support team.
-            </p>
-          </motion.div>
+            FAQ
+          </motion.span>
+          <motion.h2 variants={fadeInUp} className="heading-display mt-5 text-4xl sm:text-5xl">
+            Burning <span className="text-gradient-accent">questions</span>
+          </motion.h2>
+          <motion.p variants={fadeInUp} className="mx-auto mt-4 max-w-xl font-body text-base text-ink-soft">
+            Can&apos;t find what you&apos;re looking for? Our India-based support team is here to help.
+          </motion.p>
+        </motion.div>
 
-          {/* FAQ List */}
-          <div className="bg-white dark:bg-gray-800/50 rounded-2xl border border-gray-200/50 dark:border-gray-700/50 shadow-lg p-6 lg:p-8">
-            {faqs.map((faq, index) => (
-              <FAQItem
-                key={index}
-                faq={faq}
-                isOpen={openIndex === index}
-                onToggle={() => setOpenIndex(openIndex === index ? null : index)}
-                index={index}
-              />
-            ))}
-          </div>
+        <div className="space-y-3">
+          {faqs.map((faq, index) => (
+            <FAQItem
+              key={faq.question}
+              faq={faq}
+              isOpen={openIndex === index}
+              onToggle={() => setOpenIndex(openIndex === index ? null : index)}
+            />
+          ))}
+        </div>
 
-          {/* Contact CTA */}
-          <motion.div
-            initial={{ opacity: 0, y: 20 }}
-            whileInView={{ opacity: 1, y: 0 }}
-            viewport={viewportOnce}
-            transition={{ duration: 0.6, delay: 0.3 }}
-            className="text-center mt-12"
+        <div className="mt-10 text-center font-body text-sm text-ink-soft">
+          Still have questions?{' '}
+          <a
+            href={`mailto:${siteConfig.contact.email}`}
+            className="font-medium text-accent-blue hover:text-accent-purple"
           >
-            <p className="text-gray-600 dark:text-gray-400 mb-4">
-              Still have questions?
-            </p>
-            <a
-              href={`mailto:${siteConfig.contact.email}`}
-              className="inline-flex items-center gap-2 font-semibold text-primary-600 dark:text-primary-400 hover:text-primary-700 dark:hover:text-primary-300 transition-colors"
-            >
-              Contact our support team
-              <span aria-hidden="true">→</span>
-            </a>
-          </motion.div>
+            Contact our support team &rarr;
+          </a>
         </div>
       </div>
     </section>
@@ -79,37 +58,36 @@ export default function FAQSection() {
 }
 
 interface FAQItemProps {
-  faq: { question: string; answer: string }
+  faq: FAQ
   isOpen: boolean
   onToggle: () => void
-  index: number
 }
 
-function FAQItem({ faq, isOpen, onToggle, index }: FAQItemProps) {
+function FAQItem({ faq, isOpen, onToggle }: FAQItemProps) {
   return (
-    <motion.div
-      initial={{ opacity: 0, y: 20 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={viewportOnce}
-      transition={{ duration: 0.4, delay: getStaggerDelay(index, 0.05) }}
-      className="border-b border-gray-200 dark:border-gray-700/50 last:border-b-0"
+    <div
+      className={`rounded-2xl border bg-white transition-colors ${
+        isOpen ? 'border-ink/15 shadow-card' : 'border-ink/8'
+      }`}
     >
       <button
+        type="button"
         onClick={onToggle}
-        className="w-full flex items-center justify-between py-5 text-left group"
+        className="flex w-full items-center justify-between gap-4 px-6 py-5 text-left"
+        aria-expanded={isOpen}
       >
-        <span className="text-lg font-semibold text-gray-900 dark:text-white group-hover:text-primary-600 dark:group-hover:text-primary-400 transition-colors pr-4">
+        <span className="font-heading text-base font-semibold text-ink">
           {faq.question}
         </span>
-        <motion.div
+        <motion.span
           animate={{ rotate: isOpen ? 180 : 0 }}
           transition={{ duration: 0.2 }}
-          className="flex-shrink-0"
+          className="shrink-0 text-ink-faint"
         >
-          <ChevronDown className="w-5 h-5 text-gray-400 group-hover:text-primary-500 transition-colors" />
-        </motion.div>
+          <ChevronDown className="h-5 w-5" />
+        </motion.span>
       </button>
-      <AnimatePresence>
+      <AnimatePresence initial={false}>
         {isOpen && (
           <motion.div
             initial={{ height: 0, opacity: 0 }}
@@ -118,12 +96,12 @@ function FAQItem({ faq, isOpen, onToggle, index }: FAQItemProps) {
             transition={{ duration: 0.3, ease: 'easeInOut' }}
             className="overflow-hidden"
           >
-            <p className="pb-5 text-gray-600 dark:text-gray-400 leading-relaxed">
+            <p className="px-6 pb-5 font-body text-sm leading-relaxed text-ink-soft">
               {faq.answer}
             </p>
           </motion.div>
         )}
       </AnimatePresence>
-    </motion.div>
+    </div>
   )
 }

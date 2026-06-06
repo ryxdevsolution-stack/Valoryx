@@ -2,7 +2,6 @@ import React, { useState, useRef } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
-import LightPillar from '@/components/LightPillar'
 
 const INPUT_CLASS =
   'w-full px-4 py-3 bg-white/5 border border-white/15 rounded-lg focus:ring-2 focus:ring-[#5227FF] focus:border-transparent outline-none transition-all duration-200 text-white placeholder-slate-500 [&:-webkit-autofill]:[-webkit-box-shadow:0_0_0_1000px_#2d2145_inset] [&:-webkit-autofill]:[-webkit-text-fill-color:#ffffff]'
@@ -190,24 +189,6 @@ export default function LoginPage() {
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-[#271E37] relative overflow-hidden">
-      {/* LightPillar Background */}
-      <div className="absolute inset-0">
-        <LightPillar
-          topColor="#3a1acc"
-          bottomColor="#9b4fa8"
-          intensity={0.45}
-          rotationSpeed={0.3}
-          glowAmount={0.002}
-          pillarWidth={3}
-          pillarHeight={0.4}
-          noiseIntensity={0.5}
-          pillarRotation={25}
-          interactive={false}
-          mixBlendMode="screen"
-          quality="high"
-        />
-      </div>
-
       {/* RYX Elegant Centerpiece */}
       <div className="absolute inset-0 flex items-center justify-center pointer-events-none z-[1]">
         {/* Radiating lines */}

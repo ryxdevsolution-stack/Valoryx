@@ -2,6 +2,7 @@ import { useEffect, useRef } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import api from '@/lib/api'
 import { useClient } from '@/contexts/ClientContext'
+import { consumePendingDownload } from '@/lib/pendingDownload'
 
 export default function OAuthCallbackPage() {
   const [searchParams] = useSearchParams()
@@ -56,6 +57,9 @@ export default function OAuthCallbackPage() {
           subscription_end_date: client.subscription_end_date || null,
         }
         setClientData(userData, clientData, token)
+        // If the user came from the landing "Continue with Google → download"
+        // flow, trigger the deferred installer download now.
+        consumePendingDownload()
         if (user.must_change_password) {
           localStorage.setItem('must_change_password', 'true')
           navigate('/change-password', { replace: true })

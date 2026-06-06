@@ -84,9 +84,9 @@ export const siteConfig = {
 
 export const navLinks = [
   { href: '#features', label: 'Features' },
+  { href: '#how-it-works', label: 'How It Works' },
   { href: '#integrations', label: 'Integrations' },
-  { href: '#benefits', label: 'Benefits' },
-  { href: '#contact', label: 'Contact' },
+  { href: '#testimonials', label: 'Testimonials' },
   { href: '#faq', label: 'FAQ' },
 ]
 
@@ -508,7 +508,7 @@ export const footerSections: FooterSection[] = [
     links: [
       { label: 'Features', href: '#features' },
       { label: 'Integrations', href: '#integrations' },
-      { label: 'Contact', href: '#contact' },
+      { label: 'How It Works', href: '#how-it-works' },
       { label: 'FAQ', href: '#faq' },
     ],
   },
@@ -516,16 +516,16 @@ export const footerSections: FooterSection[] = [
     title: 'Resources',
     links: [
       { label: 'Documentation', href: '/docs' },
-      { label: 'Benefits', href: '#benefits' },
+      { label: 'How It Works', href: '#how-it-works' },
       { label: 'Testimonials', href: '#testimonials' },
-      { label: 'Watch Demo', href: '#features' },
+      { label: 'Features', href: '#features' },
     ],
   },
   {
     title: 'Company',
     links: [
-      { label: 'About Valoryx', href: '#benefits' },
-      { label: 'Contact Us', href: '#contact' },
+      { label: 'Features', href: '#features' },
+      { label: 'Integrations', href: '#integrations' },
     ],
   },
   {

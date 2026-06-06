@@ -1,16 +1,11 @@
-
-
 import { useState } from 'react'
-import { ThemeProvider } from '@/contexts/ThemeContext'
 import LandingNavbar from '@/components/landing/LandingNavbar'
 import HeroSection from '@/components/landing/HeroSection'
-import TrustedBySection from '@/components/landing/TrustedBySection'
-import ProductShowcaseSection from '@/components/landing/ProductShowcaseSection'
+import FeatureBentoSection from '@/components/landing/FeatureBentoSection'
+import HowItWorksSection from '@/components/landing/HowItWorksSection'
 import IntegrationsSection from '@/components/landing/IntegrationsSection'
-import BenefitsSection from '@/components/landing/BenefitsSection'
-import StatsSection from '@/components/landing/StatsSection'
+import WhyOfflineFirstSection from '@/components/landing/WhyOfflineFirstSection'
 import TestimonialsSection from '@/components/landing/TestimonialsSection'
-import ContactSection from '@/components/landing/ContactSection'
 import FAQSection from '@/components/landing/FAQSection'
 import CTASection from '@/components/landing/CTASection'
 import LandingFooter from '@/components/landing/LandingFooter'
@@ -18,58 +13,33 @@ import DemoVideoModal from '@/components/landing/DemoVideoModal'
 
 const DEMO_VIDEO = 'https://www.youtube.com/embed/wz8e0IfWaNM?autoplay=1'
 
+/**
+ * Valoryx marketing landing page — light-only, Rescale-template styling.
+ * Content is sourced from `landing.config.ts`; sections are assembled here.
+ */
 export default function LandingPage() {
   const [videoOpen, setVideoOpen] = useState(false)
 
   return (
-    <ThemeProvider>
-      <div className="min-h-screen bg-white dark:bg-gray-950 text-gray-900 dark:text-white overflow-x-hidden">
-        {/* Navigation */}
-        <LandingNavbar />
+    <div className="min-h-screen overflow-x-hidden bg-canvas font-body text-ink antialiased">
+      <LandingNavbar />
 
-        {/* Main Content */}
-        <main>
-          {/* Hero Section */}
-          <HeroSection onWatchDemo={() => setVideoOpen(true)} />
+      <main>
+        <HeroSection onWatchDemo={() => setVideoOpen(true)} />
+        <FeatureBentoSection />
+        <HowItWorksSection />
+        <IntegrationsSection />
+        <WhyOfflineFirstSection />
+        <TestimonialsSection />
+        <FAQSection />
+        <CTASection />
+      </main>
 
-          {/* Trusted By Section */}
-          <TrustedBySection />
-
-          {/* Product Showcase — BentoGrid (replaces Features + AppPreview + ModuleShowcase) */}
-          <ProductShowcaseSection />
-
-          {/* Integrations Section */}
-          <IntegrationsSection />
-
-          {/* Stats Section */}
-          <StatsSection />
-
-          {/* Benefits Section */}
-          <BenefitsSection />
-
-          {/* Testimonials Section */}
-          <TestimonialsSection />
-
-          {/* Contact Section */}
-          <ContactSection />
-
-          {/* FAQ Section */}
-          <FAQSection />
-
-          {/* Final CTA Section */}
-          <CTASection />
-        </main>
-
-        {/* Footer */}
-        <LandingFooter />
-      </div>
+      <LandingFooter />
 
       {videoOpen && (
-        <DemoVideoModal
-          onClose={() => setVideoOpen(false)}
-          videoSrc={DEMO_VIDEO}
-        />
+        <DemoVideoModal onClose={() => setVideoOpen(false)} videoSrc={DEMO_VIDEO} />
       )}
-    </ThemeProvider>
+    </div>
   )
 }

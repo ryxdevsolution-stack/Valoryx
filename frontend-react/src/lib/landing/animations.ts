@@ -52,6 +52,18 @@ export const slideInRight: Variants = {
 }
 
 /**
+ * Fade in from the left (alternating content rows)
+ */
+export const fadeInLeft: Variants = {
+  hidden: { opacity: 0, x: -60 },
+  visible: {
+    opacity: 1,
+    x: 0,
+    transition: { type: 'spring', damping: 25, stiffness: 80 },
+  },
+}
+
+/**
  * Staggered container for children animations
  */
 export const staggerContainer: Variants = {
@@ -84,7 +96,9 @@ export const quickStagger: Variants = {
 // =============================================================================
 
 export const viewportOnce = { once: true }
-export const viewportWithMargin = { once: true, margin: '-50px' as const }
+// Trigger the reveal once ~15% of the element has scrolled into view.
+// `amount` is more reliable across browsers than a negative root `margin`.
+export const viewportWithMargin = { once: true, amount: 0.15 }
 
 // =============================================================================
 // TRANSITION PRESETS

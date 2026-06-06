@@ -1,177 +1,156 @@
-
-
-import { useState, useEffect } from 'react'
-import { motion, AnimatePresence } from 'framer-motion'
-import { Menu, X, Download } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import { AnimatedThemeToggler } from '@/components/AnimatedThemeToggler'
+import { motion, AnimatePresence } from 'framer-motion'
+import { Menu, X, Download, ArrowRight } from 'lucide-react'
 import { siteConfig, navLinks } from '@/config/landing.config'
 import { scrollToSection } from '@/lib/landing/animations'
+import DownloadButton from './DownloadButton'
 
+/**
+ * Light, airy top navigation matching the Rescale template:
+ * logo · centered links · pill CTAs. Becomes a frosted floating pill on scroll.
+ */
 export default function LandingNavbar() {
-  const [isScrolled, setIsScrolled] = useState(false)
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [scrolled, setScrolled] = useState(false)
+  const [menuOpen, setMenuOpen] = useState(false)
 
   useEffect(() => {
-    const handleScroll = () => {
-      setIsScrolled(window.scrollY > 50)
-    }
-    window.addEventListener('scroll', handleScroll)
-    return () => window.removeEventListener('scroll', handleScroll)
+    const onScroll = () => setScrolled(window.scrollY > 24)
+    onScroll()
+    window.addEventListener('scroll', onScroll, { passive: true })
+    return () => window.removeEventListener('scroll', onScroll)
   }, [])
 
   const handleNavClick = (href: string) => {
-    setIsMobileMenuOpen(false)
-    scrollToSection(href)
+    setMenuOpen(false)
+    if (href.startsWith('#')) scrollToSection(href)
   }
 
   return (
-    <>
-      <motion.nav
-        initial={{ y: -100 }}
-        animate={{ y: 0 }}
-        transition={{ duration: 0.5, ease: 'easeOut' }}
-        className={`fixed top-0 left-0 right-0 z-50 transition-all duration-300 ${
-          isScrolled
-            ? 'bg-white/90 dark:bg-gray-900/90 backdrop-blur-xl shadow-lg border-b border-gray-200/50 dark:border-gray-700/50'
-            : 'bg-transparent'
+    <motion.header
+      initial={{ y: -80, opacity: 0 }}
+      animate={{ y: 0, opacity: 1 }}
+      transition={{ type: 'spring', damping: 22, stiffness: 120 }}
+      className="fixed inset-x-0 top-0 z-50 flex justify-center px-4 pt-3 sm:pt-4"
+    >
+      <nav
+        className={`flex w-full max-w-6xl items-center justify-between rounded-full px-3 py-2 transition-all duration-300 sm:px-4 ${
+          scrolled ? 'glass-card shadow-soft' : 'bg-white/40 backdrop-blur-sm'
         }`}
       >
-        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
-          <div className="flex items-center justify-between h-20 lg:h-24">
-            {/* Logo */}
-            <Link to={siteConfig.routes.home} className="flex items-center">
-              <img
-                src={siteConfig.logoPath}
-                alt={siteConfig.name}
-                style={{ height: 72, width: 'auto' }}
-              />
-            </Link>
+        {/* Logo */}
+        <Link
+          to={siteConfig.routes.home}
+          className="flex items-center gap-2 pl-2"
+          aria-label={`${siteConfig.name} home`}
+        >
+          <img
+            src={siteConfig.logoPath}
+            alt={siteConfig.name}
+            className="h-8 w-8 rounded-lg object-contain"
+          />
+          <span className="font-heading text-xl font-bold tracking-tight text-ink">
+            {siteConfig.name}
+          </span>
+        </Link>
 
-            {/* Desktop Navigation */}
-            <div className="hidden lg:flex items-center gap-8">
-              {navLinks.map((link) => (
-                <button
-                  key={link.href}
-                  onClick={() => handleNavClick(link.href)}
-                  className="font-medium text-gray-700 dark:text-gray-300 hover:text-primary-500 transition-colors"
-                >
-                  {link.label}
-                </button>
-              ))}
-            </div>
-
-            {/* Desktop Actions */}
-            <div className="hidden lg:flex items-center gap-4">
-              <AnimatedThemeToggler
-                className={`p-2 rounded-lg transition-colors ${
-                  isScrolled
-                    ? 'hover:bg-gray-100 dark:hover:bg-gray-800'
-                    : 'hover:bg-white/20 dark:hover:bg-gray-800/50'
-                } text-gray-600 dark:text-yellow-500`}
-              />
-
-              <Link
-                to={siteConfig.routes.login}
-                className="font-medium px-4 py-2 rounded-lg text-gray-700 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-              >
-                Login
-              </Link>
-
-              <a
-                href={siteConfig.downloadUrl}
-                download
-                rel="noopener"
-                className="inline-flex items-center gap-2 font-semibold px-5 py-2.5 rounded-xl border border-primary-500 text-primary-600 dark:text-primary-400 hover:bg-primary-50 dark:hover:bg-primary-950/30 transition-all duration-300"
-              >
-                <Download className="w-4 h-4" />
-                Download
-              </a>
-
-              <Link
-                to={siteConfig.routes.register}
-                className="font-semibold px-6 py-2.5 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600 hover:from-primary-600 hover:to-primary-700 text-white shadow-lg shadow-primary-500/25 hover:shadow-xl hover:shadow-primary-500/30 transition-all duration-300"
-              >
-                Start Free Trial
-              </Link>
-            </div>
-
-            {/* Mobile Menu Button */}
-            <div className="flex items-center gap-2 lg:hidden">
-              <AnimatedThemeToggler
-                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800 text-gray-600 dark:text-yellow-500"
-              />
-
-              <button
-                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                className="p-2 rounded-lg hover:bg-gray-100 dark:hover:bg-gray-800"
-                aria-label="Toggle menu"
-              >
-                {isMobileMenuOpen ? (
-                  <X className="w-6 h-6 text-gray-900 dark:text-white" />
-                ) : (
-                  <Menu className="w-6 h-6 text-gray-900 dark:text-white" />
-                )}
-              </button>
-            </div>
-          </div>
+        {/* Desktop links */}
+        <div className="hidden items-center gap-1 lg:flex">
+          {navLinks.map((link) => (
+            <a
+              key={link.href}
+              href={link.href}
+              onClick={(e) => {
+                e.preventDefault()
+                handleNavClick(link.href)
+              }}
+              className="rounded-full px-4 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
+            >
+              {link.label}
+            </a>
+          ))}
         </div>
-      </motion.nav>
 
-      {/* Mobile Menu */}
-      <AnimatePresence>
-        {isMobileMenuOpen && (
-          <motion.div
-            initial={{ opacity: 0, y: -20 }}
-            animate={{ opacity: 1, y: 0 }}
-            exit={{ opacity: 0, y: -20 }}
-            transition={{ duration: 0.2 }}
-            className="fixed inset-x-0 top-16 z-40 lg:hidden bg-white/95 dark:bg-gray-900/95 backdrop-blur-xl border-b border-gray-200/50 dark:border-gray-700/50 shadow-xl"
+        {/* Desktop CTAs */}
+        <div className="hidden items-center gap-2 lg:flex">
+          <DownloadButton className="inline-flex items-center gap-1.5 rounded-full border border-ink/15 px-4 py-2 text-sm font-medium text-ink-soft transition-colors hover:border-ink/30 hover:text-ink">
+            <Download className="h-4 w-4" />
+            Download
+          </DownloadButton>
+          <Link
+            to={siteConfig.routes.login}
+            className="rounded-full px-3 py-2 text-sm font-medium text-ink-soft transition-colors hover:text-ink"
           >
-            <div className="px-4 py-6 space-y-4">
-              {navLinks.map((link, index) => (
-                <motion.button
+            Sign In
+          </Link>
+          <Link
+            to={siteConfig.routes.register}
+            className="group inline-flex items-center gap-1.5 rounded-full bg-ink px-5 py-2.5 text-sm font-semibold text-white shadow-pill transition-all hover:scale-[1.03] hover:bg-[#3a4666]"
+          >
+            Start Free Trial
+            <ArrowRight className="h-4 w-4 transition-transform group-hover:translate-x-0.5" />
+          </Link>
+        </div>
+
+        {/* Mobile toggle */}
+        <button
+          type="button"
+          onClick={() => setMenuOpen((v) => !v)}
+          className="inline-flex h-10 w-10 items-center justify-center rounded-full text-ink hover:bg-ink/5 lg:hidden"
+          aria-label={menuOpen ? 'Close menu' : 'Open menu'}
+          aria-expanded={menuOpen}
+        >
+          {menuOpen ? <X className="h-5 w-5" /> : <Menu className="h-5 w-5" />}
+        </button>
+      </nav>
+
+      {/* Mobile menu */}
+      <AnimatePresence>
+        {menuOpen && (
+          <motion.div
+            initial={{ opacity: 0, y: -8 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -8 }}
+            transition={{ duration: 0.2 }}
+            className="glass-card absolute inset-x-4 top-[4.5rem] rounded-3xl p-4 shadow-soft lg:hidden"
+          >
+            <div className="flex flex-col gap-1">
+              {navLinks.map((link) => (
+                <a
                   key={link.href}
-                  initial={{ opacity: 0, x: -20 }}
-                  animate={{ opacity: 1, x: 0 }}
-                  transition={{ delay: index * 0.1 }}
-                  onClick={() => handleNavClick(link.href)}
-                  className="block w-full text-left font-medium text-gray-700 dark:text-gray-300 hover:text-primary-500 py-2"
+                  href={link.href}
+                  onClick={(e) => {
+                    e.preventDefault()
+                    handleNavClick(link.href)
+                  }}
+                  className="rounded-2xl px-4 py-3 text-base font-medium text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
                 >
                   {link.label}
-                </motion.button>
+                </a>
               ))}
-
-              <div className="pt-4 border-t border-gray-200 dark:border-gray-700 space-y-3">
+              <div className="mt-2 flex flex-col gap-2 border-t border-ink/10 pt-3">
+                <DownloadButton className="inline-flex items-center justify-center gap-2 rounded-full border border-ink/15 px-5 py-3 text-base font-medium text-ink-soft">
+                  <Download className="h-4 w-4" />
+                  Download for Windows
+                </DownloadButton>
                 <Link
                   to={siteConfig.routes.login}
-                  className="block w-full text-center font-medium text-gray-700 dark:text-gray-300 py-3 rounded-lg border border-gray-200 dark:border-gray-700 hover:bg-gray-50 dark:hover:bg-gray-800"
-                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="rounded-full px-4 py-3 text-center text-base font-medium text-ink-soft hover:text-ink"
                 >
-                  Login
+                  Sign In
                 </Link>
-                <a
-                  href={siteConfig.downloadUrl}
-                  download
-                  rel="noopener"
-                  className="flex items-center justify-center gap-2 w-full text-center font-semibold text-primary-600 dark:text-primary-400 py-3 rounded-xl border border-primary-500"
-                  onClick={() => setIsMobileMenuOpen(false)}
-                >
-                  <Download className="w-4 h-4" />
-                  Download for Windows
-                </a>
                 <Link
                   to={siteConfig.routes.register}
-                  className="block w-full text-center font-semibold text-white py-3 rounded-xl bg-gradient-to-r from-primary-500 to-primary-600"
-                  onClick={() => setIsMobileMenuOpen(false)}
+                  className="inline-flex items-center justify-center gap-1.5 rounded-full bg-ink px-5 py-3 text-base font-semibold text-white shadow-pill"
                 >
                   Start Free Trial
+                  <ArrowRight className="h-4 w-4" />
                 </Link>
               </div>
             </div>
           </motion.div>
         )}
       </AnimatePresence>
-    </>
+    </motion.header>
   )
 }

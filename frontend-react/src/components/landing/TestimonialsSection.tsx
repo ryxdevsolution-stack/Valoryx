@@ -1,103 +1,78 @@
-
-
 import { motion } from 'framer-motion'
 import { Star, Quote } from 'lucide-react'
 import { testimonials } from '@/config/landing.config'
-import { viewportOnce, viewportWithMargin, getStaggerDelay } from '@/lib/landing/animations'
+import { fadeInUp, staggerContainer, viewportWithMargin } from '@/lib/landing/animations'
+import TestimonialMarquee from './TestimonialMarquee'
 
+/**
+ * "What our clients say" — a featured testimonial alongside vertically-scrolling
+ * marquee columns of the remaining quotes (Rescale testimonials section).
+ */
 export default function TestimonialsSection() {
+  const featured = testimonials[0]
+  const rest = testimonials.slice(1)
+
   return (
-    <section id="testimonials" className="py-20 lg:py-32 relative overflow-hidden">
-      {/* Background */}
-      <div className="absolute inset-0 bg-gradient-to-b from-white via-gray-50/50 to-white dark:from-gray-950 dark:via-gray-900/50 dark:to-gray-950" />
-
-      {/* Decorative Elements */}
-      <div className="absolute inset-0 overflow-hidden pointer-events-none">
-        <div className="absolute top-1/4 -left-32 w-64 h-64 bg-primary-100/30 dark:bg-primary-900/10 rounded-full blur-3xl" />
-        <div className="absolute bottom-1/4 -right-32 w-64 h-64 bg-indigo-100/30 dark:bg-indigo-900/10 rounded-full blur-3xl" />
-      </div>
-
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 relative z-10">
-        {/* Section Header */}
+    <section id="testimonials" className="relative overflow-hidden bg-canvas py-20 sm:py-28">
+      <div className="mx-auto max-w-6xl px-4 sm:px-6">
         <motion.div
-          initial={{ opacity: 0, y: 20 }}
-          whileInView={{ opacity: 1, y: 0 }}
-          viewport={viewportOnce}
-          transition={{ duration: 0.6 }}
-          className="text-center max-w-3xl mx-auto mb-16 lg:mb-20"
+          variants={staggerContainer}
+          initial="hidden"
+          whileInView="visible"
+          viewport={viewportWithMargin}
+          className="mx-auto mb-14 max-w-2xl text-center"
         >
-          <span className="inline-block px-4 py-1.5 rounded-full bg-yellow-100 dark:bg-yellow-900/30 text-yellow-700 dark:text-yellow-300 text-sm font-semibold mb-4">
-            Customer Stories
-          </span>
-          <h2 className="text-3xl sm:text-4xl lg:text-5xl font-bold text-gray-900 dark:text-white mb-6">
-            Loved by{' '}
-            <span className="text-transparent bg-clip-text bg-gradient-to-r from-yellow-500 to-orange-600">
-              Business Owners
-            </span>
-          </h2>
-          <p className="text-lg text-gray-600 dark:text-gray-400 leading-relaxed">
-            Don&apos;t just take our word for it. Here&apos;s what real business owners
-            have to say about Valoryx.
-          </p>
+          <motion.span
+            variants={fadeInUp}
+            className="inline-flex items-center rounded-full border border-ink/10 bg-white px-4 py-1.5 font-body text-xs font-semibold uppercase tracking-wide text-ink-faint"
+          >
+            Customer stories
+          </motion.span>
+          <motion.h2 variants={fadeInUp} className="heading-display mt-5 text-4xl sm:text-5xl">
+            Loved by <span className="text-gradient-accent">business owners</span>
+          </motion.h2>
+          <motion.p variants={fadeInUp} className="mx-auto mt-4 max-w-xl font-body text-base text-ink-soft">
+            Real shopkeepers across India, running their counters on Valoryx.
+          </motion.p>
         </motion.div>
 
-        {/* Testimonials Grid */}
-        <div className="grid md:grid-cols-2 lg:grid-cols-3 gap-6 lg:gap-8">
-          {testimonials.map((testimonial, index) => (
-            <TestimonialCard key={testimonial.name} testimonial={testimonial} index={index} />
-          ))}
+        <div className="grid grid-cols-1 items-stretch gap-6 lg:grid-cols-[0.85fr_1.15fr]">
+          {/* Featured */}
+          <motion.figure
+            initial={{ opacity: 0, y: 30 }}
+            whileInView={{ opacity: 1, y: 0 }}
+            viewport={{ once: true, margin: '-50px' }}
+            transition={{ duration: 0.6 }}
+            className="relative flex flex-col justify-between overflow-hidden rounded-[1.75rem] border border-ink/8 bg-gradient-to-br from-accent-blue/8 to-accent-purple/8 p-8 shadow-card"
+          >
+            <Quote className="h-10 w-10 text-accent-purple/40" fill="currentColor" />
+            <blockquote className="mt-4 font-heading text-2xl font-medium leading-snug tracking-tight text-ink">
+              &ldquo;{featured.quote}&rdquo;
+            </blockquote>
+            <figcaption className="mt-8 flex items-center gap-4">
+              <span className="flex h-14 w-14 items-center justify-center rounded-full bg-gradient-to-br from-accent-blue to-accent-purple font-heading text-lg font-bold text-white">
+                {featured.name.charAt(0)}
+              </span>
+              <div>
+                <div className="flex gap-0.5">
+                  {Array.from({ length: featured.rating }).map((_, i) => (
+                    <Star key={i} className="h-4 w-4 text-[#FFB23E]" fill="currentColor" />
+                  ))}
+                </div>
+                <p className="mt-1 font-heading text-base font-semibold text-ink">
+                  {featured.name}
+                </p>
+                <p className="font-body text-sm text-ink-faint">
+                  {featured.business}, {featured.location}
+                </p>
+              </div>
+            </figcaption>
+          </motion.figure>
+
+          {/* Marquee */}
+          <TestimonialMarquee items={rest} />
         </div>
       </div>
     </section>
-  )
-}
-
-interface TestimonialCardProps {
-  testimonial: typeof testimonials[0]
-  index: number
-}
-
-function TestimonialCard({ testimonial, index }: TestimonialCardProps) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 30 }}
-      whileInView={{ opacity: 1, y: 0 }}
-      viewport={viewportWithMargin}
-      transition={{ duration: 0.5, delay: getStaggerDelay(index) }}
-      className="relative p-6 lg:p-8 rounded-2xl bg-white dark:bg-gray-800/80 backdrop-blur-xl border border-gray-200/50 dark:border-gray-700/50 shadow-lg hover:shadow-xl transition-all duration-300"
-    >
-      {/* Quote Icon */}
-      <div className="absolute -top-3 -left-3 w-10 h-10 rounded-xl bg-gradient-to-br from-primary-500 to-indigo-600 flex items-center justify-center shadow-lg">
-        <Quote className="w-5 h-5 text-white" fill="white" />
-      </div>
-
-      {/* Rating */}
-      <div className="flex gap-1 mb-4">
-        {[...Array(testimonial.rating)].map((_, i) => (
-          <Star key={i} className="w-5 h-5 text-yellow-400" fill="currentColor" />
-        ))}
-      </div>
-
-      {/* Quote */}
-      <p className="text-gray-700 dark:text-gray-300 leading-relaxed mb-6">
-        &quot;{testimonial.quote}&quot;
-      </p>
-
-      {/* Author */}
-      <div className="flex items-center gap-3">
-        {/* Avatar */}
-        <div className="w-12 h-12 rounded-full bg-gradient-to-br from-primary-400 to-indigo-500 flex items-center justify-center text-white font-bold text-lg">
-          {testimonial.name.charAt(0)}
-        </div>
-        <div>
-          <p className="font-semibold text-gray-900 dark:text-white">
-            {testimonial.name}
-          </p>
-          <p className="text-sm text-gray-500 dark:text-gray-400">
-            {testimonial.business}, {testimonial.location}
-          </p>
-        </div>
-      </div>
-    </motion.div>
   )
 }

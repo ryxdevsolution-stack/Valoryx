@@ -20,6 +20,33 @@ export default {
           800: '#075985',
           900: '#0c4a6e',
         },
+        // Rescale-template landing palette (light theme)
+        canvas: '#F9FAFB',
+        ink: {
+          DEFAULT: '#465478', // signature muted slate-indigo headline
+          soft: '#6B7280',    // body grey
+          faint: '#9AA3B2',   // captions / labels
+        },
+        blob: {
+          blue: '#A9C7FF',
+          purple: '#C9B8FF',
+          pink: '#F5B9D6',
+        },
+        accent: {
+          blue: '#5B8DEF',
+          purple: '#8B7CF6',
+          pink: '#EC8FC0',
+        },
+      },
+      fontFamily: {
+        heading: ['Manrope', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+        body: ['Inter', 'ui-sans-serif', 'system-ui', 'sans-serif'],
+      },
+      boxShadow: {
+        soft: '0 10px 40px -12px rgba(70, 84, 120, 0.18)',
+        card: '0 2px 8px rgba(70, 84, 120, 0.06), 0 12px 32px -8px rgba(70, 84, 120, 0.12)',
+        'card-hover': '0 8px 16px rgba(70, 84, 120, 0.10), 0 24px 48px -12px rgba(70, 84, 120, 0.18)',
+        pill: '0 6px 20px -6px rgba(91, 141, 239, 0.45)',
       },
       fontSize: {
         'xs': ['clamp(0.625rem, 0.7vw + 0.5rem, 0.75rem)', { lineHeight: '1rem' }],
@@ -58,6 +85,13 @@ export default {
       animation: {
         'marquee': 'marquee 40s linear infinite',
         'marquee-reverse': 'marquee-reverse 40s linear infinite',
+        'marquee-vertical': 'marquee-vertical var(--marquee-duration, 30s) linear infinite',
+        'marquee-vertical-reverse': 'marquee-vertical-reverse var(--marquee-duration, 30s) linear infinite',
+        'float': 'float 6s ease-in-out infinite',
+        'float-slow': 'float 9s ease-in-out infinite',
+        'orbit': 'orbit 24s linear infinite',
+        'orbit-reverse': 'orbit-reverse 24s linear infinite',
+        'spin-slow': 'spin 18s linear infinite',
       },
       keyframes: {
         marquee: {
@@ -67,6 +101,26 @@ export default {
         'marquee-reverse': {
           '0%': { transform: 'translateX(-50%)' },
           '100%': { transform: 'translateX(0)' },
+        },
+        'marquee-vertical': {
+          '0%': { transform: 'translateY(0)' },
+          '100%': { transform: 'translateY(-50%)' },
+        },
+        'marquee-vertical-reverse': {
+          '0%': { transform: 'translateY(-50%)' },
+          '100%': { transform: 'translateY(0)' },
+        },
+        float: {
+          '0%, 100%': { transform: 'translateY(0)' },
+          '50%': { transform: 'translateY(-18px)' },
+        },
+        orbit: {
+          '0%': { transform: 'rotate(0deg)' },
+          '100%': { transform: 'rotate(360deg)' },
+        },
+        'orbit-reverse': {
+          '0%': { transform: 'rotate(360deg)' },
+          '100%': { transform: 'rotate(0deg)' },
         },
       },
     },

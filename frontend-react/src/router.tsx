@@ -24,6 +24,8 @@ const Profile = React.lazy(() => import('@/pages/Profile'))
 const Docs = React.lazy(() => import('@/pages/Docs'))
 const TrialExpired = React.lazy(() => import('@/pages/TrialExpired'))
 const Pricing = React.lazy(() => import('@/pages/Pricing'))
+const PrivacyPolicy = React.lazy(() => import('@/pages/legal/PrivacyPolicy'))
+const TermsOfService = React.lazy(() => import('@/pages/legal/TermsOfService'))
 
 const StockTransfer = React.lazy(() => import('@/pages/stock-transfer/StockTransfer'))
 const BranchManagement = React.lazy(() => import('@/pages/stock-transfer/BranchManagement'))
@@ -112,6 +114,8 @@ export function AppRoutes() {
         <Route path="/" element={<Home />} />
         <Route path="/login" element={<Navigate to="/auth/login" replace />} />
         <Route path="/landing" element={<Landing />} />
+        <Route path="/privacy" element={<PrivacyPolicy />} />
+        <Route path="/terms" element={<TermsOfService />} />
 
         {/* Auth routes — use dark fallback so no white flash on lazy load */}
         <Route
@@ -136,6 +140,14 @@ export function AppRoutes() {
         />
         <Route
           path="/oauth/callback"
+          element={<Suspense fallback={<AuthFallback />}><OAuthCallbackPage /></Suspense>}
+        />
+        {/* Google redirects here — the backend registers `<origin>/frontend/oauth/callback`
+            as the OAuth redirect URI, but the SPA is mounted at root (basename="/").
+            Register the component at the prefixed path too so the callback renders
+            instead of a blank, unmatched route. */}
+        <Route
+          path="/frontend/oauth/callback"
           element={<Suspense fallback={<AuthFallback />}><OAuthCallbackPage /></Suspense>}
         />
         <Route

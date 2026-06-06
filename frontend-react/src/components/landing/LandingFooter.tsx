@@ -1,101 +1,71 @@
-
-
-import { motion } from 'framer-motion'
 import { Link } from 'react-router-dom'
 import { Mail, Phone, MapPin } from 'lucide-react'
 import { siteConfig, footerSections, socialLinks } from '@/config/landing.config'
-import { viewportOnce, getStaggerDelay, scrollToSection } from '@/lib/landing/animations'
+import { scrollToSection } from '@/lib/landing/animations'
 
+/**
+ * Light Rescale-style footer: brand + contact, link columns, a "talk to us"
+ * contact CTA, an oversized brand wordmark, and a bottom bar with socials.
+ */
 export default function LandingFooter() {
   const currentYear = new Date().getFullYear()
 
   return (
-    <footer className="relative bg-gray-900 dark:bg-black">
-      {/* Top Wave Decoration */}
-      <div className="absolute top-0 left-0 right-0 overflow-hidden">
-        <svg
-          className="relative block w-full h-16 text-gray-900 dark:text-black transform rotate-180"
-          viewBox="0 0 1200 120"
-          preserveAspectRatio="none"
-        >
-          <path
-            d="M321.39,56.44c58-10.79,114.16-30.13,172-41.86,82.39-16.72,168.19-17.73,250.45-.39C823.78,31,906.67,72,985.66,92.83c70.05,18.48,146.53,26.09,214.34,3V0H0V27.35A600.21,600.21,0,0,0,321.39,56.44Z"
-            fill="currentColor"
-          />
-        </svg>
-      </div>
-
-      <div className="container mx-auto px-4 sm:px-6 lg:px-8 pt-24 pb-12">
-        {/* Main Footer Content */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-8 lg:gap-12 mb-12">
-          {/* Brand Section */}
-          <div className="col-span-2 md:col-span-3 lg:col-span-2">
-            <Link to={siteConfig.routes.home} className="flex items-center mb-6">
+    <footer className="relative overflow-hidden border-t border-ink/8 bg-white">
+      <div className="mx-auto w-full max-w-screen-2xl px-4 pb-8 pt-16 sm:px-6 lg:px-12 xl:px-20">
+        <div className="grid grid-cols-2 gap-8 md:grid-cols-4 lg:grid-cols-6 lg:gap-12">
+          {/* Brand + contact */}
+          <div className="col-span-2 lg:col-span-2">
+            <Link to={siteConfig.routes.home} className="flex items-center gap-2">
               <img
                 src={siteConfig.logoPath}
                 alt={siteConfig.name}
-                className="object-contain h-12 w-auto"
+                className="h-9 w-9 rounded-lg object-contain"
               />
+              <span className="font-heading text-xl font-bold tracking-tight text-ink">
+                {siteConfig.name}
+              </span>
             </Link>
-            <p className="text-gray-400 mb-6 leading-relaxed max-w-sm">
-              Modern billing software built for Indian businesses. GST compliant,
-              feature-rich, and incredibly easy to use.
+            <p className="mt-5 max-w-xs font-body text-sm leading-relaxed text-ink-soft">
+              The offline-first POS &amp; business suite for Indian retail. Run your
+              entire shop from one app — online or offline.
             </p>
 
-            {/* Contact Info */}
-            <div className="space-y-3 text-gray-400">
-              <a
-                href={`mailto:${siteConfig.contact.email}`}
-                className="flex items-center gap-3 hover:text-primary-400 transition-colors"
-              >
-                <Mail className="w-5 h-5" />
+            <div className="mt-6 space-y-2.5 font-body text-sm text-ink-soft">
+              <a href={`mailto:${siteConfig.contact.email}`} className="flex items-center gap-2.5 hover:text-ink">
+                <Mail className="h-4 w-4 text-ink-faint" />
                 {siteConfig.contact.email}
               </a>
-              <a
-                href={`tel:${siteConfig.contact.phone.replace(/\s/g, '')}`}
-                className="flex items-center gap-3 hover:text-primary-400 transition-colors"
-              >
-                <Phone className="w-5 h-5" />
+              <a href={`tel:${siteConfig.contact.phone.replace(/\s/g, '')}`} className="flex items-center gap-2.5 hover:text-ink">
+                <Phone className="h-4 w-4 text-ink-faint" />
                 {siteConfig.contact.phone}
               </a>
-              <a
-                href={`tel:${siteConfig.contact.altPhone.replace(/\s/g, '')}`}
-                className="flex items-center gap-3 hover:text-primary-400 transition-colors"
-              >
-                <Phone className="w-5 h-5" />
-                {siteConfig.contact.altPhone}
-              </a>
-              <div className="flex items-start gap-3">
-                <MapPin className="w-5 h-5 mt-1 flex-shrink-0" />
+              <div className="flex items-start gap-2.5">
+                <MapPin className="mt-0.5 h-4 w-4 shrink-0 text-ink-faint" />
                 <span>{siteConfig.contact.address}</span>
               </div>
             </div>
           </div>
 
-          {/* Links Sections */}
-          {footerSections.map((section, index) => (
-            <motion.div
-              key={section.title}
-              initial={{ opacity: 0, y: 20 }}
-              whileInView={{ opacity: 1, y: 0 }}
-              viewport={viewportOnce}
-              transition={{ duration: 0.5, delay: getStaggerDelay(index) }}
-            >
-              <h3 className="font-semibold text-white mb-4">{section.title}</h3>
-              <ul className="space-y-3">
+          {/* Link columns */}
+          {footerSections.map((section) => (
+            <div key={section.title}>
+              <h3 className="font-heading text-sm font-semibold text-ink">{section.title}</h3>
+              <ul className="mt-4 space-y-2.5">
                 {section.links.map((link) => (
                   <li key={link.label}>
                     {link.href.startsWith('#') ? (
                       <button
+                        type="button"
                         onClick={() => scrollToSection(link.href)}
-                        className="text-gray-400 hover:text-primary-400 transition-colors"
+                        className="font-body text-sm text-ink-soft transition-colors hover:text-ink"
                       >
                         {link.label}
                       </button>
                     ) : (
                       <Link
                         to={link.href}
-                        className="text-gray-400 hover:text-primary-400 transition-colors"
+                        className="font-body text-sm text-ink-soft transition-colors hover:text-ink"
                       >
                         {link.label}
                       </Link>
@@ -103,35 +73,63 @@ export default function LandingFooter() {
                   </li>
                 ))}
               </ul>
-            </motion.div>
+            </div>
           ))}
         </div>
 
-        {/* Divider */}
-        <div className="border-t border-gray-800 pt-8">
-          <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-            {/* Copyright */}
-            <div className="flex flex-col sm:flex-row items-center gap-4 text-gray-400 text-sm">
-              <span>&copy; {currentYear} {siteConfig.name}. All rights reserved.</span>
-              <span className="hidden sm:inline">•</span>
-              <span className="flex items-center gap-2">
-                Made with <span className="text-red-500">❤️</span> in India <span className="text-lg">🇮🇳</span>
-              </span>
-            </div>
+        {/* Contact CTA */}
+        <div className="mt-12 flex flex-col items-start justify-between gap-4 rounded-3xl border border-ink/8 bg-canvas p-6 sm:flex-row sm:items-center">
+          <div>
+            <h3 className="font-heading text-base font-semibold text-ink">
+              Questions? We&apos;re here to help
+            </h3>
+            <p className="mt-1 font-body text-sm text-ink-soft">
+              Talk to our India-based team about onboarding, data migration, or a
+              live demo at your counter.
+            </p>
+          </div>
+          <a
+            href={`mailto:${siteConfig.contact.email}`}
+            className="inline-flex shrink-0 items-center gap-2 rounded-full bg-ink px-6 py-3 font-body text-sm font-semibold text-white shadow-pill transition-transform hover:scale-105"
+          >
+            <Mail className="h-4 w-4" />
+            Email us
+          </a>
+        </div>
 
-            {/* Social Links */}
-            <div className="flex items-center gap-4">
-              {socialLinks.map((social) => (
-                <a
-                  key={social.label}
-                  href={social.href}
-                  aria-label={social.label}
-                  className="w-10 h-10 rounded-lg bg-gray-800 hover:bg-primary-500 flex items-center justify-center text-gray-400 hover:text-white transition-all duration-300"
-                >
-                  <social.icon className="w-5 h-5" />
-                </a>
-              ))}
-            </div>
+        {/* Oversized wordmark */}
+        <div
+          aria-hidden="true"
+          className="pointer-events-none mt-14 select-none text-center font-heading text-[22vw] font-extrabold leading-none tracking-tighter text-transparent"
+          style={{
+            backgroundImage: 'linear-gradient(180deg, rgba(70,84,120,0.14), rgba(70,84,120,0.02))',
+            WebkitBackgroundClip: 'text',
+            backgroundClip: 'text',
+          }}
+        >
+          {siteConfig.name.toLowerCase()}
+        </div>
+
+        {/* Bottom bar */}
+        <div className="mt-8 flex flex-col items-center justify-between gap-4 border-t border-ink/8 pt-8 sm:flex-row">
+          <div className="flex flex-col items-center gap-2 font-body text-sm text-ink-faint sm:flex-row sm:gap-4">
+            <span>&copy; {currentYear} {siteConfig.name}. All rights reserved.</span>
+            <span className="hidden sm:inline">•</span>
+            <span className="inline-flex items-center gap-1.5">
+              Made with <span className="text-[#EC8FC0]">❤</span> in India 🇮🇳
+            </span>
+          </div>
+          <div className="flex items-center gap-2">
+            {socialLinks.map((social) => (
+              <a
+                key={social.label}
+                href={social.href}
+                aria-label={social.label}
+                className="inline-flex h-10 w-10 items-center justify-center rounded-full border border-ink/10 text-ink-soft transition-all hover:border-ink/30 hover:text-ink"
+              >
+                <social.icon className="h-4 w-4" />
+              </a>
+            ))}
           </div>
         </div>
       </div>

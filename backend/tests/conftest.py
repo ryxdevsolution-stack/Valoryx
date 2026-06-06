@@ -265,6 +265,7 @@ def create_test_app():
             ("routes.search",  "/api/search"),
             ("routes.admin",   "/api/admin"),
             ("routes.team",    "/api/team"),
+            ("routes.oauth",   "/api/oauth"),
         ]:
             try:
                 mod = __import__(_bp_path, fromlist=[""])

@@ -172,6 +172,10 @@ def google_callback():
     POST /api/oauth/google/callback
     Body: { "code": "...", "state": "..." }
     """
+    # Client IP for the session record / last_login_ip — X-Forwarded-For first
+    # (behind nginx/proxy in prod), falling back to the direct peer address.
+    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
+
     data = request.get_json() or {}
     code = (data.get('code') or '').strip()
     state = (data.get('state') or '').strip()
