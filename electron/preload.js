@@ -26,6 +26,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
   installUpdate: () => ipcRenderer.invoke('install-update'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
+  // Forced logout: quit the app when the account is taken over on another till.
+  quitApp: () => ipcRenderer.invoke('quit-app'),
 });
 
 console.log('[Preload] Context bridge initialized');

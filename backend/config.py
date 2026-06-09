@@ -217,6 +217,16 @@ class OptimizedConfig:
     JWT_DESKTOP_EXPIRATION_HOURS = 168  # 7 days for desktop/offline mode (Phase 2)
 
     # -------------------------------
+    # Concurrent session policy
+    # -------------------------------
+    # Maximum number of simultaneously-active sessions allowed per user account.
+    # 1 = single-device: a new login auto-logs-out the previous device.
+    # Set higher to allow multiple devices per account; 0 disables enforcement.
+    MAX_CONCURRENT_SESSIONS_PER_USER = int(
+        os.getenv("MAX_CONCURRENT_SESSIONS_PER_USER", "1")
+    )
+
+    # -------------------------------
     # Flask - SECURITY HARDENED
     # -------------------------------
     SECRET_KEY = os.getenv("SECRET_KEY")

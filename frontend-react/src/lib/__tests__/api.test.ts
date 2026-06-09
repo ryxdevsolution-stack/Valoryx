@@ -106,6 +106,22 @@ describe('401 response handling', () => {
     await expect(api.get('/billing/list')).rejects.toThrow()
     expect(logoutMock).toHaveBeenCalledTimes(1)
   })
+
+  it('flags SESSION_REVOKED logouts with a reason for the login page', async () => {
+    server.use(
+      http.get(`${BASE}/anything`, () =>
+        HttpResponse.json(
+          { error: 'Session has been revoked. Please login again.', code: 'SESSION_REVOKED' },
+          { status: 401 }
+        )
+      )
+    )
+
+    await api.get('/anything').catch(() => {})
+
+    expect(localStorage.getItem('token')).toBeNull()
+    expect(localStorage.getItem('logout_reason')).toBe('session_revoked')
+  })
 })
 
 // ── 6. 403 TRIAL_EXPIRED / SUBSCRIPTION_EXPIRED redirects to upgrade page ──────

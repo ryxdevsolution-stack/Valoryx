@@ -15,6 +15,8 @@ import { InstallBanner } from '@/components/pwa/InstallBanner'
 import { ApiPerformanceBar } from '@/components/ApiPerformanceBar'
 import ToastContainer from '@/components/ToastContainer'
 
+const SESSION_HEARTBEAT_MS = 30_000
+
 function LoadingFallback() {
   return (
     <div className="flex items-center justify-center min-h-screen bg-gray-50 dark:bg-gray-900">
@@ -71,6 +73,18 @@ export default function App() {
       .then(r => { if (r.data.needs_setup) setNeedsSetup(true) })
       .catch(() => {})
   }, [isElectron, backendReady])
+
+  // Single-session heartbeat: periodically confirm the session is still valid.
+  // A 401 here is handled globally by the api.ts interceptor (clears auth + redirect).
+  useEffect(() => {
+    const ping = () => {
+      if (document.visibilityState !== 'visible') return
+      if (!localStorage.getItem('token')) return
+      api.get('/auth/session-check').catch(() => {})
+    }
+    const id = window.setInterval(ping, SESSION_HEARTBEAT_MS)
+    return () => window.clearInterval(id)
+  }, [])
 
   if (!backendReady) return <ElectronSplash status={startupStatus} />
   if (isElectron && needsSetup) return <ElectronSetup onComplete={() => setNeedsSetup(false)} />

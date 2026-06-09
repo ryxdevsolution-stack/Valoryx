@@ -1,6 +1,7 @@
 import jwt
 import bcrypt
 import uuid
+import logging as _logging
 import pyotp
 import hashlib as _hashlib
 import secrets as _secrets
@@ -13,6 +14,7 @@ from models.client_model import ClientEntry
 from models.branch_model import Branch
 from models.permission_model import get_user_permissions, Permission, UserPermission
 from models.session_model import UserSession
+from utils.session_manager import enforce_session_limit
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager
@@ -145,6 +147,40 @@ def login():
                 'deletion_date': client.deletion_scheduled_at.isoformat(),
                 'message': 'Your account is scheduled for deletion.'
             }), 403
+
+        # Serialize concurrent logins for this account so two near-simultaneous
+        # logins (double-click / two tabs / two workers) can't both pass the
+        # single-session check and create two sessions. On Postgres this takes a
+        # row-level lock held until commit; on SQLite writes already serialize, so
+        # with_for_update is a harmless no-op there.
+        db.session.query(User).filter_by(user_id=user.user_id).with_for_update().first()
+
+        # Single-device policy: if the account already has an active session and
+        # the caller hasn't explicitly chosen to take over, surface a 409 so the
+        # UI can warn and confirm before displacing the other device. Placed BEFORE
+        # the 2FA step so a takeover never re-consumes a one-time TOTP/backup code.
+        max_sessions = Config.MAX_CONCURRENT_SESSIONS_PER_USER
+        force_login = bool(data.get('force_login'))
+        if max_sessions > 0 and not force_login:
+            existing_sessions = (
+                UserSession.query
+                .filter_by(user_id=str(user.user_id), is_active=True)
+                .filter(UserSession.expires_at > datetime.utcnow())
+                .order_by(UserSession.last_seen.desc())
+                .all()
+            )
+            if len(existing_sessions) >= max_sessions:
+                latest = existing_sessions[0]
+                return jsonify({
+                    'success': False,
+                    'code': 'SESSION_EXISTS',
+                    'error': 'This account is already logged in on another system.',
+                    'active_session': {
+                        'device': latest.device,
+                        'ip_address': latest.ip_address,
+                        'last_seen': latest.last_seen.isoformat() if latest.last_seen else None,
+                    },
+                }), 409
 
         # 2FA check: only for self-registered owners (created_by IS NULL) with TOTP enabled.
         # Admin-created sub-users are never prompted even if totp_enabled=True.
@@ -320,11 +356,26 @@ def login():
         )
         db.session.add(new_session)
 
-        # OPTIMIZED: Single commit for last_login update and session record (non-blocking)
+        # Single-device policy: revoke the user's other active sessions so the
+        # newest login wins. Displaced devices auto-logout on their next request
+        # via the SESSION_REVOKED check in auth_middleware.
+        enforce_session_limit(
+            user.user_id, session_id, Config.MAX_CONCURRENT_SESSIONS_PER_USER
+        )
+
+        # Commit the session record + revocations. Unlike last_login, the session
+        # row is REQUIRED for the just-issued token to authenticate, so a failure
+        # here must fail the login closed — otherwise we'd hand out a token whose
+        # session was rolled back (instant self-logout) while the old device that
+        # enforce_session_limit tried to revoke stays alive.
         try:
             db.session.commit()
-        except Exception:
-            db.session.rollback()  # Don't fail login if last_login update fails
+        except Exception as commit_err:
+            db.session.rollback()
+            _logging.getLogger(__name__).error(
+                "Login session persist failed for user %s: %s", user.user_id, commit_err
+            )
+            return jsonify({'error': 'Login failed', 'message': 'Could not establish session'}), 500
 
         # Send login notification only when IP is new/different
         if is_new_ip and _email_enabled('email_on_login'):
@@ -365,6 +416,15 @@ def login():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Login failed', 'message': str(e)}), 500
+
+
+@auth_bp.route('/session-check', methods=['GET'])
+@authenticate
+def session_check():
+    """Lightweight authenticated ping for the client heartbeat. Returns 200 while
+    the session is valid; auth_middleware returns 401 SESSION_REVOKED once the
+    session has been revoked by a takeover login."""
+    return jsonify({'success': True}), 200
 
 
 @auth_bp.route('/register', methods=['POST'])
@@ -838,6 +898,12 @@ def verify_email():
         is_active=True,
     )
     db.session.add(new_session)
+
+    # Same single-device policy as login: this is an auto-login, so respect the cap.
+    enforce_session_limit(
+        owner.user_id, session_id, Config.MAX_CONCURRENT_SESSIONS_PER_USER
+    )
+
     try:
         db.session.commit()
     except Exception:

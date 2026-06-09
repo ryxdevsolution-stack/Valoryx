@@ -24,6 +24,7 @@ from models.branch_model import Branch
 from models.permission_model import get_user_permissions, Permission, UserPermission
 from models.session_model import UserSession
 from config import Config
+from utils.session_manager import enforce_session_limit
 import requests as http_requests
 
 logger = logging.getLogger(__name__)
@@ -339,6 +340,10 @@ def google_callback():
         is_active=True,
     )
     db.session.add(session_record)
+    # Single-device policy: revoke other active sessions for this user.
+    enforce_session_limit(
+        user.user_id, session_id, Config.MAX_CONCURRENT_SESSIONS_PER_USER
+    )
     try:
         db.session.commit()
     except Exception as exc:

@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react'
+import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
@@ -13,12 +13,21 @@ export default function LoginPage() {
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
 
+  // Single-session enforcement state
+  const [sessionConflict, setSessionConflict] = useState<null | {
+    device?: string; ip_address?: string; last_seen?: string;
+  }>(null)
+  const [forcedLogout, setForcedLogout] = useState(false)
+
   // 2FA two-step state
   const [requiresTotp, setRequiresTotp] = useState(false)
   const [totpCode, setTotpCode] = useState('')
   const [trustDevice, setTrustDevice] = useState(false)
   // Store credentials between step 1 and step 2
   const pendingCredentials = useRef<{ email: string; password: string } | null>(null)
+  // Once the user confirms a takeover, force_login rides along on every subsequent
+  // post (including the TOTP step) so the conflict surfaces once and is never re-asked.
+  const forceLoginRef = useRef(false)
 
   // Retrieve stored trusted-device token for the given email (if any)
   const getStoredDeviceToken = (forEmail: string): string => {
@@ -34,6 +43,8 @@ export default function LoginPage() {
   const { setClientData } = useClient()
 
   const processLoginResponse = (data: any) => {
+    // Login succeeded — clear the takeover flag so a later attempt starts clean.
+    forceLoginRef.current = false
     const { token, user, client_id, client_name, client_logo, client_address, client_phone, client_email, client_gstin } = data
 
     const userData = {
@@ -91,6 +102,7 @@ export default function LoginPage() {
           password: pendingCredentials.current.password,
           totp_code: totpCode,
           trust_device: trustDevice,
+          force_login: forceLoginRef.current,
         })
 
         if (response.data.requires_totp) {
@@ -105,6 +117,10 @@ export default function LoginPage() {
 
         processLoginResponse(response.data)
       } catch (err: any) {
+        if (err.response?.status === 409 && err.response?.data?.code === 'SESSION_EXISTS') {
+          setSessionConflict(err.response.data.active_session || {})
+          return
+        }
         setError(err.response?.data?.error || 'Login failed')
       } finally {
         setLoading(false)
@@ -125,6 +141,7 @@ export default function LoginPage() {
         email,
         password,
         device_token: getStoredDeviceToken(email),
+        force_login: forceLoginRef.current,
       })
 
       if (response.data.requires_totp) {
@@ -140,6 +157,13 @@ export default function LoginPage() {
       processLoginResponse(response.data)
     } catch (err: any) {
       const data = err.response?.data ?? {}
+
+      // Account already logged in elsewhere — offer confirm-before-takeover
+      if (err.response?.status === 409 && data.code === 'SESSION_EXISTS') {
+        setSessionConflict(data.active_session || {})
+        setLoading(false)
+        return
+      }
 
       // Email not yet verified — soft redirect to the pending page
       if (data.email_unverified) {
@@ -165,11 +189,73 @@ export default function LoginPage() {
     }
   }
 
+  // User chose to take over the other session. The conflict surfaces at the
+  // password step (before 2FA), so we re-run the password post with force_login.
+  // If the account uses 2FA, the backend then asks for the TOTP code as usual —
+  // force_login rides along on that step too (forceLoginRef), so the one-time
+  // code is entered exactly once and never re-consumed.
+  const confirmTakeover = async () => {
+    setSessionConflict(null)
+    setError('')
+    forceLoginRef.current = true
+    setLoading(true)
+    try {
+      const response = await api.post('/auth/login', {
+        email,
+        password,
+        device_token: getStoredDeviceToken(email),
+        force_login: true,
+      })
+
+      if (response.data.requires_totp) {
+        // 2FA account: proceed to the TOTP step (forceLoginRef keeps the takeover).
+        pendingCredentials.current = { email, password }
+        setRequiresTotp(true)
+        setTotpCode('')
+        return
+      }
+
+      processLoginResponse(response.data)
+    } catch (e: any) {
+      // Takeover failed — clear the flag so a later attempt re-asks for confirmation
+      // (never silently take over a different account the user types next).
+      forceLoginRef.current = false
+      setError(e.response?.data?.error || 'Login failed')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  // Surface the forced-logout flag set by the api.ts interceptor on a revoked session
+  useEffect(() => {
+    if (localStorage.getItem('logout_reason') === 'session_revoked') {
+      setForcedLogout(true)
+    }
+  }, [])
+
+  const dismissForcedLogout = () => {
+    localStorage.removeItem('logout_reason')
+    setForcedLogout(false)
+    const electronAPI = (window as any).electronAPI
+    if (electronAPI?.isElectron && typeof electronAPI.quitApp === 'function') {
+      electronAPI.quitApp()
+    }
+  }
+
+  // Render a human-friendly "last active" string from an ISO/date-like value
+  const formatLastSeen = (value?: string): string => {
+    if (!value) return ''
+    const parsed = new Date(value)
+    if (isNaN(parsed.getTime())) return value
+    return parsed.toLocaleString()
+  }
+
   const handleBackToLogin = () => {
     setRequiresTotp(false)
     setTotpCode('')
     setError('')
     pendingCredentials.current = null
+    forceLoginRef.current = false
   }
 
   const handleGoogleLogin = async () => {
@@ -337,7 +423,7 @@ export default function LoginPage() {
                     id="email"
                     type="email"
                     value={email}
-                    onChange={(e) => setEmail(e.target.value)}
+                    onChange={(e) => { setEmail(e.target.value); forceLoginRef.current = false }}
                     className={INPUT_CLASS}
                     placeholder="Enter your email"
                   />
@@ -435,6 +521,86 @@ export default function LoginPage() {
           )}
         </div>
       </div>
+
+      {/* ── Already-signed-in: confirm before takeover ─────────── */}
+      {sessionConflict && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          role="dialog"
+          aria-modal="true"
+          aria-labelledby="session-conflict-title"
+        >
+          <div className="w-full max-w-md backdrop-blur-md rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] border border-white/10 p-8 bg-[#2d2145]">
+            <h2 id="session-conflict-title" className="text-2xl font-bold text-white mb-2">
+              Already signed in
+            </h2>
+            <p className="text-slate-400 text-sm mb-4">
+              This account is already logged in on another system.
+            </p>
+
+            {(sessionConflict.device || sessionConflict.last_seen) && (
+              <div className="bg-white/5 border border-white/10 rounded-lg px-4 py-3 mb-6 text-sm space-y-1">
+                {sessionConflict.device && (
+                  <p className="text-slate-300">
+                    <span className="text-slate-500">Device: </span>
+                    {sessionConflict.device}
+                  </p>
+                )}
+                {sessionConflict.last_seen && (
+                  <p className="text-slate-300">
+                    <span className="text-slate-500">Last active: </span>
+                    {formatLastSeen(sessionConflict.last_seen)}
+                  </p>
+                )}
+              </div>
+            )}
+
+            <div className="flex flex-col gap-3">
+              <button
+                type="button"
+                onClick={confirmTakeover}
+                disabled={loading}
+                className="w-full bg-[#5227FF] hover:bg-[#6340ff] text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 disabled:opacity-50 disabled:cursor-not-allowed shadow-md hover:shadow-lg"
+              >
+                {loading ? 'Signing in…' : 'Continue & log them out'}
+              </button>
+              <button
+                type="button"
+                onClick={() => setSessionConflict(null)}
+                className="w-full bg-white/5 border border-white/15 text-white font-medium py-3 px-6 rounded-lg hover:bg-white/10 transition-colors"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* ── Forced logout: session revoked elsewhere ───────────── */}
+      {forcedLogout && (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm"
+          role="alertdialog"
+          aria-modal="true"
+          aria-labelledby="forced-logout-title"
+        >
+          <div className="w-full max-w-md backdrop-blur-md rounded-2xl shadow-[0_20px_60px_rgba(0,0,0,0.5)] border border-white/10 p-8 bg-[#2d2145]">
+            <h2 id="forced-logout-title" className="text-2xl font-bold text-white mb-2">
+              Signed out
+            </h2>
+            <p className="text-slate-400 text-sm mb-6">
+              You have been logged out because this account signed in on another system.
+            </p>
+            <button
+              type="button"
+              onClick={dismissForcedLogout}
+              className="w-full bg-[#5227FF] hover:bg-[#6340ff] text-white font-semibold py-3 px-6 rounded-lg transition-all duration-200 shadow-md hover:shadow-lg"
+            >
+              OK
+            </button>
+          </div>
+        </div>
+      )}
     </div>
   )
 }

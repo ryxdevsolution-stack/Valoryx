@@ -299,6 +299,12 @@ api.interceptors.response.use(
     }
 
     if (error.response?.status === 401) {
+      // Distinguish a forced single-device logout from an ordinary token expiry,
+      // so the login page can explain why the user was signed out.
+      if (error.response?.data?.code === 'SESSION_REVOKED') {
+        localStorage.setItem('logout_reason', 'session_revoked')
+      }
+
       // Token expired or invalid
       // Clear auth keys only — billing draft stays so user sees it on next login
       localStorage.removeItem('token')
