@@ -1050,9 +1050,14 @@ def create_app():
         else:
             response.headers.setdefault(
                 'Content-Security-Policy',
-                "default-src 'self'; script-src 'self' 'unsafe-inline'; "
-                "style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; "
-                "font-src 'self' data:; connect-src 'self'; frame-ancestors 'none'"
+                "default-src 'self'; "
+                "script-src 'self' 'unsafe-inline' https://checkout.razorpay.com; "
+                "style-src 'self' 'unsafe-inline'; "
+                "img-src 'self' data: blob: https://checkout.razorpay.com; "
+                "font-src 'self' data:; "
+                "connect-src 'self' https://api.razorpay.com https://lumberjack.razorpay.com; "
+                "frame-src https://api.razorpay.com https://checkout.razorpay.com; "
+                "frame-ancestors 'none'"
             )
 
         return response
