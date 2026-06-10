@@ -152,12 +152,15 @@ def test_login_rate_limit_blocks_after_ten_failures(http, sample_client):
     import routes.auth as _auth_mod
 
     now = time.time()
-    # Seed 10 recent failures for the test client IP (127.0.0.1)
-    _auth_mod._LOGIN_FAIL_STORE["127.0.0.1"] = [now] * 10
+    # Seed 10 recent failures for the test client IP (keys are namespaced
+    # "ip:<addr>" / "email:<addr>" since the 2026-06-10 hardening)
+    _auth_mod._LOGIN_FAIL_STORE["ip:127.0.0.1"] = [now] * 10
 
     resp = _login(http, "any@example.com", "anything")
     assert resp.status_code == 429
     assert "too many" in resp.get_json().get("error", "").lower()
+    # Clean up so later login tests in this module are not blocked
+    _auth_mod._LOGIN_FAIL_STORE.pop("ip:127.0.0.1", None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

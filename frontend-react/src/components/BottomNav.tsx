@@ -22,6 +22,7 @@ import {
   Banknote,
   History,
   Truck,
+  CreditCard,
 } from 'lucide-react'
 import { usePWA } from '@/hooks/usePWA'
 
@@ -78,6 +79,9 @@ export default function BottomNav() {
   const moreItems = [
     hasPermission('view_customers') && {
       name: 'Customers', href: '/customers', icon: Users,
+    },
+    (user.role === 'owner' || !!user.is_super_admin) && {
+      name: 'Membership', href: '/membership', icon: CreditCard,
     },
     hasPermission('view_sales_reports') && {
       name: 'Reports', href: '/reports', icon: TrendingUp,

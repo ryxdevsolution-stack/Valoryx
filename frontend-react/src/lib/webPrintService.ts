@@ -46,6 +46,16 @@ export interface BillData {
   gst_percentage?: number;
   final_amount: number;
   total_amount: number;
+  /** ₹ knocked off this bill by membership point redemption. */
+  membership_redeemed?: number | null;
+  /** Membership receipt block (card number, earn/redeem, balance). */
+  membership?: {
+    card_number: string;
+    points_earned: number;
+    points_redeemed: number;
+    redeemed_amount: number;
+    points_balance: number;
+  } | null;
   payment_type: string;
   created_at: string;
   type: 'gst' | 'non-gst';
@@ -183,12 +193,14 @@ export function generateReceiptHtml(
   const discount = Number(bill.discount_amount) || 0;
   const actualDiscount = negotiable > 0 ? negotiable : discount;
 
-  // Calculate final amount
+  // Calculate final amount — membership point redemption also reduces what the
+  // customer pays (mirrors the server's final_amount).
+  const membershipRedeemed = Number(bill.membership_redeemed) || 0;
   let finalAmount = 0;
   if (bill.type === 'gst') {
-    finalAmount = subtotal + gstAmount - actualDiscount;
+    finalAmount = subtotal + gstAmount - actualDiscount - membershipRedeemed;
   } else {
-    finalAmount = subtotal - actualDiscount;
+    finalAmount = subtotal - actualDiscount - membershipRedeemed;
   }
   finalAmount = Math.max(0, finalAmount);
 
@@ -207,8 +219,8 @@ export function generateReceiptHtml(
     }
   }
 
-  // Include discount in savings
-  totalSavings += actualDiscount;
+  // Include discount + redeemed points in savings
+  totalSavings += actualDiscount + membershipRedeemed;
 
   // Format payment info with amounts
   let paymentDisplay = '';
@@ -357,8 +369,19 @@ export function generateReceiptHtml(
     <div class="row">Total Mrp : ${totalMrp.toFixed(2)}</div>
     <div class="row">Total Rate : ${totalRate.toFixed(2)}</div>
     ${actualDiscount > 0 ? `<div class="row"><span style="font-size: ${FONT_SIZE_LARGE}; font-weight: 700;">Total Discount : ${actualDiscount.toFixed(2)}</span></div>` : ''}
+    ${membershipRedeemed > 0 ? `<div class="row"><span style="font-size: ${FONT_SIZE_LARGE}; font-weight: 700;">Points Redeemed${bill.membership ? ` (${bill.membership.points_redeemed} pts)` : ''} : -${membershipRedeemed.toFixed(2)}</span></div>` : ''}
+    <div class="row"><span style="font-size: 14px; font-weight: 700;">Net Payable : ${grandTotal.toFixed(2)}</span></div>
   </div>
   <div class="dashed"></div>
+
+  <!-- Membership summary (earned this bill + balance after) -->
+  ${bill.membership ? `
+  <div class="center" style="font-size: ${FONT_SIZE_SMALL}; margin: 1mm 0;">
+    Member ${escapeHtml(bill.membership.card_number || '')}
+    &middot; Earned ${bill.membership.points_earned} pts
+    &middot; Balance ${bill.membership.points_balance} pts
+  </div>
+  <div class="dashed"></div>` : ''}
 
   <!-- GST Breakdown (if GST bill) -->
   ${gstBreakdownText ? `<div class="center" style="font-size: ${FONT_SIZE_SMALL};">${gstBreakdownText}</div>` : ''}

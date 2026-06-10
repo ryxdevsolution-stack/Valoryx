@@ -259,13 +259,14 @@ def create_test_app():
         _db.session.commit()
 
         for _bp_path, _prefix in [
-            ("routes.auth",    "/api/auth"),
-            ("routes.billing", "/api/billing"),
-            ("routes.stock",   "/api/stock"),
-            ("routes.search",  "/api/search"),
-            ("routes.admin",   "/api/admin"),
-            ("routes.team",    "/api/team"),
-            ("routes.oauth",   "/api/oauth"),
+            ("routes.auth",     "/api/auth"),
+            ("routes.billing",  "/api/billing"),
+            ("routes.stock",    "/api/stock"),
+            ("routes.search",   "/api/search"),
+            ("routes.admin",    "/api/admin"),
+            ("routes.team",     "/api/team"),
+            ("routes.oauth",    "/api/oauth"),
+            ("routes.electron", None),  # routes carry full /api/electron/* paths
         ]:
             try:
                 mod = __import__(_bp_path, fromlist=[""])

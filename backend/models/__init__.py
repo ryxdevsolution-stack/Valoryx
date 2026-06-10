@@ -28,3 +28,6 @@ from models.sync_metadata_model import SyncMetadata, SyncLog             # noqa:
 from models.supplier_model import Supplier, SupplierDelivery, SupplierDeliveryItem  # noqa: F401
 from models.payment_type_model import PaymentType                          # noqa: F401
 from models.bill_number_counter_model import BillNumberCounter             # noqa: F401
+from models.membership_tier_model import MembershipTier                    # noqa: F401
+from models.membership_card_model import MembershipCard                    # noqa: F401
+from models.membership_ledger_model import MembershipLedger                # noqa: F401

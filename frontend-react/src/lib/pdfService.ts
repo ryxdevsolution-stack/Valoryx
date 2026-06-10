@@ -224,6 +224,15 @@ export async function generateBillPDF(
       `<tr><td class="tot-lbl">Negotiated</td><td class="tot-val green">− ${formatCurrency(negotiableAmount)}</td></tr>`
     )
   }
+  const membershipRedeemed = Number(bill.membership_redeemed) || 0
+  if (membershipRedeemed > 0) {
+    const ptsLabel = bill.membership?.points_redeemed
+      ? `Points Redeemed (${bill.membership.points_redeemed} pts)`
+      : 'Points Redeemed'
+    totalRows.push(
+      `<tr><td class="tot-lbl">${ptsLabel}</td><td class="tot-val green">− ${formatCurrency(membershipRedeemed)}</td></tr>`
+    )
+  }
   if (isGST) {
     totalRows.push(
       `<tr><td class="tot-lbl">CGST</td><td class="tot-val">${formatCurrency(bill.cgst)}</td></tr>`
@@ -239,8 +248,19 @@ export async function generateBillPDF(
     : ''
 
   // ── Loyalty points panel (below card, festive) ────────────────────────────
-  const pointsPanel =
-    bill.points_earned && bill.points_earned > 0
+  // Prefer the membership block (card program) over the legacy client-level points.
+  const m = bill.membership
+  const pointsPanel = m
+    ? `<div class="points-panel">
+         <div class="confetti-bg">
+           <div class="points-inner">
+             <div class="points-label">Member ${esc(m.card_number || '')}</div>
+             <div class="points-value">+${m.points_earned} Points</div>
+             <div class="points-sub">Balance: ${m.points_balance} pts &middot; T&amp;C applied</div>
+           </div>
+         </div>
+       </div>`
+    : bill.points_earned && bill.points_earned > 0
       ? `<div class="points-panel">
            <div class="confetti-bg">
              <div class="points-inner">

@@ -50,9 +50,11 @@
         "to": "backend",
         "filter": [
           "**/*",
-          ".env",
-          "!__pycache__/**",
-          "!*.pyc",
+          "!**/.env",
+          "!**/.env.*",
+          "!tests/**",
+          "!**/__pycache__/**",
+          "!**/*.pyc",
           "!venv/**"
         ]
       },

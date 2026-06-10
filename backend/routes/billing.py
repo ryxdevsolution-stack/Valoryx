@@ -14,6 +14,7 @@ from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission, require_any_permission
 from utils.audit_logger import log_action
 from utils.helpers import calculate_gst_amount, calculate_final_amount, validate_items, title_case
+from services.membership_service import MembershipError
 from utils.cache_helper import get_cache_manager, invalidate_billing_cache as _invalidate_billing, invalidate_stock_cache as _invalidate_stock
 from utils.bill_number_helper import get_next_bill_number
 from utils.rate_limiter import rate_limit
@@ -114,6 +115,105 @@ def _update_loyalty_points(client_id, customer_phone, bill_amount, subtract=Fals
     except Exception as e:
         print(f"Warning: Loyalty points update failed: {e}")
         return 0
+
+
+# ── Membership card hooks (loyalty card program) ────────────────────────────────
+
+def _commit_membership_on_finalize(client_id, data, bill_id, final_amount, earn_base=None):
+    """Commit the membership ledger (earn/redeem/negotiate/upgrade) for a finalized bill.
+
+    Called INSIDE the bill transaction (before db.session.commit) so the whole
+    bill + membership mutation is atomic. Raises MembershipError on rule
+    violations (redeem>balance, over budget) so the caller rolls back.
+    No-op when the bill carries no membership card. Idempotent on bill_id.
+    """
+    membership_card_id = (str(data.get('membership_card_id') or '').strip()) if data else ''
+    if not membership_card_id:
+        return None
+
+    from models.membership_card_model import MembershipCard
+    import services.membership_service as membership_service
+
+    card = MembershipCard.query.filter_by(card_id=membership_card_id, client_id=client_id).first()
+    if not card:
+        return None
+
+    summary = membership_service.commit_bill_ledger(
+        client_id, card, bill_id, final_amount,
+        redeem_points=data.get('membership_redeem_points') or 0,
+        negotiate_amount=data.get('membership_negotiate_amount') or 0,
+        earn_base=earn_base,
+    )
+    # Receipt block: what the printed bill shows for the member.
+    if summary and summary.get('applied'):
+        summary['card_number'] = card.membership_number
+        summary['points_balance'] = card.redeemable_points or 0
+    return summary
+
+
+def _membership_receipt_block(summary):
+    """Compact membership dict for the printed receipt; None when not applied."""
+    if not summary or not summary.get('applied'):
+        return None
+    return {
+        'card_number': summary.get('card_number'),
+        'points_earned': summary.get('earned', 0),
+        'points_redeemed': summary.get('redeemed_points', 0),
+        'redeemed_amount': summary.get('redeemed_amount', 0.0),
+        'points_balance': summary.get('points_balance', 0),
+    }
+
+
+def _reverse_membership_on_cancel(client_id, bill_id):
+    """Write reversing `adjust` ledger rows for a cancelled bill. Idempotent, atomic.
+
+    Runs inside the cancel transaction. No-op when no card is linked to the bill.
+    """
+    from models.membership_card_model import MembershipCard
+    from models.membership_ledger_model import MembershipLedger
+    import services.membership_service as membership_service
+
+    # The card is identified via the ledger rows written at finalize for this bill.
+    # Scoped by client_id for defense-in-depth (consistent with the rest of the module).
+    row = MembershipLedger.query.filter_by(bill_id=bill_id, client_id=client_id).first()
+    if not row:
+        return None
+    card = MembershipCard.query.filter_by(card_id=row.card_id, client_id=client_id).first()
+    if not card:
+        return None
+    return membership_service.reverse_bill_ledger(client_id, card, bill_id)
+
+
+def _membership_redeem_value(client_id, data):
+    """Server-side ₹ value of the points the customer is redeeming on this bill.
+
+    Computed authoritatively (never trust the client's number). The matching
+    points are deducted and logged by _commit_membership_on_finalize, which
+    re-validates the balance — so this only needs the value to reduce the
+    payable total. Returns 0.0 when no card / no redemption / tier has no
+    redemption rate.
+    """
+    if not data:
+        return 0.0
+    raw_card_id = data.get('membership_card_id')
+    card_id = str(raw_card_id).strip() if raw_card_id else ''
+    try:
+        pts = int(data.get('membership_redeem_points') or 0)
+    except (TypeError, ValueError):
+        return 0.0
+    if not card_id or pts <= 0:
+        return 0.0
+
+    from models.membership_card_model import MembershipCard
+    from models.membership_tier_model import MembershipTier
+
+    card = MembershipCard.query.filter_by(card_id=card_id, client_id=client_id).first()
+    if not card:
+        return 0.0
+    tier = MembershipTier.query.filter_by(tier_id=card.tier_id, client_id=client_id).first()
+    if not tier or tier.redemption_rate is None:
+        return 0.0
+    return round(pts * float(tier.redemption_rate), 2)
 
 
 @billing_bp.route('/gst', methods=['POST'])
@@ -936,6 +1036,16 @@ def create_unified_bill():
                 # Subtract discount from final_amount
                 final_amount = round(final_amount - discount_amount, 2)
 
+            # Membership point redemption reduces what the customer pays now.
+            # ₹ value is computed server-side; the matching points are deducted +
+            # logged (and the balance re-validated) by the membership hook below.
+            membership_redeem_value = _membership_redeem_value(client_id, data)
+            if membership_redeem_value > 0:
+                if membership_redeem_value > final_amount:
+                    db.session.rollback()
+                    return jsonify({'error': 'Redeemed points exceed the bill total'}), 400
+                final_amount = round(final_amount - membership_redeem_value, 2)
+
             new_bill = GSTBilling(
                 bill_id=str(uuid.uuid4()),
                 client_id=client_id,
@@ -960,8 +1070,20 @@ def create_unified_bill():
             )
 
             db.session.add(new_bill)
+            db.session.flush()  # ensure bill_id is available for the membership ledger
             # Log action BEFORE commit so it's part of the same transaction (performance optimization)
             log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
+
+            # Membership ledger (earn/redeem/negotiate/upgrade) — same transaction, atomic.
+            try:
+                membership_summary = _commit_membership_on_finalize(
+                    client_id, data, new_bill.bill_id, final_amount,
+                    earn_base=round(final_amount + membership_redeem_value, 2),
+                )
+            except MembershipError as _me:
+                db.session.rollback()
+                return jsonify({'error': _me.message}), _me.status_code
+
             db.session.commit()
 
             # Auto-save customer to Customer table (no permission needed)
@@ -1002,6 +1124,8 @@ def create_unified_bill():
                     'gst_amount': round(total_gst_amount, 2),
                     'final_amount': round(final_amount, 2),
                     'total_amount': round(subtotal, 2),
+                    'membership_redeemed': membership_redeem_value if membership_redeem_value > 0 else None,
+                    'membership': _membership_receipt_block(membership_summary),
                     'payment_type': data['payment_type'],
                     'created_at': new_bill.created_at.isoformat() if new_bill.created_at else get_current_time().isoformat(),
                     'type': 'gst',
@@ -1032,6 +1156,15 @@ def create_unified_bill():
                 discount_amount = round((subtotal * data.get('discount_percentage', 0)) / 100, 2)
                 total_amount = round(subtotal - discount_amount, 2)
 
+            # Membership point redemption reduces what the customer pays now
+            # (₹ value computed server-side; points deducted + balance re-validated below).
+            membership_redeem_value = _membership_redeem_value(client_id, data)
+            if membership_redeem_value > 0:
+                if membership_redeem_value > total_amount:
+                    db.session.rollback()
+                    return jsonify({'error': 'Redeemed points exceed the bill total'}), 400
+                total_amount = round(total_amount - membership_redeem_value, 2)
+
             new_bill = NonGSTBilling(
                 bill_id=str(uuid.uuid4()),
                 client_id=client_id,
@@ -1053,8 +1186,20 @@ def create_unified_bill():
             )
 
             db.session.add(new_bill)
+            db.session.flush()  # ensure bill_id is available for the membership ledger
             # Log action BEFORE commit so it's part of the same transaction (performance optimization)
             log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
+
+            # Membership ledger (earn/redeem/negotiate/upgrade) — same transaction, atomic.
+            try:
+                membership_summary = _commit_membership_on_finalize(
+                    client_id, data, new_bill.bill_id, total_amount,
+                    earn_base=round(total_amount + membership_redeem_value, 2),
+                )
+            except MembershipError as _me:
+                db.session.rollback()
+                return jsonify({'error': _me.message}), _me.status_code
+
             db.session.commit()
 
             # Auto-save customer to Customer table (no permission needed)
@@ -1089,6 +1234,8 @@ def create_unified_bill():
                     'gst_amount': 0,
                     'final_amount': total_amount,
                     'total_amount': round(subtotal, 2),
+                    'membership_redeemed': membership_redeem_value if membership_redeem_value > 0 else None,
+                    'membership': _membership_receipt_block(membership_summary),
                     'payment_type': data['payment_type'],
                     'created_at': new_bill.created_at.isoformat() if new_bill.created_at else get_current_time().isoformat(),
                     'type': 'non-gst',
@@ -1550,6 +1697,10 @@ def cancel_bill(bill_id):
         # Update bill status
         bill.status = 'cancelled'
         bill.updated_at = get_current_time()
+
+        # Membership reversal — claw back earned points / restore redeemed points,
+        # in the same transaction as the cancel + stock restore. Idempotent.
+        _reverse_membership_on_cancel(client_id, bill_id)
 
         db.session.commit()
 

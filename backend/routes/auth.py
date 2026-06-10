@@ -19,6 +19,7 @@ from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager
 from utils.rate_limiter import rate_limit
+from utils.request_ip import get_client_ip
 from routes.admin import _email_enabled
 from utils.email_service import (
     send_welcome_email,
@@ -44,31 +45,54 @@ TOTP_REPLAY_WINDOW = 90  # 90 seconds — covers the ±1 valid_window (3 × 30 s
 # How long (seconds) a trusted device token is valid (30 days)
 TRUSTED_DEVICE_TTL = 30 * 24 * 3600
 
-# Login brute-force protection (in-memory, per IP)
+# Login brute-force protection (in-memory, keyed per IP and per account)
 import time as _time
-_LOGIN_FAIL_STORE: dict = {}   # { ip: [timestamp, ...] }
-LOGIN_MAX_FAILURES = 10        # block after 10 failed attempts
-LOGIN_FAIL_WINDOW  = 300       # within 5 minutes
+import bcrypt as _bcrypt_mod
+_LOGIN_FAIL_STORE: dict = {}   # { key: [timestamp, ...] }
+LOGIN_MAX_FAILURES = 10          # per-IP: block after 10 failed attempts
+LOGIN_MAX_FAILURES_PER_EMAIL = 5  # per-account: block after 5 failed attempts
+LOGIN_FAIL_WINDOW  = 300         # within 5 minutes
+
+# Generic message for every credential failure — distinct messages allow
+# account enumeration (audit 2026-06-10)
+LOGIN_GENERIC_ERROR = 'Invalid email or password'
+
+# Dummy hash so unknown-email requests cost the same bcrypt time as a real
+# password check (timing-based enumeration guard)
+_DUMMY_PASSWORD_HASH = _bcrypt_mod.hashpw(
+    b'valoryx-timing-equalizer', _bcrypt_mod.gensalt()
+)
 
 
-def _check_login_rate_limit(ip: str):
+def _login_keys(ip: str, email: str):
+    return f'ip:{ip}', f"email:{(email or '').strip().lower()}"
+
+
+def _check_login_rate_limit(key: str, max_failures: int = LOGIN_MAX_FAILURES):
     """Return (allowed, retry_after_seconds). Prunes old entries automatically."""
     now = _time.time()
-    timestamps = [t for t in _LOGIN_FAIL_STORE.get(ip, []) if now - t < LOGIN_FAIL_WINDOW]
-    _LOGIN_FAIL_STORE[ip] = timestamps
-    if len(timestamps) >= LOGIN_MAX_FAILURES:
+    timestamps = [t for t in _LOGIN_FAIL_STORE.get(key, []) if now - t < LOGIN_FAIL_WINDOW]
+    if timestamps:
+        _LOGIN_FAIL_STORE[key] = timestamps
+    else:
+        # Never keep empty buckets — every probed email/IP would otherwise
+        # leave a permanent dict entry (slow memory exhaustion)
+        _LOGIN_FAIL_STORE.pop(key, None)
+    if len(timestamps) >= max_failures:
         retry_after = int(LOGIN_FAIL_WINDOW - (now - timestamps[0]))
         return False, retry_after
     return True, 0
 
 
-def _record_login_failure(ip: str):
+def _record_login_failure(*keys: str):
     now = _time.time()
-    _LOGIN_FAIL_STORE.setdefault(ip, []).append(now)
+    for key in keys:
+        _LOGIN_FAIL_STORE.setdefault(key, []).append(now)
 
 
-def _clear_login_failures(ip: str):
-    _LOGIN_FAIL_STORE.pop(ip, None)
+def _clear_login_failures(*keys: str):
+    for key in keys:
+        _LOGIN_FAIL_STORE.pop(key, None)
 
 
 @auth_bp.route('/login', methods=['POST', 'OPTIONS'])
@@ -88,10 +112,17 @@ def login():
         if not email or not password:
             return jsonify({'error': 'Email and password required'}), 400
 
-        # Rate-limit by IP — 10 failures per 5 minutes
-        client_ip = request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
-        allowed, retry_after = _check_login_rate_limit(client_ip)
-        if not allowed:
+        # Rate-limit by trusted IP (10 failures / 5 min) AND by account
+        # (5 failures / 5 min) so neither IP rotation nor header spoofing
+        # bypasses the brute-force brake.
+        client_ip = get_client_ip()
+        ip_key, email_key = _login_keys(client_ip, email)
+        ip_allowed, ip_retry = _check_login_rate_limit(ip_key, LOGIN_MAX_FAILURES)
+        email_allowed, email_retry = _check_login_rate_limit(
+            email_key, LOGIN_MAX_FAILURES_PER_EMAIL
+        )
+        if not ip_allowed or not email_allowed:
+            retry_after = max(ip_retry, email_retry)
             return jsonify({
                 'error': f'Too many failed login attempts. Try again in {retry_after} seconds.'
             }), 429
@@ -104,23 +135,33 @@ def login():
         ).filter(User.email == email).first()
 
         if not result:
-            _record_login_failure(client_ip)
-            return jsonify({'error': 'Email address not found'}), 401
+            # Burn the same bcrypt time as a real check so response timing
+            # does not reveal whether the account exists
+            bcrypt.checkpw(password.encode('utf-8'), _DUMMY_PASSWORD_HASH)
+            _record_login_failure(ip_key, email_key)
+            return jsonify({'error': LOGIN_GENERIC_ERROR}), 401
 
         user, client, branch = result
 
         # Block pending invite users before bcrypt attempt — their password_hash is empty
-        # which would raise ValueError: Invalid salt inside bcrypt.checkpw
+        # which would raise ValueError: Invalid salt inside bcrypt.checkpw.
+        # Same generic error as unknown email: a distinct message would let an
+        # attacker enumerate invite-pending accounts (invited users complete
+        # signup via the invite email, not this form).
         if hasattr(user, 'invite_accepted') and not user.invite_accepted and not user.password_hash:
-            return jsonify({'error': 'Please accept your invite email before logging in.'}), 401
+            bcrypt.checkpw(password.encode('utf-8'), _DUMMY_PASSWORD_HASH)
+            _record_login_failure(ip_key, email_key)
+            return jsonify({'error': LOGIN_GENERIC_ERROR}), 401
 
         # Verify password
         if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
-            _record_login_failure(client_ip)
-            return jsonify({'error': 'Incorrect password'}), 401
+            _record_login_failure(ip_key, email_key)
+            return jsonify({'error': LOGIN_GENERIC_ERROR}), 401
 
-        # Clear failure counter on successful auth
-        _clear_login_failures(client_ip)
+        # Clear the per-account counter on successful auth. The per-IP counter
+        # is left to expire naturally — clearing it would let an attacker who
+        # controls one valid account launder their IP budget between attempts.
+        _clear_login_failures(email_key)
 
         # Check if user is active
         if not user.is_active:
@@ -321,12 +362,9 @@ def login():
             'client': client_data
         }, USER_SESSION_CACHE_TIMEOUT)
 
-        # Detect IP — check X-Forwarded-For first (proxy/nginx), fallback to remote_addr
-        incoming_ip = (
-            request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
-            or request.remote_addr
-            or 'unknown'
-        )
+        # Detect IP — remote_addr only (ProxyFix resolves the proxy hop;
+        # raw X-Forwarded-For is client-spoofable)
+        incoming_ip = get_client_ip() or 'unknown'
         is_new_ip = user.last_login_ip != incoming_ip
 
         # Update last_login and last_login_ip
@@ -872,11 +910,7 @@ def verify_email():
     }
 
     # Create a tracked session record (same as login)
-    incoming_ip = (
-        request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
-        or request.remote_addr
-        or 'unknown'
-    )
+    incoming_ip = get_client_ip() or 'unknown'
     ua_string = request.headers.get('User-Agent', '')
     if 'Mobile' in ua_string:
         device = 'Mobile'

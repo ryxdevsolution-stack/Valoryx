@@ -18,6 +18,7 @@ from models.user_model import User
 from models.audit_model import AuditLog
 from utils.auth_middleware import authenticate, require_role
 from utils.email_service import send_invite_email
+from utils.request_ip import get_client_ip
 from config import Config
 
 invite_bp = Blueprint('invite', __name__)
@@ -125,7 +126,7 @@ def accept_invite():
             record_id=str(user.user_id),
             old_data=None,
             new_data={'email': user.email, 'role': user.role},
-            ip_address=request.remote_addr,
+            ip_address=get_client_ip(),
             user_agent=request.headers.get('User-Agent', ''),
         )
         db.session.add(audit_entry)
@@ -159,11 +160,7 @@ def accept_invite():
     else:
         device = 'Desktop'
 
-    incoming_ip = (
-        request.headers.get('X-Forwarded-For', '').split(',')[0].strip()
-        or request.remote_addr
-        or 'unknown'
-    )
+    incoming_ip = get_client_ip() or 'unknown'
 
     new_session = UserSession(
         id=str(_uuid.uuid4()),

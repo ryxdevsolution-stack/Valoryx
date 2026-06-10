@@ -18,7 +18,7 @@
     "@react-three/fiber": "^8.18.0",
     "@tanstack/react-virtual": "^3.13.23",
     "@types/three": "^0.183.1",
-    "axios": "1.6.2",
+    "axios": "^1.17.0",
     "barcode-detector": "^3.1.1",
     "date-fns": "3.0.6",
     "framer-motion": "10.16.16",

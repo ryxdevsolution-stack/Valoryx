@@ -6,6 +6,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const fs = require('fs');
 const http = require('http');
+const crypto = require('crypto');
 const { autoUpdater } = require('electron-updater');
 
 // Configuration
@@ -38,6 +39,29 @@ function sendSplashStatus(message, progress) {
 // Renderer can pull current status on mount (avoids missing the push event)
 ipcMain.handle('get-startup-status', () => lastStartupStatus);
 
+// Per-install secrets for the local backend. The installer no longer ships
+// server credentials (.env) — the offline backend only needs a JWT/session
+// signing secret, which is generated once per machine and kept in userData.
+function loadOrCreateLocalSecrets() {
+  const secretsPath = path.join(app.getPath('userData'), 'local-secrets.json');
+  try {
+    const data = JSON.parse(fs.readFileSync(secretsPath, 'utf-8'));
+    if (data.JWT_SECRET && data.SECRET_KEY) return data;
+  } catch (e) {
+    // first run or unreadable file — regenerate below
+  }
+  const data = {
+    JWT_SECRET: crypto.randomBytes(32).toString('hex'),
+    SECRET_KEY: crypto.randomBytes(32).toString('hex'),
+  };
+  try {
+    fs.writeFileSync(secretsPath, JSON.stringify(data), { mode: 0o600 });
+  } catch (e) {
+    console.error('[Backend] Could not persist local secrets:', e.message);
+  }
+  return data;
+}
+
 function spawnFlask() {
   let pythonPath, backendPath;
   if (isDev) {
@@ -68,12 +92,20 @@ function spawnFlask() {
     console.warn('[Backend] Could not read env.local for DB_URL:', e.message);
   }
 
+  const localSecrets = loadOrCreateLocalSecrets();
+
   const proc = spawn(pythonPath, ['app.py'], {
     cwd: backendPath,
     env: {
       ...process.env,
       DB_MODE: 'offline',
       DB_URL: dbUrl,
+      JWT_SECRET: localSecrets.JWT_SECRET,
+      SECRET_KEY: localSecrets.SECRET_KEY,
+      // Keep the desktop backend loopback-only and never trust
+      // X-Forwarded-For (no proxy in front of it)
+      BIND_HOST: '127.0.0.1',
+      TRUSTED_PROXY_COUNT: '0',
       PYTHONUNBUFFERED: '1',
       TELEGRAM_BOT_TOKEN: '',
       PYTHONIOENCODING: 'utf-8',

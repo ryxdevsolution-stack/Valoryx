@@ -1787,6 +1787,10 @@ export default function StockManagementPage() {
               <iframe
                 id="label-preview-frame"
                 srcDoc={labelPreviewHtml}
+                // No allow-scripts/allow-same-origin: the preview is static HTML;
+                // sandboxing blocks any injected script from reaching our origin.
+                // allow-modals is required for contentWindow.print() to work.
+                sandbox="allow-modals"
                 className="w-full min-h-[300px] border rounded"
                 title="Label Preview"
               />

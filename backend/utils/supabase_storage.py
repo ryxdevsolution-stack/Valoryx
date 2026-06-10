@@ -10,12 +10,25 @@ from werkzeug.utils import secure_filename
 from supabase import create_client, Client
 from typing import Optional, Tuple
 
-# Initialize Supabase client
-SUPABASE_URL = os.getenv('SUPABASE_URL')
-# Use service_role key for storage operations (server-side only!)
-SUPABASE_KEY = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_KEY')
+# Supabase client is created lazily: the packaged desktop app runs without
+# cloud credentials, so module import must never require them. Env vars are
+# also read lazily so dotenv loading order cannot break configuration.
+_supabase_client: Optional[Client] = None
 
-supabase: Client = create_client(SUPABASE_URL, SUPABASE_KEY)
+
+def _get_client() -> Client:
+    global _supabase_client
+    if _supabase_client is None:
+        url = os.getenv('SUPABASE_URL')
+        # Use service_role key for storage operations (server-side only!)
+        key = os.getenv('SUPABASE_SERVICE_ROLE_KEY') or os.getenv('SUPABASE_KEY')
+        if not url or not key:
+            raise RuntimeError(
+                'Supabase storage is not configured '
+                '(SUPABASE_URL / SUPABASE_KEY are not set)'
+            )
+        _supabase_client = create_client(url, key)
+    return _supabase_client
 
 # Configuration for client logos
 BUCKET_NAME = 'client-logos'
@@ -69,14 +82,15 @@ def upload_logo(file, client_id: str) -> Tuple[bool, Optional[str], Optional[str
         storage_path = f"{client_id}/{unique_filename}"
 
         # Upload to Supabase Storage
-        response = supabase.storage.from_(BUCKET_NAME).upload(
+        client = _get_client()
+        response = client.storage.from_(BUCKET_NAME).upload(
             path=storage_path,
             file=file_bytes,
             file_options={"content-type": file.content_type}
         )
 
         # Get public URL
-        public_url = supabase.storage.from_(BUCKET_NAME).get_public_url(storage_path)
+        public_url = client.storage.from_(BUCKET_NAME).get_public_url(storage_path)
 
         return True, public_url, None
 
@@ -112,7 +126,7 @@ def delete_logo(logo_url: str, client_id: str) -> Tuple[bool, Optional[str]]:
             return False, "Unauthorized: Logo does not belong to this client"
 
         # Delete from storage
-        supabase.storage.from_(BUCKET_NAME).remove([storage_path])
+        _get_client().storage.from_(BUCKET_NAME).remove([storage_path])
 
         return True, None
 

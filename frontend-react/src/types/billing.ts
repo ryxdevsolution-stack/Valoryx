@@ -149,6 +149,16 @@ export interface PrintableBill {
   user_name: string;
   payment_status?: 'paid' | 'pending';
   points_earned?: number;
+  /** ₹ knocked off this bill by membership point redemption. */
+  membership_redeemed?: number | null;
+  /** Membership receipt block (card number, earn/redeem, balance). */
+  membership?: {
+    card_number: string;
+    points_earned: number;
+    points_redeemed: number;
+    redeemed_amount: number;
+    points_balance: number;
+  } | null;
 }
 
 // ============================================================================

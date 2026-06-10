@@ -6,8 +6,11 @@ import api from '@/lib/api'
 import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { focusRowById } from '@/utils/focusRow'
 import { CustomerCardSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
-import { X, User, Phone, Mail, MapPin, ShoppingBag, TrendingUp, Clock, ChevronDown, ChevronUp, Package, Pencil } from 'lucide-react'
+import { X, User, Phone, Mail, MapPin, ShoppingBag, TrendingUp, Clock, ChevronDown, ChevronUp, Package, Pencil, CreditCard } from 'lucide-react'
 import { toast } from '@/utils/toast'
+import { useClient } from '@/contexts/ClientContext'
+import membershipService, { getMembershipError } from '@/services/membership'
+import type { CardLookupResult } from '@/types/membership'
 
 interface Customer {
   customer_id?: string
@@ -80,6 +83,45 @@ export default function CustomersPage() {
     notes: '',
   })
   const [savingEdit, setSavingEdit] = useState(false)
+  const [lookingUpCard, setLookingUpCard] = useState(false)
+  const { user } = useClient()
+  const isOwner = user?.role === 'owner' || !!user?.is_super_admin
+
+  // Membership card summary shown inside the customer drawer (auto-fetched by phone).
+  const [drawerCard, setDrawerCard] = useState<CardLookupResult | null>(null)
+  useEffect(() => {
+    setDrawerCard(null)
+    const phone = selectedCustomer?.customer_phone
+    if (!phone || selectedCustomer?.is_walkin) return
+    let stale = false
+    membershipService.lookupCard(phone)
+      .then(res => { if (!stale) setDrawerCard(res.data.data ?? null) })
+      .catch(() => { /* non-member or lookup failure — just hide the strip */ })
+    return () => { stale = true }
+  }, [selectedCustomer])
+
+  // Resolve the customer's membership card by phone, then deep-link to the
+  // owner Membership page card view (?card=<id>). Owner-only entry point.
+  const viewMembershipCard = useCallback(async (customer: Customer) => {
+    if (!customer.customer_phone) {
+      toast.error('No phone number on file to look up a card')
+      return
+    }
+    setLookingUpCard(true)
+    try {
+      const res = await membershipService.lookupCard(customer.customer_phone)
+      const card = res.data.data?.card
+      if (card?.card_id) {
+        navigate(`/membership?card=${encodeURIComponent(card.card_id)}`)
+      } else {
+        toast.error('This customer is not a member yet')
+      }
+    } catch (err) {
+      toast.error(getMembershipError(err, 'Failed to look up membership card'))
+    } finally {
+      setLookingUpCard(false)
+    }
+  }, [navigate])
 
   const openEditCustomer = useCallback((customer: Customer) => {
     setEditingCustomer(customer)
@@ -222,6 +264,23 @@ export default function CustomersPage() {
     setExpandedBillId(null)
   }, [])
 
+  // Membership-card-number search: a query like "VLX-000123" isn't in the customer
+  // list data, so resolve it via the membership lookup to the holder's phone.
+  const [cardMatchPhone, setCardMatchPhone] = useState<string | null>(null)
+  useEffect(() => {
+    const q = searchQuery.trim()
+    if (!/^[A-Za-z]{2,5}-?\w{3,}$/.test(q)) { setCardMatchPhone(null); return }
+    const t = setTimeout(async () => {
+      try {
+        const res = await membershipService.lookupCard(q.toUpperCase())
+        setCardMatchPhone(res.data.data?.card?.customer_phone || null)
+      } catch {
+        setCardMatchPhone(null)
+      }
+    }, 350)
+    return () => clearTimeout(t)
+  }, [searchQuery])
+
   // Hoist formatters outside render — avoids recreating Intl objects on every render cycle
   const filteredCustomers = useMemo(() => {
     const q = searchQuery.toLowerCase()
@@ -229,11 +288,12 @@ export default function CustomersPage() {
       const matchesSearch =
         customer.customer_name.toLowerCase().includes(q) ||
         customer.customer_phone.includes(searchQuery) ||
-        (customer.customer_code && customer.customer_code.toString().includes(searchQuery))
+        (customer.customer_code && customer.customer_code.toString().includes(searchQuery)) ||
+        (cardMatchPhone != null && customer.customer_phone === cardMatchPhone)
       const matchesStatus = filterStatus === 'all' || customer.status === filterStatus
       return matchesSearch && matchesStatus
     })
-  }, [customers, searchQuery, filterStatus])
+  }, [customers, searchQuery, filterStatus, cardMatchPhone])
 
   // Reset to page 1 when search/filter changes
   useEffect(() => {
@@ -311,7 +371,7 @@ export default function CustomersPage() {
                 </svg>
                 <input
                   type="text"
-                  placeholder="Search by name or phone..."
+                  placeholder="Search by name, phone or card no..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="w-full pl-8 pr-2 py-1.5 text-xs bg-white dark:bg-gray-700 text-gray-900 dark:text-white border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-1 focus:ring-blue-500 focus:border-transparent placeholder-gray-400 dark:placeholder-gray-500"
@@ -550,6 +610,18 @@ export default function CustomersPage() {
                 </div>
               </div>
               <div className="flex items-center gap-1">
+                {isOwner && !selectedCustomer.is_walkin && selectedCustomer.customer_phone && (
+                  <button
+                    type="button"
+                    onClick={() => viewMembershipCard(selectedCustomer)}
+                    disabled={lookingUpCard}
+                    className="p-1.5 rounded-lg hover:bg-amber-100 dark:hover:bg-amber-900/30 text-amber-600 dark:text-amber-400 transition-colors disabled:opacity-50"
+                    title="View membership card"
+                    aria-label="View membership card"
+                  >
+                    <CreditCard className="w-4 h-4" />
+                  </button>
+                )}
                 {!selectedCustomer.is_walkin && selectedCustomer.customer_id && (
                   <button
                     type="button"
@@ -569,6 +641,33 @@ export default function CustomersPage() {
                 </button>
               </div>
             </div>
+
+            {/* Membership card summary (auto-fetched; hidden for non-members) */}
+            {drawerCard?.card && (
+              <div className="px-5 py-3 border-b border-gray-200 dark:border-gray-700 flex items-center justify-between gap-2 flex-shrink-0"
+                style={{ background: `${drawerCard.tier?.color || '#7c3aed'}14` }}>
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-bold text-white shrink-0"
+                    style={{ background: drawerCard.tier?.color || '#7c3aed' }}>
+                    {drawerCard.tier?.name || 'Member'}
+                  </span>
+                  <span className="font-mono text-xs text-gray-600 dark:text-gray-300 truncate">{drawerCard.card.membership_number}</span>
+                  <span className="text-xs font-semibold text-gray-900 dark:text-white whitespace-nowrap">
+                    {drawerCard.card.redeemable_points.toLocaleString('en-IN')} pts
+                    {drawerCard.redeemable_value != null && (
+                      <span className="text-green-600 dark:text-green-400"> ≈ ₹{drawerCard.redeemable_value.toLocaleString('en-IN')}</span>
+                    )}
+                  </span>
+                </div>
+                {isOwner && (
+                  <button type="button"
+                    onClick={() => navigate(`/membership?card=${encodeURIComponent(drawerCard.card.card_id)}`)}
+                    className="text-xs text-blue-600 dark:text-blue-400 hover:underline whitespace-nowrap">
+                    Open card
+                  </button>
+                )}
+              </div>
+            )}
 
             {/* Customer Info */}
             <div className="px-5 py-4 grid grid-cols-2 gap-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">

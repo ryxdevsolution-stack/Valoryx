@@ -16,6 +16,18 @@ def create_app():
     app = Flask(__name__)
     app.config.from_object(Config)
 
+    # Resolve the real client IP from the trusted proxy chain. Route code
+    # must read request.remote_addr only (see utils/request_ip.py) — raw
+    # X-Forwarded-For is client-spoofable and allowed rate-limit bypass.
+    if Config.TRUSTED_PROXY_COUNT > 0:
+        from werkzeug.middleware.proxy_fix import ProxyFix
+        app.wsgi_app = ProxyFix(
+            app.wsgi_app,
+            x_for=Config.TRUSTED_PROXY_COUNT,
+            x_proto=Config.TRUSTED_PROXY_COUNT,
+            x_host=0, x_port=0, x_prefix=0,
+        )
+
     # Initialize CORS - deny all cross-origin by default when env var is unset
     cors_origins_raw = os.environ.get('CORS_ORIGINS', '')
     if cors_origins_raw.strip():
@@ -456,6 +468,13 @@ def create_app():
         import_errors.append(f"suppliers: {str(e)}")
         logging.error(f"Failed to import suppliers blueprint: {e}")
 
+    membership_bp = None
+    try:
+        from routes.membership import membership_bp
+    except Exception as e:
+        import_errors.append(f"membership: {str(e)}")
+        logging.error(f"Failed to import membership blueprint: {e}")
+
     contact_bp = None
     try:
         from routes.contact import contact_bp
@@ -670,6 +689,13 @@ def create_app():
             blueprints_registered.append('suppliers')
         except Exception as e:
             print(f"Warning: Could not register suppliers blueprint: {e}")
+
+    if membership_bp:
+        try:
+            app.register_blueprint(membership_bp, url_prefix='/api/membership')
+            blueprints_registered.append('membership')
+        except Exception as e:
+            print(f"Warning: Could not register membership blueprint: {e}")
 
     if contact_bp:
         try:
@@ -1553,4 +1579,8 @@ if __name__ == '__main__':
 
     # [OK] Use environment PORT if available (Render/Railway sets this)
     port = int(os.environ.get("PORT", 5017))
-    app.run(host="0.0.0.0", port=port, debug=app.config.get('DEBUG', False))
+    # BIND_HOST: the Electron desktop app sets 127.0.0.1 so the local backend
+    # (signed with a per-install secret) is never reachable from the LAN.
+    # Default stays 0.0.0.0 for dev/PaaS compatibility.
+    host = os.environ.get("BIND_HOST", "0.0.0.0")
+    app.run(host=host, port=port, debug=app.config.get('DEBUG', False))

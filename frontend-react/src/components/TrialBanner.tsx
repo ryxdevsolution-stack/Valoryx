@@ -3,9 +3,10 @@ import { Link } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
 
 export default function TrialBanner() {
-  const { client } = useClient()
+  const { client, user } = useClient()
 
-  if (!client || client.subscription_status !== 'trial' || import.meta.env.VITE_ELECTRON) return null
+  // Super admins are exempt from expiry — no trial/upgrade nag for them.
+  if (!client || client.subscription_status !== 'trial' || import.meta.env.VITE_ELECTRON || user?.is_super_admin) return null
 
   const daysLeft = client.trial_days_remaining ?? 0
   const isUrgent = daysLeft <= 3

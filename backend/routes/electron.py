@@ -13,8 +13,12 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from extensions import db
 from sqlalchemy import create_engine, text as sa_text
+from utils.rate_limiter import rate_limit
 
 electron_bp = Blueprint('electron', __name__)
+
+# Generic credential-failure message — never reveal whether the email exists
+_GENERIC_AUTH_ERROR = 'Invalid email or password'
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -37,6 +41,8 @@ def needs_setup():
 # ─────────────────────────────────────────────────────────────────────────────
 
 @electron_bp.route('/api/electron/setup', methods=['POST'])
+@rate_limit(max_requests=5, window_seconds=300,
+            error_message='Too many setup attempts. Please wait a few minutes.')
 def setup():
     """
     First-time setup for Electron app.
@@ -64,11 +70,13 @@ def setup():
             connect_args={'connect_timeout': 30}
         )
         client_id, user_row = _authenticate_supabase(engine, email, password)
-    except ValueError as e:
-        return jsonify({'error': str(e)}), 401
+    except ValueError:
+        # All credential failures use the same generic message — never echo
+        # exception text (e.g. bcrypt's 'Invalid salt') to the caller
+        return jsonify({'error': _GENERIC_AUTH_ERROR}), 401
     except Exception as e:
         logging.error(f'[Electron] Supabase auth failed: {e}')
-        return jsonify({'error': f'Cannot connect to Supabase: {e}'}), 503
+        return jsonify({'error': 'Cannot connect to the server. Please try again later.'}), 503
 
     # Step 2 — fetch all client data from Supabase
     try:
@@ -76,7 +84,7 @@ def setup():
     except Exception as e:
         logging.error(f'[Electron] Supabase fetch failed: {e}')
         engine.dispose()
-        return jsonify({'error': f'Failed to fetch data: {e}'}), 500
+        return jsonify({'error': 'Failed to fetch account data. Please try again later.'}), 500
     finally:
         engine.dispose()
 
@@ -86,7 +94,7 @@ def setup():
     except Exception as e:
         logging.error(f'[Electron] import failed: {e}')
         db.session.rollback()
-        return jsonify({'error': f'Failed to import data: {e}'}), 500
+        return jsonify({'error': 'Failed to import account data. Please try again later.'}), 500
 
     return jsonify({
         'success': True,
@@ -115,16 +123,18 @@ def _authenticate_supabase(engine, email: str, password: str):
         ).mappings().first()
 
     if not row:
-        raise ValueError('Email address not found')
+        raise ValueError(_GENERIC_AUTH_ERROR)
 
-    if row['deleted_at'] is not None:
-        raise ValueError('Account has been deleted')
+    if row['deleted_at'] is not None or not row['is_active']:
+        raise ValueError(_GENERIC_AUTH_ERROR)
 
-    if not row['is_active']:
-        raise ValueError('Account is inactive')
+    # Empty/NULL hash (invite-pending account) would make bcrypt raise
+    # 'Invalid salt' — treat as a normal credential failure
+    if not row['password_hash']:
+        raise ValueError(_GENERIC_AUTH_ERROR)
 
     if not bcrypt.checkpw(password.encode('utf-8'), row['password_hash'].encode('utf-8')):
-        raise ValueError('Incorrect password')
+        raise ValueError(_GENERIC_AUTH_ERROR)
 
     return str(row['client_id']), dict(row)
 

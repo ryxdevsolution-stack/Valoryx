@@ -20,6 +20,7 @@ import {
   RotateCcw,
   Banknote,
   History,
+  CreditCard,
 } from 'lucide-react'
 import { usePWA } from '@/hooks/usePWA'
 import GlobalSearch from '@/components/GlobalSearch'
@@ -27,7 +28,7 @@ import GlobalSearch from '@/components/GlobalSearch'
 type SubItem = { name: string; href: string; icon: typeof RotateCcw }
 type NavItem = {
   name: string; href: string; icon: typeof LayoutDashboard
-  permission?: string; permissions?: string[]; ownerOnly?: boolean
+  permission?: string; permissions?: string[]; ownerOnly?: boolean; requireOwner?: boolean
   subItems?: SubItem[]
 }
 
@@ -41,6 +42,7 @@ const allNavigation: NavItem[] = [
     subItems: [{ name: 'Cancelled Bills', href: '/billing/restore', icon: RotateCcw }],
   },
   { name: 'Customers', href: '/customers', icon: Users, permission: 'view_customers' },
+  { name: 'Membership', href: '/membership', icon: CreditCard, requireOwner: true },
   { name: 'Stock Management', href: '/stock', icon: Package, permission: 'view_stock' },
   { name: 'Suppliers', href: '/suppliers', icon: Truck, permission: 'view_suppliers' },
   { name: 'Salary', href: '/salary', icon: Banknote, permission: 'view_employees' },
@@ -72,6 +74,7 @@ export default function Sidebar() {
   const navigation = useMemo(() => {
     if (!user) return []
     return allNavigation.filter(item => {
+      if ('requireOwner' in item && item.requireOwner) return user.role === 'owner' || !!user.is_super_admin
       if ('ownerOnly' in item && item.ownerOnly) return user.role === 'owner' || user.role === 'manager'
       if ('permissions' in item && item.permissions) return item.permissions.some(p => hasPermission(p))
       if (item.permission) return hasPermission(item.permission)

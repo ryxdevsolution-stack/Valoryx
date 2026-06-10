@@ -23,6 +23,7 @@ from models.client_model import ClientEntry
 from models.branch_model import Branch
 from models.permission_model import get_user_permissions, Permission, UserPermission
 from models.session_model import UserSession
+from utils.request_ip import get_client_ip
 from config import Config
 from utils.session_manager import enforce_session_limit
 import requests as http_requests
@@ -173,9 +174,9 @@ def google_callback():
     POST /api/oauth/google/callback
     Body: { "code": "...", "state": "..." }
     """
-    # Client IP for the session record / last_login_ip — X-Forwarded-For first
-    # (behind nginx/proxy in prod), falling back to the direct peer address.
-    client_ip = request.headers.get('X-Forwarded-For', request.remote_addr or '').split(',')[0].strip()
+    # Client IP for the session record / last_login_ip — remote_addr only
+    # (ProxyFix resolves the proxy hop; raw X-Forwarded-For is spoofable).
+    client_ip = get_client_ip()
 
     data = request.get_json() or {}
     code = (data.get('code') or '').strip()

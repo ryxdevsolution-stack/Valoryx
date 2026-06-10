@@ -31,6 +31,7 @@ const StockTransfer = React.lazy(() => import('@/pages/stock-transfer/StockTrans
 const BranchManagement = React.lazy(() => import('@/pages/stock-transfer/BranchManagement'))
 const ShopSettings = React.lazy(() => import('@/pages/ShopSettings'))
 const Suppliers = React.lazy(() => import('@/pages/Suppliers'))
+const Membership = React.lazy(() => import('@/pages/Membership'))
 const Salary = React.lazy(() => import('@/pages/Salary'))
 const ForcePasswordChange = React.lazy(() => import('@/pages/auth/ForcePasswordChange'))
 const OAuthCallbackPage = React.lazy(() => import('@/pages/auth/OAuthCallback'))
@@ -191,6 +192,7 @@ export function AppRoutes() {
         <Route path="/billing/restore" element={<ProtectedRoute><RestoreBills /></ProtectedRoute>} />
         <Route path="/stock" element={<ProtectedRoute><Stock /></ProtectedRoute>} />
         <Route path="/suppliers" element={<ProtectedRoute><Suppliers /></ProtectedRoute>} />
+        <Route path="/membership" element={<ProtectedRoute><Membership /></ProtectedRoute>} />
         <Route path="/salary" element={<ProtectedRoute><Salary /></ProtectedRoute>} />
         <Route path="/stock-transfer" element={<ProtectedRoute><StockTransfer /></ProtectedRoute>} />
         <Route path="/stock-transfer/branches" element={<ProtectedRoute><BranchManagement /></ProtectedRoute>} />

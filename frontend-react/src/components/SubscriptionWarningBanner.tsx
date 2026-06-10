@@ -30,7 +30,9 @@ export default function SubscriptionWarningBanner() {
   // If client/user change, re-check dismissal
   useEffect(() => { setDismissed(prev => prev) }, [client?.client_id])
 
-  if (!client || dismissed) return null
+  // Super admins are never subject to expiry (backend skips enforcement for
+  // them too) — don't nag them to renew a client account they're inspecting.
+  if (!client || dismissed || user?.is_super_admin) return null
 
   const trialDays = client.trial_days_remaining
   const subDays = client.subscription_days_remaining

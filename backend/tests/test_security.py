@@ -52,7 +52,11 @@ def test_security_headers_present(app_client):
     assert resp.headers.get('X-Frame-Options') == 'DENY'
     assert resp.headers.get('X-Content-Type-Options') == 'nosniff'
     assert resp.headers.get('Referrer-Policy') == 'strict-origin-when-cross-origin'
-    assert resp.headers.get('Permissions-Policy') == 'geolocation=(), microphone=(), camera=()'
+    # Directive order is not significant — compare as a set
+    policy = resp.headers.get('Permissions-Policy', '')
+    directives = {d.strip() for d in policy.split(',')}
+    assert directives == {'geolocation=()', 'microphone=()', 'camera=()'}, \
+        f"unexpected Permissions-Policy: {policy}"
 
 
 def test_printer_name_rejects_path_traversal(app_client):
@@ -128,3 +132,200 @@ def test_invite_password_minimum_8_chars(app_client):
         data = resp.get_json()
         assert '8' in (data.get('error', '') + data.get('message', '')), \
             "Error message should mention 8 characters"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# 2026-06-10 audit regression tests
+# ═══════════════════════════════════════════════════════════════════════════
+
+@pytest.fixture(autouse=True)
+def _clean_rate_limit_state():
+    """Rate-limit counters are module-level; keep tests order-independent."""
+    from utils import rate_limiter as rl
+    try:
+        from routes import auth as auth_mod
+        login_store = auth_mod._LOGIN_FAIL_STORE
+    except ImportError:
+        login_store = {}
+    rl._STORE.clear()
+    login_store.clear()
+    yield
+    rl._STORE.clear()
+    login_store.clear()
+
+
+# ── Stored XSS: default barcode label template ─────────────────────────────
+
+def test_default_label_template_escapes_html():
+    """product_name / item_code / unit must be HTML-escaped in the default label"""
+    from utils.barcode_label import generate_label_html
+    item = {
+        'item_code': '<svg onload=alert(1)>',
+        'product_name': '<img src=x onerror=alert(1)>',
+        'unit': '<b>kg</b>',
+    }
+    html = generate_label_html(item)
+    assert '<img src=x' not in html, "product_name rendered unescaped"
+    assert '<svg onload' not in html, "item_code rendered unescaped"
+    assert '<b>kg</b>' not in html, "unit rendered unescaped"
+    assert '&lt;img' in html, "expected escaped product_name in output"
+
+
+def test_labels_roll_escapes_html():
+    """The full multi-label roll must not pass payloads through unescaped"""
+    from utils.barcode_label import generate_labels_html
+    html = generate_labels_html([
+        {'item_code': 'X1', 'product_name': '<script>steal()</script>', 'quantity': 1},
+    ])
+    assert '<script>steal()' not in html
+
+
+# ── User enumeration via login error messages ───────────────────────────────
+
+def test_login_unknown_email_and_wrong_password_same_error(http, sample_user):
+    """401 bodies must not reveal whether the email exists"""
+    r_unknown = http.post('/api/auth/login', json={
+        'email': 'no-such-user@valoryx-test.invalid', 'password': 'whatever123',
+    })
+    r_wrongpw = http.post('/api/auth/login', json={
+        'email': sample_user.email, 'password': 'WrongPass999!',
+    })
+    assert r_unknown.status_code == 401
+    assert r_wrongpw.status_code == 401
+    assert r_unknown.get_json()['error'] == r_wrongpw.get_json()['error'], \
+        "distinct messages allow account enumeration"
+    assert 'not found' not in r_unknown.get_json()['error'].lower()
+
+
+# ── Login rate limiting: spoofed X-Forwarded-For must not bypass ────────────
+
+def test_login_rate_limit_not_bypassed_by_spoofed_xff(http):
+    """Rotating X-Forwarded-For must not reset the per-IP failure counter"""
+    for i in range(10):
+        http.post(
+            '/api/auth/login',
+            json={'email': f'u{i}@valoryx-test.invalid', 'password': 'xxxxxxxx'},
+            headers={'X-Forwarded-For': f'1.2.3.{i}'},
+        )
+    resp = http.post(
+        '/api/auth/login',
+        json={'email': 'final@valoryx-test.invalid', 'password': 'xxxxxxxx'},
+        headers={'X-Forwarded-For': '99.99.99.99'},
+    )
+    assert resp.status_code == 429, \
+        f"XFF rotation bypassed the login rate limit (got {resp.status_code})"
+
+
+def test_login_locks_account_after_repeated_failures(http, sample_user):
+    """Per-account lockout must trip even if attacker IPs vary (keyed by email)"""
+    for _ in range(5):
+        r = http.post('/api/auth/login', json={
+            'email': sample_user.email, 'password': 'WrongPass999!',
+        })
+        assert r.status_code in (401, 429)
+    resp = http.post('/api/auth/login', json={
+        'email': sample_user.email, 'password': 'WrongPass999!',
+    })
+    assert resp.status_code == 429, \
+        f"expected per-account lockout after 5 failures, got {resp.status_code}"
+
+
+# ── rate_limit decorator must actually limit (was a no-op stub) ─────────────
+
+def _make_limited_app(route, **kw):
+    from flask import Flask
+    from utils.rate_limiter import rate_limit
+    app = Flask(__name__)
+
+    @rate_limit(**kw)
+    def limited():
+        return 'ok'
+    # Unique endpoint per route — the limiter keys on (endpoint, ip), so two
+    # test apps must not share a bucket through the module-level store
+    app.add_url_rule(route, endpoint=f'limited{route}', view_func=limited)
+    return app.test_client()
+
+
+def test_rate_limit_decorator_enforces_limit():
+    c = _make_limited_app('/limited-a', max_requests=3, window_seconds=60)
+    codes = [c.get('/limited-a').status_code for _ in range(4)]
+    assert codes[:3] == [200, 200, 200], f"valid requests blocked: {codes}"
+    assert codes[3] == 429, f"4th request should be 429, got {codes[3]}"
+
+
+def test_rate_limit_decorator_ignores_spoofed_xff():
+    c = _make_limited_app('/limited-b', max_requests=3, window_seconds=60)
+    for i in range(3):
+        c.get('/limited-b', headers={'X-Forwarded-For': f'10.0.0.{i}'})
+    resp = c.get('/limited-b', headers={'X-Forwarded-For': '8.8.8.8'})
+    assert resp.status_code == 429, "spoofed XFF must not create a fresh bucket"
+
+
+def test_electron_setup_is_rate_limited(http):
+    """Unauthenticated credential-check endpoint must be throttled"""
+    codes = [
+        http.post('/api/electron/setup', json={}).status_code
+        for _ in range(8)
+    ]
+    assert 429 in codes, f"no 429 after 8 rapid requests: {codes}"
+
+
+def test_rate_limiter_prune_respects_per_entry_window():
+    """A 60s-window endpoint's prune must not wipe live 300s-window buckets"""
+    import time
+    from utils import rate_limiter as rl
+    now = time.monotonic()
+    rl._STORE.clear()
+    # Fill past the prune threshold with stale short-window buckets
+    for i in range(rl._PRUNE_THRESHOLD):
+        rl._STORE[('fill', f'ip{i}')] = (60, [now - 120])
+    # A long-window bucket that is still live (100s old, 300s window)
+    rl._STORE[('reset-password', 'attacker')] = (300, [now - 100])
+    rl._prune(now)
+    assert ('reset-password', 'attacker') in rl._STORE, \
+        "prune dropped a live long-window bucket"
+    rl._STORE.clear()
+
+
+def test_login_fail_store_does_not_accumulate_empty_keys(app):
+    """Checking a clean key must not create a permanent empty store entry"""
+    from routes import auth as auth_mod
+    auth_mod._LOGIN_FAIL_STORE.clear()
+    auth_mod._check_login_rate_limit('ip:198.51.100.7')
+    assert 'ip:198.51.100.7' not in auth_mod._LOGIN_FAIL_STORE, \
+        "empty bucket persisted — unbounded growth under email/IP spraying"
+
+
+# ── supabase_storage must not require credentials at import time ────────────
+
+def test_supabase_storage_imports_without_credentials(monkeypatch):
+    """Module import must not crash when Supabase env vars are absent
+    (the packaged desktop app no longer ships server credentials)."""
+    import sys
+    monkeypatch.delenv('SUPABASE_URL', raising=False)
+    monkeypatch.delenv('SUPABASE_KEY', raising=False)
+    monkeypatch.delenv('SUPABASE_SERVICE_ROLE_KEY', raising=False)
+    sys.modules.pop('utils.supabase_storage', None)
+    import utils.supabase_storage  # noqa: F401 — must not raise
+
+
+# ── SQLite database file permissions ─────────────────────────────────────────
+
+def test_sqlite_db_permissions_hardened(tmp_path, monkeypatch):
+    """get_database_uri must chmod existing DB to 0600 and its dir to 0700"""
+    import stat
+    db_dir = tmp_path / 'valoryx-data'
+    db_dir.mkdir()
+    db_file = db_dir / 'local.db'
+    db_file.write_bytes(b'')
+    db_file.chmod(0o644)
+
+    monkeypatch.setenv('DB_MODE', 'offline')
+    monkeypatch.setenv('SQLITE_DB_PATH', str(db_file))
+    from config import get_database_uri
+    get_database_uri()
+
+    file_mode = stat.S_IMODE(db_file.stat().st_mode)
+    dir_mode = stat.S_IMODE(db_dir.stat().st_mode)
+    assert file_mode == 0o600, f"DB file mode is {oct(file_mode)}, expected 0o600"
+    assert dir_mode == 0o700, f"DB dir mode is {oct(dir_mode)}, expected 0o700"

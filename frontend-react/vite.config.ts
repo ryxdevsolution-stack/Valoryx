@@ -5,7 +5,7 @@ import path from 'path'
 
 const isElectron = process.env.ELECTRON_BUILD === 'true'
 
-export default defineConfig({
+export default defineConfig(({ command }) => ({
   plugins: [
     react(),
     // PWA only for web builds, not Electron
@@ -65,14 +65,18 @@ export default defineConfig({
   },
   // Use /frontend/ for web (Flask-served), './' for Electron (file:// protocol)
   base: isElectron ? './' : '/',
+  // Strip all console.* and debugger statements from production builds.
+  // NOTE 1: must be top-level `esbuild`, not build.esbuildOptions (which Vite
+  // ignores) — the old placement shipped console.logs of customer data.
+  // NOTE 2: keyed on command, not mode — the Electron build runs
+  // `vite build --mode electron`, which would skip a mode==='production' check.
+  esbuild: {
+    drop: command === 'build' ? (['console', 'debugger'] as ('console' | 'debugger')[]) : [],
+  },
   build: {
     outDir: 'dist',
     sourcemap: false,
-    // Strip all console.* and debugger statements from production builds
     minify: 'esbuild',
-    esbuildOptions: {
-      drop: ['console', 'debugger'],
-    },
     rollupOptions: {
       // virtual:pwa-register only exists when vite-plugin-pwa is loaded.
       // In Electron builds the plugin is omitted, so mark the virtual module
@@ -94,4 +98,4 @@ export default defineConfig({
       '/api': 'http://localhost:5017',
     },
   },
-})
+}))

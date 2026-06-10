@@ -10,6 +10,8 @@ import { SystemNotification } from '@/utils/notifications'
 import ProductCardGrid from '@/components/billing/ProductCardGrid'
 import ProfitSummaryBar from '@/components/billing/ProfitSummaryBar'
 import MobileCartList from '@/components/billing/MobileCartList'
+import MembershipBillingPanel from '@/components/billing/MembershipBillingPanel'
+import type { CardLookupResult } from '@/types/membership'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
 import BarcodeScannerModal from '@/components/billing/BarcodeScannerModal'
 import UpiQrCode from '@/components/billing/UpiQrCode'
@@ -98,6 +100,12 @@ interface BillTab {
   negotiableAmount: number
   useNegotiablePrice: boolean
   amountReceived: number
+  // Membership card attached to this bill (optional). Cleared when the tab resets.
+  membershipCardId?: string
+  membershipRedeemPoints?: number
+  // ₹ value per point for the attached card's tier — used to convert redeemed
+  // points into a money-off amount on this bill (backend re-computes authoritatively).
+  membershipRedemptionRate?: number
 }
 
 export default function UnifiedBillingPage() {
@@ -1189,14 +1197,23 @@ export default function UnifiedBillingPage() {
     const totalGST = activeTab.items.reduce((sum, item) => sum + item.gst_amount, 0)
     const subtotalWithGST = subtotal + totalGST
 
-    // Per-line discounts replace the bill-level discount: if any line is discounted,
-    // the bill-level discount % is ignored to avoid double-discounting.
+    // Bill-level discount stacks AFTER per-item discounts: line amounts are
+    // already net of their own discounts, so the bill % applies on the reduced
+    // subtotal+GST (no double-counting of the same discount).
     const hasLineDiscount = activeTab.items.some(item => (item.discount_percentage || 0) > 0)
-    const effectiveBillDiscountPct = hasLineDiscount ? 0 : activeTab.discountPercentage
+    const effectiveBillDiscountPct = activeTab.discountPercentage
 
-    const grandTotal = activeTab.useNegotiablePrice && activeTab.negotiableAmount > 0
+    const preRedeemTotal = activeTab.useNegotiablePrice && activeTab.negotiableAmount > 0
       ? Math.max(0, subtotalWithGST - activeTab.negotiableAmount)
       : Math.max(0, subtotalWithGST - (subtotalWithGST * effectiveBillDiscountPct) / 100)
+
+    // Membership points redeemed as money off this bill (backend re-computes the
+    // ₹ value authoritatively; this mirrors it so the payable total + splits match).
+    const redeemValue = Math.min(
+      preRedeemTotal,
+      (activeTab.membershipRedeemPoints || 0) * (activeTab.membershipRedemptionRate || 0)
+    )
+    const grandTotal = Math.max(0, preRedeemTotal - redeemValue)
 
     const rounded = Math.round(grandTotal)
 
@@ -1206,11 +1223,13 @@ export default function UnifiedBillingPage() {
       grandTotal: rounded,
       roundOff: rounded - grandTotal,
       discountAmount: (subtotalWithGST * effectiveBillDiscountPct) / 100,
+      membershipRedeemValue: redeemValue,
       hasLineDiscount,
       balance: activeTab.amountReceived - rounded,
     }
   }, [activeTab.items, activeTab.discountPercentage, activeTab.negotiableAmount,
-      activeTab.useNegotiablePrice, activeTab.amountReceived])
+      activeTab.useNegotiablePrice, activeTab.amountReceived,
+      activeTab.membershipRedeemPoints, activeTab.membershipRedemptionRate])
 
   // Determine if GST columns should be shown in the table
   const showGstColumns = () => {
@@ -1232,6 +1251,9 @@ export default function UnifiedBillingPage() {
       useNegotiablePrice: false,
       amountReceived: 0,
       payment_splits: [],
+      membershipCardId: undefined,
+      membershipRedeemPoints: 0,
+      membershipRedemptionRate: undefined,
     })
     setCurrentItem({
       product_id: '',
@@ -1321,8 +1343,16 @@ export default function UnifiedBillingPage() {
         amount_received: isPending ? 0 : activeTab.amountReceived,
         // Per-item discounts replace the bill-level discount; send 0 so the backend
         // doesn't double-apply on top of the already-discounted line amounts.
-        discount_percentage: (activeTab.useNegotiablePrice || billTotals.hasLineDiscount) ? 0 : activeTab.discountPercentage,
+        // Bill-level % is sent even when per-item discounts exist — the backend
+        // applies it on the already line-discounted subtotal (stacking, not doubling).
+        discount_percentage: activeTab.useNegotiablePrice ? 0 : activeTab.discountPercentage,
         negotiable_amount: activeTab.useNegotiablePrice ? activeTab.negotiableAmount : null,
+        // Membership: attached card + points redeemed now. The backend enforces the
+        // monthly negotiable budget and recomputes the redemption ₹ value server-side.
+        membership_card_id: activeTab.membershipCardId || null,
+        membership_redeem_points: activeTab.membershipRedeemPoints || 0,
+        membership_negotiate_amount: activeTab.membershipCardId && activeTab.useNegotiablePrice
+          ? activeTab.negotiableAmount : null,
         bill_date: billDate.toISOString(),
         payment_status: isPending ? 'pending' : 'paid',
       })
@@ -1659,7 +1689,10 @@ export default function UnifiedBillingPage() {
                     {customerSuggestions.map((customer, index) => (
                       <div
                         key={customer.customer_id}
-                        onClick={() => selectCustomer(customer)}
+                        // Select on MOUSEDOWN, not click: the input's blur closes the
+                        // dropdown 150ms after mousedown — a slow click (mouseup later)
+                        // would land on a vanished row and select nothing.
+                        onMouseDown={(e) => { e.preventDefault(); selectCustomer(customer) }}
                         className={`px-3 py-2 cursor-pointer border-b border-gray-100 dark:border-gray-700 ${
                           index === selectedCustomerIndex
                             ? 'bg-blue-100 dark:bg-blue-900'
@@ -1680,7 +1713,7 @@ export default function UnifiedBillingPage() {
               </div>
 
               {/* Customer Name */}
-              <div className="md:col-span-3 relative customer-search-container">
+              <div className="md:col-span-2 relative customer-search-container">
                 <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
                   Customer Name
                 </label>
@@ -1705,7 +1738,10 @@ export default function UnifiedBillingPage() {
                     {customerSuggestions.map((customer, index) => (
                       <div
                         key={customer.customer_id}
-                        onClick={() => selectCustomer(customer)}
+                        // Select on MOUSEDOWN, not click: the input's blur closes the
+                        // dropdown 150ms after mousedown — a slow click (mouseup later)
+                        // would land on a vanished row and select nothing.
+                        onMouseDown={(e) => { e.preventDefault(); selectCustomer(customer) }}
                         className={`px-3 py-2 cursor-pointer border-b border-gray-100 dark:border-gray-700 ${
                           index === selectedCustomerIndex
                             ? 'bg-blue-100 dark:bg-blue-900'
@@ -1751,7 +1787,10 @@ export default function UnifiedBillingPage() {
                     {customerSuggestions.map((customer, index) => (
                       <div
                         key={customer.customer_id}
-                        onClick={() => selectCustomer(customer)}
+                        // Select on MOUSEDOWN, not click: the input's blur closes the
+                        // dropdown 150ms after mousedown — a slow click (mouseup later)
+                        // would land on a vanished row and select nothing.
+                        onMouseDown={(e) => { e.preventDefault(); selectCustomer(customer) }}
                         className={`px-3 py-2 cursor-pointer border-b border-gray-100 dark:border-gray-700 ${
                           index === selectedCustomerIndex
                             ? 'bg-blue-100 dark:bg-blue-900'
@@ -1772,7 +1811,7 @@ export default function UnifiedBillingPage() {
               </div>
 
               {/* GST Number */}
-              <div className="md:col-span-5">
+              <div className="md:col-span-2">
                 <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
                   Customer GSTIN
                 </label>
@@ -1785,6 +1824,33 @@ export default function UnifiedBillingPage() {
                   onKeyDown={(e) => handleEnterNavigation(e, productSearchRef)}
                   className="w-full p-2 text-xs border-2 border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
+              </div>
+
+              {/* Membership card — lookup, tier discount, point redemption */}
+              <div className="md:col-span-4">
+              <MembershipBillingPanel
+                customerPhone={activeTab.customer_phone || ''}
+                customerName={activeTab.customer_name || ''}
+                attachedCardId={activeTab.membershipCardId}
+                redeemPoints={activeTab.membershipRedeemPoints || 0}
+                billPayableBeforeRedeem={billTotals.grandTotal + (billTotals.membershipRedeemValue || 0)}
+                onApply={(result: CardLookupResult) => {
+                  const applyTierDiscount = !activeTab.useNegotiablePrice
+                  updateActiveTab({
+                    membershipCardId: result.card.card_id,
+                    membershipRedemptionRate: result.tier?.redemption_rate ?? undefined,
+                    discountPercentage: applyTierDiscount
+                      ? (result.tier?.discount_percentage ?? activeTab.discountPercentage)
+                      : activeTab.discountPercentage,
+                  })
+                }}
+                onRedeemChange={(points) => updateActiveTab({ membershipRedeemPoints: points })}
+                onRemove={() => updateActiveTab({
+                  membershipCardId: undefined,
+                  membershipRedeemPoints: 0,
+                  membershipRedemptionRate: undefined,
+                })}
+              />
               </div>
             </div>
 
@@ -2428,9 +2494,8 @@ export default function UnifiedBillingPage() {
                       max="100"
                       step="0.01"
                       placeholder="Enter %"
-                      disabled={billTotals.hasLineDiscount}
-                      title={billTotals.hasLineDiscount ? 'Disabled — per-item discounts are in use' : 'Bill-level discount %'}
-                      value={billTotals.hasLineDiscount ? '' : (activeTab.discountPercentage || '')}
+                      title="Bill-level discount % (applies after per-item discounts)"
+                      value={activeTab.discountPercentage || ''}
                       onChange={(e) =>
                         updateActiveTab({ discountPercentage: parseFloat(e.target.value) || 0 })
                       }
@@ -2451,7 +2516,7 @@ export default function UnifiedBillingPage() {
                           }
                         }
                       }}
-                      className={`w-28 px-3 py-2 text-sm font-bold border-2 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 ${billTotals.hasLineDiscount ? 'border-gray-300 dark:border-gray-600 opacity-50 cursor-not-allowed' : 'border-blue-400 dark:border-blue-600'}`}
+                      className="w-28 px-3 py-2 text-sm font-bold border-2 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 border-blue-400 dark:border-blue-600"
                     />
                   )}
                   <button
@@ -2469,9 +2534,9 @@ export default function UnifiedBillingPage() {
                     {activeTab.useNegotiablePrice ? '% Off' : '₹ Price'}
                   </button>
                 </div>
-                {billTotals.hasLineDiscount && !activeTab.useNegotiablePrice && (
-                  <p className="text-[11px] text-amber-600 dark:text-amber-400 mt-1">
-                    Bill-level discount is off — per-item discounts are in use.
+                {billTotals.hasLineDiscount && !activeTab.useNegotiablePrice && (activeTab.discountPercentage || 0) > 0 && (
+                  <p className="text-[11px] text-blue-600 dark:text-blue-400 mt-1">
+                    Bill discount applies on top of the per-item discounts.
                   </p>
                 )}
               </div>
@@ -2778,6 +2843,16 @@ export default function UnifiedBillingPage() {
                       </span>
                       <span className="text-xs font-semibold text-red-600 dark:text-red-400">
                         - ₹{activeTab.negotiableAmount.toFixed(2)}
+                      </span>
+                    </div>
+                  )}
+                  {(billTotals.membershipRedeemValue || 0) > 0 && (
+                    <div className="flex justify-between items-center border-t border-gray-300 dark:border-gray-600 pt-1">
+                      <span className="text-xs text-purple-600 dark:text-purple-400 font-medium">
+                        Points Redeemed ({activeTab.membershipRedeemPoints} pts):
+                      </span>
+                      <span className="text-xs font-semibold text-purple-600 dark:text-purple-400">
+                        - ₹{(billTotals.membershipRedeemValue || 0).toFixed(2)}
                       </span>
                     </div>
                   )}

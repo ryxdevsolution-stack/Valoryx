@@ -116,14 +116,20 @@ def generate_label_html(item: Dict[str, Any]) -> str:
     Generate HTML for a single 1.6"×1.6" (≈40×40mm) product label.
     Layout: QR code on top, item code as text, product name + unit below.
     """
-    item_code = item.get('item_code', 'N/A')
+    raw_item_code = item.get('item_code', 'N/A')
     product_name = item.get('product_name', 'Unknown Product')
     unit = item.get('unit', '') or item.get('unit_of_measurement', '') or ''
 
     if len(product_name) > 28:
         product_name = product_name[:25] + '...'
 
-    qr_uri = generate_qr_data_uri(item_code)
+    qr_uri = generate_qr_data_uri(raw_item_code)
+
+    # User-controlled fields must be HTML-escaped (stored-XSS guard,
+    # same as the apparel template below)
+    item_code = _escape(raw_item_code)
+    product_name = _escape(product_name)
+    unit = _escape(unit)
 
     unit_html = f' <span class="unit">{unit}</span>' if unit else ''
 

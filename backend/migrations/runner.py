@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 26
+CURRENT_SCHEMA_VERSION = 28
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -1513,6 +1513,125 @@ def _m026_add_missing_permissions(db):
     )
 
 
+def _m027_membership_tables(db):
+    """
+    v27: Customer membership / loyalty card program tables:
+      - membership_tier   (owner-defined card types; NULL benefit = not offered)
+      - membership_card   (1:1 with customer; two point counters)
+      - membership_ledger (append-only event log; source of truth for stats)
+    """
+    inspector = sa_inspect(db.engine)
+    tables = inspector.get_table_names()
+    dialect = db.engine.dialect.name
+    bool_true = 'TRUE' if dialect == 'postgresql' else '1'
+
+    if 'membership_tier' not in tables:
+        db.session.execute(text(f"""
+            CREATE TABLE IF NOT EXISTS membership_tier (
+                tier_id                   VARCHAR(36) PRIMARY KEY,
+                client_id                 VARCHAR(36) NOT NULL
+                                          REFERENCES client_entry(client_id) ON DELETE CASCADE,
+                name                      VARCHAR(100) NOT NULL,
+                description               TEXT         NULL,
+                color                     VARCHAR(20)  NULL,
+                discount_percentage       NUMERIC      NULL,
+                points_per_100            NUMERIC      NULL,
+                redemption_rate           NUMERIC      NULL,
+                monthly_negotiable_budget NUMERIC      NULL,
+                negotiable_budget_period  VARCHAR(10)  DEFAULT 'monthly',
+                upgrade_threshold_points  INTEGER      NULL,
+                upgrade_to_tier_id        VARCHAR(36)  NULL,
+                enrollment_fee            NUMERIC      NULL,
+                validity_days             INTEGER      NULL,
+                is_active                 BOOLEAN      NOT NULL DEFAULT {bool_true},
+                sort_order                INTEGER      DEFAULT 0,
+                created_at                TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at                TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at                 TIMESTAMP    NULL
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mtier_client ON membership_tier (client_id)"))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mtier_client_active ON membership_tier (client_id, is_active)"))
+        logging.info("[Migration] v27: membership_tier table created")
+
+    if 'membership_card' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS membership_card (
+                card_id           VARCHAR(36) PRIMARY KEY,
+                client_id         VARCHAR(36) NOT NULL
+                                  REFERENCES client_entry(client_id) ON DELETE CASCADE,
+                customer_id       VARCHAR(36) NOT NULL UNIQUE
+                                  REFERENCES customer(customer_id) ON DELETE CASCADE,
+                membership_number VARCHAR(50) NOT NULL UNIQUE,
+                tier_id           VARCHAR(36) NOT NULL
+                                  REFERENCES membership_tier(tier_id),
+                redeemable_points INTEGER     NOT NULL DEFAULT 0,
+                lifetime_points   INTEGER     NOT NULL DEFAULT 0,
+                enrolled_at       TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
+                expires_at        TIMESTAMP   NULL,
+                status            VARCHAR(20) NOT NULL DEFAULT 'active',
+                created_at        TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
+                updated_at        TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
+                synced_at         TIMESTAMP   NULL
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mcard_client ON membership_card (client_id)"))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mcard_client_number ON membership_card (client_id, membership_number)"))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mcard_client_customer ON membership_card (client_id, customer_id)"))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mcard_client_status ON membership_card (client_id, status)"))
+        logging.info("[Migration] v27: membership_card table created")
+
+    if 'membership_ledger' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS membership_ledger (
+                ledger_id    VARCHAR(36) PRIMARY KEY,
+                client_id    VARCHAR(36) NOT NULL
+                             REFERENCES client_entry(client_id) ON DELETE CASCADE,
+                card_id      VARCHAR(36) NOT NULL
+                             REFERENCES membership_card(card_id) ON DELETE CASCADE,
+                bill_id      VARCHAR(36) NULL,
+                event_type   VARCHAR(20) NOT NULL,
+                points_delta INTEGER     NOT NULL DEFAULT 0,
+                amount_delta NUMERIC     NOT NULL DEFAULT 0,
+                note         TEXT        NULL,
+                created_at   TIMESTAMP   DEFAULT CURRENT_TIMESTAMP,
+                synced_at    TIMESTAMP   NULL
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mledger_card_created ON membership_ledger (card_id, created_at)"))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mledger_bill_event ON membership_ledger (bill_id, event_type)"))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_mledger_client ON membership_ledger (client_id)"))
+        logging.info("[Migration] v27: membership_ledger table created")
+
+    db.session.commit()
+    logging.info("[Migration] v27: membership tables ready")
+
+
+def _m028_negotiable_budget_period(db):
+    """v28: membership_tier.negotiable_budget_period — 'monthly' (default) or
+    'yearly' window for the negotiable budget cap."""
+    inspector = sa_inspect(db.engine)
+    try:
+        cols = [c['name'] for c in inspector.get_columns('membership_tier')]
+    except Exception:
+        return
+    if 'negotiable_budget_period' not in cols:
+        db.session.execute(text(
+            "ALTER TABLE membership_tier ADD COLUMN negotiable_budget_period VARCHAR(10) DEFAULT 'monthly'"
+        ))
+        db.session.commit()
+        logging.info("[Migration] v28: membership_tier.negotiable_budget_period added")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -1541,6 +1660,8 @@ MIGRATIONS = [
     (24, _m024_ot_columns),
     (25, _m025_discount_columns),
     (26, _m026_add_missing_permissions),
+    (27, _m027_membership_tables),
+    (28, _m028_negotiable_budget_period),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

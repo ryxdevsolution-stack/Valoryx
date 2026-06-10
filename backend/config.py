@@ -55,7 +55,16 @@ def get_database_uri():
         # SQLite for offline mode
         sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
         # Ensure directory exists
-        os.makedirs(os.path.dirname(sqlite_path), exist_ok=True)
+        db_dir = os.path.dirname(sqlite_path)
+        os.makedirs(db_dir, exist_ok=True)
+        # The DB holds password hashes and tenant data — owner-only access.
+        # (On Windows chmod is a no-op beyond the read-only bit; harmless.)
+        try:
+            os.chmod(db_dir, 0o700)
+            if os.path.exists(sqlite_path):
+                os.chmod(sqlite_path, 0o600)
+        except OSError:
+            pass
         return f'sqlite:///{sqlite_path}'
 
 
@@ -292,6 +301,15 @@ class OptimizedConfig:
     # CORS
     # -------------------------------
     CORS_ORIGINS = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
+
+    # -------------------------------
+    # Reverse proxy trust (ProxyFix)
+    # -------------------------------
+    # Number of reverse-proxy hops in front of the app. ProxyFix uses this to
+    # resolve request.remote_addr from X-Forwarded-For safely. Default 1
+    # matches the production deployment (nginx → gunicorn). Set 0 when the
+    # app is exposed directly (then XFF is ignored entirely).
+    TRUSTED_PROXY_COUNT = int(os.getenv("TRUSTED_PROXY_COUNT", "1"))
 
     # -------------------------------
     # Performance Monitoring
