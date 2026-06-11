@@ -19,36 +19,29 @@ export interface BillUpdatePayload {
   payment_type: string
 }
 
-export type AuditEditScope = 'audit_only' | 'apply'
-
 export interface BillUpdateResponse {
   success: boolean
   message: string
   bill: Record<string, unknown>
-  scope: AuditEditScope
+  scope: 'audit_only'
 }
 
 // ─── API Functions ───────────────────────────────────────────────────
 
 /**
- * Update a bill from the Auditor Reports edit flow.
+ * Record an audit correction (audit note) on a bill.
  *
- * @param billId   The bill_id to update.
- * @param payload  Pricing-field-only update payload.
- * @param opts     scope:
- *   - 'audit_only' → write to audit_overrides; bill itself unchanged.
- *                    Only the audit view reflects the correction.
- *   - 'apply'      → mutate bill items; clear any prior audit_overrides.
- *                    Bill, reports, prints all reflect the new values.
+ * Owner/Manager only (enforced server-side). The correction is stored as an
+ * overlay in `audit_overrides`; the original bill items, totals, prints and
+ * reports are NEVER mutated. Only the audit view reflects the corrected figures.
+ *
+ * @param billId   The bill_id to correct.
+ * @param payload  Corrected pricing fields.
  */
 export async function updateBillFromAudit(
   billId: string,
   payload: BillUpdatePayload,
-  opts: { scope: AuditEditScope },
 ): Promise<BillUpdateResponse> {
-  const params = new URLSearchParams()
-  params.set('scope', opts.scope)
-  const url = `/billing/${billId}?${params.toString()}`
-  const { data } = await api.put<BillUpdateResponse>(url, payload)
+  const { data } = await api.put<BillUpdateResponse>(`/billing/${billId}`, payload)
   return data
 }

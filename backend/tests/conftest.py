@@ -719,6 +719,7 @@ def make_token(
     *,
     permissions=None,
     is_super_admin=False,
+    is_readonly=False,
     expired=False,
 ):
     """
@@ -739,6 +740,7 @@ def make_token(
             "client_id": str(client_id),
             "permissions": permissions or [],
             "is_super_admin": is_super_admin,
+            "is_readonly": is_readonly,
             "exp": exp,
             "iat": datetime.utcnow(),
         },
@@ -845,12 +847,52 @@ def gst_headers(sample_user, sample_client):
 
 @pytest.fixture
 def audit_only_headers(sample_user, sample_client):
-    """Auth headers for a user who has ONLY edit_bill_price_audit, NOT edit_bill_details."""
+    """Auth headers for the manager sample_user (role='manager') — allowed to record
+    audit corrections. (Permissions are kept for back-compat of unrelated tests.)"""
     token = make_token(
         sample_user.user_id,
         sample_client.client_id,
         permissions=["edit_bill_price_audit"],
     )
+    return auth_hdr(token)
+
+
+@pytest.fixture
+def readonly_headers(sample_user, sample_client):
+    """Auth headers for a read-only impersonation session — role passes the gate
+    (manager) but is_readonly must block all mutations via @readonly_guard."""
+    token = make_token(
+        sample_user.user_id,
+        sample_client.client_id,
+        permissions=["edit_bill_price_audit"],
+        is_readonly=True,
+    )
+    return auth_hdr(token)
+
+
+@pytest.fixture
+def staff_headers(sample_client):
+    """Auth headers for a STAFF user — must NOT be able to record audit corrections,
+    even when granted the legacy edit_bill_price_audit permission (role-based gate)."""
+    from models.user_model import User
+    from extensions import db
+
+    uid = str(uuid.uuid4())
+    u = User(
+        user_id=uid,
+        email=f"staff-{uid[:8]}@valoryx-test.invalid",
+        password_hash=_bcrypt("TestPass123!"),
+        client_id=sample_client.client_id,
+        role="staff",
+        is_active=True,
+        is_super_admin=False,
+        full_name="Staff User",
+        invite_accepted=True,
+        totp_enabled=False,
+    )
+    db.session.add(u)
+    db.session.commit()
+    token = make_token(uid, sample_client.client_id, permissions=["edit_bill_price_audit"])
     return auth_hdr(token)
 
 

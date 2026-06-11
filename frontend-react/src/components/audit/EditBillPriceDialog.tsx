@@ -1,7 +1,7 @@
 import { useState, useMemo, useEffect, useRef } from 'react';
+import { Pencil } from 'lucide-react';
 import { calcLine, calcBillTotals, LineInput } from '@/utils/billCalc';
-import { updateBillFromAudit, AuditEditScope } from '@/services/billingService';
-import SaveScopeDialog from './SaveScopeDialog';
+import { updateBillFromAudit } from '@/services/billingService';
 import { toast } from '@/utils/toast';
 
 interface BillItemInput extends LineInput {
@@ -29,11 +29,15 @@ interface Bill {
   gst_percentage: number;
   payment_type: string;
   subtotal: number | string;
+  status?: string;
 }
 
 interface Props {
   open: boolean;
   bill: Bill | null;
+  /** Whether the current user may record a correction (owner/manager). When false,
+   *  the dialog is a pure read-only bill detail with no way to enter edit mode. */
+  canCorrect: boolean;
   onClose: () => void;
   /**
    * Fired after a successful save. Receives the updated bill from the server response,
@@ -42,15 +46,19 @@ interface Props {
   onSaved: (updatedBill: Record<string, unknown>) => void;
 }
 
-export default function EditBillPriceDialog({ open, bill, onClose, onSaved }: Props) {
+export default function EditBillPriceDialog({ open, bill, canCorrect, onClose, onSaved }: Props) {
   const [items, setItems] = useState<BillItemInput[]>([]);
   const [originalItems, setOriginalItems] = useState<BillItemInput[]>([]);
-  const [showScope, setShowScope] = useState(false);
   const [saving, setSaving] = useState(false);
+  // The dialog opens as a read-only bill detail; owner/manager can flip into
+  // correction mode. This keeps the edit affordance one deliberate step removed.
+  const [editing, setEditing] = useState(false);
   // Preserve the full raw items (item_code, hsn_code, mrp, unit, etc.) so we don't drop them on save
   const rawItemsRef = useRef<RawItem[]>([]);
 
   useEffect(() => {
+    // Every time a (new) bill is opened, start in read-only view mode.
+    setEditing(false);
     if (!bill) {
       setItems([]); setOriginalItems([]); rawItemsRef.current = [];
       return;
@@ -90,11 +98,8 @@ export default function EditBillPriceDialog({ open, bill, onClose, onSaved }: Pr
     setItems(prev => prev.map((it, i) => i === idx ? { ...it, [field]: value } : it));
   };
 
-  const handleSaveClick = () => setShowScope(true);
-
-  const handleScopeChoice = async (choice: AuditEditScope) => {
+  const handleSave = async () => {
     if (!bill) return;
-    setShowScope(false);
     setSaving(true);
     try {
       // Merge user edits back into the full item shape the backend expects.
@@ -125,12 +130,8 @@ export default function EditBillPriceDialog({ open, bill, onClose, onSaved }: Pr
         total_amount: Number(totals.bill_total.toFixed(2)),
         payment_type: bill.payment_type,
       };
-      const result = await updateBillFromAudit(bill.bill_id, payload as never, { scope: choice });
-      toast.success(
-        choice === 'apply'
-          ? `Bill #${bill.bill_number} updated — visible everywhere.`
-          : `Audit note saved for Bill #${bill.bill_number}. Bill itself unchanged.`,
-      );
+      const result = await updateBillFromAudit(bill.bill_id, payload as never);
+      toast.success(`Audit note saved for Bill #${bill.bill_number}. Bill itself unchanged.`);
       onSaved(result.bill);
       onClose();
     } catch (e: unknown) {
@@ -155,17 +156,35 @@ export default function EditBillPriceDialog({ open, bill, onClose, onSaved }: Pr
         <div className="flex items-center justify-between border-b pb-3">
           <div>
             <h2 className="text-lg font-semibold text-gray-900 dark:text-white">
-              Edit prices — Bill #{bill.bill_number}
+              {editing ? 'Record audit correction' : 'Bill detail'} — Bill #{bill.bill_number}
             </h2>
-            <p className="text-sm text-gray-500 dark:text-gray-400">{bill.customer_name}</p>
+            <p className="text-sm text-gray-500 dark:text-gray-400">
+              {editing
+                ? `${bill.customer_name} · saved as an audit note — the original bill, prints & reports stay unchanged`
+                : `${bill.customer_name} · view only`}
+            </p>
           </div>
-          <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-700" aria-label="Close">✕</button>
+          <div className="flex items-center gap-1.5">
+            {canCorrect && !editing && (
+              <button
+                type="button"
+                onClick={() => setEditing(true)}
+                disabled={bill.status === 'cancelled'}
+                aria-label="Correct prices"
+                title={bill.status === 'cancelled' ? 'Cancelled bills cannot be corrected' : 'Record an audit correction — saved as a note, does not change the bill'}
+                className="rounded p-1.5 text-gray-400 hover:text-blue-600 hover:bg-gray-100 disabled:opacity-40 disabled:cursor-not-allowed dark:text-gray-500 dark:hover:text-blue-400 dark:hover:bg-gray-700"
+              >
+                <Pencil className="h-4 w-4" />
+              </button>
+            )}
+            <button type="button" onClick={onClose} className="text-gray-500 hover:text-gray-700" aria-label="Close">✕</button>
+          </div>
         </div>
 
         {bill.audit_overrides && bill.audit_overrides.length > 0 && (
           <div className="mt-3 rounded border border-blue-400/40 bg-blue-50 dark:bg-blue-900/30 px-3 py-2 text-xs text-blue-700 dark:text-blue-200">
-            Resuming a prior audit note. The bill itself still reads from the original line items.
-            Use <span className="font-semibold">Apply to bill</span> if you want this correction to land everywhere.
+            Resuming a prior audit note. The bill itself still reads from the original line items —
+            your correction is recorded alongside it, never applied over it.
           </div>
         )}
 
@@ -186,7 +205,7 @@ export default function EditBillPriceDialog({ open, bill, onClose, onSaved }: Pr
               const orig = originalItems[idx];
               const origLine = orig ? calcLine(orig) : null;
               const inputCls = (changed: boolean, w: string) =>
-                `${w} rounded border px-2 py-1 text-gray-900 bg-white dark:text-white dark:bg-gray-700 ${
+                `${w} rounded border px-2 py-1 text-gray-900 bg-white dark:text-white dark:bg-gray-700 disabled:bg-gray-100 disabled:text-gray-600 disabled:cursor-default dark:disabled:bg-gray-800/60 dark:disabled:text-gray-300 ${
                   changed
                     ? 'border-amber-500 dark:border-amber-400 ring-1 ring-amber-500/40'
                     : 'border-gray-300 dark:border-gray-600'
@@ -205,6 +224,7 @@ export default function EditBillPriceDialog({ open, bill, onClose, onSaved }: Pr
                       step="0.01"
                       aria-label={`Rate for ${item.product_name}`}
                       value={item.rate}
+                      disabled={!editing}
                       onChange={e => setField(idx, 'rate', Number(e.target.value))}
                       className={inputCls(!!orig && item.rate !== orig.rate, 'w-24')}
                     />
@@ -216,6 +236,7 @@ export default function EditBillPriceDialog({ open, bill, onClose, onSaved }: Pr
                       step="1"
                       aria-label={`Quantity for ${item.product_name}`}
                       value={item.quantity}
+                      disabled={!editing}
                       onChange={e => setField(idx, 'quantity', Number(e.target.value))}
                       className={inputCls(!!orig && item.quantity !== orig.quantity, 'w-20')}
                     />
@@ -227,6 +248,7 @@ export default function EditBillPriceDialog({ open, bill, onClose, onSaved }: Pr
                       step="0.01"
                       aria-label={`Discount for ${item.product_name}`}
                       value={item.discount}
+                      disabled={!editing}
                       onChange={e => setField(idx, 'discount', Number(e.target.value))}
                       className={inputCls(!!orig && item.discount !== orig.discount, 'w-20')}
                     />
@@ -238,6 +260,7 @@ export default function EditBillPriceDialog({ open, bill, onClose, onSaved }: Pr
                       step="0.01"
                       aria-label={`Tax for ${item.product_name}`}
                       value={item.tax_percent}
+                      disabled={!editing}
                       onChange={e => setField(idx, 'tax_percent', Number(e.target.value))}
                       className={inputCls(!!orig && item.tax_percent !== orig.tax_percent, 'w-20')}
                     />
@@ -285,24 +308,32 @@ export default function EditBillPriceDialog({ open, bill, onClose, onSaved }: Pr
         </div>
 
         <div className="mt-4 flex justify-end gap-2">
-          <button type="button" onClick={onClose} className="rounded border px-4 py-2">Cancel</button>
-          <button
-            type="button"
-            onClick={handleSaveClick}
-            disabled={saving || !hasChanges}
-            title={!hasChanges ? 'Change at least one value to save' : 'Save changes'}
-            className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            {saving ? 'Saving…' : 'Save'}
-          </button>
+          {editing ? (
+            <>
+              <button
+                type="button"
+                onClick={() => { setItems(originalItems.map(s => ({ ...s }))); setEditing(false); }}
+                disabled={saving}
+                className="rounded border px-4 py-2 disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                onClick={handleSave}
+                disabled={saving || !hasChanges}
+                title={!hasChanges ? 'Change at least one value to save' : 'Save audit note'}
+                className="rounded bg-blue-600 px-4 py-2 text-white hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {saving ? 'Saving…' : 'Save audit note'}
+              </button>
+            </>
+          ) : (
+            <>
+              <button type="button" onClick={onClose} className="rounded border px-4 py-2">Close</button>
+            </>
+          )}
         </div>
-
-        <SaveScopeDialog
-          open={showScope}
-          onClose={() => setShowScope(false)}
-          onChoice={handleScopeChoice}
-          itemCount={items.length}
-        />
       </div>
     </div>
   );

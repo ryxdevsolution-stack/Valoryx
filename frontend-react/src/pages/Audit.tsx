@@ -4,7 +4,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { toast } from '@/utils/toast'
-import { PermissionGate } from '@/components/PermissionGate'
+import { useClient } from '@/contexts/ClientContext'
 import EditBillPriceDialog from '@/components/audit/EditBillPriceDialog'
 
 interface BillLine {
@@ -67,6 +67,13 @@ export default function AuditorReportsPage() {
   const [showPreview, setShowPreview] = useState(false)
   const [exporting, setExporting] = useState(false)
   const [editingBill, setEditingBill] = useState<GSTBill | null>(null)
+
+  // Audit corrections are a privileged action — owner/manager only (manager
+  // absorbed the old admin role), plus the platform super-admin. We don't surface
+  // an open "edit" control on the report; the correction is reached deliberately
+  // and is recorded as a non-destructive audit note. The server enforces this too.
+  const { user, isSuperAdmin } = useClient()
+  const canCorrect = isSuperAdmin() || user?.role === 'owner' || user?.role === 'manager'
 
   // Pagination state
   const [currentPage, setCurrentPage] = useState(1)
@@ -404,7 +411,15 @@ export default function AuditorReportsPage() {
                   {gstBills.map((bill, index) => {
                     const eff = effectiveTotals(bill)
                     return (
-                    <tr key={bill.bill_id} className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors">
+                    <tr
+                      key={bill.bill_id}
+                      onClick={() => setEditingBill(bill)}
+                      tabIndex={0}
+                      role="button"
+                      onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditingBill(bill) } }}
+                      title="Open bill detail"
+                      className="cursor-pointer hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors focus:outline-none focus:ring-1 focus:ring-inset focus:ring-blue-400"
+                    >
                       <td className="px-3 py-2.5 whitespace-nowrap">
                         <div className="flex items-center gap-1.5">
                           <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">{index + 1}</span>
@@ -455,17 +470,7 @@ export default function AuditorReportsPage() {
                         )}
                       </td>
                       <td className="px-3 py-2.5 text-center whitespace-nowrap">
-                        <PermissionGate permission="edit_bill_price_audit">
-                          <button
-                            type="button"
-                            disabled={bill.status === 'cancelled'}
-                            title={bill.status === 'cancelled' ? 'Cancelled bills cannot be edited' : 'Edit prices'}
-                            onClick={() => setEditingBill(bill)}
-                            className="rounded border px-2 py-1 text-xs hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                          >
-                            Edit
-                          </button>
-                        </PermissionGate>
+                        <span className="text-xs font-medium text-blue-600 dark:text-blue-400">View ›</span>
                       </td>
                     </tr>
                     )
@@ -511,7 +516,11 @@ export default function AuditorReportsPage() {
                 return (
                 <div
                   key={bill.bill_id ?? index}
-                  className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm"
+                  onClick={() => setEditingBill(bill)}
+                  role="button"
+                  tabIndex={0}
+                  onKeyDown={(e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); setEditingBill(bill) } }}
+                  className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm cursor-pointer hover:border-blue-300 dark:hover:border-blue-700 transition-colors focus:outline-none focus:ring-1 focus:ring-blue-400"
                 >
                   <div className="flex items-start justify-between gap-2 mb-2">
                     <div>
@@ -534,17 +543,7 @@ export default function AuditorReportsPage() {
                   <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                     {bill.created_at ? new Date(bill.created_at).toLocaleDateString() : ''}
                   </p>
-                  <PermissionGate permission="edit_bill_price_audit">
-                    <button
-                      type="button"
-                      disabled={bill.status === 'cancelled'}
-                      title={bill.status === 'cancelled' ? 'Cancelled bills cannot be edited' : 'Edit prices'}
-                      onClick={() => setEditingBill(bill)}
-                      className="mt-2 rounded border px-2 py-1 text-xs hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50 disabled:cursor-not-allowed"
-                    >
-                      Edit
-                    </button>
-                  </PermissionGate>
+                  <p className="mt-2 text-right text-xs font-medium text-blue-600 dark:text-blue-400">View ›</p>
                 </div>
                 )
               })}
@@ -741,6 +740,7 @@ export default function AuditorReportsPage() {
       <EditBillPriceDialog
         open={!!editingBill}
         bill={editingBill}
+        canCorrect={canCorrect}
         onClose={() => setEditingBill(null)}
         onSaved={(updatedBill) => {
           // Optimistic update: patch the row in place using the server's response.

@@ -26,7 +26,7 @@ export const permissionMeta: Record<string, PermissionMeta> = {
   view_all_bills:           { icon: '🗂️', example: 'See bills created by every user, not just this user.' },
   view_own_bills:           { icon: '👤', example: 'See only bills this user created — used to restrict cashiers.' },
   edit_bill_details:        { icon: '✏️', example: 'Fix the customer name or notes on an already-saved bill.' },
-  edit_bill_price_audit:    { icon: '🔧', example: 'Power feature: correct the price on a historical bill from the audit log.' },
+  edit_bill_price_audit:    { icon: '🔧', example: 'Deprecated — audit corrections are now owner/manager only and cannot be granted via this permission.' },
   delete_bills:             { icon: '🗑️', example: 'Permanently remove a bill from the system (logged in audit).' },
   print_bills:              { icon: '🖨️', example: 'Print a paper receipt to the configured printer.' },
   download_pdf:             { icon: '📄', example: 'Download a bill as a PDF for emailing or filing.' },

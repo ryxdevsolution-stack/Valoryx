@@ -213,14 +213,17 @@ def test_create_non_gst_bill_success(http, sample_stock, gst_headers):
     assert "bill_id" in data
 
 
-def test_audit_only_user_cannot_edit_customer_name(http, sample_stock, gst_headers, audit_only_headers):
-    """A user with ONLY edit_bill_price_audit cannot change customer_name."""
+def test_correction_never_changes_customer_name(http, sample_stock, gst_headers, audit_only_headers):
+    """A correction is an overlay only — it can never mutate the original bill's
+    customer_name, even if a customer_name is submitted in the payload."""
+    from models.billing_model import GSTBilling
     bill_id, body = _create_gst_bill(http, sample_stock, gst_headers)
+    original_name = GSTBilling.query.filter_by(bill_id=bill_id).first().customer_name
     resp = http.put(
         f"/api/billing/{bill_id}",
         data=json.dumps({
             "items": body["items"],
-            "customer_name": "EVIL HACKER",  # not allowed
+            "customer_name": "EVIL HACKER",  # ignored — corrections only write audit_overrides
             "subtotal": body["subtotal"],
             "gst_percentage": body["gst_percentage"],
             "payment_type": body["payment_type"],
@@ -228,8 +231,9 @@ def test_audit_only_user_cannot_edit_customer_name(http, sample_stock, gst_heade
         content_type="application/json",
         headers=audit_only_headers,
     )
-    assert resp.status_code == 400, resp.get_json()
-    assert "pricing fields" in resp.get_json().get("error", "").lower()
+    assert resp.status_code == 200, resp.get_json()
+    bill = GSTBilling.query.filter_by(bill_id=bill_id).first()
+    assert bill.customer_name == original_name, "original customer_name must never change"
 
 
 def test_audit_only_user_can_edit_pricing_fields(http, sample_stock, gst_headers, audit_only_headers):
@@ -251,9 +255,9 @@ def test_audit_only_user_can_edit_pricing_fields(http, sample_stock, gst_headers
     assert resp.status_code == 200, resp.get_json()
 
 
-# 14. PUT /api/billing/<id> — edit_bill_price_audit permission is accepted
-def test_update_bill_accepts_edit_bill_price_audit_permission(http, sample_stock, gst_headers, audit_only_headers):
-    """A user with ONLY edit_bill_price_audit (no edit_bill_details) can call PUT /api/billing/<id>."""
+# 14. PUT /api/billing/<id> — owner/manager can record an audit correction
+def test_manager_can_record_audit_correction(http, sample_stock, gst_headers, audit_only_headers):
+    """A manager (sample_user.role == 'manager') is allowed to record an audit correction."""
     bill_id, body = _create_gst_bill(http, sample_stock, gst_headers)
     resp = http.put(
         f"/api/billing/{bill_id}",
@@ -268,6 +272,24 @@ def test_update_bill_accepts_edit_bill_price_audit_permission(http, sample_stock
     )
     assert resp.status_code == 200, resp.get_json()
     assert resp.get_json()["success"] is True
+
+
+def test_staff_cannot_record_audit_correction(http, sample_stock, gst_headers, staff_headers):
+    """Staff are forbidden from recording audit corrections — even WITH the legacy
+    edit_bill_price_audit permission. Authorization is role-based (owner/manager only)."""
+    bill_id, body = _create_gst_bill(http, sample_stock, gst_headers)
+    resp = http.put(
+        f"/api/billing/{bill_id}",
+        data=json.dumps({
+            "items": body["items"],
+            "subtotal": body["subtotal"],
+            "gst_percentage": body["gst_percentage"],
+            "payment_type": body["payment_type"],
+        }),
+        content_type="application/json",
+        headers=staff_headers,
+    )
+    assert resp.status_code == 403, resp.get_json()
 
 
 def test_scope_audit_only_writes_to_audit_overrides(http, sample_stock, gst_headers, audit_only_headers):
@@ -302,61 +324,64 @@ def test_scope_audit_only_writes_to_audit_overrides(http, sample_stock, gst_head
     assert float(bill.audit_overrides[0]["rate"]) == new_rate
 
 
-def test_scope_apply_writes_to_items_and_clears_overrides(http, sample_stock, gst_headers, audit_only_headers):
-    """scope=apply mutates items and clears any prior audit_overrides."""
+def test_readonly_impersonation_cannot_record_audit_correction(http, sample_stock, gst_headers, readonly_headers):
+    """A read-only impersonation session inherits the owner/manager role but must be
+    blocked by @readonly_guard — it cannot persist audit corrections to a tenant's bill."""
+    bill_id, body = _create_gst_bill(http, sample_stock, gst_headers)
+    resp = http.put(
+        f"/api/billing/{bill_id}",
+        data=json.dumps({"items": body["items"], "subtotal": body["subtotal"],
+                         "gst_percentage": body["gst_percentage"], "payment_type": body["payment_type"]}),
+        content_type="application/json",
+        headers=readonly_headers,
+    )
+    assert resp.status_code == 403, resp.get_json()
+    assert resp.get_json().get("code") == "READONLY_SESSION"
+
+
+def test_apply_scope_is_ignored_original_never_mutated(http, sample_stock, gst_headers, audit_only_headers):
+    """The legacy ?scope=apply path is gone. Even when apply is requested, the
+    original bill items are NEVER mutated — the correction is recorded as an overlay."""
     from extensions import db
     from models.billing_model import GSTBilling
 
     bill_id, body = _create_gst_bill(http, sample_stock, gst_headers)
+    original_rate = float(body["items"][0]["rate"])
 
-    # First: write an audit_only override
     items = [dict(i) for i in body["items"]]
-    items[0]["rate"] = float(items[0]["rate"]) + 5.0
-    http.put(
-        f"/api/billing/{bill_id}?scope=audit_only",
+    new_rate = original_rate + 99.0
+    items[0]["rate"] = new_rate
+    resp = http.put(
+        f"/api/billing/{bill_id}?scope=apply",  # apply is no longer honored
         data=json.dumps({"items": items, "subtotal": body["subtotal"],
                          "gst_percentage": body["gst_percentage"], "payment_type": body["payment_type"]}),
         content_type="application/json",
         headers=audit_only_headers,
     )
-
-    # Confirm override is set
-    bill = GSTBilling.query.filter_by(bill_id=bill_id).first()
-    assert bill.audit_overrides is not None
-
-    # Then: apply with a different rate
-    items2 = [dict(i) for i in body["items"]]
-    new_rate = float(items2[0]["rate"]) + 99.0
-    items2[0]["rate"] = new_rate
-    resp = http.put(
-        f"/api/billing/{bill_id}?scope=apply",
-        data=json.dumps({"items": items2, "subtotal": body["subtotal"],
-                         "gst_percentage": body["gst_percentage"], "payment_type": body["payment_type"]}),
-        content_type="application/json",
-        headers=audit_only_headers,
-    )
     assert resp.status_code == 200, resp.get_json()
-    assert resp.get_json()["scope"] == "apply"
+    assert resp.get_json()["scope"] == "audit_only"
 
     db.session.expire_all()
     bill = GSTBilling.query.filter_by(bill_id=bill_id).first()
-    # items should now reflect the apply
-    assert float(bill.items[0]["rate"]) == new_rate
-    # audit_overrides should be cleared
-    assert bill.audit_overrides is None
+    # original items untouched
+    assert float(bill.items[0]["rate"]) == original_rate
+    # correction lives in the overlay
+    assert bill.audit_overrides is not None
+    assert float(bill.audit_overrides[0]["rate"]) == new_rate
 
 
-def test_default_scope_is_apply(http, sample_stock, gst_headers, audit_only_headers):
-    """Omitting ?scope defaults to apply (back-compat with existing PUT consumers)."""
+def test_default_writes_audit_overrides_not_items(http, sample_stock, gst_headers, audit_only_headers):
+    """A correction always writes audit_overrides and leaves the original items unchanged."""
     from models.billing_model import GSTBilling
 
     bill_id, body = _create_gst_bill(http, sample_stock, gst_headers)
+    original_rate = float(body["items"][0]["rate"])
     items = [dict(i) for i in body["items"]]
-    new_rate = float(items[0]["rate"]) + 10.0
+    new_rate = original_rate + 10.0
     items[0]["rate"] = new_rate
 
     resp = http.put(
-        f"/api/billing/{bill_id}",  # no ?scope query param
+        f"/api/billing/{bill_id}",
         data=json.dumps({"items": items, "subtotal": body["subtotal"],
                          "gst_percentage": body["gst_percentage"], "payment_type": body["payment_type"]}),
         content_type="application/json",
@@ -365,4 +390,5 @@ def test_default_scope_is_apply(http, sample_stock, gst_headers, audit_only_head
     assert resp.status_code == 200, resp.get_json()
 
     bill = GSTBilling.query.filter_by(bill_id=bill_id).first()
-    assert float(bill.items[0]["rate"]) == new_rate  # items were updated → default is apply
+    assert float(bill.items[0]["rate"]) == original_rate  # original never changes
+    assert float(bill.audit_overrides[0]["rate"]) == new_rate  # overlay holds the correction
