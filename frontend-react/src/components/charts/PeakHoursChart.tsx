@@ -110,6 +110,7 @@ export default function PeakHoursChart({ data }: PeakHoursChartProps) {
     chart: {
       type: 'line',
       backgroundColor: 'transparent',
+      height: 300,
       animation: {
         duration: 1000,
         easing: (t: number) => t
@@ -187,19 +188,19 @@ export default function PeakHoursChart({ data }: PeakHoursChartProps) {
           maxWidth: 500
         },
         chartOptions: {
+          chart: {
+            height: 250
+          },
           yAxis: {
-            labels: {
-              align: 'left',
-              x: 0,
-              y: -3
-            },
-            tickLength: 0,
+            // Drop the axis title on narrow screens: it previously floated to the
+            // top-left and collided with the chart title. Compact ₹k labels keep context.
             title: {
-              align: 'high',
-              reserveSpace: false,
-              rotation: 0,
-              textAlign: 'left',
-              y: -20
+              text: undefined
+            },
+            labels: {
+              formatter: function () {
+                return '₹' + ((this.value as number) / 1000).toFixed(0) + 'k'
+              }
             }
           }
         }
