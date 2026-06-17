@@ -281,7 +281,6 @@ def create_subscription():
             'plan_id': rz_plan_id,
             'total_count': 120,  # max billing cycles (~10 years)
             'customer_notify': 1,
-            'payment_capture': 1,
             'notes': {
                 'client_id': g.user['client_id'],
                 'plan_id': str(plan_id),
@@ -480,6 +479,23 @@ def razorpay_webhook():
         payload = request.get_json()
         event = payload.get('event', '')
         logger.info(f'[Webhook] Received event: {event}')
+
+        # ----------------------------------------------------------------
+        # payment.authorized — capture subscription payment immediately
+        # ----------------------------------------------------------------
+        if event == 'payment.authorized':
+            payment_entity = payload.get('payload', {}).get('payment', {}).get('entity', {})
+            payment_id = payment_entity.get('id')
+            amount = payment_entity.get('amount')
+            if payment_id and amount and (payment_entity.get('recurring') or payment_entity.get('subscription_id')):
+                try:
+                    import razorpay
+                    rz_client = razorpay.Client(auth=(Config.RAZORPAY_KEY_ID, Config.RAZORPAY_KEY_SECRET))
+                    rz_client.payment.capture(payment_id, amount)
+                    logger.info(f'[Webhook] Captured subscription payment {payment_id} amount {amount}')
+                except Exception as e:
+                    logger.error(f'[Webhook] Failed to capture payment {payment_id}: {e}')
+            return jsonify({'status': 'captured'}), 200
 
         # ----------------------------------------------------------------
         # invoice.paid — activate or renew subscription
