@@ -281,6 +281,7 @@ def create_subscription():
             'plan_id': rz_plan_id,
             'total_count': 120,  # max billing cycles (~10 years)
             'customer_notify': 1,
+            'payment_capture': 1,
             'notes': {
                 'client_id': g.user['client_id'],
                 'plan_id': str(plan_id),
