@@ -23,6 +23,12 @@ class SubscriptionPlan(db.Model):
     razorpay_monthly_plan_id = db.Column(db.String(100), nullable=True)
     razorpay_yearly_plan_id = db.Column(db.String(100), nullable=True)
 
+    # Lemon Squeezy — foreign billing
+    usd_monthly_price = db.Column(db.Integer, nullable=True)   # in cents, e.g. $9 = 900
+    usd_yearly_price = db.Column(db.Integer, nullable=True)
+    ls_monthly_variant_id = db.Column(db.String(100), nullable=True)
+    ls_yearly_variant_id = db.Column(db.String(100), nullable=True)
+
     def to_dict(self):
         return {
             'plan_id': str(self.plan_id) if self.plan_id else None,
@@ -38,6 +44,10 @@ class SubscriptionPlan(db.Model):
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'razorpay_monthly_plan_id': self.razorpay_monthly_plan_id,
             'razorpay_yearly_plan_id': self.razorpay_yearly_plan_id,
+            'usd_monthly_price': self.usd_monthly_price,
+            'usd_yearly_price': self.usd_yearly_price,
+            'ls_monthly_variant_id': self.ls_monthly_variant_id,
+            'ls_yearly_variant_id': self.ls_yearly_variant_id,
         }
 
 
@@ -48,8 +58,11 @@ class PaymentTransaction(db.Model):
     transaction_id = db.Column(FlexibleUUID, primary_key=True, default=lambda: str(uuid.uuid4()))
     client_id = db.Column(FlexibleUUID, db.ForeignKey('client_entry.client_id'), nullable=False, index=True)
     plan_id = db.Column(FlexibleUUID, db.ForeignKey('subscription_plan.plan_id'), nullable=False)
+    gateway = db.Column(db.String(20), nullable=False, default='razorpay')  # 'razorpay' | 'lemonsqueezy'
     razorpay_order_id = db.Column(db.String(100), index=True)          # order flow (legacy)
     razorpay_subscription_id = db.Column(db.String(100), nullable=True, index=True)  # subscription flow
+    ls_subscription_id = db.Column(db.String(100), nullable=True, index=True)
+    ls_order_id = db.Column(db.String(100), nullable=True)
     invoice_id = db.Column(db.String(100), nullable=True, unique=True)  # unique per invoice — prevents duplicate webhook processing
     invoice_number = db.Column(db.String(100), nullable=True)
     razorpay_payment_id = db.Column(db.String(100))
@@ -71,8 +84,11 @@ class PaymentTransaction(db.Model):
             'transaction_id': str(self.transaction_id) if self.transaction_id else None,
             'client_id': str(self.client_id) if self.client_id else None,
             'plan_id': str(self.plan_id) if self.plan_id else None,
+            'gateway': self.gateway or 'razorpay',
             'razorpay_order_id': self.razorpay_order_id,
             'razorpay_subscription_id': self.razorpay_subscription_id,
+            'ls_subscription_id': self.ls_subscription_id,
+            'ls_order_id': self.ls_order_id,
             'invoice_id': self.invoice_id,
             'invoice_number': self.invoice_number,
             'razorpay_payment_id': self.razorpay_payment_id,

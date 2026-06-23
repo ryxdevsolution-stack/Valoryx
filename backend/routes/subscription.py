@@ -215,14 +215,11 @@ def create_order():
 @subscription_bp.route('/create-subscription', methods=['POST'])
 @authenticate(allow_expired=True)
 def create_subscription():
-    """Create a Razorpay Subscription for auto-renewal billing."""
+    """
+    Create a subscription — routes to Razorpay (India) or Lemon Squeezy (foreign)
+    based on client_entry.country.
+    """
     try:
-        if not Config.RAZORPAY_KEY_ID or not Config.RAZORPAY_KEY_SECRET:
-            return jsonify({
-                'error': 'Payment gateway not configured',
-                'message': 'Razorpay keys are not set. Please contact support.'
-            }), 503
-
         data = request.get_json()
         plan_id = data.get('plan_id')
         billing_cycle = data.get('billing_cycle', 'monthly')
@@ -232,8 +229,9 @@ def create_subscription():
         if billing_cycle not in ('monthly', 'yearly'):
             return jsonify({'error': 'billing_cycle must be monthly or yearly'}), 400
 
-        # Block duplicate subscription — allow only if switching plans or reactivating
         client_entry = ClientEntry.query.filter_by(client_id=g.user['client_id']).first()
+
+        # Block duplicate subscription — allow only if switching plans or reactivating
         if client_entry and client_entry.subscription_status == 'active':
             if str(client_entry.plan_id) == str(plan_id):
                 return jsonify({
@@ -241,79 +239,159 @@ def create_subscription():
                     'message': 'You already have an active subscription on this plan.'
                 }), 409
 
-        # Block rapid duplicate clicks — reuse pending subscription within 2 minutes
-        recent_pending = PaymentTransaction.query.filter_by(
-            client_id=g.user['client_id'],
-            status='created'
-        ).filter(
-            PaymentTransaction.razorpay_subscription_id.isnot(None),
-            PaymentTransaction.created_at >= datetime.utcnow() - timedelta(minutes=2)
-        ).first()
-
-        if recent_pending:
-            plan_obj = SubscriptionPlan.query.filter_by(plan_id=recent_pending.plan_id).first()
-            return jsonify({
-                'success': True,
-                'subscription_id': recent_pending.razorpay_subscription_id,
-                'razorpay_key_id': Config.RAZORPAY_KEY_ID,
-                'plan_name': plan_obj.name if plan_obj else '',
-                'billing_cycle': recent_pending.billing_cycle,
-                'reused_subscription': True,
-            }), 200
-
         # Get plan
         plan = SubscriptionPlan.query.filter_by(plan_id=plan_id, is_active=True).first()
         if not plan:
             return jsonify({'error': 'Plan not found'}), 404
 
-        # Pick the correct Razorpay plan ID based on billing cycle
-        rz_plan_id = plan.razorpay_yearly_plan_id if billing_cycle == 'yearly' else plan.razorpay_monthly_plan_id
-        if not rz_plan_id:
+        # Geo-route: India → Razorpay, everyone else → Lemon Squeezy
+        country = (client_entry.country or 'IN').upper() if client_entry else 'IN'
+        gateway = 'razorpay' if country == 'IN' else 'lemonsqueezy'
+
+        # ----------------------------------------------------------------
+        # Razorpay flow (Indian customers)
+        # ----------------------------------------------------------------
+        if gateway == 'razorpay':
+            if not Config.RAZORPAY_KEY_ID or not Config.RAZORPAY_KEY_SECRET:
+                return jsonify({
+                    'error': 'Payment gateway not configured',
+                    'message': 'Razorpay keys are not set. Please contact support.'
+                }), 503
+
+            # Block rapid duplicate clicks — reuse pending subscription within 2 minutes
+            recent_pending = PaymentTransaction.query.filter_by(
+                client_id=g.user['client_id'],
+                status='created',
+                gateway='razorpay',
+            ).filter(
+                PaymentTransaction.razorpay_subscription_id.isnot(None),
+                PaymentTransaction.created_at >= datetime.utcnow() - timedelta(minutes=2)
+            ).first()
+
+            if recent_pending:
+                plan_obj = SubscriptionPlan.query.filter_by(plan_id=recent_pending.plan_id).first()
+                return jsonify({
+                    'success': True,
+                    'gateway': 'razorpay',
+                    'subscription_id': recent_pending.razorpay_subscription_id,
+                    'razorpay_key_id': Config.RAZORPAY_KEY_ID,
+                    'plan_name': plan_obj.name if plan_obj else '',
+                    'billing_cycle': recent_pending.billing_cycle,
+                    'reused_subscription': True,
+                }), 200
+
+            rz_plan_id = plan.razorpay_yearly_plan_id if billing_cycle == 'yearly' else plan.razorpay_monthly_plan_id
+            if not rz_plan_id:
+                return jsonify({
+                    'error': 'Plan not configured for auto-renewal',
+                    'message': 'This plan has not been seeded in Razorpay yet. Please contact support.'
+                }), 503
+
+            import razorpay
+            rz_client = razorpay.Client(auth=(Config.RAZORPAY_KEY_ID, Config.RAZORPAY_KEY_SECRET))
+            rz_subscription = rz_client.subscription.create(data={
+                'plan_id': rz_plan_id,
+                'total_count': 120,
+                'customer_notify': 1,
+                'notes': {
+                    'client_id': g.user['client_id'],
+                    'plan_id': str(plan_id),
+                    'billing_cycle': billing_cycle,
+                }
+            })
+            rz_sub_id = rz_subscription['id']
+            amount = plan.yearly_price if billing_cycle == 'yearly' else plan.monthly_price
+
+            transaction = PaymentTransaction(
+                transaction_id=str(uuid.uuid4()),
+                client_id=g.user['client_id'],
+                plan_id=plan_id,
+                gateway='razorpay',
+                razorpay_subscription_id=rz_sub_id,
+                amount=amount,
+                currency='INR',
+                billing_cycle=billing_cycle,
+                status='created',
+                created_at=datetime.utcnow(),
+            )
+            db.session.add(transaction)
+            db.session.commit()
+
+            logger.info(f'[create-subscription] Razorpay sub {rz_sub_id} for client {g.user["client_id"]}')
+
             return jsonify({
-                'error': 'Plan not configured for auto-renewal',
-                'message': 'This plan has not been seeded in Razorpay yet. Please contact support.'
+                'success': True,
+                'gateway': 'razorpay',
+                'subscription_id': rz_sub_id,
+                'razorpay_key_id': Config.RAZORPAY_KEY_ID,
+                'plan_name': plan.name,
+                'billing_cycle': billing_cycle,
+            }), 200
+
+        # ----------------------------------------------------------------
+        # Lemon Squeezy flow (foreign customers)
+        # ----------------------------------------------------------------
+        if not Config.LEMONSQUEEZY_API_KEY or not Config.LEMONSQUEEZY_STORE_ID:
+            return jsonify({
+                'error': 'Foreign payment gateway not configured',
+                'message': 'International billing is not available yet. Please contact support.'
             }), 503
 
-        import razorpay
-        rz_client = razorpay.Client(auth=(Config.RAZORPAY_KEY_ID, Config.RAZORPAY_KEY_SECRET))
+        ls_variant_id = plan.ls_yearly_variant_id if billing_cycle == 'yearly' else plan.ls_monthly_variant_id
+        if not ls_variant_id:
+            return jsonify({
+                'error': 'Plan not configured for international billing',
+                'message': 'This plan is not available for international customers yet. Please contact support.'
+            }), 503
 
-        sub_data = {
-            'plan_id': rz_plan_id,
-            'total_count': 120,  # max billing cycles (~10 years)
-            'customer_notify': 1,
-            'notes': {
-                'client_id': g.user['client_id'],
-                'plan_id': str(plan_id),
-                'billing_cycle': billing_cycle,
-            }
-        }
-
-        rz_subscription = rz_client.subscription.create(data=sub_data)
-        rz_sub_id = rz_subscription['id']
-
-        amount = plan.yearly_price if billing_cycle == 'yearly' else plan.monthly_price
-
-        # Store transaction — DO NOT update ClientEntry here (user hasn't paid yet)
-        transaction = PaymentTransaction(
-            transaction_id=str(uuid.uuid4()),
-            client_id=g.user['client_id'],
-            plan_id=plan_id,
-            razorpay_subscription_id=rz_sub_id,
-            amount=amount,
-            currency='INR',
-            billing_cycle=billing_cycle,
-            status='created',
-            created_at=datetime.utcnow(),
+        import requests as http_requests
+        ls_response = http_requests.post(
+            'https://api.lemonsqueezy.com/v1/checkouts',
+            headers={
+                'Authorization': f'Bearer {Config.LEMONSQUEEZY_API_KEY}',
+                'Accept': 'application/vnd.api+json',
+                'Content-Type': 'application/vnd.api+json',
+            },
+            json={
+                'data': {
+                    'type': 'checkouts',
+                    'attributes': {
+                        'checkout_data': {
+                            'custom': {
+                                'client_id': g.user['client_id'],
+                                'plan_id': str(plan_id),
+                                'billing_cycle': billing_cycle,
+                            }
+                        },
+                        'product_options': {
+                            'redirect_url': f'{Config.FRONTEND_URL}/subscription/success?gateway=lemonsqueezy',
+                        },
+                    },
+                    'relationships': {
+                        'store': {
+                            'data': {'type': 'stores', 'id': str(Config.LEMONSQUEEZY_STORE_ID)}
+                        },
+                        'variant': {
+                            'data': {'type': 'variants', 'id': str(ls_variant_id)}
+                        },
+                    },
+                }
+            },
+            timeout=10,
         )
-        db.session.add(transaction)
-        db.session.commit()
 
-        logger.info(f'[create-subscription] Created sub {rz_sub_id} for client {g.user["client_id"]}')
+        if ls_response.status_code not in (200, 201):
+            logger.error(f'[create-subscription] LS checkout creation failed: {ls_response.text}')
+            return jsonify({'error': 'Failed to create checkout', 'message': 'Please try again.'}), 500
+
+        checkout_url = ls_response.json()['data']['attributes']['url']
+
+        logger.info(f'[create-subscription] LS checkout created for client {g.user["client_id"]}')
 
         return jsonify({
             'success': True,
-            'subscription_id': rz_sub_id,
-            'razorpay_key_id': Config.RAZORPAY_KEY_ID,
+            'gateway': 'lemonsqueezy',
+            'checkout_url': checkout_url,
             'plan_name': plan.name,
             'billing_cycle': billing_cycle,
         }), 200

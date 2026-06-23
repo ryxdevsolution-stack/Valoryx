@@ -607,6 +607,14 @@ def create_app():
         except Exception as e:
             print(f"Warning: Could not register subscription blueprint: {e}")
 
+    try:
+        from routes.lemonsqueezy import lemonsqueezy_bp
+        app.register_blueprint(lemonsqueezy_bp, url_prefix='/api/subscription')
+        blueprints_registered.append('lemonsqueezy')
+    except Exception as e:
+        import_errors.append(f"lemonsqueezy: {str(e)}")
+        logging.error(f"Failed to import lemonsqueezy blueprint: {e}")
+
     if branch_bp:
         try:
             app.register_blueprint(branch_bp, url_prefix='/api/branches')

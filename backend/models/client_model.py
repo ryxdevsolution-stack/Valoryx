@@ -25,6 +25,14 @@ class ClientEntry(db.Model):
     plan_id = db.Column(FlexibleUUID, nullable=True)
     subscription_end_date = db.Column(db.DateTime, nullable=True)
     razorpay_subscription_id = db.Column(db.String(100), nullable=True)  # set after first invoice.paid webhook
+    lemon_squeezy_subscription_id = db.Column(db.String(100), nullable=True)
+
+    # Locale / billing region — detected on first login, already in Supabase
+    country = db.Column(db.String(2), nullable=True, default='IN')        # ISO-3166 e.g. 'IN', 'US'
+    currency_code = db.Column(db.String(3), nullable=True, default='INR') # e.g. 'INR', 'USD'
+    currency_symbol = db.Column(db.String(5), nullable=True, default='₹')
+    locale = db.Column(db.String(10), nullable=True, default='en-IN')     # e.g. 'en-IN', 'en-US'
+
     telegram_chat_id = db.Column(db.String(50), nullable=True)  # Telegram chat ID for daily summary reports
     role_quotas = db.Column(FlexibleJSON, nullable=True)  # {"admin": 1, "manager": 2, "staff": 3, "cashier": 3}; null key = unlimited
 
@@ -111,6 +119,11 @@ class ClientEntry(db.Model):
             'plan_id': str(self.plan_id) if self.plan_id else None,
             'subscription_end_date': self.subscription_end_date.isoformat() if self.subscription_end_date else None,
             'razorpay_subscription_id': self.razorpay_subscription_id,
+            'lemon_squeezy_subscription_id': self.lemon_squeezy_subscription_id,
+            'country': self.country or 'IN',
+            'currency_code': self.currency_code or 'INR',
+            'currency_symbol': self.currency_symbol or '₹',
+            'locale': self.locale or 'en-IN',
             'telegram_chat_id': self.telegram_chat_id,
             'address2': self.address2,
             'upi_id': self.upi_id,

@@ -256,6 +256,13 @@ class OptimizedConfig:
     RAZORPAY_WEBHOOK_SECRET = os.getenv('RAZORPAY_WEBHOOK_SECRET', '')
 
     # -------------------------------
+    # Lemon Squeezy (optional — foreign billing disabled if not set)
+    # -------------------------------
+    LEMONSQUEEZY_API_KEY = os.getenv('LEMONSQUEEZY_API_KEY', '')
+    LEMONSQUEEZY_STORE_ID = os.getenv('LEMONSQUEEZY_STORE_ID', '')
+    LEMONSQUEEZY_WEBHOOK_SECRET = os.getenv('LEMONSQUEEZY_WEBHOOK_SECRET', '')
+
+    # -------------------------------
     # Google OAuth (optional — OAuth login disabled if not set)
     # -------------------------------
     GOOGLE_CLIENT_ID = os.getenv('GOOGLE_CLIENT_ID', '')
