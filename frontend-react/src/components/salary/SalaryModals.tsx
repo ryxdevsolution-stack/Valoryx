@@ -307,8 +307,14 @@ const PRESETS = [
 export function NewCycleModal({ employee, onClose, onSave }: NewCycleModalProps) {
   const now = new Date()
   const currentYearMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
+  // Default to the FULL current month (1 → last day) so the cycle always covers
+  // today and every day of the month. `new Date(y, monthIndex + 1, 0)` rolls to
+  // day 0 of next month = the last day of this month (handles 28/29/30/31).
+  const lastDayOfMonth = String(
+    new Date(now.getFullYear(), now.getMonth() + 1, 0).getDate(),
+  ).padStart(2, '0')
   const [startDate, setStartDate] = useState(`${currentYearMonth}-01`)
-  const [endDate, setEndDate] = useState(`${currentYearMonth}-25`)
+  const [endDate, setEndDate] = useState(`${currentYearMonth}-${lastDayOfMonth}`)
   const [fullDayHours, setFullDayHours] = useState('8')
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')

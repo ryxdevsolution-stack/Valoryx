@@ -986,88 +986,6 @@ def delete_attendance(attendance_id):
     return jsonify({'success': True, 'message': 'Attendance record deleted'}), 200
 
 
-@employees_bp.route('/attendance/daily-summary', methods=['GET'])
-@authenticate
-@require_permission('view_attendance')
-def daily_summary():
-    """
-    Return punch summary for every active employee on a given date.
-    Query params:
-        date      (required) - YYYY-MM-DD
-        branch_id (optional) - filter by branch
-    """
-    client_id = g.user['client_id']
-    date_str = request.args.get('date', '')
-    summary_date = _parse_date(date_str)
-    if not summary_date:
-        return jsonify({'success': False, 'error': 'date query param is required (YYYY-MM-DD)'}), 400
-
-    branch_id = request.args.get('branch_id')
-
-    # Build employee query (respect branch_id filter)
-    emp_params = {'cid': client_id}
-    branch_clause = ''
-    if branch_id:
-        branch_clause = 'AND e.branch_id = :bid'
-        emp_params['bid'] = branch_id
-
-    employees = db.session.execute(
-        text(
-            f"SELECT employee_id, name, pay_type, rate, branch_id "
-            f"FROM employees "
-            f"WHERE client_id = :cid AND is_active = TRUE {branch_clause} "
-            f"ORDER BY name"
-        ),
-        emp_params
-    ).fetchall()
-
-    if not employees:
-        return jsonify({'success': True, 'data': [], 'date': str(summary_date)}), 200
-
-    employees = [_row_to_dict(e) for e in employees]
-    emp_ids = [e['employee_id'] for e in employees]
-    # Fetch all attendance rows for that date in one query (no N+1)
-    # Use expanding bindparam for PostgreSQL-compatible IN clause
-    from sqlalchemy import bindparam
-    att_rows = [_row_to_dict(r) for r in db.session.execute(
-        text(
-            "SELECT employee_id, attendance_id, check_in, check_out, total_minutes, notes "
-            "FROM employee_attendance "
-            "WHERE client_id = :cid AND work_date = :d "
-            "  AND employee_id IN :eids "
-            "ORDER BY check_in"
-        ).bindparams(bindparam('eids', expanding=True)),
-        {'cid': client_id, 'd': str(summary_date), 'eids': emp_ids}
-    ).fetchall()]
-
-    # Group attendance by employee
-    att_by_emp: dict = {}
-    for a in att_rows:
-        eid = a['employee_id']
-        if eid not in att_by_emp:
-            att_by_emp[eid] = []
-        att_by_emp[eid].append(_row_to_dict(a))
-
-    result = []
-    for emp in employees:
-        eid = emp['employee_id']
-        punches = att_by_emp.get(eid, [])
-        total_mins = sum(p['total_minutes'] or 0 for p in punches)
-        result.append({
-            'employee_id': eid,
-            'name': emp['name'],
-            'pay_type': emp['pay_type'],
-            'rate': float(emp['rate']),
-            'branch_id': emp['branch_id'],
-            'punches': punches,
-            'total_minutes': total_mins,
-            'hours_worked': round(total_mins / 60.0, 2),
-            'present': len(punches) > 0,
-        })
-
-    return jsonify({'success': True, 'data': result, 'date': str(summary_date)}), 200
-
-
 # ── Salary Cycles ─────────────────────────────────────────────────────────────
 
 @employees_bp.route('/<employee_id>/cycles', methods=['GET'])
@@ -1362,25 +1280,6 @@ def mark_cycle_paid(employee_id, cycle_id):
         'next_cycle_start_date': next_start,
         'message': 'Salary cycle marked as paid',
     }), 200
-
-
-@employees_bp.route('/cycles/open', methods=['GET'])
-@authenticate
-@require_permission('view_salary')
-def list_open_cycles():
-    """List all open salary cycles for this client, joined with employee name."""
-    client_id = g.user['client_id']
-    rows = db.session.execute(
-        text(
-            "SELECT sc.*, e.name AS employee_name, e.pay_type, e.rate "
-            "FROM salary_cycles sc "
-            "JOIN employees e ON e.employee_id = sc.employee_id "
-            "WHERE sc.client_id = :cid AND sc.status = 'open' "
-            "ORDER BY sc.start_date DESC"
-        ),
-        {'cid': client_id}
-    ).fetchall()
-    return jsonify({'success': True, 'data': [_row_to_dict(r) for r in rows]}), 200
 
 
 @employees_bp.route('/payroll-timeseries', methods=['GET'])
@@ -1706,56 +1605,6 @@ def record_advance(employee_id):
     return jsonify({'success': True, 'data': _row_to_dict(row), 'message': 'Advance recorded'}), 201
 
 
-@employees_bp.route('/advances/<advance_id>', methods=['DELETE'])
-@authenticate
-@require_permission('record_advance')
-def delete_advance(advance_id):
-    client_id = g.user['client_id']
-    adv = db.session.execute(
-        text(
-            "SELECT sa.*, sc.status AS cycle_status "
-            "FROM salary_advances sa "
-            "JOIN salary_cycles sc ON sc.cycle_id = sa.cycle_id "
-            "WHERE sa.advance_id = :aid AND sa.client_id = :cid"
-        ),
-        {'aid': advance_id, 'cid': client_id}
-    ).fetchone()
-
-    if not adv:
-        return jsonify({'success': False, 'error': 'Advance not found'}), 404
-
-    if adv['cycle_status'] == 'paid':
-        return jsonify({'success': False, 'error': 'Cannot delete advances from a paid cycle'}), 409
-
-    cycle_id = adv['cycle_id']
-
-    db.session.execute(
-        text("DELETE FROM salary_advances WHERE advance_id = :aid"),
-        {'aid': advance_id}
-    )
-
-    # Refresh cycle totals after deletion
-    cycle = db.session.execute(
-        text("SELECT * FROM salary_cycles WHERE cycle_id = :cid"),
-        {'cid': cycle_id}
-    ).fetchone()
-    if cycle:
-        cycle_dict = _row_to_dict(cycle)
-        gross, total_advances, net, _, _ot = _calculate_cycle_amounts(cycle_dict)
-        db.session.execute(
-            text(
-                "UPDATE salary_cycles "
-                "SET gross_salary = :gross, total_advances = :adv, net_salary = :net, "
-                "    updated_at = :now "
-                "WHERE cycle_id = :cid"
-            ),
-            {'gross': gross, 'adv': total_advances, 'net': net, 'now': _now_iso(), 'cid': cycle_id}
-        )
-
-    db.session.commit()
-    return jsonify({'success': True, 'message': 'Advance deleted'}), 200
-
-
 # ── Employee History ───────────────────────────────────────────────────────────
 
 @employees_bp.route('/<employee_id>/history', methods=['GET'])
@@ -1920,19 +1769,3 @@ def approve_ot(attendance_id):
         'success': True,
         'data': {'attendance_id': attendance_id, 'approved_ot_minutes': ot_mins_int},
     }), 200
-
-
-@employees_bp.route('/<employee_id>/cycles/covering', methods=['GET'])
-@authenticate
-@require_permission('view_salary')
-def get_covering_cycle(employee_id):
-    """Return the salary cycle that covers ?date=YYYY-MM-DD, or null."""
-    client_id = g.user['client_id']
-    date_str = request.args.get('date')
-    if not date_str:
-        return jsonify({'success': False, 'error': 'date query param required'}), 400
-    wd = _parse_date(date_str)
-    if not wd:
-        return jsonify({'success': False, 'error': 'Invalid date format (use YYYY-MM-DD)'}), 400
-    cycle = _find_covering_cycle(employee_id, client_id, wd)
-    return jsonify({'success': True, 'data': cycle}), 200

@@ -21,6 +21,7 @@ import TierForm from '@/components/membership/TierForm'
 import MembersList from '@/components/membership/MembersList'
 import Reporting from '@/components/membership/Reporting'
 import CardView from '@/components/membership/CardView'
+import { MembershipCardPrintButton, tierBenefitLines } from '@/components/membership/MembershipCardPrint'
 import { QRCodeSVG } from 'qrcode.react'
 import { Eye, Pencil, Ban } from 'lucide-react'
 
@@ -256,6 +257,20 @@ export default function MembershipPage() {
                         className="p-1.5 rounded-lg text-blue-600 dark:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-900/30">
                         <Eye className="w-4 h-4" />
                       </button>
+                      <MembershipCardPrintButton
+                        variant="icon"
+                        data={{
+                          shopName: client?.client_name || 'Your Shop',
+                          tierName: t.name,
+                          accentColor: accent,
+                          memberName: 'Member Name',
+                          cardNumber: sampleNumber,
+                          description: t.description,
+                          qrValue: sampleNumber,
+                          benefits: tierBenefitLines(t),
+                          shopPhone: client?.phone,
+                        }}
+                      />
                       <button type="button" onClick={() => openEditTier(t)}
                         title="Edit tier" aria-label={`Edit ${t.name}`}
                         className="p-1.5 rounded-lg text-gray-500 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30">

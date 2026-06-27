@@ -3,6 +3,7 @@ import { ChevronLeft, ChevronRight, LogIn, LogOut, Clock, RefreshCw } from 'luci
 import api from '@/lib/api'
 import { toast } from '@/utils/toast'
 import type { Employee, AttendanceDay, AttendancePunch, SalaryCycle } from '@/pages/Salary'
+import { formatMinutes, isDateCovered as isCovered } from '@/utils/salary'
 
 interface AttendancePanelProps {
   employee: Employee
@@ -18,25 +19,6 @@ interface AttendancePanelProps {
   refreshSignal?: number
   // Callback to open the create-cycle modal when no cycle covers the date.
   onCreateCycle?: () => void
-}
-
-// ── Cycle-coverage helpers ────────────────────────────────────────────────────
-
-function isCovered(dateStr: string, cycles: SalaryCycle[]): { covered: boolean; sealed: boolean } {
-  for (const c of cycles) {
-    if (c.start_date <= dateStr && c.end_date >= dateStr) {
-      return { covered: true, sealed: c.status !== 'open' }
-    }
-  }
-  return { covered: false, sealed: false }
-}
-
-function formatMinutes(mins: number): string {
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  if (h === 0) return `${m}m`
-  if (m === 0) return `${h}h`
-  return `${h}h ${m}m`
 }
 
 function monthLabel(year: number, month: number): string {

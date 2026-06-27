@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react'
 import { X, Clock, TrendingUp, Banknote, Calendar, ChevronDown, ChevronUp, CheckCircle2, Circle } from 'lucide-react'
 import api from '@/lib/api'
 import type { Employee } from '@/pages/Salary'
+import { formatMinutes as fmtMins, formatSalaryDate as fmtDate } from '@/utils/salary'
 
 interface HistoryAdvance {
   advance_id: string
@@ -54,23 +55,6 @@ interface HistoryData {
 
 function fmt(n: number | string) {
   return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(n))
-}
-
-function fmtDate(d: string) {
-  try {
-    const date = new Date(d)
-    if (isNaN(date.getTime())) return d
-    return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-  } catch {
-    return d
-  }
-}
-
-function fmtMins(m: number) {
-  const h = Math.floor(m / 60), min = m % 60
-  if (h === 0) return `${min}m`
-  if (min === 0) return `${h}h`
-  return `${h}h ${min}m`
 }
 
 interface Props {
