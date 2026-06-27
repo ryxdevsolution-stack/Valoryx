@@ -19,7 +19,7 @@ from datetime import datetime, timedelta
 from flask import Blueprint, jsonify, request
 from extensions import db
 from models.user_model import User
-from models.client_model import ClientEntry
+from models.client_model import ClientEntry, DEFAULT_GST_CONFIG
 from models.branch_model import Branch
 from models.permission_model import get_user_permissions, Permission, UserPermission
 from models.session_model import UserSession
@@ -395,5 +395,12 @@ def google_callback():
             'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
             'trial_days_remaining': client.trial_days_remaining,
             'subscription_end_date': client.subscription_end_date.isoformat() if client.subscription_end_date else None,
+            # Regional customization — drives the first-login setup wizard for OAuth signups
+            'country': getattr(client, 'country', None) or 'IN',
+            'currency_code': getattr(client, 'currency_code', None) or 'INR',
+            'currency_symbol': getattr(client, 'currency_symbol', None) or '₹',
+            'locale': getattr(client, 'locale', None) or 'en-IN',
+            'tax_config': getattr(client, 'tax_config', None) or DEFAULT_GST_CONFIG,
+            'setup_completed': getattr(client, 'setup_completed_at', None) is not None,
         },
     }), 200

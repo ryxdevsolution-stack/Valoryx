@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
-import { Users, CreditCard, User, MonitorSmartphone, ShieldCheck, Webhook } from 'lucide-react'
+import { Users, CreditCard, User, MonitorSmartphone, ShieldCheck, Webhook, Globe } from 'lucide-react'
 
-export type ProfileTab = 'account' | 'team' | 'subscription' | 'sessions' | 'two-factor' | 'webhooks'
+export type ProfileTab = 'account' | 'region' | 'team' | 'subscription' | 'sessions' | 'two-factor' | 'webhooks'
 
 interface ProfileTabsProps {
   activeTab: ProfileTab
@@ -14,6 +14,7 @@ interface ProfileTabsProps {
 
 const TABS: { id: ProfileTab; label: string; icon: typeof User }[] = [
   { id: 'account', label: 'Account', icon: User },
+  { id: 'region', label: 'Region & Tax', icon: Globe },
   { id: 'team', label: 'Team', icon: Users },
   { id: 'subscription', label: 'Subscription', icon: CreditCard },
   { id: 'sessions', label: 'Sessions', icon: MonitorSmartphone },
@@ -25,7 +26,7 @@ export default function ProfileTabs({ activeTab, onTabChange, showTeamTab, showS
   const visibleTabs = TABS.filter(tab => {
     if (tab.id === 'team') return showTeamTab
     if (tab.id === 'subscription') return showSubscriptionTab
-    if (tab.id === 'webhooks') return showWebhooksTab ?? false
+    if (tab.id === 'webhooks') return false
     if (tab.id === 'two-factor') return showTwoFactorTab ?? true
     return true
   })

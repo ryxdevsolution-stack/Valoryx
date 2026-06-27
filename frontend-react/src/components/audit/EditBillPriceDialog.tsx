@@ -2,6 +2,7 @@ import { useState, useMemo, useEffect, useRef } from 'react';
 import { Pencil } from 'lucide-react';
 import { calcLine, calcBillTotals, LineInput } from '@/utils/billCalc';
 import { updateBillFromAudit } from '@/services/billingService';
+import { useCurrency } from '@/lib/useCurrency';
 import { toast } from '@/utils/toast';
 
 interface BillItemInput extends LineInput {
@@ -47,6 +48,7 @@ interface Props {
 }
 
 export default function EditBillPriceDialog({ open, bill, canCorrect, onClose, onSaved }: Props) {
+  const { symbol: cur } = useCurrency();
   const [items, setItems] = useState<BillItemInput[]>([]);
   const [originalItems, setOriginalItems] = useState<BillItemInput[]>([]);
   const [saving, setSaving] = useState(false);
@@ -298,10 +300,10 @@ export default function EditBillPriceDialog({ open, bill, canCorrect, onClose, o
             )}
           </div>
           <div className="text-lg font-bold text-gray-900 dark:text-white" data-testid="bill-total">
-            Total: ₹{totals.bill_total.toFixed(2)}
+            Total: {cur}{totals.bill_total.toFixed(2)}
             {hasChanges && (
               <span className="ml-2 text-sm font-normal text-amber-600 dark:text-amber-400">
-                (was: ₹{originalTotals.bill_total.toFixed(2)})
+                (was: {cur}{originalTotals.bill_total.toFixed(2)})
               </span>
             )}
           </div>

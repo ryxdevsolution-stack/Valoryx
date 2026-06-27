@@ -57,13 +57,20 @@ export default function VerifyEmailSuccessPage() {
           trial_days_remaining: data.trial?.days_remaining,
           plan_id: data.plan_id,
           subscription_end_date: data.subscription_end_date,
+          country: data.country,
+          currency_code: data.currency_code,
+          currency_symbol: data.currency_symbol,
+          locale: data.locale,
+          tax_config: data.tax_config,
+          setup_completed: data.setup_completed,
         }
 
         setClientData(userData, clientData, jwt)
         setState('success')
 
-        // Auto-redirect after short delay so user sees success state
-        setTimeout(() => navigate('/billing/create', { replace: true }), 2000)
+        // First login for a new client → send them through the regional setup wizard.
+        const dest = data.setup_completed === false ? '/setup' : '/billing/create'
+        setTimeout(() => navigate(dest, { replace: true }), 2000)
       })
       .catch((err) => {
         setState('error')

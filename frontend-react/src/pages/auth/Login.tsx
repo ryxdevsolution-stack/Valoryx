@@ -65,6 +65,13 @@ export default function LoginPage() {
       phone: client_phone,
       email: client_email,
       gstin: client_gstin,
+      // Regional customization — drives currency/tax rendering across the app
+      country: data.country,
+      currency_code: data.currency_code,
+      currency_symbol: data.currency_symbol,
+      locale: data.locale,
+      tax_config: data.tax_config,
+      setup_completed: data.setup_completed,
     }
 
     setClientData(userData, clientData, token)

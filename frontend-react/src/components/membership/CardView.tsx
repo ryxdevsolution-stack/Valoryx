@@ -12,6 +12,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import membershipService, { getMembershipError } from '@/services/membership'
 import { useClient } from '@/contexts/ClientContext'
+import { useCurrency } from '@/lib/useCurrency'
 import type { CardDetail, PeriodStats } from '@/types/membership'
 import LedgerTable from './LedgerTable'
 
@@ -22,7 +23,7 @@ interface CardViewProps {
 }
 
 const fmtCurrency = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 })
-const money = (n: number) => `₹${fmtCurrency.format(n)}`
+const money = (n: number, cur: string) => `${cur}${fmtCurrency.format(n)}`
 const pts = (n: number) => `${n.toLocaleString('en-IN')} pts`
 
 const STATUS_BADGE: Record<string, string> = {
@@ -31,19 +32,19 @@ const STATUS_BADGE: Record<string, string> = {
   cancelled: 'bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300',
 }
 
-function StatBlock({ title, stats }: { title: string; stats: PeriodStats }) {
+function StatBlock({ title, stats, cur }: { title: string; stats: PeriodStats; cur: string }) {
   return (
     <div className="border border-gray-200 dark:border-gray-700 rounded-xl p-4">
       <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-3">{title}</p>
       <dl className="grid grid-cols-2 gap-y-2 text-sm">
         <dt className="text-gray-500 dark:text-gray-400">Spend</dt>
-        <dd className="text-right font-medium text-gray-900 dark:text-white">{money(stats.spend)}</dd>
+        <dd className="text-right font-medium text-gray-900 dark:text-white">{money(stats.spend, cur)}</dd>
         <dt className="text-gray-500 dark:text-gray-400">Earned</dt>
         <dd className="text-right font-medium text-green-600 dark:text-green-400">{pts(stats.points_earned)}</dd>
         <dt className="text-gray-500 dark:text-gray-400">Redeemed</dt>
         <dd className="text-right font-medium text-amber-600 dark:text-amber-400">{pts(stats.points_redeemed)}</dd>
         <dt className="text-gray-500 dark:text-gray-400">Negotiated</dt>
-        <dd className="text-right font-medium text-purple-600 dark:text-purple-400">{money(stats.negotiable_used)}</dd>
+        <dd className="text-right font-medium text-purple-600 dark:text-purple-400">{money(stats.negotiable_used, cur)}</dd>
       </dl>
     </div>
   )
@@ -51,6 +52,7 @@ function StatBlock({ title, stats }: { title: string; stats: PeriodStats }) {
 
 export default function CardView({ cardId, onError }: CardViewProps) {
   const { client } = useClient()
+  const { symbol: cur } = useCurrency()
   const [detail, setDetail] = useState<CardDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
@@ -157,13 +159,13 @@ export default function CardView({ cardId, onError }: CardViewProps) {
                   <li>• {tier.discount_percentage}% member discount on every bill</li>
                 )}
                 {tier?.points_per_100 != null && (
-                  <li>• Earn {tier.points_per_100} point{Number(tier.points_per_100) === 1 ? '' : 's'} per ₹100 spent</li>
+                  <li>• Earn {tier.points_per_100} point{Number(tier.points_per_100) === 1 ? '' : 's'} per {cur}100 spent</li>
                 )}
                 {tier?.redemption_rate != null && (
-                  <li>• Redeem points as money off — 1 pt = ₹{tier.redemption_rate}</li>
+                  <li>• Redeem points as money off — 1 pt = {cur}{tier.redemption_rate}</li>
                 )}
                 {tier?.monthly_negotiable_budget != null && (
-                  <li>• ₹{tier.monthly_negotiable_budget} negotiation allowance per {tier.negotiable_budget_period === 'yearly' ? 'year' : 'month'}</li>
+                  <li>• {cur}{tier.monthly_negotiable_budget} negotiation allowance per {tier.negotiable_budget_period === 'yearly' ? 'year' : 'month'}</li>
                 )}
               </ul>
               <div className="border-t border-gray-300 dark:border-gray-600 pt-1.5">
@@ -194,7 +196,7 @@ export default function CardView({ cardId, onError }: CardViewProps) {
           <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide">Redeemable</p>
           <p className="mt-1 text-2xl font-bold text-gray-900 dark:text-white">{pts(card.redeemable_points)}</p>
           {redemptionRate > 0 && (
-            <p className="text-sm text-green-600 dark:text-green-400">≈ {money(redeemableValue)}</p>
+            <p className="text-sm text-green-600 dark:text-green-400">≈ {money(redeemableValue, cur)}</p>
           )}
         </div>
         <div className="border border-gray-200 dark:border-gray-700 rounded-xl p-4">
@@ -216,8 +218,8 @@ export default function CardView({ cardId, onError }: CardViewProps) {
 
       {/* Period stats */}
       <div className="grid gap-4 sm:grid-cols-2">
-        <StatBlock title="This Month" stats={this_month} />
-        <StatBlock title="This Year" stats={this_year} />
+        <StatBlock title="This Month" stats={this_month} cur={cur} />
+        <StatBlock title="This Year" stats={this_year} cur={cur} />
       </div>
 
       {/* Ledger history */}

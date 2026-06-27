@@ -9,6 +9,7 @@ import { CustomerCardSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { X, User, Phone, Mail, MapPin, ShoppingBag, TrendingUp, Clock, ChevronDown, ChevronUp, Package, Pencil, CreditCard } from 'lucide-react'
 import { toast } from '@/utils/toast'
 import { useClient } from '@/contexts/ClientContext'
+import { useCurrency } from '@/lib/useCurrency'
 import membershipService, { getMembershipError } from '@/services/membership'
 import type { CardLookupResult } from '@/types/membership'
 
@@ -47,10 +48,12 @@ interface Statistics {
 // Module-level formatters — created once, never recreated on re-renders
 const currencyFormatter = new Intl.NumberFormat('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 const dateFormatter = new Intl.DateTimeFormat('en-IN', { year: 'numeric', month: 'short', day: 'numeric' })
-const formatCurrency = (amount: number) => `₹${currencyFormatter.format(amount)}`
+const formatCurrencyWithSymbol = (amount: number, cur: string) => `${cur}${currencyFormatter.format(amount)}`
 const formatDate = (dateString: string) => dateString ? dateFormatter.format(new Date(dateString)) : 'N/A'
 
 export default function CustomersPage() {
+  const { symbol: cur, taxLabel } = useCurrency()
+  const formatCurrency = (amount: number) => formatCurrencyWithSymbol(amount, cur)
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const location = useLocation()
@@ -655,7 +658,7 @@ export default function CustomersPage() {
                   <span className="text-xs font-semibold text-gray-900 dark:text-white whitespace-nowrap">
                     {drawerCard.card.redeemable_points.toLocaleString('en-IN')} pts
                     {drawerCard.redeemable_value != null && (
-                      <span className="text-green-600 dark:text-green-400"> ≈ ₹{drawerCard.redeemable_value.toLocaleString('en-IN')}</span>
+                      <span className="text-green-600 dark:text-green-400"> ≈ {cur}{drawerCard.redeemable_value.toLocaleString('en-IN')}</span>
                     )}
                   </span>
                 </div>
@@ -819,12 +822,12 @@ export default function CustomersPage() {
                                       <div className="flex-1 min-w-0">
                                         <p className="text-xs text-gray-800 dark:text-gray-200 truncate">{item.product_name}</p>
                                         <p className="text-[10px] text-gray-500 dark:text-gray-400">
-                                          {item.quantity} × ₹{(item.rate || 0).toLocaleString('en-IN')}
-                                          {item.gst_percentage ? ` + ${item.gst_percentage}% GST` : ''}
+                                          {item.quantity} × {cur}{(item.rate || 0).toLocaleString('en-IN')}
+                                          {item.gst_percentage ? ` + ${item.gst_percentage}% ${taxLabel}` : ''}
                                         </p>
                                       </div>
                                       <p className="text-xs font-medium text-gray-800 dark:text-gray-200 shrink-0 ml-3">
-                                        ₹{(item.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                                        {cur}{(item.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                                       </p>
                                     </div>
                                   ))}

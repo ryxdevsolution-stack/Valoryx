@@ -10,6 +10,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Loader2, X } from 'lucide-react'
 import membershipService, { getMembershipError } from '@/services/membership'
+import { useCurrency } from '@/lib/useCurrency'
 import type { CardLookupResult, MembershipTier } from '@/types/membership'
 
 interface MembershipBillingPanelProps {
@@ -31,8 +32,6 @@ interface MembershipBillingPanelProps {
   onRemove: () => void
 }
 
-const money = (n: number) => `₹${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
-
 export default function MembershipBillingPanel({
   customerPhone,
   customerName,
@@ -43,6 +42,8 @@ export default function MembershipBillingPanel({
   onRedeemChange,
   onRemove,
 }: MembershipBillingPanelProps) {
+  const { symbol: cur } = useCurrency()
+  const money = (n: number) => `${cur}${n.toLocaleString('en-IN', { maximumFractionDigits: 2 })}`
   const [query, setQuery] = useState(customerPhone || '')
   const [result, setResult] = useState<CardLookupResult | null>(null)
   const [loading, setLoading] = useState(false)
@@ -246,7 +247,7 @@ export default function MembershipBillingPanel({
                   >
                     {tiers.map(t => (
                       <option key={t.tier_id} value={t.tier_id}>
-                        {t.name}{t.enrollment_fee ? ` (₹${t.enrollment_fee})` : ''}
+                        {t.name}{t.enrollment_fee ? ` (${cur}${t.enrollment_fee})` : ''}
                       </option>
                     ))}
                   </select>
@@ -328,7 +329,7 @@ export default function MembershipBillingPanel({
           )}
           {result?.remaining_monthly_budget != null && (
             <span className="text-[11px] text-gray-500 dark:text-gray-400 whitespace-nowrap"
-              title="Tier's negotiation allowance left this period (month or year) — reduces when '₹ Price' negotiation is used on a member's bill; resets at the period start">
+              title={`Tier's negotiation allowance left this period (month or year) — reduces when '${cur} Price' negotiation is used on a member's bill; resets at the period start`}>
               · Negotiable left {money(result.remaining_monthly_budget)}/{result?.tier?.negotiable_budget_period === 'yearly' ? 'yr' : 'mo'}
             </span>
           )}

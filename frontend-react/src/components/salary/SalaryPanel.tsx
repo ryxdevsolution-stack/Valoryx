@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { Plus, Calculator, CheckCircle, ChevronDown, ChevronUp, RefreshCw, Pencil } from 'lucide-react'
 import api from '@/lib/api'
+import { useCurrency } from '@/lib/useCurrency'
 import type { Employee, SalaryCycle, SalaryAdvance } from '@/pages/Salary'
 
 interface SalaryPanelProps {
@@ -40,6 +41,7 @@ export default function SalaryPanel({
   onAddAdvance,
   refreshSignal,
 }: SalaryPanelProps) {
+  const { symbol: cur } = useCurrency()
   const [cycles, setCycles] = useState<SalaryCycle[]>([])
   const [loading, setLoading] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
@@ -179,13 +181,13 @@ export default function SalaryPanel({
                     </div>
                     <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
                       {cycle.gross_salary !== null && (
-                        <span>Gross: <strong className="text-gray-800 dark:text-gray-200">₹{Number(cycle.gross_salary).toFixed(2)}</strong></span>
+                        <span>Gross: <strong className="text-gray-800 dark:text-gray-200">{cur}{Number(cycle.gross_salary).toFixed(2)}</strong></span>
                       )}
                       {Number(cycle.total_advances) > 0 && (
-                        <span>Adv: <strong className="text-orange-600 dark:text-orange-400">-₹{Number(cycle.total_advances).toFixed(2)}</strong></span>
+                        <span>Adv: <strong className="text-orange-600 dark:text-orange-400">-{cur}{Number(cycle.total_advances).toFixed(2)}</strong></span>
                       )}
                       {cycle.net_salary !== null && (
-                        <span>Net: <strong className="text-green-700 dark:text-green-400">₹{Number(cycle.net_salary).toFixed(2)}</strong></span>
+                        <span>Net: <strong className="text-green-700 dark:text-green-400">{cur}{Number(cycle.net_salary).toFixed(2)}</strong></span>
                       )}
                     </div>
                   </div>
@@ -212,7 +214,7 @@ export default function SalaryPanel({
                         {advanceCoversSalary && (
                           <div className="w-full bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 mb-1">
                             <p className="text-[11px] text-blue-700 dark:text-blue-300">
-                              <strong>Advance covers salary.</strong> Employee was paid ₹{adv.toFixed(2)} as advances; they earned ₹{gross.toFixed(2)} this cycle. No additional payment due — closing this cycle settles the period.
+                              <strong>Advance covers salary.</strong> Employee was paid {cur}{adv.toFixed(2)} as advances; they earned {cur}{gross.toFixed(2)} this cycle. No additional payment due — closing this cycle settles the period.
                             </p>
                           </div>
                         )}
@@ -288,7 +290,7 @@ export default function SalaryPanel({
                               {' '}({(cycle.ot_summary.total_ot_minutes / 60).toFixed(1)}h)
                             </span>
                             <span className="text-amber-800 dark:text-amber-300">
-                              OT pay: <strong>₹{Number(cycle.ot_summary.total_ot_pay).toFixed(2)}</strong>
+                              OT pay: <strong>{cur}{Number(cycle.ot_summary.total_ot_pay).toFixed(2)}</strong>
                             </span>
                             <span className="text-amber-600 dark:text-amber-400">
                               Multiplier: {cycle.ot_summary.ot_multiplier}×
@@ -313,12 +315,12 @@ export default function SalaryPanel({
                                   <td className="px-3 py-2 text-gray-700 dark:text-gray-300">{fmtDate(day.date)}</td>
                                   <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{formatMins(Number(day.total_minutes))}</td>
                                   <td className="px-3 py-2 text-right text-gray-700 dark:text-gray-300">{Number(day.days_counted).toFixed(2)}</td>
-                                  <td className="px-3 py-2 text-right font-semibold text-gray-900 dark:text-white">₹{Number(day.amount_earned).toFixed(2)}</td>
+                                  <td className="px-3 py-2 text-right font-semibold text-gray-900 dark:text-white">{cur}{Number(day.amount_earned).toFixed(2)}</td>
                                   <td className="px-3 py-2 text-right text-amber-700 dark:text-amber-300">
                                     {Number(day.ot_minutes) > 0 ? `${day.ot_minutes}m` : '—'}
                                   </td>
                                   <td className="px-3 py-2 text-right text-amber-700 dark:text-amber-300 font-medium">
-                                    {Number(day.ot_pay) > 0 ? `₹${Number(day.ot_pay).toFixed(2)}` : '—'}
+                                    {Number(day.ot_pay) > 0 ? `${cur}${Number(day.ot_pay).toFixed(2)}` : '—'}
                                   </td>
                                 </tr>
                               ))}
@@ -339,7 +341,7 @@ export default function SalaryPanel({
                               className="flex items-center justify-between bg-orange-50 dark:bg-orange-900/20 rounded-lg px-3 py-2"
                             >
                               <div>
-                                <span className="text-xs font-semibold text-orange-700 dark:text-orange-300">₹{Number(adv.amount).toFixed(2)}</span>
+                                <span className="text-xs font-semibold text-orange-700 dark:text-orange-300">{cur}{Number(adv.amount).toFixed(2)}</span>
                                 <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">{fmtDate(adv.advance_date)}</span>
                                 {adv.notes && <span className="text-xs text-gray-400 ml-2">— {adv.notes}</span>}
                               </div>
@@ -370,6 +372,7 @@ export default function SalaryPanel({
 }
 
 function LifetimeStats({ cycles }: { cycles: SalaryCycle[] }) {
+  const { symbol: cur } = useCurrency()
   const paidCycles = cycles.filter(c => c.status === 'paid')
   const totalEarned = cycles.reduce((sum, c) => sum + Number(c.gross_salary ?? 0), 0)
   const totalAdvances = cycles.reduce((sum, c) => sum + Number(c.total_advances ?? 0), 0)
@@ -392,9 +395,9 @@ function LifetimeStats({ cycles }: { cycles: SalaryCycle[] }) {
         Lifetime stats
       </p>
       <div className="grid grid-cols-2 gap-2">
-        <StatTile label="Total Earned" value={`₹${totalEarned.toFixed(2)}`} tone="green" />
-        <StatTile label="Total Advances" value={`₹${totalAdvances.toFixed(2)}`} tone="orange" />
-        <StatTile label="Net Paid Out" value={`₹${totalNetPaid.toFixed(2)}`} tone="blue" sub={`${paidCycles.length} paid cycle${paidCycles.length === 1 ? '' : 's'}`} />
+        <StatTile label="Total Earned" value={`${cur}${totalEarned.toFixed(2)}`} tone="green" />
+        <StatTile label="Total Advances" value={`${cur}${totalAdvances.toFixed(2)}`} tone="orange" />
+        <StatTile label="Net Paid Out" value={`${cur}${totalNetPaid.toFixed(2)}`} tone="blue" sub={`${paidCycles.length} paid cycle${paidCycles.length === 1 ? '' : 's'}`} />
         <StatTile label="Last Paid" value={lastPaidLabel} tone="gray" />
       </div>
     </div>

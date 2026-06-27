@@ -36,6 +36,9 @@ export interface ReceiptData {
   discount?: number;
   grandTotal: number;
   footerText?: string;
+  /** Region-aware tax label (e.g. "GST", "VAT"). Defaults to the client's
+   *  tax_config name from localStorage, else "GST". */
+  taxLabel?: string;
 }
 
 // ---------------------------------------------------------------------------
@@ -74,6 +77,21 @@ const BLE_CHUNK_SIZE = 20;
 const RECEIPT_WIDTH = 32;
 
 const SEPARATOR = '-'.repeat(RECEIPT_WIDTH);
+
+/**
+ * Resolve the tax label for a receipt without React hooks.
+ * Order: explicit value on the receipt → client tax_config in localStorage → GST.
+ */
+function resolveTaxLabel(explicit?: string): string {
+  if (explicit) return explicit;
+  try {
+    const client = JSON.parse(localStorage.getItem('client') || '{}');
+    if (client.tax_config?.name) return client.tax_config.name;
+  } catch {
+    /* localStorage unavailable / bad JSON */
+  }
+  return 'GST';
+}
 
 // ---------------------------------------------------------------------------
 // Service
@@ -429,7 +447,8 @@ export class BluetoothPrinterService {
     push(text(`Subtotal: ${receipt.subtotal.toFixed(2)}`), lf);
 
     if (receipt.gstAmount !== undefined && receipt.gstAmount !== null) {
-      push(text(`GST: ${receipt.gstAmount.toFixed(2)}`), lf);
+      const taxLabel = resolveTaxLabel(receipt.taxLabel);
+      push(text(`${taxLabel}: ${receipt.gstAmount.toFixed(2)}`), lf);
     }
     if (receipt.discount !== undefined && receipt.discount !== null && receipt.discount > 0) {
       push(text(`Discount: -${receipt.discount.toFixed(2)}`), lf);

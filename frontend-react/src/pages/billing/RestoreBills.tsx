@@ -4,6 +4,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { RotateCcw, Calendar, X, Package, User, Clock, Hash, ArrowLeft } from 'lucide-react'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface BillItem {
   product_name: string
@@ -42,6 +43,7 @@ interface Bill {
 }
 
 export default function RestoreBills() {
+  const { symbol: cur } = useCurrency()
   const [bills, setBills] = useState<Bill[]>([])
   const [loading, setLoading] = useState(true)
   const [currentPage, setCurrentPage] = useState(1)
@@ -231,7 +233,7 @@ export default function RestoreBills() {
                           </td>
                           <td className="px-2 py-1.5 text-right">
                             <span className="text-xs font-bold text-gray-900 dark:text-white">
-                              ₹{getAmount(bill).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                              {cur}{getAmount(bill).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                             </span>
                           </td>
                         </tr>
@@ -257,7 +259,7 @@ export default function RestoreBills() {
                           <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{bill.customer_name || 'Walk-in'}</p>
                         </div>
                         <span className="text-sm font-bold text-gray-900 dark:text-white">
-                          ₹{getAmount(bill).toLocaleString('en-IN')}
+                          {cur}{getAmount(bill).toLocaleString('en-IN')}
                         </span>
                       </div>
                       <div className="flex items-center justify-between">
@@ -340,7 +342,7 @@ export default function RestoreBills() {
                               <div key={i} className="flex items-center justify-between text-xs">
                                 <span className="text-gray-700 dark:text-gray-300 truncate max-w-[160px]">{item.product_name}</span>
                                 <span className="text-gray-500 dark:text-gray-400 whitespace-nowrap ml-2">
-                                  {item.quantity} x ₹{item.rate} = ₹{item.amount?.toLocaleString('en-IN')}
+                                  {item.quantity} x {cur}{item.rate} = {cur}{item.amount?.toLocaleString('en-IN')}
                                 </span>
                               </div>
                             ))}
@@ -353,7 +355,7 @@ export default function RestoreBills() {
                         <div className="flex items-center justify-between">
                           <span className="text-xs font-semibold text-gray-600 dark:text-gray-300">Total</span>
                           <span className="text-sm font-bold text-gray-900 dark:text-white">
-                            ₹{getAmount(selectedBill).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                            {cur}{getAmount(selectedBill).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                           </span>
                         </div>
                       </div>

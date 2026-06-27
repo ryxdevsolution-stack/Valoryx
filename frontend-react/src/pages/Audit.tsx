@@ -5,6 +5,7 @@ import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { toast } from '@/utils/toast'
 import { useClient } from '@/contexts/ClientContext'
+import { useCurrency } from '@/lib/useCurrency'
 import EditBillPriceDialog from '@/components/audit/EditBillPriceDialog'
 
 interface BillLine {
@@ -61,6 +62,7 @@ function effectiveTotals(bill: GSTBill): { subtotal: number; gst_amount: number;
 }
 
 export default function AuditorReportsPage() {
+  const { symbol: cur, taxLabel } = useCurrency()
   const [loading, setLoading] = useState(false)
   const [gstBills, setGstBills] = useState<GSTBill[]>([])
   const [dateRange, setDateRange] = useState({ start_date: '', end_date: '' })
@@ -379,15 +381,15 @@ export default function AuditorReportsPage() {
               </div>
               <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md p-2.5">
                 <p className="text-[10px] font-semibold text-gray-600 dark:text-gray-400">Total Subtotal</p>
-                <p className="text-lg font-bold text-gray-900 dark:text-white mt-0.5">₹{totalSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                <p className="text-lg font-bold text-gray-900 dark:text-white mt-0.5">{cur}{totalSubtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
               </div>
               <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md p-2.5">
-                <p className="text-[10px] font-semibold text-gray-600 dark:text-gray-400">Total GST Amount</p>
-                <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">₹{totalGSTAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                <p className="text-[10px] font-semibold text-gray-600 dark:text-gray-400">Total {taxLabel} Amount</p>
+                <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400 mt-0.5">{cur}{totalGSTAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
               </div>
               <div className="bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 shadow-md p-2.5">
                 <p className="text-[10px] font-semibold text-gray-600 dark:text-gray-400">Grand Total</p>
-                <p className="text-lg font-bold text-blue-600 dark:text-blue-400 mt-0.5">₹{totalFinalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
+                <p className="text-lg font-bold text-blue-600 dark:text-blue-400 mt-0.5">{cur}{totalFinalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</p>
               </div>
             </div>
 
@@ -401,8 +403,8 @@ export default function AuditorReportsPage() {
                     <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase">Date</th>
                     <th className="px-3 py-2 text-left text-[10px] font-bold text-white uppercase">Customer</th>
                     <th className="px-3 py-2 text-right text-[10px] font-bold text-white uppercase">Subtotal</th>
-                    <th className="px-3 py-2 text-center text-[10px] font-bold text-white uppercase">GST %</th>
-                    <th className="px-3 py-2 text-right text-[10px] font-bold text-white uppercase">GST Amount</th>
+                    <th className="px-3 py-2 text-center text-[10px] font-bold text-white uppercase">{taxLabel} %</th>
+                    <th className="px-3 py-2 text-right text-[10px] font-bold text-white uppercase">{taxLabel} Amount</th>
                     <th className="px-3 py-2 text-right text-[10px] font-bold text-white uppercase">Final Amount</th>
                     <th className="px-3 py-2 text-center text-[10px] font-bold text-white uppercase">Actions</th>
                   </tr>
@@ -443,11 +445,11 @@ export default function AuditorReportsPage() {
                       </td>
                       <td className="px-3 py-2.5 text-right whitespace-nowrap">
                         <span className="text-xs font-medium text-gray-800 dark:text-gray-200">
-                          ₹{eff.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          {cur}{eff.subtotal.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </span>
                         {eff.isAudited && (
                           <div className="text-[9px] text-gray-500 dark:text-gray-400">
-                            (bill: ₹{parseFloat(String(bill.subtotal)).toLocaleString('en-IN', { minimumFractionDigits: 2 })})
+                            (bill: {cur}{parseFloat(String(bill.subtotal)).toLocaleString('en-IN', { minimumFractionDigits: 2 })})
                           </div>
                         )}
                       </td>
@@ -456,16 +458,16 @@ export default function AuditorReportsPage() {
                       </td>
                       <td className="px-3 py-2.5 text-right whitespace-nowrap">
                         <span className="text-xs font-medium text-emerald-600 dark:text-emerald-400">
-                          ₹{eff.gst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          {cur}{eff.gst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 text-right whitespace-nowrap">
                         <span className="text-xs font-bold text-gray-800 dark:text-gray-200">
-                          ₹{eff.final_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          {cur}{eff.final_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </span>
                         {eff.isAudited && (
                           <div className="text-[9px] text-gray-500 dark:text-gray-400">
-                            (bill: ₹{parseFloat(String(bill.final_amount)).toLocaleString('en-IN', { minimumFractionDigits: 2 })})
+                            (bill: {cur}{parseFloat(String(bill.final_amount)).toLocaleString('en-IN', { minimumFractionDigits: 2 })})
                           </div>
                         )}
                       </td>
@@ -534,11 +536,11 @@ export default function AuditorReportsPage() {
                       </p>
                       <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{bill.customer_name || 'Walk-in'}</p>
                     </div>
-                    <span className="text-sm font-bold text-gray-900 dark:text-white">₹{eff.final_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                    <span className="text-sm font-bold text-gray-900 dark:text-white">{cur}{eff.final_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                     <span>{bill.customer_phone}</span>
-                    <span>GST: ₹{eff.gst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                    <span>{taxLabel}: {cur}{eff.gst_amount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                   </div>
                   <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">
                     {bill.created_at ? new Date(bill.created_at).toLocaleDateString() : ''}
@@ -657,7 +659,7 @@ export default function AuditorReportsPage() {
                       <div>
                         <p className="text-[10px] text-gray-500 dark:text-gray-400">Grand Total</p>
                         <p className="text-xs font-semibold text-blue-600 dark:text-blue-400">
-                          ₹{totalFinalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                          {cur}{totalFinalAmount.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                         </p>
                       </div>
                     </div>

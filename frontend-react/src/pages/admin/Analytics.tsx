@@ -1,6 +1,7 @@
 
 import React, { useState, useEffect, useCallback, useMemo } from 'react';
 import api from '@/lib/api';
+import { useCurrency } from '@/lib/useCurrency';
 import {
   FileText,
   DollarSign,
@@ -27,15 +28,17 @@ interface AnalyticsData {
   };
 }
 
-const formatCurrency = (amount: number) => {
-  if (amount >= 100000) return `₹${(amount / 100000).toFixed(1)}L`;
-  if (amount >= 1000) return `₹${(amount / 1000).toFixed(1)}K`;
-  return `₹${amount.toFixed(0)}`;
+const formatCurrencyWithSymbol = (amount: number, cur: string) => {
+  if (amount >= 100000) return `${cur}${(amount / 100000).toFixed(1)}L`;
+  if (amount >= 1000) return `${cur}${(amount / 1000).toFixed(1)}K`;
+  return `${cur}${amount.toFixed(0)}`;
 };
 
 const CATEGORY_COLORS = ['bg-violet-500', 'bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-red-500', 'bg-pink-500'];
 
 export default function AnalyticsPage() {
+  const { symbol: cur } = useCurrency();
+  const formatCurrency = (amount: number) => formatCurrencyWithSymbol(amount, cur);
   const [dateRange, setDateRange] = useState<'today' | 'week' | 'month'>('month');
   const [data, setData] = useState<AnalyticsData | null>(null);
   const [loading, setLoading] = useState(true);

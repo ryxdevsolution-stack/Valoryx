@@ -6,6 +6,7 @@ import BarcodeScannerModal from '@/components/billing/BarcodeScannerModal'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
 import { getAddedByLabel, setAddedByLabel } from '@/utils/addedByLabel'
 import { focusRowById } from '@/utils/focusRow'
+import { useCurrency } from '@/lib/useCurrency'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -91,6 +92,7 @@ const STATUS_LABEL: Record<string, string> = {
 // ─── Main Page ────────────────────────────────────────────────────────────────
 
 export default function SuppliersPage() {
+  const { symbol: cur, taxLabel } = useCurrency()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const location = useLocation()
@@ -709,7 +711,7 @@ export default function SuppliersPage() {
                       <div className="mt-4 pt-3 border-t border-gray-100 dark:border-gray-700 flex flex-wrap gap-1.5">
                         {s.gst_number && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs bg-purple-50 dark:bg-purple-900/30 text-purple-700 dark:text-purple-300 font-mono">
-                            GST {s.gst_number}
+                            {taxLabel} {s.gst_number}
                           </span>
                         )}
                         {s.payment_terms && (
@@ -719,7 +721,7 @@ export default function SuppliersPage() {
                         )}
                         {s.transport_fee > 0 && (
                           <span className="inline-flex items-center px-2 py-0.5 rounded-md text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">
-                            ₹{s.transport_fee.toLocaleString()} transport
+                            {cur}{s.transport_fee.toLocaleString()} transport
                           </span>
                         )}
                       </div>
@@ -873,7 +875,7 @@ export default function SuppliersPage() {
                 <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-3">Financial</p>
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">GST Number</label>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">{taxLabel} Number</label>
                     <input value={suppForm.gst_number || ''} onChange={e => setSuppForm(f => ({ ...f, gst_number: e.target.value.toUpperCase() }))}
                       placeholder="22AAAAA0000A1Z5"
                       className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
@@ -885,7 +887,7 @@ export default function SuppliersPage() {
                       className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   </div>
                   <div className="col-span-2">
-                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Default Transport Fee (₹)</label>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Default Transport Fee ({cur})</label>
                     <input type="number" min="0" step="0.01"
                       value={suppForm.transport_fee} onChange={e => setSuppForm(f => ({ ...f, transport_fee: parseFloat(e.target.value) || 0 }))}
                       placeholder="0"
@@ -997,7 +999,7 @@ export default function SuppliersPage() {
                         className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
                     </div>
                     <div>
-                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Transport Fee (₹)</label>
+                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Transport Fee ({cur})</label>
                       <input type="number" min="0" step="0.01"
                         value={delForm.transport_fee} onChange={e => setDelForm(f => ({ ...f, transport_fee: e.target.value }))}
                         placeholder="0"
@@ -1071,12 +1073,12 @@ export default function SuppliersPage() {
                             </td>
                             <td className="px-2 py-1.5">
                               <input type="number" min="0" step="0.01" value={item.cost_price} onChange={e => updateItem(idx, 'cost_price', e.target.value)}
-                                placeholder="₹0"
+                                placeholder={`${cur}0`}
                                 className="w-20 px-2 py-1 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
                             </td>
                             <td className="px-2 py-1.5">
                               <input type="number" min="0" step="0.01" value={item.selling_price} onChange={e => updateItem(idx, 'selling_price', e.target.value)}
-                                placeholder="₹0"
+                                placeholder={`${cur}0`}
                                 className="w-20 px-2 py-1 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded text-xs focus:outline-none focus:ring-1 focus:ring-blue-500" />
                             </td>
                             <td className="px-2 py-1.5">
@@ -1326,13 +1328,13 @@ export default function SuppliersPage() {
                   <div>
                     <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">Transport Fee</p>
                     <p className="font-medium text-gray-800 dark:text-gray-200">
-                      {activeDelivery.transport_fee > 0 ? `₹${activeDelivery.transport_fee.toLocaleString()}` : '—'}
+                      {activeDelivery.transport_fee > 0 ? `${cur}${activeDelivery.transport_fee.toLocaleString()}` : '—'}
                     </p>
                   </div>
                   {totalCost > 0 && (
                     <div className="col-span-3 border-t border-gray-200 dark:border-gray-700 pt-3 mt-1">
                       <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">Total Purchase Value</p>
-                      <p className="font-semibold text-gray-900 dark:text-white text-base">₹{totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      <p className="font-semibold text-gray-900 dark:text-white text-base">{cur}{totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
                     </div>
                   )}
                 </div>
@@ -1384,11 +1386,11 @@ export default function SuppliersPage() {
                               <td className="px-3 py-2 text-gray-500 dark:text-gray-400 font-mono">{item.barcode || '—'}</td>
                               <td className="px-3 py-2 text-gray-700 dark:text-gray-300 text-right">{item.quantity} {item.unit}</td>
                               <td className="px-3 py-2 text-gray-700 dark:text-gray-300 text-right">
-                                {item.cost_price ? `₹${parseFloat(String(item.cost_price)).toFixed(2)}` : '—'}
+                                {item.cost_price ? `${cur}${parseFloat(String(item.cost_price)).toFixed(2)}` : '—'}
                               </td>
                               <td className="px-3 py-2 text-right">
                                 {item.selling_price
-                                  ? <span className="text-green-700 dark:text-green-400 font-medium">₹{parseFloat(String(item.selling_price)).toFixed(2)}</span>
+                                  ? <span className="text-green-700 dark:text-green-400 font-medium">{cur}{parseFloat(String(item.selling_price)).toFixed(2)}</span>
                                   : <span className="text-gray-400">—</span>}
                               </td>
                             </tr>

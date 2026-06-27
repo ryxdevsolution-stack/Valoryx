@@ -10,6 +10,22 @@ from typing import Dict, Any, List, Optional
 import subprocess
 import tempfile
 
+# Currency display symbols for thermal/text receipts. INR keeps "Rs." (ASCII-safe
+# for the widest thermal-printer compatibility); others use their symbol.
+_CURRENCY_SYMBOLS = {
+    'INR': 'Rs.', 'USD': '$', 'AED': 'AED ', 'EUR': '€', 'GBP': '£',
+    'SAR': 'SAR ', 'SGD': 'S$', 'AUD': 'A$', 'CAD': 'C$', 'MYR': 'RM',
+}
+
+def _resolve_currency_symbol(bill_data: Dict[str, Any], client_info: Dict[str, Any]) -> str:
+    """Pick the currency symbol for a receipt: explicit symbol → code map → 'Rs.'."""
+    sym = (client_info or {}).get('currency_symbol') or (bill_data or {}).get('currency_symbol')
+    if sym:
+        return sym
+    code = ((bill_data or {}).get('currency_code')
+            or (client_info or {}).get('currency_code') or 'INR')
+    return _CURRENCY_SYMBOLS.get(str(code).upper(), 'Rs.')
+
 # Cache for printer detection (avoids repeated slow PowerShell calls)
 _printer_cache = {
     'default_printer': None,
@@ -201,6 +217,7 @@ class ThermalPrinter:
         # ========================================================
 
         # Extract data
+        cur = _resolve_currency_symbol(bill_data, client_info)
         items = bill_data.get('items', [])
         total_items = len(items)
         total_qty = sum(item.get('quantity', 0) for item in items)
@@ -429,8 +446,8 @@ class ThermalPrinter:
     <!-- Grand Total -->
     <div class="grand-total">
         <span>GRAND TOTAL</span>
-        <span>Rs.{}</span>
-    </div>""".format(grand_total)
+        <span>{}{}</span>
+    </div>""".format(cur, grand_total)
 
         # Payment info
         html += f"""
@@ -443,7 +460,7 @@ class ThermalPrinter:
             html += f"""
     <div class="savings">
         <div class="savings-title">TODAY'S SAVINGS</div>
-        <div class="savings-amount">Rs.{total_savings:.2f}</div>
+        <div class="savings-amount">{cur}{total_savings:.2f}</div>
         <div class="savings-title">You saved compared to MRP!</div>
     </div>"""
 
@@ -583,6 +600,7 @@ class ThermalPrinter:
         lines.append("-" * W)
 
         # ==================== TOTALS ====================
+        cur = _resolve_currency_symbol(bill_data, client_info)
         total_items = len(items)
         subtotal = float(bill_data.get('subtotal', 0) or 0)
         discount = float(bill_data.get('discount_amount', 0) or 0)
@@ -607,7 +625,7 @@ class ThermalPrinter:
 
         grand_total = round(final)
         lines.append("=" * W)
-        lines.append(f"{'GRAND TOTAL':<20}{'Rs.' + str(grand_total):>18}")
+        lines.append(f"{'GRAND TOTAL':<20}{cur + str(grand_total):>18}")
         lines.append("=" * W)
 
         # ==================== PAYMENT ====================
@@ -615,7 +633,7 @@ class ThermalPrinter:
         try:
             if isinstance(payment_info, str) and payment_info.startswith('['):
                 payments = json.loads(payment_info)
-                parts = [f"{p.get('payment_type', 'Cash')}: Rs.{p.get('amount', 0)}" for p in payments]
+                parts = [f"{p.get('payment_type', 'Cash')}: {cur}{p.get('amount', 0)}" for p in payments]
                 lines.append(f"Payment: {', '.join(parts)}".center(W))
             else:
                 lines.append(f"Payment: {payment_info}".center(W))
@@ -627,7 +645,7 @@ class ThermalPrinter:
         if total_savings > 0:
             lines.append("-" * W)
             lines.append("TODAY'S SAVINGS".center(W))
-            lines.append(f"Rs.{total_savings:.2f}".center(W))
+            lines.append(f"{cur}{total_savings:.2f}".center(W))
             lines.append("You saved compared to MRP!".center(W))
             lines.append("-" * W)
 

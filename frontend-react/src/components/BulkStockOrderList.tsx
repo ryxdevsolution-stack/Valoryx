@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import api from '@/lib/api'
 import { toast } from '@/utils/toast'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface OrderItem {
   item_id: string
@@ -36,6 +37,7 @@ interface Props {
 }
 
 export default function BulkStockOrderList({ isOpen, onClose, onReceive }: Props) {
+  const { symbol: cur } = useCurrency()
   const [orders, setOrders] = useState<BulkOrder[]>([])
   const [loading, setLoading] = useState(true)
   const [filter, setFilter] = useState<string>('all')
@@ -250,10 +252,10 @@ export default function BulkStockOrderList({ isOpen, onClose, onReceive }: Props
                                   {item.quantity_received} {item.unit}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">
-                                  {item.cost_price ? `₹${item.cost_price}` : '-'}
+                                  {item.cost_price ? `${cur}${item.cost_price}` : '-'}
                                 </td>
                                 <td className="px-4 py-3 text-sm text-gray-900 dark:text-white">
-                                  {item.selling_price ? `₹${item.selling_price}` : '-'}
+                                  {item.selling_price ? `${cur}${item.selling_price}` : '-'}
                                 </td>
                                 <td className="px-4 py-3 text-sm">
                                   {item.quantity_received >= item.quantity_ordered ? (

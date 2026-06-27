@@ -149,6 +149,12 @@ export interface PrintableBill {
   user_name: string;
   payment_status?: 'paid' | 'pending';
   points_earned?: number;
+  /** Per-bill regional currency, frozen at create time. */
+  currency_code?: string;
+  currency_symbol?: string;
+  locale?: string;
+  /** Tax components for this bill, e.g. [{name:'CGST',amount}, {name:'SGST',amount}]. */
+  tax_breakdown?: { name: string; amount: number }[];
   /** ₹ knocked off this bill by membership point redemption. */
   membership_redeemed?: number | null;
   /** Membership receipt block (card number, earn/redeem, balance). */

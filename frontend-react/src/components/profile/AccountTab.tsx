@@ -448,7 +448,7 @@ export default function AccountTab({
       </div>
 
       {/* Telegram Notifications — hidden in Electron */}
-      {!import.meta.env.VITE_ELECTRON && <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+      {!import.meta.env.VITE_ELECTRON && <div className="hidden bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
         <div className="flex items-center gap-2 mb-1">
           <MessageCircle className="w-5 h-5 text-sky-500" />
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Telegram Daily Reports</h3>

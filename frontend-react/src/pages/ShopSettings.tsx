@@ -15,6 +15,7 @@ import type { ShopSettings } from '@/services/shopSettingsService'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
 import bluetoothPrinterService from '@/services/bluetoothPrinterService'
 import { QRCodeSVG } from 'qrcode.react'
+import { useCurrency } from '@/lib/useCurrency'
 
 const RECEIPT_FOOTER_MAX = 60
 
@@ -200,6 +201,7 @@ function ReceiptPreview({ form }: { form: FormState }) {
 
 export default function ShopSettingsPage() {
   const { user } = useClient()
+  const { symbol: cur, taxLabel } = useCurrency()
 
   const { isMobile, supportsWebBluetooth } = useMobileDetect()
 
@@ -476,7 +478,7 @@ export default function ShopSettingsPage() {
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                   <div>
                     <label htmlFor="gst_number" className={labelClasses}>
-                      GST Number
+                      {taxLabel} Number
                     </label>
                     <input
                       id="gst_number"
@@ -601,7 +603,7 @@ export default function ShopSettingsPage() {
                 <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-3">Loyalty Points</h3>
                 <div>
                   <label htmlFor="points_per_100" className={labelClasses}>
-                    Points per ₹100 spent
+                    Points per {cur}100 spent
                   </label>
                   <div className="flex items-center gap-3">
                     <input
@@ -617,7 +619,7 @@ export default function ShopSettingsPage() {
                     />
                     <p className="text-xs text-gray-500 dark:text-gray-400">
                       {parseInt(form.points_per_100) > 0
-                        ? `Customer earns ${form.points_per_100} point${parseInt(form.points_per_100) !== 1 ? 's' : ''} for every ₹100 spent`
+                        ? `Customer earns ${form.points_per_100} point${parseInt(form.points_per_100) !== 1 ? 's' : ''} for every ${cur}100 spent`
                         : 'Set to 0 to disable loyalty points'}
                     </p>
                   </div>

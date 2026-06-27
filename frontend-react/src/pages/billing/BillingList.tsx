@@ -5,6 +5,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { useClient } from '@/contexts/ClientContext'
+import { useCurrency } from '@/lib/useCurrency'
 import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle, Calendar, X, Package, User, Clock, Hash, CheckCircle, RotateCcw } from 'lucide-react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { generateBillPDF } from '@/lib/pdfService'
@@ -57,6 +58,7 @@ export default function AllBillsPage() {
   const navigate = useNavigate()
   const location = useLocation()
   const { client } = useClient()
+  const { symbol: cur, taxLabel } = useCurrency()
   const [bills, setBills] = useState<Bill[]>([])
   const [paymentTypes, setPaymentTypes] = useState<PaymentType[]>([])
   const [loading, setLoading] = useState(true)
@@ -807,7 +809,7 @@ export default function AllBillsPage() {
                       <span className={`text-[10px] font-medium ${
                         selectedPaymentType === 'all' ? 'text-white/80' : 'text-gray-600 dark:text-gray-400'
                       }`}>
-                        ₹{grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                        {cur}{grandTotal.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                       </span>
                     </div>
                   </div>
@@ -854,7 +856,7 @@ export default function AllBillsPage() {
                           <span className={`text-[10px] font-medium ${
                             isSelected ? 'text-white/80' : 'text-gray-600 dark:text-gray-400'
                           }`}>
-                            ₹{stat.total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                            {cur}{stat.total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                           </span>
                         </div>
                       </div>
@@ -901,7 +903,7 @@ export default function AllBillsPage() {
                               <span className={`text-[10px] font-medium ${
                                 isSelected ? 'text-white/80' : 'text-gray-600 dark:text-gray-400'
                               }`}>
-                                ₹{stat.total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                                {cur}{stat.total.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                               </span>
                             </div>
                           </div>
@@ -995,7 +997,7 @@ export default function AllBillsPage() {
                       </td>
                       <td className="px-2 py-1.5 text-right whitespace-nowrap">
                         <span className="text-xs font-bold text-gray-900 dark:text-white">
-                          ₹{bill.displayAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                          {cur}{bill.displayAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                         </span>
                       </td>
                       {showActions ? (
@@ -1095,7 +1097,7 @@ export default function AllBillsPage() {
                     </div>
                     <div className="flex items-center justify-between text-xs text-gray-500 dark:text-gray-400">
                       <span>{bill.created_at ? new Date(bill.created_at).toLocaleDateString() : ''}</span>
-                      <span className="text-sm font-bold text-gray-900 dark:text-white">₹{bill.displayAmount?.toLocaleString()}</span>
+                      <span className="text-sm font-bold text-gray-900 dark:text-white">{cur}{bill.displayAmount?.toLocaleString()}</span>
                     </div>
                     {bill.payment_status === 'pending' && bill.status !== 'cancelled' && (
                       <div className="mt-2 flex gap-2">
@@ -1173,7 +1175,7 @@ export default function AllBillsPage() {
                   <div className="border-l border-slate-600 pl-6">
                     <p className="text-slate-400 dark:text-gray-400 text-[10px] uppercase font-medium">Page Total</p>
                     <p className="text-yellow-400 text-sm font-bold">
-                      ₹{paginatedBills.reduce((sum, bill) => sum + bill.displayAmount, 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      {cur}{paginatedBills.reduce((sum, bill) => sum + bill.displayAmount, 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                     </p>
                   </div>
                 </div>
@@ -1186,7 +1188,7 @@ export default function AllBillsPage() {
                     }
                   </p>
                   <p className="text-white text-lg font-bold">
-                    ₹{filteredTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                    {cur}{filteredTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                   </p>
                 </div>
               </div>
@@ -1259,7 +1261,7 @@ export default function AllBillsPage() {
                               const arr = JSON.parse(pt)
                               return Array.isArray(arr)
                                 ? arr.map((p: { payment_type?: string; PAYMENT_TYPE?: string; amount?: number; AMOUNT?: number }) =>
-                                    `${p.payment_type || p.PAYMENT_TYPE || ''}${p.amount || p.AMOUNT ? ` ₹${p.amount || p.AMOUNT}` : ''}`
+                                    `${p.payment_type || p.PAYMENT_TYPE || ''}${p.amount || p.AMOUNT ? ` ${cur}${p.amount || p.AMOUNT}` : ''}`
                                   ).join(' + ')
                                 : pt
                             } catch { return pt }
@@ -1294,12 +1296,12 @@ export default function AllBillsPage() {
                       <div className="flex-1 min-w-0">
                         <p className="text-sm text-gray-800 dark:text-gray-200 truncate">{item.product_name}</p>
                         <p className="text-xs text-gray-500 dark:text-gray-400">
-                          {item.quantity} × ₹{(item.rate || 0).toLocaleString('en-IN')}
-                          {item.gst_percentage ? ` + ${item.gst_percentage}% GST` : ''}
+                          {item.quantity} × {cur}{(item.rate || 0).toLocaleString('en-IN')}
+                          {item.gst_percentage ? ` + ${item.gst_percentage}% ${taxLabel}` : ''}
                         </p>
                       </div>
                       <p className="text-sm font-medium text-gray-800 dark:text-gray-200 shrink-0 ml-3">
-                        ₹{(item.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        {cur}{(item.amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                       </p>
                     </div>
                   ))}
@@ -1314,24 +1316,24 @@ export default function AllBillsPage() {
               {selectedBill.type === 'gst' && selectedBill.subtotal !== undefined && (
                 <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
                   <span>Subtotal</span>
-                  <span>₹{(selectedBill.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  <span>{cur}{(selectedBill.subtotal || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                 </div>
               )}
               {selectedBill.gst_amount !== undefined && selectedBill.gst_amount > 0 && (
                 <div className="flex justify-between text-sm text-gray-600 dark:text-gray-400">
-                  <span>GST ({selectedBill.gst_percentage || 0}%)</span>
-                  <span>₹{(selectedBill.gst_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  <span>{taxLabel} ({selectedBill.gst_percentage || 0}%)</span>
+                  <span>{cur}{(selectedBill.gst_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                 </div>
               )}
               {selectedBill.discount_amount !== undefined && selectedBill.discount_amount > 0 && (
                 <div className="flex justify-between text-sm text-red-500">
                   <span>Discount {selectedBill.discount_percentage ? `(${selectedBill.discount_percentage}%)` : ''}</span>
-                  <span>-₹{(selectedBill.discount_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  <span>-{cur}{(selectedBill.discount_amount || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
                 </div>
               )}
               <div className="flex justify-between text-base font-bold text-gray-900 dark:text-white pt-2 border-t border-gray-200 dark:border-gray-700">
                 <span>Total</span>
-                <span>₹{((selectedBill.final_amount ?? selectedBill.total_amount) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                <span>{cur}{((selectedBill.final_amount ?? selectedBill.total_amount) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               </div>
 
               {/* Payment status row */}

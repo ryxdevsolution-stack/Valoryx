@@ -6,6 +6,7 @@ import { useEffect, useState, useRef, useMemo, lazy } from 'react'
 const TODAY_LABEL = new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
 import DashboardLayout from '@/components/DashboardLayout'
 import { useClient } from '@/contexts/ClientContext'
+import { useCurrency } from '@/lib/useCurrency'
 import api from '@/lib/api'
 import { DashboardSkeleton } from '@/components/SkeletonLoader'
 import { motion } from 'framer-motion'
@@ -114,6 +115,7 @@ interface PayrollTrendPoint {
 
 export default function DashboardPage() {
   const { client } = useClient()
+  const { symbol: cur } = useCurrency()
   const [analytics, setAnalytics] = useState<AnalyticsDashboard | null>(null)
   const [payroll, setPayroll] = useState<PayrollSummary | null>(null)
   const [payrollTrend, setPayrollTrend] = useState<PayrollTrendPoint[] | null>(null)
@@ -331,7 +333,7 @@ export default function DashboardPage() {
             )}
           </div>
           <p className="text-lg font-bold text-gray-900 dark:text-white mb-0.5">
-            ₹{(timeRange === 'today' ? analytics.revenue.today :
+            {cur}{(timeRange === 'today' ? analytics.revenue.today :
                timeRange === 'week' ? analytics.revenue.thisWeek :
                analytics.revenue.thisMonth).toLocaleString('en-IN')}
           </p>
@@ -369,7 +371,7 @@ export default function DashboardPage() {
             <span className="text-[10px] font-medium text-gray-500 dark:text-gray-400 uppercase tracking-wide">Avg Transaction</span>
           </div>
           <p className="text-lg font-bold text-gray-900 dark:text-white mb-0.5">
-            ₹{analytics.bills.avgBillValue.toLocaleString('en-IN')}
+            {cur}{analytics.bills.avgBillValue.toLocaleString('en-IN')}
           </p>
           <p className="text-[10px] text-gray-500 dark:text-gray-400">Per bill average</p>
         </motion.div>
@@ -500,7 +502,7 @@ export default function DashboardPage() {
                 return (
                   <>
                     <p className="text-lg font-bold text-gray-900 dark:text-white mb-1">
-                      ₹{predictedRevenue.toFixed(2)}
+                      {cur}{predictedRevenue.toFixed(2)}
                     </p>
                     <div className="flex items-center gap-1">
                       <span className={`text-[10px] font-medium ${avgGrowth >= 0 ? 'text-green-600' : 'text-red-600'}`}>
@@ -581,7 +583,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="text-right ml-2">
                   <p className="font-semibold text-gray-900 text-xs">{product.quantity_sold}</p>
-                  <p className="text-[10px] text-gray-500 dark:text-gray-400">₹{product.revenue.toFixed(0)}</p>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400">{cur}{product.revenue.toFixed(0)}</p>
                 </div>
               </div>
             ))}
@@ -624,7 +626,7 @@ export default function DashboardPage() {
                 </div>
                 <div className="text-right ml-2">
                   <p className="font-semibold text-gray-900 text-xs">{product.quantity_sold}</p>
-                  <p className="text-[10px] text-gray-500 dark:text-gray-400">₹{product.revenue.toFixed(0)}</p>
+                  <p className="text-[10px] text-gray-500 dark:text-gray-400">{cur}{product.revenue.toFixed(0)}</p>
                 </div>
               </div>
             ))}
@@ -664,7 +666,7 @@ export default function DashboardPage() {
                   </div>
                 </div>
                 <div className="text-right ml-2">
-                  <p className="font-semibold text-gray-900 text-xs">₹{customer.total_spend.toLocaleString('en-IN')}</p>
+                  <p className="font-semibold text-gray-900 text-xs">{cur}{customer.total_spend.toLocaleString('en-IN')}</p>
                 </div>
               </div>
             ))}
@@ -690,7 +692,7 @@ export default function DashboardPage() {
                 <div>
                   <p className="text-[9px] text-gray-500 dark:text-gray-400 uppercase">Paid</p>
                   <p className="text-xs font-bold text-gray-900 dark:text-white">
-                    ₹{payroll.paid_in_period.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                    {cur}{payroll.paid_in_period.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                   </p>
                 </div>
                 <div>
@@ -699,7 +701,7 @@ export default function DashboardPage() {
                     {payroll.open_cycles}
                     {payroll.pending_advances > 0 && (
                       <span className="text-[9px] font-normal text-amber-500 ml-1">
-                        · ₹{payroll.pending_advances.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+                        · {cur}{payroll.pending_advances.toLocaleString('en-IN', { maximumFractionDigits: 0 })}
                       </span>
                     )}
                   </p>
@@ -738,7 +740,7 @@ export default function DashboardPage() {
               </p>
             </div>
             <span className="text-[10px] text-gray-400">
-              Total Earned: ₹{payrollTrend.reduce((s, p) => s + Math.max(0, p.gross_earned), 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
+              Total Earned: {cur}{payrollTrend.reduce((s, p) => s + Math.max(0, p.gross_earned), 0).toLocaleString('en-IN', { maximumFractionDigits: 0 })}
             </span>
           </div>
           {payrollTrend.some(p => p.gross_earned > 0 || p.advances_paid > 0 || p.net_paid > 0) ? (
@@ -820,7 +822,7 @@ export default function DashboardPage() {
                         <span className="text-gray-500 dark:text-gray-400 ml-1">{item.unit}</span>
                       </td>
                       <td className="px-2 py-1.5 text-right font-semibold text-gray-900 dark:text-white">
-                        ₹{item.estimatedCost.toLocaleString('en-IN')}
+                        {cur}{item.estimatedCost.toLocaleString('en-IN')}
                       </td>
                     </tr>
                   ))}
@@ -831,7 +833,7 @@ export default function DashboardPage() {
                       Total:
                     </td>
                     <td className="px-2 py-1.5 text-right font-bold text-gray-900 dark:text-white">
-                      ₹{lowStockCalculations.total.toLocaleString('en-IN')}
+                      {cur}{lowStockCalculations.total.toLocaleString('en-IN')}
                     </td>
                   </tr>
                 </tfoot>

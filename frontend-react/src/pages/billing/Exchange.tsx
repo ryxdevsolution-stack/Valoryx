@@ -6,6 +6,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { useData } from '@/contexts/DataContext'
 import { useClient } from '@/contexts/ClientContext'
+import { useCurrency } from '@/lib/useCurrency'
 import { RefreshCw, ArrowRight, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
 import { toast } from '@/utils/toast'
 
@@ -65,6 +66,7 @@ export default function ExchangeBillPage() {
   const navigate = useNavigate()
   const { fetchProducts } = useData()
   const { client } = useClient()
+  const { symbol: cur, taxLabel } = useCurrency()
   const productSearchRef = useRef<HTMLInputElement>(null)
 
   const paymentTypes = ['Cash', 'Card', 'UPI']
@@ -351,7 +353,7 @@ export default function ExchangeBillPage() {
     }
 
     if (difference > 0 && Math.abs(getTotalPaymentSplits() - difference) > 0.01) {
-      toast.error(`Payment amount (₹${getTotalPaymentSplits().toFixed(2)}) must equal balance due (₹${difference.toFixed(2)})`)
+      toast.error(`Payment amount (${cur}${getTotalPaymentSplits().toFixed(2)}) must equal balance due (${cur}${difference.toFixed(2)})`)
       return
     }
 
@@ -626,11 +628,11 @@ export default function ExchangeBillPage() {
                               {item.product_name}
                             </p>
                             <p className="text-[10px] sm:text-xs text-gray-600 dark:text-gray-400">
-                              {item.item_code} | ₹{item.rate.toFixed(2)}
+                              {item.item_code} | {cur}{item.rate.toFixed(2)}
                             </p>
                           </div>
                           <p className="text-xs sm:text-sm font-bold text-gray-900 dark:text-white whitespace-nowrap">
-                            ₹{item.amount.toFixed(2)}
+                            {cur}{item.amount.toFixed(2)}
                           </p>
                         </div>
 
@@ -664,7 +666,7 @@ export default function ExchangeBillPage() {
                     Return Amount:
                   </span>
                   <span className="text-base sm:text-lg font-bold text-gray-900 dark:text-white">
-                    ₹{getReturnAmount().toFixed(2)}
+                    {cur}{getReturnAmount().toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -713,7 +715,7 @@ export default function ExchangeBillPage() {
                             <div className="flex justify-between items-start">
                               <div>
                                 <p className="font-medium text-gray-900 dark:text-white">{product.product_name}</p>
-                                <p className="text-xs text-gray-600 dark:text-gray-400">{product.item_code} - ₹{Number(product.rate).toFixed(2)}</p>
+                                <p className="text-xs text-gray-600 dark:text-gray-400">{product.item_code} - {cur}{Number(product.rate).toFixed(2)}</p>
                               </div>
                               <span className={`text-xs px-1.5 py-0.5 rounded ${product.quantity > 0 ? 'bg-green-100 text-green-700 dark:bg-green-900/30 dark:text-green-400' : 'bg-red-100 text-red-700 dark:bg-red-900/30 dark:text-red-400'}`}>
                                 {product.quantity > 0 ? `${product.quantity} in stock` : 'Out of stock'}
@@ -770,7 +772,7 @@ export default function ExchangeBillPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mb-1">Rate (₹)</label>
+                      <label className="block text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mb-1">Rate ({cur})</label>
                       <input
                         type="number"
                         min="0"
@@ -781,7 +783,7 @@ export default function ExchangeBillPage() {
                       />
                     </div>
                     <div>
-                      <label className="block text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mb-1">GST %</label>
+                      <label className="block text-[10px] sm:text-xs text-gray-500 dark:text-gray-400 mb-1">{taxLabel} %</label>
                       <input
                         type="number"
                         min="0"
@@ -802,7 +804,7 @@ export default function ExchangeBillPage() {
                     </div>
                   </div>
                   <div className="mt-2 text-xs text-gray-600 dark:text-gray-400">
-                    Subtotal: ₹{(currentItem.quantity * currentItem.rate).toFixed(2)} + GST: ₹{((currentItem.quantity * currentItem.rate * currentItem.gst_percentage) / 100).toFixed(2)} = <span className="font-semibold text-gray-900 dark:text-white">₹{((currentItem.quantity * currentItem.rate) + (currentItem.quantity * currentItem.rate * currentItem.gst_percentage) / 100).toFixed(2)}</span>
+                    Subtotal: {cur}{(currentItem.quantity * currentItem.rate).toFixed(2)} + {taxLabel}: {cur}{((currentItem.quantity * currentItem.rate * currentItem.gst_percentage) / 100).toFixed(2)} = <span className="font-semibold text-gray-900 dark:text-white">{cur}{((currentItem.quantity * currentItem.rate) + (currentItem.quantity * currentItem.rate * currentItem.gst_percentage) / 100).toFixed(2)}</span>
                   </div>
                 </div>
               )}
@@ -817,12 +819,12 @@ export default function ExchangeBillPage() {
                           {item.product_name}
                         </p>
                         <p className="text-[10px] sm:text-xs text-gray-600 dark:text-gray-400 mt-0.5">
-                          {item.quantity} × ₹{item.rate.toFixed(2)} + {item.gst_percentage}% GST
+                          {item.quantity} × {cur}{item.rate.toFixed(2)} + {item.gst_percentage}% {taxLabel}
                         </p>
                       </div>
                       <div className="text-right flex-shrink-0">
                         <p className="text-xs sm:text-sm font-bold text-green-700 dark:text-green-400">
-                          ₹{item.amount.toFixed(2)}
+                          {cur}{item.amount.toFixed(2)}
                         </p>
                         <button
                           onClick={() => handleRemoveNewItem(index)}
@@ -848,7 +850,7 @@ export default function ExchangeBillPage() {
                     New Items Amount:
                   </span>
                   <span className="text-base sm:text-lg font-bold text-gray-900 dark:text-white">
-                    ₹{getNewItemsAmount().toFixed(2)}
+                    {cur}{getNewItemsAmount().toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -872,19 +874,19 @@ export default function ExchangeBillPage() {
                 <div className="flex justify-between py-1.5 sm:py-2 border-b border-gray-200 dark:border-gray-700">
                   <span className="text-gray-700 dark:text-gray-300">Returned Value:</span>
                   <span className="font-semibold text-gray-900 dark:text-white">
-                    - ₹{getReturnAmount().toFixed(2)}
+                    - {cur}{getReturnAmount().toFixed(2)}
                   </span>
                 </div>
                 <div className="flex justify-between py-1.5 sm:py-2 border-b border-gray-200 dark:border-gray-700">
                   <span className="text-gray-700 dark:text-gray-300">New Items Value:</span>
                   <span className="font-semibold text-gray-900 dark:text-white">
-                    + ₹{getNewItemsAmount().toFixed(2)}
+                    + {cur}{getNewItemsAmount().toFixed(2)}
                   </span>
                 </div>
                 <div className="flex justify-between py-2 sm:py-3 border-t-2 border-gray-300 dark:border-gray-600">
                   <span className="font-bold text-gray-900 dark:text-white">Difference:</span>
                   <span className={`font-bold text-base sm:text-lg ${getDifference() >= 0 ? 'text-gray-900 dark:text-white' : 'text-red-600 dark:text-red-400'}`}>
-                    {getDifference() >= 0 ? '+' : ''}₹{getDifference().toFixed(2)}
+                    {getDifference() >= 0 ? '+' : ''}{cur}{getDifference().toFixed(2)}
                   </span>
                 </div>
               </div>
@@ -894,7 +896,7 @@ export default function ExchangeBillPage() {
                   <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5 text-blue-600 dark:text-blue-400 flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="text-xs sm:text-sm font-semibold text-blue-900 dark:text-blue-200">
-                      Customer Owes: ₹{getDifference().toFixed(2)}
+                      Customer Owes: {cur}{getDifference().toFixed(2)}
                     </p>
                     <p className="text-[10px] sm:text-xs text-blue-700 dark:text-blue-300 mt-1">
                       Please collect payment
@@ -908,7 +910,7 @@ export default function ExchangeBillPage() {
                   <AlertCircle className="w-4 h-4 sm:w-5 sm:h-5 text-amber-600 dark:text-amber-400 flex-shrink-0 mt-0.5" />
                   <div>
                     <p className="text-xs sm:text-sm font-semibold text-amber-900 dark:text-amber-200">
-                      Refund Due: ₹{Math.abs(getDifference()).toFixed(2)}
+                      Refund Due: {cur}{Math.abs(getDifference()).toFixed(2)}
                     </p>
                     <p className="text-[10px] sm:text-xs text-amber-700 dark:text-amber-300 mt-1">
                       Refund to customer
@@ -954,7 +956,7 @@ export default function ExchangeBillPage() {
                       <div key={index} className="flex justify-between items-center bg-white dark:bg-gray-700 p-2 rounded text-sm">
                         <span className="font-medium text-gray-900 dark:text-white">{split.payment_type}</span>
                         <div className="flex items-center gap-2">
-                          <span className="font-semibold text-gray-900 dark:text-white">₹{split.amount.toFixed(2)}</span>
+                          <span className="font-semibold text-gray-900 dark:text-white">{cur}{split.amount.toFixed(2)}</span>
                           <button
                             onClick={() => handleRemovePaymentSplit(index)}
                             className="text-red-600 hover:text-red-700 text-xs"
@@ -971,7 +973,7 @@ export default function ExchangeBillPage() {
                       <div className="flex justify-between text-sm font-semibold">
                         <span className="text-gray-700 dark:text-gray-300">Total Collected:</span>
                         <span className={`${Math.abs(getTotalPaymentSplits() - getDifference()) < 0.01 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-                          ₹{getTotalPaymentSplits().toFixed(2)}
+                          {cur}{getTotalPaymentSplits().toFixed(2)}
                         </span>
                       </div>
                     </div>

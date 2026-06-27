@@ -5,6 +5,7 @@
  * when ON its input is revealed. `name` is the only required field.
  */
 import { useCallback, useMemo, useState } from 'react'
+import { useCurrency } from '@/lib/useCurrency'
 import type { MembershipTier, TierWritePayload } from '@/types/membership'
 
 interface TierFormProps {
@@ -26,20 +27,22 @@ interface BenefitKey {
   min?: string
 }
 
-const NUMERIC_BENEFITS: BenefitKey[] = [
-  { key: 'discount_percentage', label: 'Auto-discount (%)', hint: 'Applied automatically at billing', step: '0.01', min: '0' },
-  { key: 'points_per_100', label: 'Points per ₹100', hint: 'Points earned per ₹100 spent', step: '0.01', min: '0' },
-  { key: 'redemption_rate', label: 'Redemption rate (₹/point)', hint: 'e.g. 0.10 → 100 pts = ₹10', step: '0.01', min: '0' },
-  { key: 'monthly_negotiable_budget', label: 'Negotiable budget (₹)', hint: 'Negotiation cap per calendar month or year', step: '0.01', min: '0' },
-  { key: 'enrollment_fee', label: 'Enrollment fee (₹)', hint: 'Leave off for free enrollment', step: '0.01', min: '0' },
-  { key: 'validity_days', label: 'Validity (days)', hint: 'Off = never expires', step: '1', min: '1' },
-]
+function makeNumericBenefits(cur: string): BenefitKey[] {
+  return [
+    { key: 'discount_percentage', label: 'Auto-discount (%)', hint: 'Applied automatically at billing', step: '0.01', min: '0' },
+    { key: 'points_per_100', label: `Points per ${cur}100`, hint: `Points earned per ${cur}100 spent`, step: '0.01', min: '0' },
+    { key: 'redemption_rate', label: `Redemption rate (${cur}/point)`, hint: `e.g. 0.10 → 100 pts = ${cur}10`, step: '0.01', min: '0' },
+    { key: 'monthly_negotiable_budget', label: `Negotiable budget (${cur})`, hint: 'Negotiation cap per calendar month or year', step: '0.01', min: '0' },
+    { key: 'enrollment_fee', label: `Enrollment fee (${cur})`, hint: 'Leave off for free enrollment', step: '0.01', min: '0' },
+    { key: 'validity_days', label: 'Validity (days)', hint: 'Off = never expires', step: '1', min: '1' },
+  ]
+}
 
 type NumericState = Record<string, { enabled: boolean; value: string }>
 
-function initNumeric(tier: MembershipTier | null): NumericState {
+function initNumeric(tier: MembershipTier | null, benefits: BenefitKey[]): NumericState {
   const state: NumericState = {}
-  for (const b of NUMERIC_BENEFITS) {
+  for (const b of benefits) {
     const raw = tier ? (tier[b.key as keyof MembershipTier] as number | null) : null
     state[b.key as string] = {
       enabled: raw !== null && raw !== undefined,
@@ -67,10 +70,12 @@ const CARD_COLORS = [
 ]
 
 export default function TierForm({ tier, allTiers, saving, onSubmit, onCancel }: TierFormProps) {
+  const { symbol: cur } = useCurrency()
+  const numericBenefits = useMemo(() => makeNumericBenefits(cur), [cur])
   const [name, setName] = useState(tier?.name ?? '')
   const [description, setDescription] = useState(tier?.description ?? '')
   const [color, setColor] = useState(tier?.color ?? '#2563eb')
-  const [numeric, setNumeric] = useState<NumericState>(() => initNumeric(tier))
+  const [numeric, setNumeric] = useState<NumericState>(() => initNumeric(tier, makeNumericBenefits(cur)))
   // Negotiable budget window — monthly (default) or yearly, owner's choice.
   const [budgetPeriod, setBudgetPeriod] = useState<'monthly' | 'yearly'>(
     tier?.negotiable_budget_period === 'yearly' ? 'yearly' : 'monthly'
@@ -109,7 +114,7 @@ export default function TierForm({ tier, allTiers, saving, onSubmit, onCancel }:
       negotiable_budget_period: budgetPeriod,
     }
 
-    for (const b of NUMERIC_BENEFITS) {
+    for (const b of numericBenefits) {
       const entry = numeric[b.key as string]
       const num = entry.value === '' ? NaN : Number(entry.value)
       payload[b.key] = (entry.enabled && !Number.isNaN(num) ? num : null) as never
@@ -125,7 +130,7 @@ export default function TierForm({ tier, allTiers, saving, onSubmit, onCancel }:
     }
 
     onSubmit(payload)
-  }, [name, description, color, numeric, budgetPeriod, upgradeEnabled, threshold, upgradeTo, onSubmit])
+  }, [name, description, color, numeric, budgetPeriod, upgradeEnabled, threshold, upgradeTo, onSubmit, numericBenefits])
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
@@ -187,7 +192,7 @@ export default function TierForm({ tier, allTiers, saving, onSubmit, onCancel }:
           Benefits — toggle on to offer
         </p>
         <div className="space-y-3">
-          {NUMERIC_BENEFITS.map(b => {
+          {numericBenefits.map(b => {
             const entry = numeric[b.key as string]
             return (
               <div key={b.key as string} className="rounded-lg border border-gray-200 dark:border-gray-700 p-3">

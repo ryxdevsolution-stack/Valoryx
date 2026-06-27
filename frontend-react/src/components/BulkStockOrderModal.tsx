@@ -8,6 +8,7 @@ import BarcodeScannerOverlay from '@/components/BarcodeScannerOverlay'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
 import { toast } from '@/utils/toast'
 import { getAddedByLabel, setAddedByLabel } from '@/utils/addedByLabel'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface OrderItem {
   item_id?: string
@@ -50,6 +51,7 @@ interface Props {
 }
 
 export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existingOrder, onReceive }: Props) {
+  const { symbol: cur } = useCurrency()
   const [activeTab, setActiveTab] = useState<'create' | 'orders'>('create')
   const [submitting, setSubmitting] = useState(false)
   const [addedByLabel, setAddedByLabelState] = useState<string>(() => getAddedByLabel())
@@ -623,9 +625,9 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                           <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-8">#</th>
                           <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase">Product Name *</th>
                           <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-20">Qty *</th>
-                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">Cost ₹</th>
-                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">Sell ₹</th>
-                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">MRP ₹</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">Cost {cur}</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">Sell {cur}</th>
+                          <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-24">MRP {cur}</th>
                           <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-20" title="Supplier discount — profit calc only">Purch Disc %</th>
                           <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-20" title="Customer discount — auto-fills the bill line">Cust Disc %</th>
                           <th className="px-3 py-2 text-left text-[10px] font-bold text-gray-500 dark:text-gray-400 uppercase w-28">Barcode</th>
@@ -783,7 +785,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                             />
                           </div>
                           <div>
-                            <label className="block text-[10px] text-gray-400 mb-1">Cost ₹</label>
+                            <label className="block text-[10px] text-gray-400 mb-1">Cost {cur}</label>
                             <input
                               type="number"
                               step="0.01"
@@ -794,7 +796,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                             />
                           </div>
                           <div>
-                            <label className="block text-[10px] text-gray-400 mb-1">Sell ₹</label>
+                            <label className="block text-[10px] text-gray-400 mb-1">Sell {cur}</label>
                             <input
                               type="number"
                               step="0.01"
@@ -862,7 +864,7 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                     </span>
                     {totalCost > 0 && (
                       <span className="font-semibold text-gray-900 dark:text-white">
-                        Est. Cost: ₹{totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                        Est. Cost: {cur}{totalCost.toLocaleString('en-IN', { minimumFractionDigits: 2 })}
                       </span>
                     )}
                   </div>
@@ -985,8 +987,8 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
                                     <td className="px-4 py-2 text-gray-900 dark:text-white">{item.product_name}</td>
                                     <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{item.quantity_ordered} {item.unit}</td>
                                     <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{item.quantity_received || 0}</td>
-                                    <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{item.cost_price ? `₹${item.cost_price}` : '—'}</td>
-                                    <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{item.selling_price ? `₹${item.selling_price}` : '—'}</td>
+                                    <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{item.cost_price ? `${cur}${item.cost_price}` : '—'}</td>
+                                    <td className="px-4 py-2 text-gray-700 dark:text-gray-300">{item.selling_price ? `${cur}${item.selling_price}` : '—'}</td>
                                     <td className="px-4 py-2">
                                       {(item.quantity_received || 0) >= item.quantity_ordered ? (
                                         <span className="text-green-600 dark:text-green-400 text-[10px] font-medium">Complete</span>

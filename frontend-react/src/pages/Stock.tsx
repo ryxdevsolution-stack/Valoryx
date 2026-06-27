@@ -14,6 +14,7 @@ import BarcodeScannerOverlay from '@/components/BarcodeScannerOverlay'
 import LabelPrintDialog, { LabelFields } from '@/components/LabelPrintDialog'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
 import { focusRowById } from '@/utils/focusRow'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface Stock {
   product_id: string
@@ -57,6 +58,7 @@ interface StockRowProps {
 const StockDesktopRow = memo(function StockDesktopRow({
   stock, isLowStock, printingLabels, onEdit, onDelete, onPrintBarcode,
 }: StockRowProps) {
+  const { symbol: cur } = useCurrency()
   return (
     <tr
       data-focus-id={stock.product_id}
@@ -92,7 +94,7 @@ const StockDesktopRow = memo(function StockDesktopRow({
         {stock.unit}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-900 dark:text-white">
-        ₹{Number(stock.rate).toFixed(2)}
+        {cur}{Number(stock.rate).toFixed(2)}
       </td>
       <td className="px-6 py-4 whitespace-nowrap text-sm">
         {isLowStock ? (
@@ -156,6 +158,7 @@ interface StockMobileCardProps {
 }
 
 const StockMobileCard = memo(function StockMobileCard({ stock, isLowStock, onEdit }: StockMobileCardProps) {
+  const { symbol: cur } = useCurrency()
   return (
     <div data-focus-id={stock.product_id} className="bg-white dark:bg-gray-800 rounded-xl border border-gray-200 dark:border-gray-700 p-4 shadow-sm">
       <div className="flex items-start justify-between gap-2 mb-2">
@@ -177,7 +180,7 @@ const StockMobileCard = memo(function StockMobileCard({ stock, isLowStock, onEdi
         }`}>
           {stock.quantity} {stock.unit}
         </span>
-        <span className="text-xs text-gray-500 dark:text-gray-400">₹{Number(stock.rate).toLocaleString()}</span>
+        <span className="text-xs text-gray-500 dark:text-gray-400">{cur}{Number(stock.rate).toLocaleString()}</span>
       </div>
       {isLowStock && (
         <span className="mt-2 inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-400">
@@ -189,6 +192,7 @@ const StockMobileCard = memo(function StockMobileCard({ stock, isLowStock, onEdi
 })
 
 export default function StockManagementPage() {
+  const { symbol: cur, taxLabel } = useCurrency()
   const { invalidateCache: invalidateDataCache } = useData()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
@@ -970,7 +974,7 @@ export default function StockManagementPage() {
                       <path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7-4a1 1 0 11-2 0 1 1 0 012 0zM9 9a1 1 0 000 2v3a1 1 0 001 1h1a1 1 0 100-2v-3a1 1 0 00-1-1H9z" clipRule="evenodd" />
                     </svg>
                     <span className="text-xs">
-                      Exists in stock (Qty: {duplicateProduct.quantity}, Rate: ₹{Number(duplicateProduct.rate).toLocaleString('en-IN')}) — adding will increase quantity
+                      Exists in stock (Qty: {duplicateProduct.quantity}, Rate: {cur}{Number(duplicateProduct.rate).toLocaleString('en-IN')}) — adding will increase quantity
                     </span>
                   </div>
                 )}
@@ -994,7 +998,7 @@ export default function StockManagementPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Selling Price (₹) *
+                  Selling Price ({cur}) *
                 </label>
                 <input
                   type="number"
@@ -1012,7 +1016,7 @@ export default function StockManagementPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  Purchase Price (₹)
+                  Purchase Price ({cur})
                 </label>
                 <input
                   type="number"
@@ -1068,7 +1072,7 @@ export default function StockManagementPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  MRP (₹)
+                  MRP ({cur})
                 </label>
                 <input
                   type="number"
@@ -1150,7 +1154,7 @@ export default function StockManagementPage() {
               </div>
               <div>
                 <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-2">
-                  GST Percentage
+                  {taxLabel} Percentage
                 </label>
                 <input
                   type="number"

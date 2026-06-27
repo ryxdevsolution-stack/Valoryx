@@ -22,6 +22,19 @@ interface User {
   avatar_url?: string | null
 }
 
+export interface TaxComponent {
+  name: string
+  ratio: number
+}
+
+export interface TaxConfig {
+  name: string
+  mode: 'split' | 'single' | 'none'
+  default_rate: number
+  inclusive?: boolean
+  components: TaxComponent[]
+}
+
 interface Client {
   client_id: string
   client_name: string
@@ -36,6 +49,13 @@ interface Client {
   trial_end_date?: string
   trial_days_remaining?: number
   subscription_days_remaining?: number
+  // Regional customization
+  country?: string
+  currency_code?: string
+  currency_symbol?: string
+  locale?: string
+  tax_config?: TaxConfig
+  setup_completed?: boolean
 }
 
 interface ClientContextType {
@@ -102,6 +122,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
                 trial_end_date: fresh.trial_end_date,
                 trial_days_remaining: fresh.trial_days_remaining,
                 subscription_days_remaining: fresh.subscription_days_remaining,
+                country: fresh.country ?? clientData.country,
+                currency_code: fresh.currency_code ?? clientData.currency_code,
+                currency_symbol: fresh.currency_symbol ?? clientData.currency_symbol,
+                locale: fresh.locale ?? clientData.locale,
+                tax_config: fresh.tax_config ?? clientData.tax_config,
+                setup_completed: fresh.setup_completed ?? clientData.setup_completed,
               }
               setClient(updated)
               localStorage.setItem('client', JSON.stringify(updated))
@@ -184,6 +210,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         subscription_end_date: response.data.subscription_end_date,
         trial_end_date: response.data.trial?.end_date,
         trial_days_remaining: response.data.trial?.days_remaining,
+        country: response.data.country,
+        currency_code: response.data.currency_code,
+        currency_symbol: response.data.currency_symbol,
+        locale: response.data.locale,
+        tax_config: response.data.tax_config,
+        setup_completed: response.data.setup_completed,
       }
 
       // Store in state
@@ -202,14 +234,20 @@ export function ClientProvider({ children }: { children: ReactNode }) {
       // Set axios default header
       api.defaults.headers.common['Authorization'] = `Bearer ${token}`
 
-      // Handle forced password change before accessing the app
+      // Redirect chain: forced password change → first-login setup wizard → app home
       const mustChange = response.data.must_change_password ?? user.must_change_password ?? false
       if (mustChange) {
         localStorage.setItem('must_change_password', 'true')
         navigate('/change-password')
       } else {
         localStorage.removeItem('must_change_password')
-        navigate('/billing/create')
+        // setup_completed is omitted/false only for brand-new clients that haven't
+        // run the regional setup wizard yet. Existing clients are backfilled to true.
+        if (clientData.setup_completed === false) {
+          navigate('/setup')
+        } else {
+          navigate('/billing/create')
+        }
       }
     } catch (error: any) {
       throw new Error(error.response?.data?.error || 'Login failed')
@@ -294,6 +332,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           subscription_end_date: freshClient.subscription_end_date,
           trial_end_date: freshClient.trial_end_date,
           trial_days_remaining: freshClient.trial_days_remaining,
+          country: freshClient.country,
+          currency_code: freshClient.currency_code,
+          currency_symbol: freshClient.currency_symbol,
+          locale: freshClient.locale,
+          tax_config: freshClient.tax_config,
+          setup_completed: freshClient.setup_completed,
         }
         setClient(updatedClient)
         localStorage.setItem('client', JSON.stringify(updatedClient))

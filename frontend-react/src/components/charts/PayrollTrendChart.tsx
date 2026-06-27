@@ -2,6 +2,7 @@ import Highcharts from 'highcharts'
 import HighchartsReact from 'highcharts-react-official'
 import { useTheme } from '@/contexts/ThemeContext'
 import { getDarkModeChartOptions } from '@/lib/highcharts-config'
+import { useCurrency } from '@/lib/useCurrency'
 
 export interface PayrollTrendPoint {
   month: string         // '2026-04'
@@ -22,6 +23,7 @@ interface PayrollTrendChartProps {
 
 export default function PayrollTrendChart({ data }: PayrollTrendChartProps) {
   const { isDarkMode } = useTheme()
+  const { symbol: cur } = useCurrency()
 
   const options: Highcharts.Options = {
     ...getDarkModeChartOptions(isDarkMode),
@@ -43,14 +45,14 @@ export default function PayrollTrendChart({ data }: PayrollTrendChartProps) {
       min: 0,
       floor: 0,      // Hard floor — clamp axis to non-negative even if data provides negatives
       startOnTick: true,
-      title: { text: 'Payroll (₹)', style: { color: isDarkMode ? '#9ca3af' : '#6b7280', fontSize: '11px' } },
+      title: { text: `Payroll (${cur})`, style: { color: isDarkMode ? '#9ca3af' : '#6b7280', fontSize: '11px' } },
       gridLineColor: isDarkMode ? '#374151' : '#e5e7eb',
       labels: {
         formatter: function () {
           const v = Number(this.value)
-          if (v >= 100000) return `₹${(v / 100000).toFixed(1)}L`
-          if (v >= 1000) return `₹${(v / 1000).toFixed(0)}k`
-          return `₹${v}`
+          if (v >= 100000) return `${cur}${(v / 100000).toFixed(1)}L`
+          if (v >= 1000) return `${cur}${(v / 1000).toFixed(0)}k`
+          return `${cur}${v}`
         },
         style: { color: isDarkMode ? '#9ca3af' : '#6b7280', fontSize: '11px' },
       },
@@ -68,9 +70,9 @@ export default function PayrollTrendChart({ data }: PayrollTrendChartProps) {
         const fmt = (n: number) => new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n)
         return (
           `<b>${row.label}</b><br/>` +
-          `<span style="color:#6366f1">■</span> Gross Earned: <b>₹${fmt(row.gross_earned)}</b><br/>` +
-          `<span style="color:#f59e0b">●</span> Advances Paid: <b>₹${fmt(row.advances_paid)}</b><br/>` +
-          `<span style="color:#10b981">●</span> Salary Paid: <b>₹${fmt(row.net_paid)}</b><br/>` +
+          `<span style="color:#6366f1">■</span> Gross Earned: <b>${cur}${fmt(row.gross_earned)}</b><br/>` +
+          `<span style="color:#f59e0b">●</span> Advances Paid: <b>${cur}${fmt(row.advances_paid)}</b><br/>` +
+          `<span style="color:#10b981">●</span> Salary Paid: <b>${cur}${fmt(row.net_paid)}</b><br/>` +
           `<span style="opacity:0.7">Cycles closed: ${row.cycles_paid}</span>`
         )
       },
@@ -121,9 +123,9 @@ export default function PayrollTrendChart({ data }: PayrollTrendChartProps) {
           formatter: function () {
             const v = Number(this.y ?? 0)
             if (v === 0) return ''
-            if (v >= 100000) return `₹${(v / 100000).toFixed(1)}L`
-            if (v >= 1000) return `₹${(v / 1000).toFixed(0)}k`
-            return `₹${v}`
+            if (v >= 100000) return `${cur}${(v / 100000).toFixed(1)}L`
+            if (v >= 1000) return `${cur}${(v / 1000).toFixed(0)}k`
+            return `${cur}${v}`
           },
           style: {
             fontSize: '10px',

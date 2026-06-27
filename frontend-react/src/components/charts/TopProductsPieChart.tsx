@@ -5,6 +5,7 @@ import Highcharts from 'highcharts'
 import HighchartsReact from 'highcharts-react-official'
 import { useTheme } from '@/contexts/ThemeContext'
 import { getDarkModeChartOptions } from '@/lib/highcharts-config'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface TopProductsPieChartProps {
   data: Array<{ product_name: string; revenue: number; quantity: number; category: string }>
@@ -13,6 +14,7 @@ interface TopProductsPieChartProps {
 
 export default function TopProductsPieChart({ data, timeRange }: TopProductsPieChartProps) {
   const { isDarkMode } = useTheme()
+  const { symbol: cur } = useCurrency()
   const chartRef = useRef<HighchartsReact.RefObject>(null)
 
   const getTitle = () => {
@@ -42,7 +44,7 @@ export default function TopProductsPieChart({ data, timeRange }: TopProductsPieC
       }
     },
     subtitle: {
-      text: `${getTotalItems()} items • ₹${data.reduce((sum, d) => sum + d.revenue, 0).toLocaleString('en-IN')} revenue`,
+      text: `${getTotalItems()} items • ${cur}${data.reduce((sum, d) => sum + d.revenue, 0).toLocaleString('en-IN')} revenue`,
       align: 'left',
       style: {
         fontSize: '12px',
@@ -62,7 +64,7 @@ export default function TopProductsPieChart({ data, timeRange }: TopProductsPieC
         return `
           <div style="padding: 8px;">
             <strong style="font-size: 13px; color: ${textColor};">${point.name}</strong><br/>
-            <span style="color: ${point.color}; font-size: 12px;">●</span> Revenue: <strong style="color: ${textColor};">₹${point.y.toLocaleString('en-IN')}</strong><br/>
+            <span style="color: ${point.color}; font-size: 12px;">●</span> Revenue: <strong style="color: ${textColor};">${cur}${point.y.toLocaleString('en-IN')}</strong><br/>
             <span style="font-size: 11px; color: ${secondaryColor};">Quantity: ${point.quantity}</span><br/>
             <span style="font-size: 11px; color: ${secondaryColor};">Share: ${point.percentage.toFixed(1)}%</span>
           </div>

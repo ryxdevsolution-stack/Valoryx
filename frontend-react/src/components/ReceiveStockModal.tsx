@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import api from '@/lib/api'
 import { toast } from '@/utils/toast'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface OrderItem {
   item_id: string
@@ -34,6 +35,7 @@ interface Props {
 }
 
 export default function ReceiveStockModal({ isOpen, onClose, order, onSuccess }: Props) {
+  const { symbol: cur } = useCurrency()
   const [submitting, setSubmitting] = useState(false)
   const [receiveData, setReceiveData] = useState<{ [key: string]: number }>({})
 
@@ -208,8 +210,8 @@ export default function ReceiveStockModal({ isOpen, onClose, order, onSuccess }:
 
                     {item.cost_price && item.selling_price && (
                       <div className="mt-2 pt-2 border-t border-gray-200 dark:border-gray-600 flex gap-4 text-xs text-gray-600 dark:text-gray-400">
-                        <span>Purchase: ₹{item.cost_price}</span>
-                        <span>Selling: ₹{item.selling_price}</span>
+                        <span>Purchase: {cur}{item.cost_price}</span>
+                        <span>Selling: {cur}{item.selling_price}</span>
                       </div>
                     )}
                   </div>

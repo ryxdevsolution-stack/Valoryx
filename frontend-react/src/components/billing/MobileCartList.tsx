@@ -1,4 +1,5 @@
 import { memo } from 'react'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface BillItem {
   product_id: string
@@ -23,6 +24,7 @@ interface MobileCartListProps {
 }
 
 function MobileCartList({ items, showGst, onUpdateQuantity, onRemoveItem }: MobileCartListProps) {
+  const { symbol: cur, taxLabel } = useCurrency()
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-8 text-gray-400 dark:text-gray-500">
@@ -49,14 +51,14 @@ function MobileCartList({ items, showGst, onUpdateQuantity, onRemoveItem }: Mobi
                 {item.product_name}
               </p>
               <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
-                ₹{item.rate.toFixed(2)} x {item.quantity} {item.unit}
+                {cur}{item.rate.toFixed(2)} x {item.quantity} {item.unit}
                 {showGst && item.gst_percentage > 0 && (
-                  <span className="ml-1">+ {item.gst_percentage}% GST</span>
+                  <span className="ml-1">+ {item.gst_percentage}% {taxLabel}</span>
                 )}
               </p>
             </div>
             <p className="text-sm font-bold text-gray-900 dark:text-white ml-2">
-              ₹{item.amount.toFixed(2)}
+              {cur}{item.amount.toFixed(2)}
             </p>
           </div>
 

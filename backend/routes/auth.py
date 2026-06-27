@@ -10,7 +10,7 @@ from utils.dt import is_past
 from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.user_model import User
-from models.client_model import ClientEntry
+from models.client_model import ClientEntry, DEFAULT_GST_CONFIG
 from models.branch_model import Branch
 from models.permission_model import get_user_permissions, Permission, UserPermission
 from models.session_model import UserSession
@@ -352,6 +352,13 @@ def login():
             'subscription_status': client.subscription_status,
             'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
             'trial_days_remaining': client.trial_days_remaining,
+            # Regional customization — drives currency/tax rendering and the setup wizard
+            'country': getattr(client, 'country', None) or 'IN',
+            'currency_code': getattr(client, 'currency_code', None) or 'INR',
+            'currency_symbol': getattr(client, 'currency_symbol', None) or '₹',
+            'locale': getattr(client, 'locale', None) or 'en-IN',
+            'tax_config': getattr(client, 'tax_config', None) or DEFAULT_GST_CONFIG,
+            'setup_completed': getattr(client, 'setup_completed_at', None) is not None,
         }
 
         # Cache user and client data in Redis
@@ -446,6 +453,13 @@ def login():
             'user': user_data,
             'trial': trial_info,
             'must_change_password': user.must_change_password,
+            # Regional customization — drives currency/tax rendering and the setup wizard
+            'country': getattr(client, 'country', None) or 'IN',
+            'currency_code': getattr(client, 'currency_code', None) or 'INR',
+            'currency_symbol': getattr(client, 'currency_symbol', None) or '₹',
+            'locale': getattr(client, 'locale', None) or 'en-IN',
+            'tax_config': getattr(client, 'tax_config', None) or DEFAULT_GST_CONFIG,
+            'setup_completed': getattr(client, 'setup_completed_at', None) is not None,
         }
         if new_device_token:
             login_response['device_token'] = new_device_token
@@ -964,7 +978,15 @@ def verify_email():
             'status': client.subscription_status,
             'days_remaining': client.trial_days_remaining,
             'end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
-        }
+        },
+        # Regional customization — new clients land here on first login; setup_completed
+        # will be false so the frontend routes them to the setup wizard.
+        'country': getattr(client, 'country', None) or 'IN',
+        'currency_code': getattr(client, 'currency_code', None) or 'INR',
+        'currency_symbol': getattr(client, 'currency_symbol', None) or '₹',
+        'locale': getattr(client, 'locale', None) or 'en-IN',
+        'tax_config': getattr(client, 'tax_config', None) or DEFAULT_GST_CONFIG,
+        'setup_completed': getattr(client, 'setup_completed_at', None) is not None,
     }), 200
 
 

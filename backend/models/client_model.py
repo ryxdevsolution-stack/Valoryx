@@ -4,6 +4,19 @@ from datetime import datetime, timezone
 from utils.dt import is_past, utcnow
 import uuid
 
+# Default tax configuration for India (GST split into CGST + SGST).
+# Used as the fallback when a client has no tax_config and as the wizard's India preset.
+DEFAULT_GST_CONFIG = {
+    "name": "GST",
+    "mode": "split",          # 'split' | 'single' | 'none'
+    "default_rate": 18,
+    "inclusive": False,
+    "components": [
+        {"name": "CGST", "ratio": 0.5},
+        {"name": "SGST", "ratio": 0.5},
+    ],
+}
+
 class ClientEntry(db.Model):
     """Master client registration table"""
     __tablename__ = 'client_entry'
@@ -41,6 +54,14 @@ class ClientEntry(db.Model):
     upi_id = db.Column(db.String(100), nullable=True)      # e.g. shop@upi
     receipt_footer = db.Column(db.Text, nullable=True)      # custom footer text on receipts
     points_per_100 = db.Column(db.Integer, nullable=True, default=0)  # loyalty points earned per ₹100 spent
+
+    # Regional customization (country / currency / tax) — collected in first-login setup wizard
+    country = db.Column(db.String(2), nullable=True, default='IN')          # ISO-3166 alpha-2, e.g. 'IN', 'AE', 'US'
+    currency_code = db.Column(db.String(3), nullable=True, default='INR')   # ISO-4217, e.g. 'INR', 'AED', 'USD'
+    currency_symbol = db.Column(db.String(8), nullable=True, default='₹')   # display symbol, e.g. '₹', '$', 'د.إ'
+    locale = db.Column(db.String(10), nullable=True, default='en-IN')       # number/date formatting, e.g. 'en-IN', 'en-US'
+    tax_config = db.Column(FlexibleJSON, nullable=True)                     # {name, mode, default_rate, inclusive, components:[{name, ratio}]}
+    setup_completed_at = db.Column(db.DateTime, nullable=True)             # set when the setup wizard is completed; null => show wizard
 
     # Apparel label defaults (v13) — applied when per-SKU fields are empty
     label_importer_name = db.Column(db.String(160), nullable=True)
@@ -129,6 +150,13 @@ class ClientEntry(db.Model):
             'upi_id': self.upi_id,
             'receipt_footer': self.receipt_footer,
             'points_per_100': self.points_per_100 or 0,
+            'country': self.country or 'IN',
+            'currency_code': self.currency_code or 'INR',
+            'currency_symbol': self.currency_symbol or '₹',
+            'locale': self.locale or 'en-IN',
+            'tax_config': self.tax_config or DEFAULT_GST_CONFIG,
+            'setup_completed_at': self.setup_completed_at.isoformat() if self.setup_completed_at else None,
+            'setup_completed': self.setup_completed_at is not None,
             'label_importer_name': self.label_importer_name,
             'label_importer_address': self.label_importer_address,
             'label_origin_country': self.label_origin_country,

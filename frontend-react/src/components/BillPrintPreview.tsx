@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState } from 'react'
 
 import { printBill, downloadPdf, shareWhatsApp, BillData, ClientInfo } from '@/lib/webPrintService'
+import { useCurrency } from '@/lib/useCurrency'
 
 // Extended types for component props (extends imported types)
 interface BillDataExtended extends BillData {
@@ -31,6 +32,12 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
   const printRef = useRef<HTMLDivElement>(null)
   const hasAutoPrinted = useRef(false)
   const [printError, setPrintError] = useState<string | null>(null)
+
+  // Region-aware currency/tax. Prefer the bill's frozen values (correct for
+  // historical bills), then fall back to the logged-in client's settings.
+  const { symbol: clientSymbol, taxLabel: clientTaxLabel } = useCurrency()
+  const currencySymbol = bill.currency_symbol || clientSymbol
+  const taxLabel = bill.tax_breakdown?.[0]?.name || clientTaxLabel
 
   // Provide default values if clientInfo is undefined
   const safeClientInfo: ClientInfoExtended = clientInfo || {
@@ -256,12 +263,24 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
 
               <div style={{ borderBottom: '1px dashed #000', margin: '1.5mm 0' }}></div>
 
-              {/* GST Breakdown - Only for GST bills */}
-              {bill.type === 'gst' && bill.gst_amount && Number(bill.gst_amount) > 0 && (
-                <div style={{ fontSize: '7pt', textAlign: 'center', marginBottom: '2mm' }}>
-                  GST {bill.gst_percentage || 18}% on {Number(bill.subtotal || 0).toFixed(2)} - CGST ={(Number(bill.gst_amount) / 2).toFixed(2)} - SGST = {(Number(bill.gst_amount) / 2).toFixed(2)}
-                </div>
-              )}
+              {/* Tax Breakdown - Only for GST bills */}
+              {bill.type === 'gst' && bill.gst_amount && Number(bill.gst_amount) > 0 && (() => {
+                const gstAmt = Number(bill.gst_amount)
+                const components = bill.tax_breakdown && bill.tax_breakdown.length > 0
+                  ? bill.tax_breakdown
+                  : [
+                      { name: 'CGST', amount: gstAmt / 2 },
+                      { name: 'SGST', amount: gstAmt / 2 },
+                    ]
+                const componentsText = components
+                  .map(c => `${c.name} = ${Number(c.amount).toFixed(2)}`)
+                  .join(' - ')
+                return (
+                  <div style={{ fontSize: '7pt', textAlign: 'center', marginBottom: '2mm' }}>
+                    {taxLabel} {bill.gst_percentage || 18}% on {Number(bill.subtotal || 0).toFixed(2)} - {componentsText}
+                  </div>
+                )
+              })()}
 
               {/* Savings Box */}
               {(() => {
@@ -278,7 +297,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                 return totalSavings > 0 && (
                   <div style={{ textAlign: 'center', margin: '2mm 0', padding: '1.5mm', border: '1px dashed #000' }}>
                     <div style={{ fontSize: '7pt' }}>TODAY&apos;S SAVINGS</div>
-                    <div style={{ fontSize: '11pt', fontWeight: 'bold', margin: '0.5mm 0' }}>₹{totalSavings.toFixed(2)}</div>
+                    <div style={{ fontSize: '11pt', fontWeight: 'bold', margin: '0.5mm 0' }}>{currencySymbol}{totalSavings.toFixed(2)}</div>
                     <div style={{ fontSize: '7pt' }}>You saved compared to MRP!</div>
                   </div>
                 )
