@@ -5,6 +5,7 @@ import Highcharts from 'highcharts'
 import HighchartsReact from 'highcharts-react-official'
 import { useTheme } from '@/contexts/ThemeContext'
 import { getDarkModeChartOptions } from '@/lib/highcharts-config'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface RevenueAreaChartProps {
   data: Array<{ date: string; revenue: number; bills: number }>
@@ -12,6 +13,7 @@ interface RevenueAreaChartProps {
 
 export default function RevenueAreaChart({ data }: RevenueAreaChartProps) {
   const { isDarkMode } = useTheme()
+  const { symbol: cur } = useCurrency()
   const chartRef = useRef<HighchartsReact.RefObject>(null)
 
   useEffect(() => {
@@ -88,7 +90,7 @@ export default function RevenueAreaChart({ data }: RevenueAreaChartProps) {
       }
     },
     subtitle: {
-      text: `Total: ₹${data.reduce((sum, d) => sum + d.revenue, 0).toLocaleString('en-IN')}`,
+      text: `Total: ${cur}${data.reduce((sum, d) => sum + d.revenue, 0).toLocaleString('en-IN')}`,
       align: 'left',
       style: {
         fontSize: '12px',
@@ -108,7 +110,7 @@ export default function RevenueAreaChart({ data }: RevenueAreaChartProps) {
     },
     yAxis: {
       title: {
-        text: 'Revenue (₹)',
+        text: `Revenue (${cur})`,
         style: {
           fontSize: '12px',
           color: isDarkMode ? '#9ca3af' : '#4b5563'
@@ -117,7 +119,7 @@ export default function RevenueAreaChart({ data }: RevenueAreaChartProps) {
       gridLineColor: isDarkMode ? '#374151' : '#f3f4f6',
       labels: {
         formatter: function() {
-          return '₹' + (this.value as number).toLocaleString('en-IN')
+          return cur + (this.value as number).toLocaleString('en-IN')
         },
         style: {
           fontSize: '11px',
@@ -148,7 +150,7 @@ export default function RevenueAreaChart({ data }: RevenueAreaChartProps) {
         return `
           <div style="padding: 8px;">
             <strong style="font-size: 13px; color: ${isDarkMode ? '#f3f4f6' : '#1f2937'};">${this.x}</strong><br/>
-            <span style="color: #3b82f6; font-size: 12px;">●</span> Revenue: <strong style="color: ${isDarkMode ? '#f3f4f6' : '#1f2937'};">₹${(this.y as number).toLocaleString('en-IN')}</strong><br/>
+            <span style="color: #3b82f6; font-size: 12px;">●</span> Revenue: <strong style="color: ${isDarkMode ? '#f3f4f6' : '#1f2937'};">${cur}${(this.y as number).toLocaleString('en-IN')}</strong><br/>
             <span style="font-size: 11px; color: ${isDarkMode ? '#9ca3af' : '#666'};">Bills: ${bills}</span>
           </div>
         `
@@ -204,7 +206,7 @@ export default function RevenueAreaChart({ data }: RevenueAreaChartProps) {
           yAxis: {
             labels: {
               formatter: function() {
-                return '₹' + ((this.value as number) / 1000).toFixed(0) + 'k'
+                return cur + ((this.value as number) / 1000).toFixed(0) + 'k'
               }
             }
           }

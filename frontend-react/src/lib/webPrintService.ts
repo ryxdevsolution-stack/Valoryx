@@ -6,6 +6,7 @@
  */
 
 import QRCode from 'qrcode'
+import { CURRENCY_SYMBOLS } from '@/lib/regions'
 
 // ============================================================================
 // CONFIGURATION - Keep in sync with thermal_printer.py
@@ -61,6 +62,11 @@ export interface BillData {
   type: 'gst' | 'non-gst';
   user_name?: string;
   created_by?: string;
+  /** Per-bill regional currency, frozen at create time. */
+  currency_code?: string;
+  currency_symbol?: string;
+  /** Tax components for this bill, e.g. [{name:'CGST',amount}, {name:'SGST',amount}]. */
+  tax_breakdown?: { name: string; amount: number }[];
 }
 
 export interface ClientInfo {
@@ -149,6 +155,42 @@ function escapeHtml(text: string): string {
     .replace(/'/g, '&#039;');
 }
 
+/**
+ * Resolve the currency symbol for a bill without React hooks.
+ * Order: explicit symbol on bill → code map on bill → client in localStorage → ₹.
+ */
+function resolveCurrencySymbol(bill: BillData): string {
+  if (bill.currency_symbol) return bill.currency_symbol;
+  if (bill.currency_code && CURRENCY_SYMBOLS[bill.currency_code]) {
+    return CURRENCY_SYMBOLS[bill.currency_code];
+  }
+  try {
+    const client = JSON.parse(localStorage.getItem('client') || '{}');
+    if (client.currency_symbol) return client.currency_symbol;
+    if (client.currency_code && CURRENCY_SYMBOLS[client.currency_code]) {
+      return CURRENCY_SYMBOLS[client.currency_code];
+    }
+  } catch {
+    /* localStorage unavailable / bad JSON */
+  }
+  return '₹';
+}
+
+/**
+ * Resolve the tax label (e.g. "GST", "VAT") for a bill without React hooks.
+ * Order: first tax_breakdown name → client tax_config name → GST.
+ */
+function resolveTaxLabel(bill: BillData): string {
+  if (bill.tax_breakdown?.[0]?.name) return bill.tax_breakdown[0].name;
+  try {
+    const client = JSON.parse(localStorage.getItem('client') || '{}');
+    if (client.tax_config?.name) return client.tax_config.name;
+  } catch {
+    /* localStorage unavailable / bad JSON */
+  }
+  return 'GST';
+}
+
 // ============================================================================
 // RECEIPT HTML GENERATOR - UNIFIED FORMAT
 // ============================================================================
@@ -182,6 +224,10 @@ export function generateReceiptHtml(
   qrDataUrl?: string
 ): string {
   const { PAPER_WIDTH, FONT_SIZE, FONT_SIZE_LARGE, FONT_SIZE_XLARGE, FONT_SIZE_SMALL, ITEM_NAME_MAX } = RECEIPT_CONFIG;
+
+  // Resolve regional currency/tax from the bill (with localStorage fallback).
+  const currencySymbol = resolveCurrencySymbol(bill);
+  const taxLabel = resolveTaxLabel(bill);
 
   // Calculate totals
   const totalItems = bill.items.length;
@@ -276,13 +322,22 @@ export function generateReceiptHtml(
     </div>`;
   }
 
-  // Build GST breakdown text (inline format like reference)
+  // Build tax breakdown text (inline format like reference).
+  // Prefer the bill's tax_breakdown components (region-aware); fall back to the
+  // legacy CGST/SGST split when no breakdown is present.
   let gstBreakdownText = '';
   if (bill.type === 'gst' && gstAmount > 0) {
-    const cgst = gstAmount / 2;
-    const sgst = gstAmount / 2;
     const taxableAmount = subtotal;
-    gstBreakdownText = `GST ${bill.gst_percentage || 18}% on ${taxableAmount.toFixed(2)} - CGST =${cgst.toFixed(2)} - SGST = ${sgst.toFixed(2)}`;
+    const components = bill.tax_breakdown && bill.tax_breakdown.length > 0
+      ? bill.tax_breakdown
+      : [
+          { name: 'CGST', amount: gstAmount / 2 },
+          { name: 'SGST', amount: gstAmount / 2 },
+        ];
+    const componentsText = components
+      .map(c => `${c.name} = ${Number(c.amount).toFixed(2)}`)
+      .join(' - ');
+    gstBreakdownText = `${taxLabel} ${bill.gst_percentage || 18}% on ${taxableAmount.toFixed(2)} - ${componentsText}`;
   }
 
   // Build complete HTML - MATCHING REFERENCE RECEIPT EXACTLY
@@ -390,14 +445,14 @@ export function generateReceiptHtml(
   ${totalSavings > 0 ? `
   <div style="text-align: center; margin: 2mm 0; padding: 1.5mm; border: 1px dashed #000;">
     <div style="font-size: ${FONT_SIZE_SMALL};">TODAY'S SAVINGS</div>
-    <div style="font-size: ${FONT_SIZE_LARGE}; font-weight: bold; margin: 0.5mm 0;">&#8377;${totalSavings.toFixed(2)}</div>
+    <div style="font-size: ${FONT_SIZE_LARGE}; font-weight: bold; margin: 0.5mm 0;">${currencySymbol}${totalSavings.toFixed(2)}</div>
     <div style="font-size: ${FONT_SIZE_SMALL};">You saved compared to MRP!</div>
   </div>` : ''}
 
   <!-- UPI QR Code -->
   ${qrDataUrl ? `
   <div style="text-align: center; margin: 2mm 0;">
-    <div style="font-size: ${FONT_SIZE_SMALL}; font-weight: bold;">Scan to Pay &#8377;${grandTotal}</div>
+    <div style="font-size: ${FONT_SIZE_SMALL}; font-weight: bold;">Scan to Pay ${currencySymbol}${grandTotal}</div>
     <img src="${qrDataUrl}" style="width: 18mm; height: 18mm; margin: 0.5mm 0;" />
     <div style="font-size: 6pt;">UPI: ${escapeHtml(clientInfo.upi_id || '')}</div>
   </div>
@@ -539,6 +594,7 @@ export function shareWhatsApp(bill: BillData, clientInfo: ClientInfo): PrintResu
   try {
     const finalAmount = bill.type === 'gst' ? bill.final_amount : bill.total_amount;
     const date = formatDate(bill.created_at);
+    const currencySymbol = resolveCurrencySymbol(bill);
 
     const message = encodeURIComponent(
       `*${clientInfo.client_name || 'Bill'}*\n` +
@@ -547,7 +603,7 @@ export function shareWhatsApp(bill: BillData, clientInfo: ClientInfo): PrintResu
       `Date: ${date}\n` +
       `━━━━━━━━━━━━━━━\n` +
       `Items: ${bill.items.length}\n` +
-      `Total: Rs. ${Math.round(Number(finalAmount))}\n` +
+      `Total: ${currencySymbol}${Math.round(Number(finalAmount))}\n` +
       `Payment: ${bill.payment_type}\n` +
       `━━━━━━━━━━━━━━━\n` +
       `Thank you for your purchase!`

@@ -13,6 +13,8 @@
 
 import { PrintableBill } from '@/types/billing'
 import { toast } from '@/utils/toast'
+import { CURRENCY_SYMBOLS } from '@/lib/regions'
+import { formatCurrencyWith } from '@/lib/useCurrency'
 
 export interface ClientInfoForPDF {
   client_name: string
@@ -28,14 +30,37 @@ export interface ClientInfoForPDF {
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
-function formatCurrency(amount: number): string {
-  return (
-    '₹' +
-    amount.toLocaleString('en-IN', {
-      minimumFractionDigits: 2,
-      maximumFractionDigits: 2,
-    })
-  )
+/**
+ * Resolve the currency symbol for a bill without React hooks.
+ * Order: explicit symbol on bill → code map on bill → client in localStorage → ₹.
+ */
+function resolveCurrencySymbol(bill: PrintableBill): string {
+  if (bill.currency_symbol) return bill.currency_symbol
+  if (bill.currency_code && CURRENCY_SYMBOLS[bill.currency_code]) {
+    return CURRENCY_SYMBOLS[bill.currency_code]
+  }
+  try {
+    const client = JSON.parse(localStorage.getItem('client') || '{}')
+    if (client.currency_symbol) return client.currency_symbol
+    if (client.currency_code && CURRENCY_SYMBOLS[client.currency_code]) {
+      return CURRENCY_SYMBOLS[client.currency_code]
+    }
+  } catch {
+    /* localStorage unavailable / bad JSON */
+  }
+  return '₹'
+}
+
+/** Resolve the display locale for a bill (falls back to client / en-IN). */
+function resolveLocale(bill: PrintableBill): string {
+  if (bill.locale) return bill.locale
+  try {
+    const client = JSON.parse(localStorage.getItem('client') || '{}')
+    if (client.locale) return client.locale
+  } catch {
+    /* localStorage unavailable / bad JSON */
+  }
+  return 'en-IN'
 }
 
 function formatDate(isoString: string): string {
@@ -118,6 +143,11 @@ export async function generateBillPDF(
   const isPending = bill.payment_status === 'pending'
   const paymentLabel = parsePaymentLabel(bill.payment_type)
 
+  // Region-aware currency formatting (no hooks — driven by the bill / localStorage).
+  const currencySymbol = resolveCurrencySymbol(bill)
+  const currencyLocale = resolveLocale(bill)
+  const fmt = (amount: number) => formatCurrencyWith(amount, currencySymbol, currencyLocale)
+
   // Pre-fetch logo as base64 so it works inside blob: windows
   let logoBase64: string | null = null
   if (clientInfo.logo_url) {
@@ -172,8 +202,18 @@ export async function generateBillPDF(
   // ── Bill meta row ────────────────────────────────────────────────────────
   const maskedPhone = bill.customer_phone ? maskPhone(bill.customer_phone) : null
 
-  // ── GST column header ────────────────────────────────────────────────────
-  const gstColHeader = isGST ? '<th class="tc gst-th">GST %</th>' : ''
+  // ── Tax column header (region-aware label: GST %, VAT %, …) ───────────────
+  const taxLabel =
+    bill.tax_breakdown?.[0]?.name
+    || (() => {
+      try {
+        return JSON.parse(localStorage.getItem('client') || '{}').tax_config?.name
+      } catch {
+        return undefined
+      }
+    })()
+    || 'GST'
+  const gstColHeader = isGST ? `<th class="tc gst-th">${esc(taxLabel)} %</th>` : ''
 
   // ── Disc % column — only render when at least one line is discounted ───────
   const hasItemDiscount = bill.items.some(it => Number(it.discount_percentage || 0) > 0)
@@ -196,10 +236,10 @@ export async function generateBillPDF(
           ${item.item_code ? `<span class="item-code">${esc(item.item_code)}</span>` : ''}
         </td>
         <td class="tc">${item.quantity}</td>
-        <td class="tr">${formatCurrency(item.rate)}</td>
+        <td class="tr">${fmt(item.rate)}</td>
         ${discCell}
         ${gstCell}
-        <td class="tr fw">${formatCurrency(item.amount)}</td>
+        <td class="tr fw">${fmt(item.amount)}</td>
       </tr>`
     })
     .join('')
@@ -210,18 +250,18 @@ export async function generateBillPDF(
 
   const totalRows: string[] = []
   totalRows.push(
-    `<tr><td class="tot-lbl">Subtotal</td><td class="tot-val">${formatCurrency(bill.subtotal || grandTotal)}</td></tr>`
+    `<tr><td class="tot-lbl">Subtotal</td><td class="tot-val">${fmt(bill.subtotal || grandTotal)}</td></tr>`
   )
   if (discountAmount > 0) {
     const discLabel = bill.discount_percentage
       ? `Discount (${bill.discount_percentage}%)`
       : 'Discount'
     totalRows.push(
-      `<tr><td class="tot-lbl">${discLabel}</td><td class="tot-val green">− ${formatCurrency(discountAmount)}</td></tr>`
+      `<tr><td class="tot-lbl">${discLabel}</td><td class="tot-val green">− ${fmt(discountAmount)}</td></tr>`
     )
   } else if (negotiableAmount > 0) {
     totalRows.push(
-      `<tr><td class="tot-lbl">Negotiated</td><td class="tot-val green">− ${formatCurrency(negotiableAmount)}</td></tr>`
+      `<tr><td class="tot-lbl">Negotiated</td><td class="tot-val green">− ${fmt(negotiableAmount)}</td></tr>`
     )
   }
   const membershipRedeemed = Number(bill.membership_redeemed) || 0
@@ -230,16 +270,23 @@ export async function generateBillPDF(
       ? `Points Redeemed (${bill.membership.points_redeemed} pts)`
       : 'Points Redeemed'
     totalRows.push(
-      `<tr><td class="tot-lbl">${ptsLabel}</td><td class="tot-val green">− ${formatCurrency(membershipRedeemed)}</td></tr>`
+      `<tr><td class="tot-lbl">${ptsLabel}</td><td class="tot-val green">− ${fmt(membershipRedeemed)}</td></tr>`
     )
   }
   if (isGST) {
-    totalRows.push(
-      `<tr><td class="tot-lbl">CGST</td><td class="tot-val">${formatCurrency(bill.cgst)}</td></tr>`
-    )
-    totalRows.push(
-      `<tr><td class="tot-lbl">SGST</td><td class="tot-val">${formatCurrency(bill.sgst)}</td></tr>`
-    )
+    // Prefer the bill's region-aware tax_breakdown (e.g. CGST/SGST, or a single
+    // VAT line); fall back to the legacy CGST/SGST split.
+    const taxComponents = bill.tax_breakdown && bill.tax_breakdown.length > 0
+      ? bill.tax_breakdown
+      : [
+          { name: 'CGST', amount: bill.cgst },
+          { name: 'SGST', amount: bill.sgst },
+        ]
+    for (const comp of taxComponents) {
+      totalRows.push(
+        `<tr><td class="tot-lbl">${esc(comp.name)}</td><td class="tot-val">${fmt(Number(comp.amount))}</td></tr>`
+      )
+    }
   }
 
   // ── Footer note ───────────────────────────────────────────────────────────
@@ -543,7 +590,7 @@ body{
     <div class="amount-row-top">
       <div>
         <div class="amount-main">
-          ${formatCurrency(grandTotal)}
+          ${fmt(grandTotal)}
           <span class="${isPending ? 'status-chip chip-pending' : 'status-chip chip-paid'}">${isPending ? 'Pending' : 'Paid'}</span>
         </div>
         <div class="amount-payment">${esc(paymentLabel)}</div>
@@ -589,7 +636,7 @@ body{
       ${totalRows.join('')}
       <tr class="grand-row">
         <td class="grand-lbl">Grand Total</td>
-        <td class="grand-val">${formatCurrency(grandTotal)}</td>
+        <td class="grand-val">${fmt(grandTotal)}</td>
       </tr>
     </table>
   </div>

@@ -21,6 +21,7 @@ import type { ShopSettings } from '@/services/shopSettingsService'
 import { generateBillPDF } from '@/lib/pdfService'
 import { toast } from '@/utils/toast'
 import { calcLine, netCost } from '@/utils/billCalc'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface Product {
   product_id: string
@@ -112,6 +113,9 @@ export default function UnifiedBillingPage() {
   const navigate = useNavigate()
   const { fetchProducts, invalidateCache: invalidateDataCache } = useData()
   const { client, user, hasPermission } = useClient()
+  const { symbol: cur } = useCurrency()
+  // Display label for the tax line — from the client's tax_config (falls back to "GST")
+  const taxLabel = client?.tax_config?.name || 'GST'
 
   // Permission-based billing mode
   const hasGstPermission = hasPermission('gst_billing')
@@ -1298,7 +1302,7 @@ export default function UnifiedBillingPage() {
       const grandTotal = billTotals.grandTotal
 
       if (Math.abs(totalSplits - grandTotal) > 0.01) {
-        toast.error(`Payment splits total (₹${totalSplits.toFixed(2)}) must equal bill total (₹${grandTotal.toFixed(2)})`)
+        toast.error(`Payment splits total (${cur}${totalSplits.toFixed(2)}) must equal bill total (${cur}${grandTotal.toFixed(2)})`)
         return
       }
     }
@@ -1810,15 +1814,15 @@ export default function UnifiedBillingPage() {
                 )}
               </div>
 
-              {/* GST Number */}
+              {/* Customer tax registration number (GSTIN for India, VAT/Tax No. elsewhere) */}
               <div className="md:col-span-2">
                 <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
-                  Customer GSTIN
+                  {taxLabel === 'GST' ? 'Customer GSTIN' : `Customer ${taxLabel} No.`}
                 </label>
                 <input
                   ref={customerGstinRef}
                   type="text"
-                  placeholder="Optional GSTIN"
+                  placeholder={taxLabel === 'GST' ? 'Optional GSTIN' : `Optional ${taxLabel} No.`}
                   value={activeTab.customer_gstin}
                   onChange={(e) => updateActiveTab({ customer_gstin: e.target.value })}
                   onKeyDown={(e) => handleEnterNavigation(e, productSearchRef)}
@@ -1938,16 +1942,16 @@ export default function UnifiedBillingPage() {
                                   </div>
                                   <div className="text-xs text-gray-500 dark:text-gray-400">
                                     Code: {product.item_code || 'N/A'} | Stock: {product.quantity} |
-                                    GST: {product.gst_percentage}%
+                                    {' '}{taxLabel}: {product.gst_percentage}%
                                     {product.mrp && (
                                       <span className="ml-2 font-semibold text-orange-600 dark:text-orange-400">
-                                        | MRP: ₹{Number(product.mrp).toFixed(2)}
+                                        | MRP: {cur}{Number(product.mrp).toFixed(2)}
                                       </span>
                                     )}
                                   </div>
                                 </div>
                                 <div className="text-sm font-semibold text-blue-600 dark:text-blue-400">
-                                  ₹{Number(product.rate).toFixed(2)}
+                                  {cur}{Number(product.rate).toFixed(2)}
                                 </div>
                               </div>
                             </div>
@@ -2040,7 +2044,7 @@ export default function UnifiedBillingPage() {
                 {!nonGstOnly && (
                   <div className="w-20">
                     <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
-                      GST%
+                      {taxLabel}%
                     </label>
                     <input
                       ref={gstInputRef}
@@ -2058,7 +2062,7 @@ export default function UnifiedBillingPage() {
                       }
                       onKeyDown={(e) => handleKeyPress(e, 'gst')}
                       className="w-full px-3 py-2.5 text-base border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium"
-                      title="Enter GST %"
+                      title={`Enter ${taxLabel} %`}
                     />
                   </div>
                 )}
@@ -2086,7 +2090,7 @@ export default function UnifiedBillingPage() {
                   />
                   {(currentItem.discount_percentage || 0) > 0 && currentItem.rate > 0 && (
                     <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 tabular-nums">
-                      Net ₹{(currentItem.rate * (1 - (currentItem.discount_percentage || 0) / 100)).toFixed(2)}
+                      Net {cur}{(currentItem.rate * (1 - (currentItem.discount_percentage || 0) / 100)).toFixed(2)}
                     </p>
                   )}
                 </div>
@@ -2176,10 +2180,10 @@ export default function UnifiedBillingPage() {
                     {showGstColumns() && (
                       <>
                         <th className="px-1 py-1 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-14">
-                          GST%
+                          {taxLabel}%
                         </th>
                         <th className="px-1 py-1 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-20">
-                          GST
+                          {taxLabel}
                         </th>
                       </>
                     )}
@@ -2277,7 +2281,7 @@ export default function UnifiedBillingPage() {
                                     <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                                       <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8c-1.657 0-3 .895-3 2s1.343 2 3 2 3 .895 3 2-1.343 2-3 2m0-8c1.11 0 2.08.402 2.599 1M12 8V7m0 1v8m0 0v1m0-1c-1.11 0-2.08-.402-2.599-1M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
                                     </svg>
-                                    MRP: ₹{Number(item.mrp).toFixed(2)}
+                                    MRP: {cur}{Number(item.mrp).toFixed(2)}
                                   </span>
                                   <span
                                     className={`absolute left-3 w-2 h-2 bg-orange-600 transform rotate-45 ${
@@ -2331,7 +2335,7 @@ export default function UnifiedBillingPage() {
                           />
                         </td>
                         <td className="px-1 py-0.5 text-xs text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 text-right font-semibold">
-                          ₹{Number(item.rate).toFixed(2)}
+                          {cur}{Number(item.rate).toFixed(2)}
                         </td>
                         <td className="px-1 py-0.5 text-xs border-r border-gray-200 dark:border-gray-700">
                           <input
@@ -2362,12 +2366,12 @@ export default function UnifiedBillingPage() {
                               </span>
                             </td>
                             <td className="px-1 py-0.5 text-xs text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 text-right font-medium">
-                              ₹{item.gst_amount.toFixed(2)}
+                              {cur}{item.gst_amount.toFixed(2)}
                             </td>
                           </>
                         )}
                         <td className="px-1 py-0.5 text-xs text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 text-right font-bold">
-                          ₹{item.amount.toFixed(2)}
+                          {cur}{item.amount.toFixed(2)}
                         </td>
                         {/* Save checkbox removed - quick products are not saved to stock */}
                         <td className="px-1 py-0.5 text-xs text-center">
@@ -2455,7 +2459,7 @@ export default function UnifiedBillingPage() {
                 {/* Discount/Negotiable */}
                 <div className="flex items-center gap-3">
                   <label className="text-sm text-blue-700 dark:text-blue-300 font-semibold">
-                    {activeTab.useNegotiablePrice ? 'Negotiable ₹' : 'Discount %'}
+                    {activeTab.useNegotiablePrice ? `Negotiable ${cur}` : 'Discount %'}
                   </label>
                   {activeTab.useNegotiablePrice ? (
                     <input
@@ -2529,9 +2533,9 @@ export default function UnifiedBillingPage() {
                       })
                     }}
                     className="text-sm text-blue-600 dark:text-blue-400 hover:underline font-bold px-2 py-1 bg-blue-50 dark:bg-blue-900/30 rounded"
-                    title={activeTab.useNegotiablePrice ? 'Switch to Discount %' : 'Switch to Negotiable ₹'}
+                    title={activeTab.useNegotiablePrice ? 'Switch to Discount %' : `Switch to Negotiable ${cur}`}
                   >
-                    {activeTab.useNegotiablePrice ? '% Off' : '₹ Price'}
+                    {activeTab.useNegotiablePrice ? '% Off' : `${cur} Price`}
                   </button>
                 </div>
                 {billTotals.hasLineDiscount && !activeTab.useNegotiablePrice && (activeTab.discountPercentage || 0) > 0 && (
@@ -2713,7 +2717,7 @@ export default function UnifiedBillingPage() {
                           : 'text-red-600 dark:text-red-400'
                       }`}
                     >
-                      ₹{getTotalPaymentSplits().toFixed(2)}
+                      {cur}{getTotalPaymentSplits().toFixed(2)}
                     </span>
                   </div>
                   {/* Balance to Collect or Change to Give */}
@@ -2723,7 +2727,7 @@ export default function UnifiedBillingPage() {
                         {getTotalPaymentSplits() < billTotals.grandTotal ? '⚠️ Balance to Collect:' : '💰 Change to Give:'}
                       </span>
                       <span className={getTotalPaymentSplits() < billTotals.grandTotal ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
-                        ₹{Math.abs(billTotals.grandTotal - getTotalPaymentSplits()).toFixed(2)}
+                        {cur}{Math.abs(billTotals.grandTotal - getTotalPaymentSplits()).toFixed(2)}
                       </span>
                     </div>
                   )}
@@ -2750,7 +2754,7 @@ export default function UnifiedBillingPage() {
           <div className="md:hidden flex flex-col gap-2 px-3 py-3 bg-white dark:bg-gray-800 border-t border-gray-200 dark:border-gray-700 sticky bottom-16">
             <div className="flex items-center justify-between">
               <p className="text-xs text-gray-500 dark:text-gray-400">Total</p>
-              <p className="text-lg font-bold text-gray-900 dark:text-white">₹{billTotals.grandTotal?.toLocaleString()}</p>
+              <p className="text-lg font-bold text-gray-900 dark:text-white">{cur}{billTotals.grandTotal?.toLocaleString()}</p>
             </div>
             <div className="grid grid-cols-3 gap-2">
               <button
@@ -2813,16 +2817,16 @@ export default function UnifiedBillingPage() {
                       Subtotal:
                     </span>
                     <span className="text-xs font-semibold text-gray-900 dark:text-white">
-                      ₹{billTotals.subtotal.toFixed(2)}
+                      {cur}{billTotals.subtotal.toFixed(2)}
                     </span>
                   </div>
                   {showGstColumns() && billTotals.totalGST > 0 && (
                     <div className="flex justify-between items-center">
                       <span className="text-xs text-gray-700 dark:text-gray-300 font-medium">
-                        Total GST:
+                        Total {taxLabel}:
                       </span>
                       <span className="text-xs font-semibold text-gray-900 dark:text-white">
-                        ₹{billTotals.totalGST.toFixed(2)}
+                        {cur}{billTotals.totalGST.toFixed(2)}
                       </span>
                     </div>
                   )}
@@ -2832,7 +2836,7 @@ export default function UnifiedBillingPage() {
                         Discount ({activeTab.discountPercentage}%):
                       </span>
                       <span className="text-xs font-semibold text-red-600 dark:text-red-400">
-                        - ₹{billTotals.discountAmount.toFixed(2)}
+                        - {cur}{billTotals.discountAmount.toFixed(2)}
                       </span>
                     </div>
                   )}
@@ -2842,7 +2846,7 @@ export default function UnifiedBillingPage() {
                         Negotiable:
                       </span>
                       <span className="text-xs font-semibold text-red-600 dark:text-red-400">
-                        - ₹{activeTab.negotiableAmount.toFixed(2)}
+                        - {cur}{activeTab.negotiableAmount.toFixed(2)}
                       </span>
                     </div>
                   )}
@@ -2852,7 +2856,7 @@ export default function UnifiedBillingPage() {
                         Points Redeemed ({activeTab.membershipRedeemPoints} pts):
                       </span>
                       <span className="text-xs font-semibold text-purple-600 dark:text-purple-400">
-                        - ₹{(billTotals.membershipRedeemValue || 0).toFixed(2)}
+                        - {cur}{(billTotals.membershipRedeemValue || 0).toFixed(2)}
                       </span>
                     </div>
                   )}
@@ -2871,7 +2875,7 @@ export default function UnifiedBillingPage() {
                       Grand Total:
                     </span>
                     <span className="text-lg font-bold text-green-700 dark:text-green-400">
-                      ₹{billTotals.grandTotal.toFixed(2)}
+                      {cur}{billTotals.grandTotal.toFixed(2)}
                     </span>
                   </div>
                   {activeTab.amountReceived > 0 && (
@@ -2881,7 +2885,7 @@ export default function UnifiedBillingPage() {
                           Received:
                         </span>
                         <span className="text-xs font-semibold text-blue-700 dark:text-blue-400">
-                          ₹{activeTab.amountReceived.toFixed(2)}
+                          {cur}{activeTab.amountReceived.toFixed(2)}
                         </span>
                       </div>
                       <div className="flex justify-between items-center">
@@ -2895,7 +2899,7 @@ export default function UnifiedBillingPage() {
                               : 'text-red-600 dark:text-red-400'
                           }`}
                         >
-                          ₹{billTotals.balance.toFixed(2)}
+                          {cur}{billTotals.balance.toFixed(2)}
                         </span>
                       </div>
                     </>

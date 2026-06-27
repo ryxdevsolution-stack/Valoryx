@@ -1,4 +1,5 @@
 import { memo, useMemo } from 'react'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface BillItem {
   product_id: string
@@ -15,8 +16,8 @@ interface ProfitSummaryBarProps {
 }
 
 function ProfitSummaryBar({ items, userRole }: ProfitSummaryBarProps) {
-  if (!['owner', 'manager'].includes(userRole)) return null
-  if (items.length === 0) return null
+  // Hooks must run unconditionally before any early return (Rules of Hooks).
+  const { symbol: cur } = useCurrency()
 
   const { totalCost, totalRevenue, profit, margin, hasCostData } = useMemo(() => {
     const cost = items.reduce((sum, item) => {
@@ -37,6 +38,8 @@ function ProfitSummaryBar({ items, userRole }: ProfitSummaryBarProps) {
     return { totalCost: cost, totalRevenue: revenue, profit: p, margin: m, hasCostData: hasData }
   }, [items])
 
+  if (!['owner', 'manager'].includes(userRole)) return null
+  if (items.length === 0) return null
   if (!hasCostData) return null
 
   return (
@@ -45,19 +48,19 @@ function ProfitSummaryBar({ items, userRole }: ProfitSummaryBarProps) {
         <div className="flex items-center gap-1">
           <span className="text-gray-500 dark:text-gray-400">Cost:</span>
           <span className="font-semibold text-gray-700 dark:text-gray-300">
-            ₹{totalCost.toFixed(2)}
+            {cur}{totalCost.toFixed(2)}
           </span>
         </div>
         <div className="flex items-center gap-1">
           <span className="text-gray-500 dark:text-gray-400">Revenue:</span>
           <span className="font-semibold text-gray-700 dark:text-gray-300">
-            ₹{totalRevenue.toFixed(2)}
+            {cur}{totalRevenue.toFixed(2)}
           </span>
         </div>
         <div className="flex items-center gap-1">
           <span className="text-gray-500 dark:text-gray-400">Profit:</span>
           <span className={`font-bold ${profit >= 0 ? 'text-green-600 dark:text-green-400' : 'text-red-600 dark:text-red-400'}`}>
-            ₹{profit.toFixed(2)}
+            {cur}{profit.toFixed(2)}
           </span>
         </div>
         <div className="flex items-center gap-1">

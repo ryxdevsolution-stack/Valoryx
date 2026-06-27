@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
+import { useCurrency } from '@/lib/useCurrency'
 import type { AttendanceStatus, Employee, SalaryCycle } from '@/pages/Salary'
 
 // ─── Shared Modal Shell ───────────────────────────────────────────────────────
@@ -82,6 +83,7 @@ interface AddEmployeeModalProps {
 }
 
 export function AddEmployeeModal({ onClose, onSave }: AddEmployeeModalProps) {
+  const { symbol: cur } = useCurrency()
   const [form, setForm] = useState<AddEmployeeForm>({
     name: '', phone: '', pay_type: 'daily', rate: '', ot_multiplier: '1.5',
   })
@@ -156,7 +158,7 @@ export function AddEmployeeModal({ onClose, onSave }: AddEmployeeModalProps) {
             ))}
           </div>
         </InputField>
-        <InputField label={`Rate (₹/${form.pay_type === 'hourly' ? 'hr' : 'day'})`} required>
+        <InputField label={`Rate (${cur}/${form.pay_type === 'hourly' ? 'hr' : 'day'})`} required>
           <input
             type="number"
             min="0"
@@ -585,6 +587,7 @@ function fmtCycleDate(d: string): string {
 }
 
 export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAdvanceModalProps) {
+  const { symbol: cur } = useCurrency()
   const todayIso = new Date().toISOString().split('T')[0]
   const [amount, setAmount] = useState('')
   const [date, setDate] = useState(todayIso)
@@ -640,7 +643,7 @@ export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAd
         <InputField label="Employee">
           <input type="text" value={employee.name} disabled className={`${inputClass} opacity-70`} />
         </InputField>
-        <InputField label="Amount (₹)" required>
+        <InputField label={`Amount (${cur})`} required>
           <input
             type="number"
             min="1"

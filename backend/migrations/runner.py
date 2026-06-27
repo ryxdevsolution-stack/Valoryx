@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 28
+CURRENT_SCHEMA_VERSION = 29
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -1632,6 +1632,77 @@ def _m028_negotiable_budget_period(db):
         logging.info("[Migration] v28: membership_tier.negotiable_budget_period added")
 
 
+def _m029_regional_customization(db):
+    """v29: Regional customization columns on client_entry (country / currency / tax).
+
+    Collected in the first-login setup wizard, editable later in settings.
+      - country         ISO-3166 alpha-2 (e.g. 'IN', 'AE', 'US')
+      - currency_code   ISO-4217 (e.g. 'INR', 'AED', 'USD')
+      - currency_symbol display symbol (e.g. '₹', '$')
+      - locale          number/date formatting (e.g. 'en-IN', 'en-US')
+      - tax_config      JSON: {name, mode, default_rate, inclusive, components:[{name, ratio}]}
+      - setup_completed_at  set when the wizard finishes; NULL => show wizard
+
+    Column DEFAULTs backfill existing rows to the India profile (INR / ₹ / en-IN).
+    The backfill marks every EXISTING client as already set up + gives them the GST
+    default so current users are NOT forced through the wizard. New clients created
+    after this migration have setup_completed_at = NULL and therefore see the wizard.
+    """
+    import json as _json
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    json_type = 'JSONB' if dialect == 'postgresql' else 'TEXT'
+
+    _add_col('client_entry', 'country',            "VARCHAR(2) NULL DEFAULT 'IN'")
+    _add_col('client_entry', 'currency_code',      "VARCHAR(3) NULL DEFAULT 'INR'")
+    _add_col('client_entry', 'currency_symbol',    "VARCHAR(8) NULL DEFAULT '₹'")
+    _add_col('client_entry', 'locale',             "VARCHAR(10) NULL DEFAULT 'en-IN'")
+    _add_col('client_entry', 'tax_config',         f"{json_type} NULL")
+    _add_col('client_entry', 'setup_completed_at', "DATETIME NULL")
+
+    # Per-bill regional snapshot (frozen at creation; nullable — legacy rows stay NULL
+    # and fall back to the client's current currency/India GST split at render time).
+    _add_col('gst_billing',     'currency_code', "VARCHAR(3) NULL")
+    _add_col('gst_billing',     'tax_breakdown', f"{json_type} NULL")
+    _add_col('non_gst_billing', 'currency_code', "VARCHAR(3) NULL")
+
+    # Backfill existing clients: India GST default + mark setup complete (skip wizard).
+    default_gst = _json.dumps({
+        "name": "GST", "mode": "split", "default_rate": 18, "inclusive": False,
+        "components": [{"name": "CGST", "ratio": 0.5}, {"name": "SGST", "ratio": 0.5}],
+    })
+    if dialect == 'postgresql':
+        db.session.execute(
+            text("UPDATE client_entry SET tax_config = CAST(:cfg AS JSONB) WHERE tax_config IS NULL"),
+            {"cfg": default_gst},
+        )
+    else:
+        db.session.execute(
+            text("UPDATE client_entry SET tax_config = :cfg WHERE tax_config IS NULL"),
+            {"cfg": default_gst},
+        )
+    db.session.execute(text(
+        "UPDATE client_entry SET setup_completed_at = CURRENT_TIMESTAMP WHERE setup_completed_at IS NULL"
+    ))
+
+    db.session.commit()
+    logging.info("[Migration] v29: regional customization columns added + existing clients backfilled")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -1662,6 +1733,7 @@ MIGRATIONS = [
     (26, _m026_add_missing_permissions),
     (27, _m027_membership_tables),
     (28, _m028_negotiable_budget_period),
+    (29, _m029_regional_customization),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

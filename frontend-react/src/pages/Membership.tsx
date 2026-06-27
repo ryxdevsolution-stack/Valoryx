@@ -15,6 +15,7 @@ import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import DashboardLayout from '@/components/DashboardLayout'
 import { useClient } from '@/contexts/ClientContext'
 import membershipService, { getMembershipError } from '@/services/membership'
+import { useCurrency } from '@/lib/useCurrency'
 import type { MembershipTier, TierWritePayload } from '@/types/membership'
 import TierForm from '@/components/membership/TierForm'
 import MembersList from '@/components/membership/MembersList'
@@ -36,13 +37,13 @@ function tierPrefix(name: string): string {
   return letters.length >= 2 ? letters.slice(0, 3) : 'VLX'
 }
 
-function benefitTags(t: MembershipTier): string[] {
+function benefitTags(t: MembershipTier, cur: string): string[] {
   const tags: string[] = []
   if (t.discount_percentage != null) tags.push(`${t.discount_percentage}% off`)
-  if (t.points_per_100 != null) tags.push(`${t.points_per_100} pts/₹100`)
-  if (t.redemption_rate != null) tags.push(`₹${t.redemption_rate}/pt`)
-  if (t.monthly_negotiable_budget != null) tags.push(`₹${t.monthly_negotiable_budget} negotiable/${t.negotiable_budget_period === 'yearly' ? 'yr' : 'mo'}`)
-  if (t.enrollment_fee != null && t.enrollment_fee > 0) tags.push(`₹${t.enrollment_fee} fee`)
+  if (t.points_per_100 != null) tags.push(`${t.points_per_100} pts/${cur}100`)
+  if (t.redemption_rate != null) tags.push(`${cur}${t.redemption_rate}/pt`)
+  if (t.monthly_negotiable_budget != null) tags.push(`${cur}${t.monthly_negotiable_budget} negotiable/${t.negotiable_budget_period === 'yearly' ? 'yr' : 'mo'}`)
+  if (t.enrollment_fee != null && t.enrollment_fee > 0) tags.push(`${cur}${t.enrollment_fee} fee`)
   if (t.validity_days != null) tags.push(`${t.validity_days}d validity`)
   if (t.upgrade_threshold_points != null) tags.push(`upgrade @ ${t.upgrade_threshold_points} pts`)
   return tags
@@ -50,6 +51,7 @@ function benefitTags(t: MembershipTier): string[] {
 
 export default function MembershipPage() {
   const { user, client } = useClient()
+  const { symbol: cur } = useCurrency()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const location = useLocation()
@@ -375,9 +377,9 @@ export default function MembershipPage() {
                     <div className="p-4 pt-2 flex flex-col justify-between h-[calc(100%-2.5rem)]">
                       <ul className="text-[10px] leading-relaxed text-gray-600 dark:text-gray-300 space-y-0.5 mt-1">
                         {previewTier.discount_percentage != null && <li>• {previewTier.discount_percentage}% member discount on every bill</li>}
-                        {previewTier.points_per_100 != null && <li>• Earn {previewTier.points_per_100} point{Number(previewTier.points_per_100) === 1 ? '' : 's'} per ₹100 spent</li>}
-                        {previewTier.redemption_rate != null && <li>• Redeem points as money off — 1 pt = ₹{previewTier.redemption_rate}</li>}
-                        {previewTier.monthly_negotiable_budget != null && <li>• ₹{previewTier.monthly_negotiable_budget} negotiation allowance per {previewTier.negotiable_budget_period === 'yearly' ? 'year' : 'month'}</li>}
+                        {previewTier.points_per_100 != null && <li>• Earn {previewTier.points_per_100} point{Number(previewTier.points_per_100) === 1 ? '' : 's'} per {cur}100 spent</li>}
+                        {previewTier.redemption_rate != null && <li>• Redeem points as money off — 1 pt = {cur}{previewTier.redemption_rate}</li>}
+                        {previewTier.monthly_negotiable_budget != null && <li>• {cur}{previewTier.monthly_negotiable_budget} negotiation allowance per {previewTier.negotiable_budget_period === 'yearly' ? 'year' : 'month'}</li>}
                       </ul>
                       <div className="border-t border-gray-300 dark:border-gray-600 pt-1.5">
                         <p className="text-[10px] font-semibold text-gray-700 dark:text-gray-200">{shopName}{client?.phone ? ` · ${client.phone}` : ''}</p>
@@ -392,7 +394,7 @@ export default function MembershipPage() {
 
               {/* Full benefit details */}
               <div className="mt-4 flex flex-wrap gap-1.5">
-                {benefitTags(previewTier).map((tag, i) => (
+                {benefitTags(previewTier, cur).map((tag, i) => (
                   <span key={i} className="inline-flex items-center px-2 py-0.5 rounded-md text-xs bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300">{tag}</span>
                 ))}
               </div>

@@ -6,6 +6,7 @@ import NotesModal from '@/components/NotesModal'
 import api from '@/lib/api'
 import { motion } from 'framer-motion'
 import { toast } from '@/utils/toast'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface Bill {
   bill_id: string
@@ -59,8 +60,8 @@ const DATE_FORMATTER = new Intl.DateTimeFormat('en-IN', {
   year: 'numeric',
 })
 
-function formatCurrency(amount: number): string {
-  return `₹${CURRENCY_FORMATTER.format(amount)}`
+function formatCurrencyWithSymbol(amount: number, symbol: string): string {
+  return `${symbol}${CURRENCY_FORMATTER.format(amount)}`
 }
 
 function formatDate(dateString: string): string {
@@ -98,6 +99,8 @@ function getPaymentColor(type: string): string {
 }
 
 export default function ReportsPage() {
+  const { symbol: cur } = useCurrency()
+  const formatCurrency = (amount: number) => formatCurrencyWithSymbol(amount, cur)
   const [loading, setLoading] = useState(false)
   const [reportData, setReportData] = useState<ReportData | null>(null)
   const [dateRange, setDateRange] = useState({
@@ -1017,7 +1020,7 @@ export default function ReportsPage() {
                             >
                               <span className="font-medium">{payment.type}</span>
                               {paymentTypes.length > 1 && (
-                                <span className="ml-1.5 font-bold text-gray-900 dark:text-gray-100">₹{payment.amount.toFixed(2)}</span>
+                                <span className="ml-1.5 font-bold text-gray-900 dark:text-gray-100">{cur}{payment.amount.toFixed(2)}</span>
                               )}
                             </span>
                           ))}

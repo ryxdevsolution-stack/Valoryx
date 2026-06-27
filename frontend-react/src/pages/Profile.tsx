@@ -4,6 +4,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import ProfileTabs, { type ProfileTab } from '@/components/profile/ProfileTabs'
 import AccountTab from '@/components/profile/AccountTab'
+import RegionTab from '@/components/profile/RegionTab'
 import TeamTab from '@/components/profile/TeamTab'
 import SubscriptionTab from '@/components/profile/SubscriptionTab'
 import SessionsTab from '@/components/profile/SessionsTab'
@@ -50,7 +51,7 @@ export default function ProfilePage() {
   const [activeTab, setActiveTab] = useState<ProfileTab>(() => {
     const params = new URLSearchParams(window.location.search)
     const tab = params.get('tab')
-    const validTabs: ProfileTab[] = ['account', 'team', 'subscription', 'sessions', 'two-factor', 'webhooks']
+    const validTabs: ProfileTab[] = ['account', 'region', 'team', 'subscription', 'sessions', 'two-factor', 'webhooks']
     return validTabs.includes(tab as ProfileTab) ? (tab as ProfileTab) : 'account'
   })
 
@@ -483,6 +484,12 @@ export default function ProfilePage() {
               handleSendTestReport={handleSendTestReport}
               formatDate={formatDate}
             />
+          )}
+
+          {activeTab === 'region' && (
+            <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700">
+              <RegionTab />
+            </div>
           )}
 
           {/* Danger Zone — owner only, shown in account tab */}

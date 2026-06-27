@@ -25,6 +25,11 @@ _SETTINGS_FIELDS = {
     'receipt_footer': 'receipt_footer',
     'logo_url': 'logo_url',
     'points_per_100': 'points_per_100',
+    # Regional customization (scalar fields; tax_config JSON is managed via /api/clients/<id>)
+    'country': 'country',
+    'currency_code': 'currency_code',
+    'currency_symbol': 'currency_symbol',
+    'locale': 'locale',
     # Apparel label defaults (v13)
     'label_importer_name': 'label_importer_name',
     'label_importer_address': 'label_importer_address',

@@ -5,6 +5,7 @@ import Highcharts from 'highcharts'
 import HighchartsReact from 'highcharts-react-official'
 import { useTheme } from '@/contexts/ThemeContext'
 import { getDarkModeChartOptions } from '@/lib/highcharts-config'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface BillTypeComparisonChartProps {
   gstCount: number
@@ -16,6 +17,7 @@ interface BillTypeComparisonChartProps {
 export default function BillTypeComparisonChart({ gstCount, nonGstCount, gstRevenue, nonGstRevenue }: BillTypeComparisonChartProps) {
   const chartRef = useRef<HighchartsReact.RefObject>(null)
   const { isDarkMode } = useTheme()
+  const { symbol: cur } = useCurrency()
 
   const options: Highcharts.Options = {
     ...getDarkModeChartOptions(isDarkMode),
@@ -64,7 +66,7 @@ export default function BillTypeComparisonChart({ gstCount, nonGstCount, gstReve
     }, {
       min: 0,
       title: {
-        text: 'Revenue (₹)',
+        text: `Revenue (${cur})`,
         style: {
           color: isDarkMode ? '#9ca3af' : undefined
         }
@@ -100,7 +102,7 @@ export default function BillTypeComparisonChart({ gstCount, nonGstCount, gstReve
               if (this.x === 0) {
                 return this.y?.toString() || '0'
               } else {
-                return '₹' + (this.y ? Math.round(this.y).toLocaleString('en-IN') : '0')
+                return cur + (this.y ? Math.round(this.y).toLocaleString('en-IN') : '0')
               }
             }
             return this.y?.toString() || '0'

@@ -5,6 +5,7 @@ import Highcharts from 'highcharts'
 import HighchartsReact from 'highcharts-react-official'
 import { useTheme } from '@/contexts/ThemeContext'
 import { getDarkModeChartOptions } from '@/lib/highcharts-config'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface PaymentMethodsColumnChartProps {
   data: Array<{ name: string; value: number }>
@@ -13,6 +14,7 @@ interface PaymentMethodsColumnChartProps {
 export default function PaymentMethodsColumnChart({ data }: PaymentMethodsColumnChartProps) {
   const chartRef = useRef<HighchartsReact.RefObject>(null)
   const { isDarkMode } = useTheme()
+  const { symbol: cur } = useCurrency()
 
   useEffect(() => {
     if (typeof window === 'undefined') return // ✅ Skip SSR
@@ -115,7 +117,7 @@ export default function PaymentMethodsColumnChart({ data }: PaymentMethodsColumn
     yAxis: {
       min: 0,
       title: {
-        text: 'Amount (₹)',
+        text: `Amount (${cur})`,
         style: { color: isDarkMode ? '#9ca3af' : undefined },
       },
       gridLineColor: isDarkMode ? '#374151' : undefined,
@@ -126,7 +128,7 @@ export default function PaymentMethodsColumnChart({ data }: PaymentMethodsColumn
       },
     },
     tooltip: {
-      valueSuffix: ' ₹',
+      valueSuffix: ` ${cur}`,
       backgroundColor: isDarkMode ? '#1f2937' : undefined,
       borderColor: isDarkMode ? '#374151' : undefined,
       style: { color: isDarkMode ? '#f3f4f6' : undefined },

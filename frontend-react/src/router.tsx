@@ -34,6 +34,7 @@ const Suppliers = React.lazy(() => import('@/pages/Suppliers'))
 const Membership = React.lazy(() => import('@/pages/Membership'))
 const Salary = React.lazy(() => import('@/pages/Salary'))
 const ForcePasswordChange = React.lazy(() => import('@/pages/auth/ForcePasswordChange'))
+const SetupWizard = React.lazy(() => import('@/pages/auth/SetupWizard'))
 const OAuthCallbackPage = React.lazy(() => import('@/pages/auth/OAuthCallback'))
 const VerifyEmailPending = React.lazy(() => import('@/pages/auth/VerifyEmailPending'))
 const VerifyEmailSuccess = React.lazy(() => import('@/pages/auth/VerifyEmailSuccess'))
@@ -176,6 +177,14 @@ export function AppRoutes() {
           element={
             <ProtectedRoute>
               <Suspense fallback={<AuthFallback />}><ForcePasswordChange /></Suspense>
+            </ProtectedRoute>
+          }
+        />
+        <Route
+          path="/setup"
+          element={
+            <ProtectedRoute>
+              <Suspense fallback={<AuthFallback />}><SetupWizard /></Suspense>
             </ProtectedRoute>
           }
         />

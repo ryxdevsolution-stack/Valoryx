@@ -42,6 +42,10 @@ class GSTBilling(db.Model):
     negotiable_amount = db.Column(FlexibleNumeric)
     status = db.Column(db.String(20), default='final')
     payment_status = db.Column(db.String(20), default='paid')  # 'paid' | 'pending'
+    # Regional snapshot — frozen at creation so historical receipts stay correct
+    # even if the client later changes currency or tax config.
+    currency_code = db.Column(db.String(3), nullable=True)        # e.g. 'INR', 'AED'
+    tax_breakdown = db.Column(FlexibleJSON, nullable=True)        # [{name, amount}] resolved from tax_config
     created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=get_current_time)
     updated_at = db.Column(db.DateTime, default=get_current_time, onupdate=get_current_time)
@@ -67,6 +71,8 @@ class GSTBilling(db.Model):
             'gst_percentage': str(self.gst_percentage),
             'gst_amount': str(self.gst_amount),
             'final_amount': str(self.final_amount),
+            'currency_code': self.currency_code,
+            'tax_breakdown': self.tax_breakdown,
             'payment_type': self.payment_type,
             'amount_received': str(self.amount_received) if self.amount_received else None,
             'discount_percentage': str(self.discount_percentage) if self.discount_percentage else None,
@@ -111,6 +117,8 @@ class NonGSTBilling(db.Model):
     negotiable_amount = db.Column(FlexibleNumeric)
     status = db.Column(db.String(20), default='final')
     payment_status = db.Column(db.String(20), default='paid')  # 'paid' | 'pending'
+    # Regional snapshot — frozen at creation (currency only; non-GST has no tax block)
+    currency_code = db.Column(db.String(3), nullable=True)        # e.g. 'INR', 'AED'
     created_by = db.Column(FlexibleUUID, db.ForeignKey('users.user_id'))
     created_at = db.Column(db.DateTime, default=get_current_time)
     updated_at = db.Column(db.DateTime, default=get_current_time, onupdate=get_current_time)
@@ -133,6 +141,7 @@ class NonGSTBilling(db.Model):
             'items': self.items,
             'audit_overrides': self.audit_overrides,
             'total_amount': str(self.total_amount),
+            'currency_code': self.currency_code,
             'payment_type': self.payment_type,
             'amount_received': str(self.amount_received) if self.amount_received else None,
             'discount_percentage': str(self.discount_percentage) if self.discount_percentage else None,

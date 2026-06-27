@@ -13,7 +13,7 @@ from models.client_model import ClientEntry
 from utils.auth_middleware import authenticate, readonly_guard
 from utils.permission_middleware import require_permission, require_any_permission
 from utils.audit_logger import log_action
-from utils.helpers import calculate_gst_amount, calculate_final_amount, validate_items, title_case
+from utils.helpers import calculate_gst_amount, calculate_final_amount, validate_items, title_case, build_tax_breakdown
 from services.membership_service import MembershipError
 from utils.cache_helper import get_cache_manager, invalidate_billing_cache as _invalidate_billing, invalidate_stock_cache as _invalidate_stock
 from utils.bill_number_helper import get_next_bill_number
@@ -806,6 +806,14 @@ def create_unified_bill():
         data = request.get_json()
         client_id = g.user['client_id']
 
+        # Regional snapshot for this client — currency + tax config frozen onto the bill
+        # so receipts stay correct even if the client later changes these settings.
+        _client_region = ClientEntry.query.with_entities(
+            ClientEntry.currency_code, ClientEntry.tax_config
+        ).filter_by(client_id=client_id).first()
+        bill_currency_code = (_client_region.currency_code if _client_region else None) or 'INR'
+        bill_tax_config = (_client_region.tax_config if _client_region else None)
+
         # Parse custom bill date if provided, otherwise use current datetime
         bill_date = get_current_time()
         if data.get('bill_date'):
@@ -1065,6 +1073,8 @@ def create_unified_bill():
                 negotiable_amount=round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                 status='final',
                 payment_status=data.get('payment_status', 'paid'),
+                currency_code=bill_currency_code,
+                tax_breakdown=build_tax_breakdown(total_gst_amount, bill_tax_config),
                 created_by=g.user['user_id'],
                 created_at=bill_date
             )
@@ -1096,9 +1106,13 @@ def create_unified_bill():
             _invalidate_billing(client_id)
             _invalidate_stock(client_id)
 
-            # Calculate CGST and SGST (half of total GST each)
-            cgst = round(total_gst_amount / 2, 2)
-            sgst = round(total_gst_amount / 2, 2)
+            # Tax breakdown driven by the client's tax_config (frozen on the bill above).
+            # Keep cgst/sgst keys for backward compatibility with existing receipt code:
+            # for the default India GST split they map to the two components; other
+            # tax systems (VAT, sales tax) are exposed via `tax_breakdown`.
+            tax_breakdown = new_bill.tax_breakdown or []
+            cgst = tax_breakdown[0]['amount'] if len(tax_breakdown) > 0 else 0
+            sgst = tax_breakdown[1]['amount'] if len(tax_breakdown) > 1 else 0
 
             # Return complete bill data for direct printing (no need for additional fetch)
             return jsonify({
@@ -1132,6 +1146,8 @@ def create_unified_bill():
                     'cgst': cgst,
                     'sgst': sgst,
                     'igst': 0,
+                    'tax_breakdown': tax_breakdown,
+                    'currency_code': bill_currency_code,
                     'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0],
                     'payment_status': data.get('payment_status', 'paid'),
                     'points_earned': points_earned
@@ -1181,6 +1197,7 @@ def create_unified_bill():
                 negotiable_amount=round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                 status='final',
                 payment_status=data.get('payment_status', 'paid'),
+                currency_code=bill_currency_code,
                 created_by=g.user['user_id'],
                 created_at=bill_date
             )
@@ -1242,6 +1259,7 @@ def create_unified_bill():
                     'cgst': 0,
                     'sgst': 0,
                     'igst': 0,
+                    'currency_code': bill_currency_code,
                     'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0],
                     'payment_status': data.get('payment_status', 'paid'),
                     'points_earned': points_earned

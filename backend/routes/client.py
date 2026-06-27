@@ -134,6 +134,9 @@ def update_client(client_id):
         if 'telegram_chat_id' in data:
             client.telegram_chat_id = data['telegram_chat_id'] or None
 
+        # Regional customization (country / currency / tax) — editable from settings
+        _apply_regional_fields(client, data)
+
         db.session.commit()
 
         # Invalidate client detail cache
@@ -149,9 +152,119 @@ def update_client(client_id):
             'client': client.to_dict()
         }), 200
 
+    except ValueError as ve:
+        db.session.rollback()
+        return jsonify({'error': str(ve)}), 400
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to update client', 'message': str(e)}), 500
+
+
+def _validate_tax_config(cfg):
+    """Validate and normalize a tax_config payload from the wizard/settings.
+
+    Raises ValueError on malformed input. Returns the normalized dict.
+    """
+    if cfg is None:
+        return None
+    if not isinstance(cfg, dict):
+        raise ValueError('tax_config must be an object')
+    mode = cfg.get('mode', 'single')
+    if mode not in ('split', 'single', 'none'):
+        raise ValueError("tax_config.mode must be 'split', 'single', or 'none'")
+    name = (cfg.get('name') or '').strip() or 'Tax'
+    try:
+        default_rate = float(cfg.get('default_rate', 0) or 0)
+    except (TypeError, ValueError):
+        raise ValueError('tax_config.default_rate must be a number')
+    if default_rate < 0 or default_rate > 100:
+        raise ValueError('tax_config.default_rate must be between 0 and 100')
+
+    components = []
+    if mode != 'none':
+        raw_components = cfg.get('components') or []
+        if not isinstance(raw_components, list) or not raw_components:
+            # Single-component fallback so the tax always has at least one named line.
+            raw_components = [{'name': name, 'ratio': 1.0}]
+        total_ratio = 0.0
+        for comp in raw_components:
+            cname = (comp.get('name') or '').strip() or name
+            try:
+                ratio = float(comp.get('ratio', 0) or 0)
+            except (TypeError, ValueError):
+                raise ValueError('tax component ratio must be a number')
+            total_ratio += ratio
+            components.append({'name': cname, 'ratio': ratio})
+        if mode == 'split' and abs(total_ratio - 1.0) > 0.001:
+            raise ValueError('split tax component ratios must sum to 1.0')
+
+    return {
+        'name': name,
+        'mode': mode,
+        'default_rate': default_rate,
+        'inclusive': bool(cfg.get('inclusive', False)),
+        'components': components,
+    }
+
+
+def _apply_regional_fields(client, data):
+    """Apply country/currency/locale/tax_config fields onto a ClientEntry if present.
+
+    Shared by update_client and complete_setup. Raises ValueError on bad input.
+    """
+    if 'country' in data:
+        client.country = (data['country'] or 'IN')[:2].upper()
+    if 'currency_code' in data:
+        client.currency_code = (data['currency_code'] or 'INR')[:3].upper()
+    if 'currency_symbol' in data:
+        client.currency_symbol = (data['currency_symbol'] or '₹')[:8]
+    if 'locale' in data:
+        client.locale = (data['locale'] or 'en-IN')[:10]
+    if 'tax_config' in data:
+        client.tax_config = _validate_tax_config(data['tax_config'])
+
+
+@client_bp.route('/<client_id>/complete-setup', methods=['POST'])
+@authenticate
+def complete_setup(client_id):
+    """Save the first-login setup wizard (country / currency / tax) and mark it done.
+
+    Idempotent: re-running just re-saves the settings and refreshes setup_completed_at.
+    After this returns, the client's `setup_completed` flag is true and the wizard
+    no longer shows on login.
+    """
+    try:
+        if client_id != g.user['client_id']:
+            return jsonify({'error': 'Access denied'}), 403
+
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+
+        old_data = client.to_dict()
+        data = request.get_json() or {}
+
+        _apply_regional_fields(client, data)
+        client.setup_completed_at = datetime.utcnow()
+
+        db.session.commit()
+
+        from utils.cache_helper import get_cache_manager
+        get_cache_manager().delete(f"client:detail:{client_id}")
+        log_action('UPDATE', 'client_entry', client_id, old_data, client.to_dict())
+
+        return jsonify({
+            'success': True,
+            'message': 'Setup completed',
+            'client': client.to_dict()
+        }), 200
+
+    except ValueError as ve:
+        db.session.rollback()
+        return jsonify({'error': str(ve)}), 400
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to complete setup', 'message': str(e)}), 500
 
 
 @client_bp.route('/<client_id>/upload-logo', methods=['POST'])

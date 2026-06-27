@@ -5,6 +5,7 @@ import Highcharts from 'highcharts'
 import HighchartsReact from 'highcharts-react-official'
 import { useTheme } from '@/contexts/ThemeContext'
 import { getDarkModeChartOptions } from '@/lib/highcharts-config'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface PeakHoursChartProps {
   data: Array<{ hour: number; sales: number; count: number }>
@@ -12,6 +13,7 @@ interface PeakHoursChartProps {
 
 export default function PeakHoursChart({ data }: PeakHoursChartProps) {
   const { isDarkMode } = useTheme()
+  const { symbol: cur } = useCurrency()
   const chartRef = useRef<HighchartsReact.RefObject>(null)
 
   useEffect(() => {
@@ -140,7 +142,7 @@ export default function PeakHoursChart({ data }: PeakHoursChartProps) {
     },
     yAxis: {
       title: {
-        text: 'Sales Amount (₹)',
+        text: `Sales Amount (${cur})`,
         style: {
           color: isDarkMode ? '#f3f4f6' : '#1f2937'
         }
@@ -199,7 +201,7 @@ export default function PeakHoursChart({ data }: PeakHoursChartProps) {
             },
             labels: {
               formatter: function () {
-                return '₹' + ((this.value as number) / 1000).toFixed(0) + 'k'
+                return cur + ((this.value as number) / 1000).toFixed(0) + 'k'
               }
             }
           }

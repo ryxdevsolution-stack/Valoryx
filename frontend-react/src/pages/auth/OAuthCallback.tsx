@@ -55,6 +55,12 @@ export default function OAuthCallbackPage() {
           trial_end_date: client.trial_end_date || null,
           trial_days_remaining: client.trial_days_remaining || null,
           subscription_end_date: client.subscription_end_date || null,
+          country: client.country,
+          currency_code: client.currency_code,
+          currency_symbol: client.currency_symbol,
+          locale: client.locale,
+          tax_config: client.tax_config,
+          setup_completed: client.setup_completed,
         }
         setClientData(userData, clientData, token)
         // If the user came from the landing "Continue with Google → download"
@@ -63,6 +69,8 @@ export default function OAuthCallbackPage() {
         if (user.must_change_password) {
           localStorage.setItem('must_change_password', 'true')
           navigate('/change-password', { replace: true })
+        } else if (client.setup_completed === false) {
+          navigate('/setup', { replace: true })
         } else {
           navigate('/billing/create', { replace: true })
         }
