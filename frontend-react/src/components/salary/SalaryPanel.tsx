@@ -1,8 +1,9 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Plus, Calculator, CheckCircle, ChevronDown, ChevronUp, RefreshCw, Pencil } from 'lucide-react'
 import api from '@/lib/api'
 import { useCurrency } from '@/lib/useCurrency'
 import type { Employee, SalaryCycle, SalaryAdvance } from '@/pages/Salary'
+import { formatMinutes as formatMins, formatSalaryDate as fmtDate, isDateCovered, currentMonthRange } from '@/utils/salary'
 
 interface SalaryPanelProps {
   employee: Employee
@@ -10,23 +11,10 @@ interface SalaryPanelProps {
   onEditCycle: (cycle: SalaryCycle) => void
   onAddAdvance: (cycles: SalaryCycle[]) => void
   refreshSignal: number
-}
-
-function formatMins(mins: number): string {
-  const h = Math.floor(mins / 60)
-  const m = mins % 60
-  if (h === 0) return `${m}m`
-  if (m === 0) return `${h}h`
-  return `${h}h ${m}m`
-}
-
-function fmtDate(d: string): string {
-  try {
-    const s = d.includes('T') ? d : d.replace(' ', 'T')
-    return new Date(s).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })
-  } catch {
-    return d
-  }
+  /** Whether the current user can create cycles — gates the auto-create. */
+  canManage: boolean
+  /** Fired after cycles change here (e.g. auto-create) so siblings re-fetch too. */
+  onCyclesChanged?: () => void
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -40,6 +28,8 @@ export default function SalaryPanel({
   onEditCycle,
   onAddAdvance,
   refreshSignal,
+  canManage,
+  onCyclesChanged,
 }: SalaryPanelProps) {
   const { symbol: cur } = useCurrency()
   const [cycles, setCycles] = useState<SalaryCycle[]>([])
@@ -49,6 +39,9 @@ export default function SalaryPanel({
   const [markingPaid, setMarkingPaid] = useState<string | null>(null)
   const [payNote, setPayNote] = useState('')
   const [payNoteInput, setPayNoteInput] = useState<string | null>(null) // cycleId of open payment note
+  // Employees we've already auto-created a current-month cycle for this session,
+  // so the auto-create runs at most once per employee (no retry loop on failure).
+  const autoCreatedFor = useRef<Set<string>>(new Set())
 
   const fetchCycles = useCallback(async () => {
     setLoading(true)
@@ -65,6 +58,33 @@ export default function SalaryPanel({
   useEffect(() => {
     fetchCycles()
   }, [fetchCycles, refreshSignal])
+
+  // Auto-create the current month's cycle when none covers today, so users never
+  // have to create cycles by hand each month. Idempotent: the backend rejects
+  // overlapping ranges, and we guard with a per-employee attempt set.
+  useEffect(() => {
+    if (loading || !canManage) return
+    const todayStr = new Date().toISOString().slice(0, 10)
+    if (isDateCovered(todayStr, cycles).covered) return
+    if (autoCreatedFor.current.has(employee.employee_id)) return
+    autoCreatedFor.current.add(employee.employee_id)
+    const { start, end } = currentMonthRange()
+    api
+      .post(`/employees/${employee.employee_id}/cycles`, {
+        start_date: start,
+        end_date: end,
+        full_day_mins: 480,
+      })
+      .then(() => {
+        fetchCycles()
+        // Tell the parent so the attendance calendar re-fetches and sees the
+        // newly-covered days (it keeps its own cycle list).
+        onCyclesChanged?.()
+      })
+      .catch(() => {
+        // Overlap or permission error — fall back to the manual "Create cycle" button.
+      })
+  }, [loading, cycles, canManage, employee.employee_id, fetchCycles, onCyclesChanged])
 
   async function handleCalculate(cycleId: string) {
     setCalculating(cycleId)
@@ -131,8 +151,7 @@ export default function SalaryPanel({
           today's attendance. */}
       {(() => {
         const todayStr = new Date().toISOString().slice(0, 10)
-        const hasCoveringCycle = cycles.some(c => c.start_date <= todayStr && c.end_date >= todayStr)
-        if (loading || cycles.length === 0 || hasCoveringCycle) return null
+        if (loading || cycles.length === 0 || isDateCovered(todayStr, cycles).covered) return null
         return (
           <div className="px-4 py-3 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 flex items-start justify-between gap-3">
             <p className="text-xs text-amber-800 dark:text-amber-200">

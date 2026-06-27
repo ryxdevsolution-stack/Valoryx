@@ -6,7 +6,9 @@ import NotesModal from '@/components/NotesModal'
 import api from '@/lib/api'
 import { motion } from 'framer-motion'
 import { toast } from '@/utils/toast'
+import { useClient } from '@/contexts/ClientContext'
 import { useCurrency } from '@/lib/useCurrency'
+import { generateReportPDF } from '@/lib/reportPdfService'
 
 interface Bill {
   bill_id: string
@@ -99,8 +101,10 @@ function getPaymentColor(type: string): string {
 }
 
 export default function ReportsPage() {
-  const { symbol: cur } = useCurrency()
-  const formatCurrency = (amount: number) => formatCurrencyWithSymbol(amount, cur)
+  const { client } = useClient()
+  // Currency formatter + symbol driven by the client's regional settings
+  // (replaces the hardcoded ₹ lost during the merge). Used in report rendering.
+  const { format: formatCurrency, symbol: cur } = useCurrency()
   const [loading, setLoading] = useState(false)
   const [reportData, setReportData] = useState<ReportData | null>(null)
   const [dateRange, setDateRange] = useState({
@@ -357,6 +361,40 @@ export default function ReportsPage() {
     return request
   }
 
+  // Export the current report (KPIs, financials, payroll, bills, expenses) as a
+  // clean, print-ready PDF. Top Customers are intentionally excluded.
+  const handleExportPDF = () => {
+    if (!reportData) {
+      toast.error('No report data to export yet.')
+      return
+    }
+    const periodLabelMap = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' } as const
+    try {
+      generateReportPDF({
+        client: {
+          client_name: client?.client_name || 'Business Report',
+          address: client?.address,
+          phone: client?.phone,
+          email: client?.email,
+          gstin: client?.gstin,
+        },
+        periodLabel: periodLabelMap[periodType],
+        startDate: dateRange.start_date,
+        endDate: dateRange.end_date,
+        totalBills: reportData.total_bills,
+        totalRevenue: reportData.total_revenue,
+        generalExpenses: reportData.expenses?.total_expenses ?? 0,
+        bills: reportData.bills,
+        expenses: reportData.expenses?.expense_list ?? [],
+        categoryBreakdown: reportData.expenses?.category_breakdown ?? {},
+        payroll,
+      })
+    } catch (error) {
+      console.error('Failed to export report PDF:', error)
+      toast.error('Could not generate the PDF. Please try again.')
+    }
+  }
+
 
   // Expense management functions
   const handleAddExpense = () => {
@@ -551,6 +589,18 @@ export default function ReportsPage() {
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
               </svg>
               Notes
+            </button>
+            <button
+              type="button"
+              onClick={handleExportPDF}
+              disabled={loading || !reportData}
+              className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-medium rounded-lg transition-colors flex items-center gap-2"
+              title="Export this report as a PDF"
+            >
+              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+              </svg>
+              Export PDF
             </button>
 
             {/* Period Selector Buttons.

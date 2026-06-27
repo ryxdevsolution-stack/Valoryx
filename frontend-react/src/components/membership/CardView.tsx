@@ -8,13 +8,14 @@
  * QR rendering uses `qrcode.react` (already bundled — see package.json), so no new
  * dependency is added.
  */
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
 import membershipService, { getMembershipError } from '@/services/membership'
 import { useClient } from '@/contexts/ClientContext'
 import { useCurrency } from '@/lib/useCurrency'
 import type { CardDetail, PeriodStats } from '@/types/membership'
 import LedgerTable from './LedgerTable'
+import { MembershipCardPrintButton, tierBenefitLines } from './MembershipCardPrint'
 
 interface CardViewProps {
   cardId: string
@@ -56,7 +57,6 @@ export default function CardView({ cardId, onError }: CardViewProps) {
   const [detail, setDetail] = useState<CardDetail | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
-  const printRef = useRef<HTMLDivElement>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -74,10 +74,6 @@ export default function CardView({ cardId, onError }: CardViewProps) {
   }, [cardId, onError])
 
   useEffect(() => { load() }, [load])
-
-  const handlePrint = useCallback(() => {
-    window.print()
-  }, [])
 
   if (loading) {
     return <div className="text-center py-16 text-gray-400 dark:text-gray-500">Loading card…</div>
@@ -115,7 +111,7 @@ export default function CardView({ cardId, onError }: CardViewProps) {
   return (
     <div className="space-y-6">
       {/* Printable card — front & back, standard credit-card aspect ratio */}
-      <div ref={printRef} className="grid gap-4 sm:grid-cols-2">
+      <div className="grid gap-4 sm:grid-cols-2">
         {/* FRONT */}
         <div>
           <p className="text-[10px] font-semibold text-gray-400 uppercase tracking-wide mb-1 print:hidden">Front</p>
@@ -184,10 +180,20 @@ export default function CardView({ cardId, onError }: CardViewProps) {
         <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium ${STATUS_BADGE[card.status]}`}>
           {card.status}
         </span>
-        <button type="button" onClick={handlePrint}
-          className="flex items-center gap-2 text-sm px-3 py-1.5 rounded-lg border border-gray-300 dark:border-gray-600 text-gray-600 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800">
-          Print card
-        </button>
+        <MembershipCardPrintButton
+          variant="button"
+          data={{
+            shopName,
+            tierName: tier?.name || 'Member',
+            accentColor: accent,
+            memberName: card.customer_name || 'Member',
+            cardNumber: card.membership_number,
+            description: validTo ? `Valid ${validFrom} – ${validTo}` : `Valid from ${validFrom}`,
+            qrValue: card.membership_number,
+            benefits: tierBenefitLines(tier),
+            shopPhone,
+          }}
+        />
       </div>
 
       {/* Point counters */}

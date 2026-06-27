@@ -204,6 +204,9 @@ export default function SalaryPage() {
     await api.post(`/employees/${employeeId}/cycles`, data)
     showToast('Salary cycle created')
     setCycleRefresh(n => n + 1)
+    // The attendance calendar keeps its own cycle list — refresh it too so the
+    // newly-covered days become clickable immediately.
+    setAttendanceRefresh(n => n + 1)
   }
 
   async function handleEditCycle(
@@ -298,6 +301,8 @@ export default function SalaryPage() {
             onEditCycle={(cycle) => setModal({ type: 'edit-cycle', cycle })}
             onAddAdvance={(cycles) => setModal({ type: 'add-advance', cycles })}
             refreshSignal={cycleRefresh}
+            canManage={hasManagerAccess}
+            onCyclesChanged={() => setAttendanceRefresh(n => n + 1)}
           />
         ) : (
           <EmptySlate message="Select an employee to view salary" />
