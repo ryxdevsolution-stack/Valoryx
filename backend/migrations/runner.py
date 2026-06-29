@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 29
+CURRENT_SCHEMA_VERSION = 30
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -1703,6 +1703,50 @@ def _m029_regional_customization(db):
     logging.info("[Migration] v29: regional customization columns added + existing clients backfilled")
 
 
+def _m030_salary_sync_columns(db):
+    """v30: Add sync-tracking columns to the salary/attendance tables so they
+    participate in the offline↔online SyncService.
+
+    The salary module (employees, employee_attendance, salary_cycles,
+    salary_advances) was created in _m014 WITHOUT a `synced_at` column, so it
+    was excluded from sync — data created on desktop (SQLite) never reached
+    Supabase and vice versa. The upload path filters on `synced_at IS NULL` and
+    the download path resolves conflicts via `updated_at` (Last-Write-Wins), so:
+
+      - All four tables get `synced_at` (nullable; existing rows = NULL = "needs upload").
+      - `salary_advances` additionally gets `updated_at` — it was the only table
+        without one, and _upsert_to_sqlite needs it for conflict resolution.
+
+    Idempotent: every add is guarded by _add_col. Runs against whichever engine
+    the app uses (Supabase on web, SQLite on desktop), so both sides gain the
+    columns when their app boots this version.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return  # table doesn't exist yet — skip
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    for table in ('employees', 'employee_attendance', 'salary_cycles', 'salary_advances'):
+        _add_col(table, 'synced_at', 'TIMESTAMP NULL')
+
+    # salary_advances is the only salary table without updated_at; LWW needs it.
+    _add_col('salary_advances', 'updated_at', 'TIMESTAMP NULL')
+
+    db.session.commit()
+    logging.info("[Migration] v30: salary/attendance sync columns added")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -1734,6 +1778,7 @@ MIGRATIONS = [
     (27, _m027_membership_tables),
     (28, _m028_negotiable_budget_period),
     (29, _m029_regional_customization),
+    (30, _m030_salary_sync_columns),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

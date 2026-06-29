@@ -21,7 +21,11 @@ EXPENSE_COLUMN_TYPES,
     USER_COLUMN_TYPES,
     USER_PERMISSION_COLUMN_TYPES,
     REPORT_COLUMN_TYPES,
-    NOTES_COLUMN_TYPES
+    NOTES_COLUMN_TYPES,
+    EMPLOYEE_COLUMN_TYPES,
+    EMPLOYEE_ATTENDANCE_COLUMN_TYPES,
+    SALARY_CYCLE_COLUMN_TYPES,
+    SALARY_ADVANCE_COLUMN_TYPES
 )
 
 logger = logging.getLogger(__name__)
@@ -119,7 +123,11 @@ class SyncService:
                     "users": 0,
                     "user_permissions": 0,
                     "reports": 0,
-                    "notes": 0
+                    "notes": 0,
+                    "employees": 0,
+                    "salary_cycles": 0,
+                    "employee_attendance": 0,
+                    "salary_advances": 0
                 },
                 "errors": []
             }
@@ -231,6 +239,42 @@ class SyncService:
             except Exception as e:
                 logger.error(f"[SyncService] Notes sync failed: {e}")
                 results["errors"].append(f"Notes: {str(e)}")
+
+            # Sync salary/attendance tables. Order matters for PostgreSQL FKs:
+            # employees first, then cycles (FK→employees), then attendance
+            # (FK→employees) and advances (FK→cycles). Users are already synced
+            # above, so created_by/marked_by/paid_by/recorded_by resolve.
+            try:
+                count = self._sync_employees()
+                results["synced"]["employees"] = count
+                logger.info(f"[SyncService] Uploaded {count} employees")
+            except Exception as e:
+                logger.error(f"[SyncService] Employee sync failed: {e}")
+                results["errors"].append(f"Employees: {str(e)}")
+
+            try:
+                count = self._sync_salary_cycles()
+                results["synced"]["salary_cycles"] = count
+                logger.info(f"[SyncService] Uploaded {count} salary cycles")
+            except Exception as e:
+                logger.error(f"[SyncService] Salary cycle sync failed: {e}")
+                results["errors"].append(f"Salary cycles: {str(e)}")
+
+            try:
+                count = self._sync_employee_attendance()
+                results["synced"]["employee_attendance"] = count
+                logger.info(f"[SyncService] Uploaded {count} attendance records")
+            except Exception as e:
+                logger.error(f"[SyncService] Attendance sync failed: {e}")
+                results["errors"].append(f"Attendance: {str(e)}")
+
+            try:
+                count = self._sync_salary_advances()
+                results["synced"]["salary_advances"] = count
+                logger.info(f"[SyncService] Uploaded {count} salary advances")
+            except Exception as e:
+                logger.error(f"[SyncService] Salary advance sync failed: {e}")
+                results["errors"].append(f"Salary advances: {str(e)}")
 
             self.last_sync_time = get_current_time()
 
@@ -881,6 +925,206 @@ class SyncService:
         self._mark_as_synced('notes', 'note_id', synced_ids)
         return len(synced_ids)
 
+    def _sync_employees(self):
+        """Sync employees from SQLite to PostgreSQL"""
+        with self.sqlite_engine.connect() as sqlite_conn:
+            result = sqlite_conn.execute(text("""
+                SELECT * FROM employees
+                WHERE synced_at IS NULL
+                ORDER BY created_at
+                LIMIT 1000
+            """))
+            rows = [dict(row._mapping) for row in result]
+
+        if not rows:
+            return 0
+
+        synced_ids = []
+        with self.postgres_engine.connect() as pg_conn:
+            for rec in rows:
+                try:
+                    converted = TypeConverter.convert_dict_from_sqlite(rec, EMPLOYEE_COLUMN_TYPES)
+
+                    pg_conn.execute(text("""
+                        INSERT INTO employees (
+                            employee_id, client_id, branch_id, name, phone, pay_type, rate,
+                            is_active, ot_multiplier, created_by, created_at, updated_at
+                        ) VALUES (
+                            :employee_id, :client_id, :branch_id, :name, :phone, :pay_type, :rate,
+                            :is_active, :ot_multiplier, :created_by, :created_at, :updated_at
+                        )
+                        ON CONFLICT (employee_id) DO UPDATE SET
+                            branch_id = EXCLUDED.branch_id,
+                            name = EXCLUDED.name,
+                            phone = EXCLUDED.phone,
+                            pay_type = EXCLUDED.pay_type,
+                            rate = EXCLUDED.rate,
+                            is_active = EXCLUDED.is_active,
+                            ot_multiplier = EXCLUDED.ot_multiplier,
+                            updated_at = EXCLUDED.updated_at,
+                            synced_at = CURRENT_TIMESTAMP
+                    """), converted)
+                    pg_conn.commit()
+                    synced_ids.append(rec['employee_id'])
+                except Exception as e:
+                    pg_conn.rollback()
+                    logger.error(f"[SyncService] Failed to sync employee {rec.get('employee_id')}: {e}")
+
+        self._mark_as_synced('employees', 'employee_id', synced_ids)
+        return len(synced_ids)
+
+    def _sync_salary_cycles(self):
+        """Sync salary cycles from SQLite to PostgreSQL"""
+        with self.sqlite_engine.connect() as sqlite_conn:
+            result = sqlite_conn.execute(text("""
+                SELECT * FROM salary_cycles
+                WHERE synced_at IS NULL
+                ORDER BY created_at
+                LIMIT 1000
+            """))
+            rows = [dict(row._mapping) for row in result]
+
+        if not rows:
+            return 0
+
+        synced_ids = []
+        with self.postgres_engine.connect() as pg_conn:
+            for rec in rows:
+                try:
+                    converted = TypeConverter.convert_dict_from_sqlite(rec, SALARY_CYCLE_COLUMN_TYPES)
+
+                    pg_conn.execute(text("""
+                        INSERT INTO salary_cycles (
+                            cycle_id, employee_id, client_id, start_date, end_date, status,
+                            gross_salary, total_advances, net_salary, paid_at, paid_by,
+                            payment_note, rate_snapshot, pay_type_snap, full_day_mins,
+                            created_at, updated_at
+                        ) VALUES (
+                            :cycle_id, :employee_id, :client_id, :start_date, :end_date, :status,
+                            :gross_salary, :total_advances, :net_salary, :paid_at, :paid_by,
+                            :payment_note, :rate_snapshot, :pay_type_snap, :full_day_mins,
+                            :created_at, :updated_at
+                        )
+                        ON CONFLICT (cycle_id) DO UPDATE SET
+                            start_date = EXCLUDED.start_date,
+                            end_date = EXCLUDED.end_date,
+                            status = EXCLUDED.status,
+                            gross_salary = EXCLUDED.gross_salary,
+                            total_advances = EXCLUDED.total_advances,
+                            net_salary = EXCLUDED.net_salary,
+                            paid_at = EXCLUDED.paid_at,
+                            paid_by = EXCLUDED.paid_by,
+                            payment_note = EXCLUDED.payment_note,
+                            rate_snapshot = EXCLUDED.rate_snapshot,
+                            pay_type_snap = EXCLUDED.pay_type_snap,
+                            full_day_mins = EXCLUDED.full_day_mins,
+                            updated_at = EXCLUDED.updated_at,
+                            synced_at = CURRENT_TIMESTAMP
+                    """), converted)
+                    pg_conn.commit()
+                    synced_ids.append(rec['cycle_id'])
+                except Exception as e:
+                    pg_conn.rollback()
+                    logger.error(f"[SyncService] Failed to sync salary cycle {rec.get('cycle_id')}: {e}")
+
+        self._mark_as_synced('salary_cycles', 'cycle_id', synced_ids)
+        return len(synced_ids)
+
+    def _sync_employee_attendance(self):
+        """Sync attendance records from SQLite to PostgreSQL"""
+        with self.sqlite_engine.connect() as sqlite_conn:
+            result = sqlite_conn.execute(text("""
+                SELECT * FROM employee_attendance
+                WHERE synced_at IS NULL
+                ORDER BY created_at
+                LIMIT 1000
+            """))
+            rows = [dict(row._mapping) for row in result]
+
+        if not rows:
+            return 0
+
+        synced_ids = []
+        with self.postgres_engine.connect() as pg_conn:
+            for rec in rows:
+                try:
+                    converted = TypeConverter.convert_dict_from_sqlite(rec, EMPLOYEE_ATTENDANCE_COLUMN_TYPES)
+
+                    pg_conn.execute(text("""
+                        INSERT INTO employee_attendance (
+                            attendance_id, employee_id, client_id, work_date, check_in, check_out,
+                            total_minutes, status, reason, auto_ot_minutes, approved_ot_minutes,
+                            marked_by, notes, created_at, updated_at
+                        ) VALUES (
+                            :attendance_id, :employee_id, :client_id, :work_date, :check_in, :check_out,
+                            :total_minutes, :status, :reason, :auto_ot_minutes, :approved_ot_minutes,
+                            :marked_by, :notes, :created_at, :updated_at
+                        )
+                        ON CONFLICT (attendance_id) DO UPDATE SET
+                            work_date = EXCLUDED.work_date,
+                            check_in = EXCLUDED.check_in,
+                            check_out = EXCLUDED.check_out,
+                            total_minutes = EXCLUDED.total_minutes,
+                            status = EXCLUDED.status,
+                            reason = EXCLUDED.reason,
+                            auto_ot_minutes = EXCLUDED.auto_ot_minutes,
+                            approved_ot_minutes = EXCLUDED.approved_ot_minutes,
+                            notes = EXCLUDED.notes,
+                            updated_at = EXCLUDED.updated_at,
+                            synced_at = CURRENT_TIMESTAMP
+                    """), converted)
+                    pg_conn.commit()
+                    synced_ids.append(rec['attendance_id'])
+                except Exception as e:
+                    pg_conn.rollback()
+                    logger.error(f"[SyncService] Failed to sync attendance {rec.get('attendance_id')}: {e}")
+
+        self._mark_as_synced('employee_attendance', 'attendance_id', synced_ids)
+        return len(synced_ids)
+
+    def _sync_salary_advances(self):
+        """Sync salary advances from SQLite to PostgreSQL"""
+        with self.sqlite_engine.connect() as sqlite_conn:
+            result = sqlite_conn.execute(text("""
+                SELECT * FROM salary_advances
+                WHERE synced_at IS NULL
+                ORDER BY created_at
+                LIMIT 1000
+            """))
+            rows = [dict(row._mapping) for row in result]
+
+        if not rows:
+            return 0
+
+        synced_ids = []
+        with self.postgres_engine.connect() as pg_conn:
+            for rec in rows:
+                try:
+                    converted = TypeConverter.convert_dict_from_sqlite(rec, SALARY_ADVANCE_COLUMN_TYPES)
+
+                    pg_conn.execute(text("""
+                        INSERT INTO salary_advances (
+                            advance_id, employee_id, client_id, cycle_id, amount, advance_date,
+                            notes, recorded_by, created_at
+                        ) VALUES (
+                            :advance_id, :employee_id, :client_id, :cycle_id, :amount, :advance_date,
+                            :notes, :recorded_by, :created_at
+                        )
+                        ON CONFLICT (advance_id) DO UPDATE SET
+                            amount = EXCLUDED.amount,
+                            advance_date = EXCLUDED.advance_date,
+                            notes = EXCLUDED.notes,
+                            synced_at = CURRENT_TIMESTAMP
+                    """), converted)
+                    pg_conn.commit()
+                    synced_ids.append(rec['advance_id'])
+                except Exception as e:
+                    pg_conn.rollback()
+                    logger.error(f"[SyncService] Failed to sync salary advance {rec.get('advance_id')}: {e}")
+
+        self._mark_as_synced('salary_advances', 'advance_id', synced_ids)
+        return len(synced_ids)
+
     # ==========================================
     # DOWNLOAD SYNC METHODS (Supabase → SQLite)
     # ==========================================
@@ -917,7 +1161,11 @@ class SyncService:
                     "expense_summaries": 0,
                     "bulk_orders": 0,
                     "bulk_order_items": 0,
-                    "reports": 0
+                    "reports": 0,
+                    "employees": 0,
+                    "salary_cycles": 0,
+                    "employee_attendance": 0,
+                    "salary_advances": 0
                 },
                 "errors": []
             }
@@ -936,6 +1184,10 @@ class SyncService:
                 ("bulk_orders", self._download_bulk_orders),
                 ("bulk_order_items", self._download_bulk_order_items),
                 ("reports", self._download_reports),
+                ("employees", self._download_employees),
+                ("salary_cycles", self._download_salary_cycles),
+                ("employee_attendance", self._download_employee_attendance),
+                ("salary_advances", self._download_salary_advances),
             ]
 
             for table_name, download_func in tables:
@@ -997,7 +1249,11 @@ class SyncService:
                     "expense_summaries": 0,
                     "bulk_orders": 0,
                     "bulk_order_items": 0,
-                    "reports": 0
+                    "reports": 0,
+                    "employees": 0,
+                    "salary_cycles": 0,
+                    "employee_attendance": 0,
+                    "salary_advances": 0
                 },
                 "errors": []
             }
@@ -1013,6 +1269,10 @@ class SyncService:
                 ("bulk_orders", self._download_bulk_orders),
                 ("bulk_order_items", self._download_bulk_order_items),
                 ("reports", self._download_reports),
+                ("employees", self._download_employees),
+                ("salary_cycles", self._download_salary_cycles),
+                ("employee_attendance", self._download_employee_attendance),
+                ("salary_advances", self._download_salary_advances),
             ]
 
             for table_name, download_func in tables:
@@ -1496,6 +1756,117 @@ class SyncService:
                    'created_at', 'updated_at', 'synced_at']
 
         return self._upsert_to_sqlite('report', converted_records, 'report_id', columns)
+
+    def _download_employees(self, client_id, last_download):
+        """Download employees from Supabase to SQLite"""
+        query = "SELECT * FROM employees WHERE client_id = :client_id"
+        if last_download:
+            query += " AND updated_at > :last_download"
+        query += " ORDER BY created_at LIMIT 5000"
+
+        params = {"client_id": client_id}
+        if last_download:
+            params["last_download"] = last_download
+
+        with self.postgres_engine.connect() as pg_conn:
+            result = pg_conn.execute(text(query), params)
+            records = [dict(row._mapping) for row in result]
+
+        if not records:
+            return 0
+
+        converted_records = [
+            TypeConverter.convert_dict_to_sqlite(r, EMPLOYEE_COLUMN_TYPES) for r in records
+        ]
+        columns = ['employee_id', 'client_id', 'branch_id', 'name', 'phone', 'pay_type', 'rate',
+                   'is_active', 'ot_multiplier', 'created_by', 'created_at', 'updated_at', 'synced_at']
+
+        return self._upsert_to_sqlite('employees', converted_records, 'employee_id', columns)
+
+    def _download_salary_cycles(self, client_id, last_download):
+        """Download salary cycles from Supabase to SQLite"""
+        query = "SELECT * FROM salary_cycles WHERE client_id = :client_id"
+        if last_download:
+            query += " AND updated_at > :last_download"
+        query += " ORDER BY created_at LIMIT 5000"
+
+        params = {"client_id": client_id}
+        if last_download:
+            params["last_download"] = last_download
+
+        with self.postgres_engine.connect() as pg_conn:
+            result = pg_conn.execute(text(query), params)
+            records = [dict(row._mapping) for row in result]
+
+        if not records:
+            return 0
+
+        converted_records = [
+            TypeConverter.convert_dict_to_sqlite(r, SALARY_CYCLE_COLUMN_TYPES) for r in records
+        ]
+        columns = ['cycle_id', 'employee_id', 'client_id', 'start_date', 'end_date', 'status',
+                   'gross_salary', 'total_advances', 'net_salary', 'paid_at', 'paid_by',
+                   'payment_note', 'rate_snapshot', 'pay_type_snap', 'full_day_mins',
+                   'created_at', 'updated_at', 'synced_at']
+
+        return self._upsert_to_sqlite('salary_cycles', converted_records, 'cycle_id', columns)
+
+    def _download_employee_attendance(self, client_id, last_download):
+        """Download attendance records from Supabase to SQLite"""
+        query = "SELECT * FROM employee_attendance WHERE client_id = :client_id"
+        if last_download:
+            query += " AND updated_at > :last_download"
+        query += " ORDER BY created_at LIMIT 5000"
+
+        params = {"client_id": client_id}
+        if last_download:
+            params["last_download"] = last_download
+
+        with self.postgres_engine.connect() as pg_conn:
+            result = pg_conn.execute(text(query), params)
+            records = [dict(row._mapping) for row in result]
+
+        if not records:
+            return 0
+
+        converted_records = [
+            TypeConverter.convert_dict_to_sqlite(r, EMPLOYEE_ATTENDANCE_COLUMN_TYPES) for r in records
+        ]
+        columns = ['attendance_id', 'employee_id', 'client_id', 'work_date', 'check_in', 'check_out',
+                   'total_minutes', 'status', 'reason', 'auto_ot_minutes', 'approved_ot_minutes',
+                   'marked_by', 'notes', 'created_at', 'updated_at', 'synced_at']
+
+        return self._upsert_to_sqlite('employee_attendance', converted_records, 'attendance_id', columns)
+
+    def _download_salary_advances(self, client_id, last_download):
+        """Download salary advances from Supabase to SQLite.
+
+        Advances are append-only and carry no maintained `updated_at`, so the
+        incremental filter uses `created_at` instead.
+        """
+        query = "SELECT * FROM salary_advances WHERE client_id = :client_id"
+        if last_download:
+            query += " AND created_at > :last_download"
+        query += " ORDER BY created_at LIMIT 5000"
+
+        params = {"client_id": client_id}
+        if last_download:
+            params["last_download"] = last_download
+
+        with self.postgres_engine.connect() as pg_conn:
+            result = pg_conn.execute(text(query), params)
+            records = [dict(row._mapping) for row in result]
+
+        if not records:
+            return 0
+
+        converted_records = [
+            TypeConverter.convert_dict_to_sqlite(r, SALARY_ADVANCE_COLUMN_TYPES) for r in records
+        ]
+        columns = ['advance_id', 'employee_id', 'client_id', 'cycle_id', 'amount', 'advance_date',
+                   'notes', 'recorded_by', 'created_at', 'updated_at', 'synced_at']
+
+        return self._upsert_to_sqlite('salary_advances', converted_records, 'advance_id', columns)
 
 
 # Global sync service instance

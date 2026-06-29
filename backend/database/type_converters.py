@@ -342,6 +342,66 @@ NOTES_COLUMN_TYPES = {
     'synced_at': 'TIMESTAMP'
 }
 
+# Employee column types (salary/attendance module)
+EMPLOYEE_COLUMN_TYPES = {
+    'employee_id': 'UUID',
+    'client_id': 'UUID',
+    'branch_id': 'UUID',
+    'created_by': 'UUID',
+    'rate': 'NUMERIC',
+    'ot_multiplier': 'NUMERIC',
+    'is_active': 'BOOLEAN',
+    'created_at': 'TIMESTAMP',
+    'updated_at': 'TIMESTAMP',
+    'synced_at': 'TIMESTAMP'
+}
+
+# Employee Attendance column types
+EMPLOYEE_ATTENDANCE_COLUMN_TYPES = {
+    'attendance_id': 'UUID',
+    'employee_id': 'UUID',
+    'client_id': 'UUID',
+    'marked_by': 'UUID',
+    'work_date': 'DATE',
+    'check_in': 'TIMESTAMP',
+    'check_out': 'TIMESTAMP',
+    'created_at': 'TIMESTAMP',
+    'updated_at': 'TIMESTAMP',
+    'synced_at': 'TIMESTAMP'
+}
+
+# Salary Cycle column types
+SALARY_CYCLE_COLUMN_TYPES = {
+    'cycle_id': 'UUID',
+    'employee_id': 'UUID',
+    'client_id': 'UUID',
+    'paid_by': 'UUID',
+    'start_date': 'DATE',
+    'end_date': 'DATE',
+    'gross_salary': 'NUMERIC',
+    'total_advances': 'NUMERIC',
+    'net_salary': 'NUMERIC',
+    'rate_snapshot': 'NUMERIC',
+    'paid_at': 'TIMESTAMP',
+    'created_at': 'TIMESTAMP',
+    'updated_at': 'TIMESTAMP',
+    'synced_at': 'TIMESTAMP'
+}
+
+# Salary Advance column types
+SALARY_ADVANCE_COLUMN_TYPES = {
+    'advance_id': 'UUID',
+    'employee_id': 'UUID',
+    'client_id': 'UUID',
+    'cycle_id': 'UUID',
+    'recorded_by': 'UUID',
+    'amount': 'NUMERIC',
+    'advance_date': 'DATE',
+    'created_at': 'TIMESTAMP',
+    'updated_at': 'TIMESTAMP',
+    'synced_at': 'TIMESTAMP'
+}
+
 # Sync Metadata column types
 SYNC_METADATA_COLUMN_TYPES = {
     'id': 'UUID',
@@ -377,6 +437,10 @@ ALL_COLUMN_TYPES = {
     'user_permissions': USER_PERMISSION_COLUMN_TYPES,
     'report': REPORT_COLUMN_TYPES,
     'notes': NOTES_COLUMN_TYPES,
+    'employees': EMPLOYEE_COLUMN_TYPES,
+    'employee_attendance': EMPLOYEE_ATTENDANCE_COLUMN_TYPES,
+    'salary_cycles': SALARY_CYCLE_COLUMN_TYPES,
+    'salary_advances': SALARY_ADVANCE_COLUMN_TYPES,
     'sync_metadata': SYNC_METADATA_COLUMN_TYPES,
     'sync_log': SYNC_LOG_COLUMN_TYPES
 }

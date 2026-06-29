@@ -471,7 +471,7 @@ def update_employee(employee_id):
 
     db.session.execute(
         text(
-            f"UPDATE employees SET {set_clause}, updated_at = :updated_at "
+            f"UPDATE employees SET {set_clause}, updated_at = :updated_at, synced_at = NULL "
             f"WHERE employee_id = :eid AND client_id = :cid"
         ),
         updates
@@ -493,7 +493,7 @@ def delete_employee(employee_id):
 
     db.session.execute(
         text(
-            "UPDATE employees SET is_active = FALSE, updated_at = :now "
+            "UPDATE employees SET is_active = FALSE, updated_at = :now, synced_at = NULL "
             "WHERE employee_id = :eid AND client_id = :cid"
         ),
         {'now': _now_iso(), 'eid': employee_id, 'cid': client_id}
@@ -678,7 +678,7 @@ def checkout(employee_id):
             "UPDATE employee_attendance "
             "SET check_out = :check_out, total_minutes = :total_minutes, "
             "    auto_ot_minutes = :auto_ot, "
-            "    updated_at = :now "
+            "    updated_at = :now, synced_at = NULL "
             "WHERE attendance_id = :aid AND client_id = :cid"
         ),
         {
@@ -1044,7 +1044,7 @@ def create_cycle(employee_id):
         return jsonify({
             'success': False,
             'error': 'A salary cycle already exists that overlaps with the requested date range.',
-            'conflicting_cycle_id': overlap['cycle_id'],
+            'conflicting_cycle_id': overlap._mapping['cycle_id'],
         }), 409
 
     cycle_id = str(uuid.uuid4())

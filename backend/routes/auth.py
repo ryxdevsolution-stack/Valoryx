@@ -105,18 +105,21 @@ def login():
     try:
         data = request.get_json()
 
-        # Validate input
-        email = data.get('email')
+        # Validate input. The login field accepts either the user's email
+        # or their business name (client_entry.client_name), so treat it as
+        # a generic identifier. `email` is kept as the JSON key for backward
+        # compatibility with existing clients.
+        identifier = (data.get('email') or data.get('username') or '').strip()
         password = data.get('password')
 
-        if not email or not password:
-            return jsonify({'error': 'Email and password required'}), 400
+        if not identifier or not password:
+            return jsonify({'error': 'Email/username and password required'}), 400
 
         # Rate-limit by trusted IP (10 failures / 5 min) AND by account
         # (5 failures / 5 min) so neither IP rotation nor header spoofing
         # bypasses the brute-force brake.
         client_ip = get_client_ip()
-        ip_key, email_key = _login_keys(client_ip, email)
+        ip_key, email_key = _login_keys(client_ip, identifier)
         ip_allowed, ip_retry = _check_login_rate_limit(ip_key, LOGIN_MAX_FAILURES)
         email_allowed, email_retry = _check_login_rate_limit(
             email_key, LOGIN_MAX_FAILURES_PER_EMAIL
@@ -127,12 +130,23 @@ def login():
                 'error': f'Too many failed login attempts. Try again in {retry_after} seconds.'
             }), 429
 
-        # OPTIMIZED: Single JOIN query to get User + Client + Branch together
+        # OPTIMIZED: Single JOIN query to get User + Client + Branch together.
+        # Match on email OR business name (case-insensitive). Business names
+        # are not unique and a business may have several users, so prefer the
+        # owner/super_admin, then the oldest account, for a deterministic pick.
+        from sqlalchemy import or_, func
         result = db.session.query(User, ClientEntry, Branch).join(
             ClientEntry, User.client_id == ClientEntry.client_id
         ).outerjoin(
             Branch, User.branch_id == Branch.branch_id
-        ).filter(User.email == email).first()
+        ).filter(
+            or_(
+                func.lower(User.email) == identifier.lower(),
+                func.lower(ClientEntry.client_name) == identifier.lower(),
+            )
+        ).order_by(
+            User.is_super_admin.desc(), User.created_at.asc()
+        ).first()
 
         if not result:
             # Burn the same bcrypt time as a real check so response timing
