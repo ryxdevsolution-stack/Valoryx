@@ -1054,11 +1054,11 @@ class SyncService:
                         INSERT INTO employee_attendance (
                             attendance_id, employee_id, client_id, work_date, check_in, check_out,
                             total_minutes, status, reason, auto_ot_minutes, approved_ot_minutes,
-                            marked_by, notes, created_at, updated_at
+                            marked_by, notes, is_active, deleted_at, created_at, updated_at
                         ) VALUES (
                             :attendance_id, :employee_id, :client_id, :work_date, :check_in, :check_out,
                             :total_minutes, :status, :reason, :auto_ot_minutes, :approved_ot_minutes,
-                            :marked_by, :notes, :created_at, :updated_at
+                            :marked_by, :notes, :is_active, :deleted_at, :created_at, :updated_at
                         )
                         ON CONFLICT (attendance_id) DO UPDATE SET
                             work_date = EXCLUDED.work_date,
@@ -1070,6 +1070,8 @@ class SyncService:
                             auto_ot_minutes = EXCLUDED.auto_ot_minutes,
                             approved_ot_minutes = EXCLUDED.approved_ot_minutes,
                             notes = EXCLUDED.notes,
+                            is_active = EXCLUDED.is_active,
+                            deleted_at = EXCLUDED.deleted_at,
                             updated_at = EXCLUDED.updated_at,
                             synced_at = CURRENT_TIMESTAMP
                     """), converted)
@@ -1834,7 +1836,7 @@ class SyncService:
         ]
         columns = ['attendance_id', 'employee_id', 'client_id', 'work_date', 'check_in', 'check_out',
                    'total_minutes', 'status', 'reason', 'auto_ot_minutes', 'approved_ot_minutes',
-                   'marked_by', 'notes', 'created_at', 'updated_at', 'synced_at']
+                   'marked_by', 'notes', 'is_active', 'deleted_at', 'created_at', 'updated_at', 'synced_at']
 
         return self._upsert_to_sqlite('employee_attendance', converted_records, 'attendance_id', columns)
 

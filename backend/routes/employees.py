@@ -225,6 +225,7 @@ def _calculate_cycle_amounts(cycle: dict):
             "                         THEN approved_ot_minutes ELSE 0 END), 0) AS day_ot_minutes "
             "FROM employee_attendance "
             "WHERE client_id = :client AND employee_id = :eid "
+            "  AND is_active = TRUE "
             "  AND work_date BETWEEN :start AND :end "
             "  AND (total_minutes IS NOT NULL OR status != 'present') "
             "GROUP BY work_date "
@@ -553,6 +554,7 @@ def checkin(employee_id):
         text(
             "SELECT attendance_id FROM employee_attendance "
             "WHERE employee_id = :eid AND client_id = :cid AND check_out IS NULL "
+            "  AND is_active = TRUE "
             "LIMIT 1"
         ),
         {'eid': employee_id, 'cid': client_id}
@@ -629,6 +631,7 @@ def checkout(employee_id):
         text(
             "SELECT * FROM employee_attendance "
             "WHERE employee_id = :eid AND client_id = :cid AND check_out IS NULL "
+            "  AND is_active = TRUE "
             "ORDER BY check_in DESC LIMIT 1"
         ),
         {'eid': employee_id, 'cid': client_id}
@@ -771,6 +774,7 @@ def mark_day_off(employee_id):
         text(
             "SELECT attendance_id, status FROM employee_attendance "
             "WHERE employee_id = :eid AND client_id = :cid AND work_date = :wd "
+            "  AND is_active = TRUE "
             "LIMIT 1"
         ),
         {'eid': employee_id, 'cid': client_id, 'wd': str(work_date)}
@@ -847,6 +851,7 @@ def get_attendance_log(employee_id):
         text(
             "SELECT * FROM employee_attendance "
             "WHERE employee_id = :eid AND client_id = :cid "
+            "  AND is_active = TRUE "
             "  AND work_date BETWEEN :from_d AND :to_d "
             "ORDER BY work_date DESC, check_in DESC"
         ),
@@ -894,7 +899,7 @@ def edit_attendance(attendance_id):
     row = db.session.execute(
         text(
             "SELECT * FROM employee_attendance "
-            "WHERE attendance_id = :aid AND client_id = :cid"
+            "WHERE attendance_id = :aid AND client_id = :cid AND is_active = TRUE"
         ),
         {'aid': attendance_id, 'cid': client_id}
     ).fetchone()
@@ -951,7 +956,7 @@ def edit_attendance(attendance_id):
     updates['aid'] = attendance_id
 
     db.session.execute(
-        text(f"UPDATE employee_attendance SET {set_clause}, updated_at = :updated_at WHERE attendance_id = :aid"),
+        text(f"UPDATE employee_attendance SET {set_clause}, updated_at = :updated_at, synced_at = NULL WHERE attendance_id = :aid"),
         updates
     )
     db.session.commit()
@@ -971,7 +976,7 @@ def delete_attendance(attendance_id):
     row = db.session.execute(
         text(
             "SELECT attendance_id FROM employee_attendance "
-            "WHERE attendance_id = :aid AND client_id = :cid"
+            "WHERE attendance_id = :aid AND client_id = :cid AND is_active = TRUE"
         ),
         {'aid': attendance_id, 'cid': client_id}
     ).fetchone()
@@ -979,8 +984,12 @@ def delete_attendance(attendance_id):
         return jsonify({'success': False, 'error': 'Attendance record not found'}), 404
 
     db.session.execute(
-        text("DELETE FROM employee_attendance WHERE attendance_id = :aid AND client_id = :cid"),
-        {'aid': attendance_id, 'cid': client_id}
+        text(
+            "UPDATE employee_attendance "
+            "SET is_active = FALSE, deleted_at = :now, updated_at = :now, synced_at = NULL "
+            "WHERE attendance_id = :aid AND client_id = :cid"
+        ),
+        {'now': _now_iso(), 'aid': attendance_id, 'cid': client_id}
     )
     db.session.commit()
     return jsonify({'success': True, 'message': 'Attendance record deleted'}), 200
@@ -1173,7 +1182,7 @@ def edit_cycle(employee_id, cycle_id):
     params = {**safe_updates, 'cid': cycle_id, 'eid': employee_id, 'client_id': client_id, 'now': _now_iso()}
     db.session.execute(
         text(
-            f"UPDATE salary_cycles SET {set_clause}, updated_at = :now "
+            f"UPDATE salary_cycles SET {set_clause}, updated_at = :now, synced_at = NULL "
             "WHERE cycle_id = :cid AND employee_id = :eid AND client_id = :client_id "
             "  AND status = 'open'"
         ),
@@ -1203,7 +1212,7 @@ def calculate_cycle(employee_id, cycle_id):
         text(
             "UPDATE salary_cycles "
             "SET gross_salary = :gross, total_advances = :adv, net_salary = :net, "
-            "    updated_at = :now "
+            "    updated_at = :now, synced_at = NULL "
             "WHERE cycle_id = :cid"
         ),
         {
@@ -1249,7 +1258,7 @@ def mark_cycle_paid(employee_id, cycle_id):
             "UPDATE salary_cycles "
             "SET status = 'paid', gross_salary = :gross, total_advances = :adv, "
             "    net_salary = :net, paid_at = :paid_at, paid_by = :paid_by, "
-            "    payment_note = :note, updated_at = :now "
+            "    payment_note = :note, updated_at = :now, synced_at = NULL "
             "WHERE cycle_id = :cid AND status = 'open'"
         ),
         {
@@ -1356,6 +1365,7 @@ def payroll_timeseries():
             "JOIN employees e ON e.employee_id = ea.employee_id "
             "                AND e.client_id = ea.client_id "
             "WHERE ea.client_id = :cid "
+            "  AND ea.is_active = TRUE "
             "  AND ea.work_date >= :from_d "
             "  AND (ea.total_minutes IS NOT NULL OR ea.status != 'present') "
             f"GROUP BY {month_expr_attend}"
@@ -1481,10 +1491,12 @@ def payroll_summary():
             "      AND advance_date BETWEEN :from_d AND :to_d) AS advances_paid_in_period, "
             "  (SELECT COUNT(*) FROM employee_attendance "
             "    WHERE client_id = :cid "
+            "      AND is_active = TRUE "
             "      AND status IN ('paid_leave', 'unpaid_leave', 'holiday', 'weekly_off') "
             "      AND work_date BETWEEN :from_d AND :to_d) AS leave_days_period, "
             "  (SELECT COUNT(*) FROM employee_attendance "
             "    WHERE client_id = :cid "
+            "      AND is_active = TRUE "
             "      AND status = 'absent' "
             "      AND work_date BETWEEN :from_d AND :to_d) AS absent_days_period "
         ),
@@ -1590,7 +1602,7 @@ def record_advance(employee_id):
         text(
             "UPDATE salary_cycles "
             "SET gross_salary = :gross, total_advances = :adv, net_salary = :net, "
-            "    updated_at = :now "
+            "    updated_at = :now, synced_at = NULL "
             "WHERE cycle_id = :cid"
         ),
         {'gross': gross, 'adv': total_advances, 'net': net, 'now': now, 'cid': cycle_id}
@@ -1673,6 +1685,7 @@ def employee_history(employee_id):
             "       COALESCE(SUM(total_minutes), 0) AS total_minutes "
             "FROM employee_attendance "
             "WHERE employee_id = :eid AND client_id = :client "
+            "  AND is_active = TRUE "
             "  AND total_minutes IS NOT NULL"
         ),
         {'eid': employee_id, 'client': client_id}
@@ -1714,6 +1727,7 @@ def list_pending_ot(employee_id):
         text(
             "SELECT * FROM employee_attendance "
             "WHERE employee_id = :eid AND client_id = :cid "
+            "  AND is_active = TRUE "
             "  AND auto_ot_minutes > 0 "
             "  AND approved_ot_minutes IS NULL "
             "ORDER BY work_date DESC"
@@ -1748,6 +1762,7 @@ def approve_ot(attendance_id):
         text(
             "SELECT * FROM employee_attendance "
             "WHERE attendance_id = :aid AND client_id = :cid "
+            "  AND is_active = TRUE "
             "LIMIT 1"
         ),
         {'aid': attendance_id, 'cid': client_id}
@@ -1759,7 +1774,7 @@ def approve_ot(attendance_id):
         text(
             "UPDATE employee_attendance SET "
             "  approved_ot_minutes = :ot, "
-            "  updated_at = :now "
+            "  updated_at = :now, synced_at = NULL "
             "WHERE attendance_id = :aid AND client_id = :cid"
         ),
         {'ot': ot_mins_int, 'now': _now_iso(), 'aid': attendance_id, 'cid': client_id}
