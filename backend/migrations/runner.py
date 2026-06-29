@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 30
+CURRENT_SCHEMA_VERSION = 31
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -1747,6 +1747,43 @@ def _m030_salary_sync_columns(db):
     logging.info("[Migration] v30: salary/attendance sync columns added")
 
 
+def _m031_attendance_soft_delete(db):
+    """v31: Soft-delete for employee_attendance so deletions sync.
+
+    The sync engine is upsert-only (no tombstones), so a hard DELETE never
+    reaches the other side and the row resurrects on the next download. Mirror
+    the `employees` soft-delete pattern instead: flip `is_active` to FALSE and
+    stamp `deleted_at`, leaving the row to upload normally.
+
+      - `is_active`  BOOLEAN NOT NULL DEFAULT 1 — existing rows backfilled active
+        (DEFAULT 1 is rewritten to DEFAULT TRUE on Postgres by _normalize_col_def).
+      - `deleted_at` TIMESTAMP NULL — when the soft delete happened.
+
+    Idempotent and engine-agnostic, exactly like _m030.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return  # table doesn't exist yet — skip
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    _add_col('employee_attendance', 'is_active', 'BOOLEAN NOT NULL DEFAULT 1')
+    _add_col('employee_attendance', 'deleted_at', 'TIMESTAMP NULL')
+
+    db.session.commit()
+    logging.info("[Migration] v31: employee_attendance soft-delete columns added")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -1779,6 +1816,7 @@ MIGRATIONS = [
     (28, _m028_negotiable_budget_period),
     (29, _m029_regional_customization),
     (30, _m030_salary_sync_columns),
+    (31, _m031_attendance_soft_delete),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

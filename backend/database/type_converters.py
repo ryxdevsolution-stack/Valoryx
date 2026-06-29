@@ -365,8 +365,10 @@ EMPLOYEE_ATTENDANCE_COLUMN_TYPES = {
     'work_date': 'DATE',
     'check_in': 'TIMESTAMP',
     'check_out': 'TIMESTAMP',
+    'is_active': 'BOOLEAN',
     'created_at': 'TIMESTAMP',
     'updated_at': 'TIMESTAMP',
+    'deleted_at': 'TIMESTAMP',
     'synced_at': 'TIMESTAMP'
 }
 
