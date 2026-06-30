@@ -59,6 +59,7 @@ jobs:
         shell: bash
         env:
           BACKEND_ENV_LOCAL_B64: ${{ secrets.BACKEND_ENV_LOCAL_B64 }}
+          DESKTOP_OAUTH_SECRET: ${{ secrets.DESKTOP_OAUTH_SECRET }}
         run: |
           if [ -z "${BACKEND_ENV_LOCAL_B64}" ]; then
             echo "ERROR: BACKEND_ENV_LOCAL_B64 secret is not set in repo settings."
@@ -67,6 +68,13 @@ jobs:
             exit 1
           fi
           echo "${BACKEND_ENV_LOCAL_B64}" | base64 -d > backend/env.local
+          # Append the desktop Google-login shared secret if provided as its own
+          # repo secret (simpler than re-encoding the whole env.local blob). Must
+          # match the value in the cloud server's .env. Skipped if already present.
+          if [ -n "${DESKTOP_OAUTH_SECRET}" ] && ! grep -q "^DESKTOP_OAUTH_SECRET=" backend/env.local; then
+            printf '\nDESKTOP_OAUTH_SECRET=%s\n' "${DESKTOP_OAUTH_SECRET}" >> backend/env.local
+            echo "OK: appended DESKTOP_OAUTH_SECRET to env.local"
+          fi
           # Cheap sanity check without printing values
           for key in JWT_SECRET SECRET_KEY DB_URL; do
             if ! grep -q "^${key}=" backend/env.local; then
@@ -74,7 +82,11 @@ jobs:
               exit 1
             fi
           done
-          echo "OK: backend/env.local materialized with required keys"
+          if grep -q "^DESKTOP_OAUTH_SECRET=" backend/env.local; then
+            echo "OK: env.local materialized (desktop Google login ENABLED)"
+          else
+            echo "WARN: env.local has no DESKTOP_OAUTH_SECRET — desktop Google login will be DISABLED (501)."
+          fi
 
       - name: Build embedded Python runtime
         run: npm run build:python
