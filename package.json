@@ -79,7 +79,7 @@
         }
       ],
       "icon": "electron/resources/icon.ico",
-      "artifactName": "Valoryx-Setup-${version}.${ext}",
+      "artifactName": "Valoryx-Setup.${ext}",
       "signAndEditExecutable": true
     },
     "publish": [

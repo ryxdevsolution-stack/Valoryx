@@ -50,8 +50,11 @@ export const siteConfig = {
   description: 'GST-compliant invoicing, real-time inventory, and powerful analytics. Everything you need to run your retail or service business efficiently.',
   logoPath: `${import.meta.env.BASE_URL}valoryx-logo.png`,
   appUrl: 'app.ryxbilling.com',
+  // Version-less filename so this ALWAYS points at the newest release. The
+  // installer is built with artifactName "Valoryx-Setup.exe" (no version), so
+  // /releases/latest/download/Valoryx-Setup.exe never 404s on a new release.
   downloadUrl:
-    'https://github.com/ryxdevsolution-stack/Valoryx/releases/latest/download/Valoryx-Setup-1.1.12.exe',
+    'https://github.com/ryxdevsolution-stack/Valoryx/releases/latest/download/Valoryx-Setup.exe',
 
   // Routes
   routes: {
