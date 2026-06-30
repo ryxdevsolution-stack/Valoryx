@@ -24,7 +24,7 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
   const { client } = useClient();
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<'success' | 'error' | null>(null);
+  const [syncResult, setSyncResult] = useState<'success' | 'partial' | 'error' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<string | null>(null);
 
@@ -60,19 +60,30 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
         ? await api.post('/sync/full', { client_id: clientId })
         : await api.post('/sync/trigger?type=upload');
 
-      if (response.data.status === 'success' || response.data.status === 'completed') {
+      const data = response.data;
+      // Both directions come back in one response from /sync/full.
+      const up = data.upload ?? data;
+      const down = data.download ?? {};
+      const uploaded = up?.tables_synced ?? data.tables_synced ?? 0;
+      const downloaded = down?.tables_synced ?? 0;
+      const summary = `Up: ${uploaded} tables, Down: ${downloaded} tables`;
+
+      if (data.status === 'success' || data.status === 'completed') {
         setSyncResult('success');
-        // Build summary from response
-        const uploaded = response.data.upload?.tables_synced || response.data.tables_synced || 0;
-        const downloaded = response.data.download?.tables_synced || 0;
-        setDetails(`Up: ${uploaded} tables, Down: ${downloaded} tables`);
-        setTimeout(() => {
-          setSyncResult(null);
-          setDetails(null);
-        }, 5000);
+        setDetails(summary);
+        setTimeout(() => { setSyncResult(null); setDetails(null); }, 5000);
+      } else if (data.status === 'partial') {
+        // One direction worked, the other didn't — surface which, not a blanket fail.
+        setSyncResult('partial');
+        const failedSide = up?.status !== 'success' ? 'upload' : 'download';
+        const reason = up?.status !== 'success'
+          ? (up?.error || up?.reason)
+          : (down?.error || down?.reason);
+        setDetails(summary);
+        setError(`${failedSide} incomplete${reason ? `: ${reason}` : ''}`);
       } else {
         setSyncResult('error');
-        setError(response.data.error || 'Sync failed');
+        setError(data.error || data.message || 'Sync failed');
       }
 
       await fetchStatus();
@@ -103,16 +114,19 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
       <button
         onClick={triggerSync}
         disabled={syncing}
-        title="Sync with cloud database"
         className={`
           relative p-2 rounded-lg transition-all
           ${syncing ? 'bg-blue-100 dark:bg-blue-900/30' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}
           ${syncResult === 'success' ? 'bg-green-100 dark:bg-green-900/30' : ''}
+          ${syncResult === 'partial' ? 'bg-amber-100 dark:bg-amber-900/30' : ''}
           ${syncResult === 'error' ? 'bg-red-100 dark:bg-red-900/30' : ''}
         `}
+        title={error || 'Sync with cloud database'}
       >
         {syncResult === 'success' ? (
           <Check className="w-4 h-4 text-green-600" />
+        ) : syncResult === 'partial' ? (
+          <AlertCircle className="w-4 h-4 text-amber-600" />
         ) : syncResult === 'error' ? (
           <AlertCircle className="w-4 h-4 text-red-600" />
         ) : (
@@ -143,9 +157,11 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
             ? 'bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300'
             : syncResult === 'success'
               ? 'bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300'
-              : syncResult === 'error'
-                ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
-                : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20'
+              : syncResult === 'partial'
+                ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
+                : syncResult === 'error'
+                  ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
+                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20'
           }
         `}
       >
@@ -158,6 +174,11 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
           <>
             <Check className="w-3.5 h-3.5" />
             Synced!
+          </>
+        ) : syncResult === 'partial' ? (
+          <>
+            <AlertCircle className="w-3.5 h-3.5" />
+            Partial
           </>
         ) : syncResult === 'error' ? (
           <>
