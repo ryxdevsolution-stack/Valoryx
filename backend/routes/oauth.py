@@ -12,6 +12,8 @@ import os
 import uuid
 import jwt
 import bcrypt
+import base64
+import hashlib
 import secrets
 import logging
 
@@ -38,13 +40,34 @@ GOOGLE_USERINFO_URL = 'https://www.googleapis.com/oauth2/v2/userinfo'
 GOOGLE_SCOPES = 'openid email profile'
 OAUTH_STATE_TTL = 600  # 10 minutes
 
+# Desktop handoff assertion: very short-lived because it travels through a
+# deep link (valoryx://) that other local processes could observe.
+DESKTOP_ASSERTION_TTL = 120  # 2 minutes
+# In-memory single-use nonce cache for desktop assertions {nonce: expiry_ts}.
+# The desktop (offline) backend is a single process, so an in-memory set is
+# sufficient; entries are pruned lazily and assertions also expire on their own.
+_desktop_nonce_cache: dict[str, float] = {}
 
-def _issue_state_token() -> str:
+
+def _pkce_challenge(verifier: str) -> str:
+    """Compute the PKCE S256 challenge for a verifier: base64url(sha256(v)),
+    padding stripped. Matches Node's crypto base64url encoding used by the
+    desktop app so the two sides agree."""
+    digest = hashlib.sha256(verifier.encode('utf-8')).digest()
+    return base64.urlsafe_b64encode(digest).rstrip(b'=').decode('ascii')
+
+
+def _issue_state_token(desktop: bool = False, challenge: str = '') -> str:
     """
     Issue a stateless, short-lived, HMAC-signed OAuth state token.
     Multi-process safe: any worker can verify a token issued by any other
     worker using only the shared JWT_SECRET. No Redis/DB required.
     The returned token acts as the `state` param sent to Google.
+
+    `desktop` records whether this flow originated from the desktop app, so the
+    callback can return a handoff assertion instead of a web session.
+    `challenge` is the PKCE S256 challenge that binds the eventual assertion to
+    the Electron process that started the flow (it alone holds the verifier).
 
     Replay protection is delegated to Google's single-use authorization
     code — Google rejects a code reused after first exchange.
@@ -56,22 +79,165 @@ def _issue_state_token() -> str:
         'iat': now,
         'exp': now + timedelta(seconds=OAUTH_STATE_TTL),
     }
+    if desktop:
+        payload['desktop'] = True
+    if challenge:
+        payload['challenge'] = challenge
     return jwt.encode(payload, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
 
 
-def _verify_state_token(token: str) -> bool:
-    """Verify an OAuth state token. Returns True only for our signed tokens."""
+def _verify_state_token(token: str):
+    """Verify an OAuth state token. Returns the decoded payload dict for a valid
+    token, or None otherwise."""
     if not token:
-        return False
+        return None
     try:
         payload = jwt.decode(token, Config.JWT_SECRET, algorithms=[Config.JWT_ALGORITHM])
     except jwt.ExpiredSignatureError:
         logger.info('OAuth state token expired')
-        return False
+        return None
     except jwt.InvalidTokenError as e:
         logger.warning('OAuth state token invalid: %s', e)
-        return False
-    return payload.get('purpose') == 'oauth_state'
+        return None
+    if payload.get('purpose') != 'oauth_state':
+        return None
+    return payload
+
+
+def _issue_desktop_assertion(email: str, google_id: str, name: str = '', avatar: str = '', challenge: str = '') -> str:
+    """Sign a short-lived handoff assertion that bridges a verified cloud Google
+    identity into the offline desktop app. Signed with the SHARED
+    DESKTOP_OAUTH_SECRET (not the per-install JWT_SECRET) so the local backend
+    can verify it offline. `challenge` is the PKCE S256 challenge — the local
+    backend will only accept the assertion alongside the matching verifier, so a
+    stolen deep link (assertion only) is useless."""
+    now = datetime.utcnow()
+    payload = {
+        'purpose': 'desktop_oauth',
+        'email': email,
+        'google_id': google_id,
+        'name': name or '',
+        'avatar': avatar or '',
+        'challenge': challenge or '',
+        'nonce': secrets.token_urlsafe(16),
+        'iat': now,
+        'exp': now + timedelta(seconds=DESKTOP_ASSERTION_TTL),
+    }
+    return jwt.encode(payload, Config.DESKTOP_OAUTH_SECRET, algorithm=Config.JWT_ALGORITHM)
+
+
+def _verify_desktop_assertion(token: str):
+    """Verify a desktop handoff assertion. Returns the payload for a valid,
+    unexpired, single-use token, or None. Enforces single-use via an in-memory
+    nonce cache."""
+    if not token or not Config.DESKTOP_OAUTH_SECRET:
+        return None
+    try:
+        payload = jwt.decode(
+            token,
+            Config.DESKTOP_OAUTH_SECRET,
+            algorithms=[Config.JWT_ALGORITHM],
+            options={'require': ['exp', 'purpose', 'nonce']},
+        )
+    except jwt.ExpiredSignatureError:
+        logger.info('Desktop assertion expired')
+        return None
+    except jwt.InvalidTokenError as e:
+        logger.warning('Desktop assertion invalid: %s', e)
+        return None
+    if payload.get('purpose') != 'desktop_oauth':
+        return None
+    # Single-use: reject a replayed nonce. Prune expired entries opportunistically.
+    import time as _time
+    now_ts = _time.time()
+    for n, exp_ts in list(_desktop_nonce_cache.items()):
+        if exp_ts < now_ts:
+            _desktop_nonce_cache.pop(n, None)
+    nonce = payload.get('nonce')
+    if not nonce or nonce in _desktop_nonce_cache:
+        logger.warning('Desktop assertion replayed or missing nonce')
+        return None
+    _desktop_nonce_cache[nonce] = payload.get('exp', now_ts + DESKTOP_ASSERTION_TTL)
+    return payload
+
+
+def _finalize_login(user, client, client_ip: str):
+    """Create a session, mint the local JWT, and build the {token,user,client}
+    response. Shared by the web Google callback and the desktop-login endpoint
+    so both issue identical login payloads with no duplication."""
+    session_id = secrets.token_urlsafe(32)
+    user_agent_str = request.headers.get('User-Agent', '')
+
+    session_record = UserSession(
+        session_id=session_id,
+        user_id=str(user.user_id),
+        client_id=str(user.client_id),
+        ip_address=client_ip[:45] if client_ip else None,
+        user_agent=user_agent_str[:512] if user_agent_str else None,
+        device=_parse_device(user_agent_str),
+        expires_at=datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS),
+        is_active=True,
+    )
+    db.session.add(session_record)
+    # Single-device policy: revoke other active sessions for this user.
+    enforce_session_limit(
+        user.user_id, session_id, Config.MAX_CONCURRENT_SESSIONS_PER_USER
+    )
+    try:
+        db.session.commit()
+    except Exception as exc:
+        db.session.rollback()
+        logger.error('OAuth session creation failed: %s', exc)
+        return jsonify({'success': False, 'error': 'Login failed. Please try again.'}), 500
+
+    permissions = get_user_permissions(str(user.user_id))
+    token_payload = {
+        'user_id': str(user.user_id),
+        'email': user.email,
+        'client_id': str(user.client_id),
+        'role': user.role,
+        'is_super_admin': user.is_super_admin or False,
+        'permissions': permissions,
+        'session_id': session_id,
+        'exp': datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS),
+    }
+    jwt_token = jwt.encode(token_payload, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
+
+    user.last_login = datetime.utcnow()
+    user.last_login_ip = client_ip
+    try:
+        db.session.commit()
+    except Exception:
+        db.session.rollback()
+
+    user_dict = user.to_dict()
+    user_dict['permissions'] = permissions  # to_dict() omits permissions; add here
+
+    return jsonify({
+        'success': True,
+        'token': jwt_token,
+        'user': user_dict,
+        'client': {
+            'client_id': str(client.client_id),
+            'client_name': client.client_name,
+            'logo_url': client.logo_url,
+            'address': client.address,
+            'phone': client.phone,
+            'email': client.email,
+            'gstin': client.gst_number,
+            'subscription_status': client.subscription_status,
+            'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
+            'trial_days_remaining': client.trial_days_remaining,
+            'subscription_end_date': client.subscription_end_date.isoformat() if client.subscription_end_date else None,
+            # Regional customization — drives the first-login setup wizard for OAuth signups
+            'country': getattr(client, 'country', None) or 'IN',
+            'currency_code': getattr(client, 'currency_code', None) or 'INR',
+            'currency_symbol': getattr(client, 'currency_symbol', None) or '₹',
+            'locale': getattr(client, 'locale', None) or 'en-IN',
+            'tax_config': getattr(client, 'tax_config', None) or DEFAULT_GST_CONFIG,
+            'setup_completed': getattr(client, 'setup_completed_at', None) is not None,
+        },
+    }), 200
 
 
 # ---------------------------------------------------------------------------
@@ -148,7 +314,11 @@ def google_authorize():
         return jsonify({'success': False, 'error': 'Google OAuth is not configured'}), 501
 
     # Stateless JWT-signed state token — multi-process safe without Redis/DB.
-    state = _issue_state_token()
+    # Carry the desktop flag + PKCE challenge so the callback can return a
+    # handoff assertion bound to the originating desktop process.
+    desktop = request.args.get('desktop') in ('1', 'true', 'valoryx')
+    challenge = (request.args.get('challenge') or '').strip() if desktop else ''
+    state = _issue_state_token(desktop=desktop, challenge=challenge)
 
     redirect_uri = _get_redirect_uri()
     if not redirect_uri:
@@ -190,8 +360,10 @@ def google_callback():
     # Replay protection is enforced by Google: authorization codes are
     # single-use and invalidated after the first exchange attempt.
     # ------------------------------------------------------------------
-    if not _verify_state_token(state):
+    state_payload = _verify_state_token(state)
+    if not state_payload:
         return jsonify({'success': False, 'error': 'Invalid or expired state (CSRF check failed)'}), 400
+    is_desktop = bool(state_payload.get('desktop'))
 
     # ------------------------------------------------------------------
     # Exchange code for Google access token
@@ -248,6 +420,14 @@ def google_callback():
 
     if not email or not google_id:
         return jsonify({'success': False, 'error': 'Could not retrieve user info from Google'}), 400
+
+    # Reject unverified Google emails. Without this, an account whose primary
+    # email is unverified could be auto-linked (below) to an existing Valoryx
+    # user that shares the same address — an account-takeover path. v2 userinfo
+    # returns `verified_email`; OIDC returns `email_verified`.
+    if google_user.get('verified_email') is not True and google_user.get('email_verified') is not True:
+        logger.warning('OAuth: rejected unverified Google email: %s', email)
+        return jsonify({'success': False, 'error': 'Your Google email address is not verified.'}), 400
 
     # ------------------------------------------------------------------
     # Find or create user
@@ -324,83 +504,89 @@ def google_callback():
         return jsonify({'success': False, 'error': 'Client account is inactive'}), 401
 
     # ------------------------------------------------------------------
-    # Create session record
+    # Desktop handoff: the cloud has now verified the Google identity. Instead
+    # of creating a web session, return a short-lived signed assertion the
+    # offline desktop app exchanges with its LOCAL backend for a local JWT.
     # ------------------------------------------------------------------
-    session_id = secrets.token_urlsafe(32)
-    ip_address = client_ip
-    user_agent_str = request.headers.get('User-Agent', '')
+    if is_desktop:
+        if not Config.DESKTOP_OAUTH_SECRET:
+            return jsonify({'success': False, 'error': 'Desktop sign-in is not configured'}), 501
+        # PKCE challenge is mandatory for desktop — it binds the assertion to the
+        # Electron process that holds the verifier, so a stolen deep link is useless.
+        challenge = (state_payload.get('challenge') or '').strip()
+        if not challenge:
+            return jsonify({'success': False, 'error': 'Invalid desktop sign-in request'}), 400
+        assertion = _issue_desktop_assertion(
+            email=user.email,
+            google_id=user.google_id or '',
+            name=user.full_name or '',
+            avatar=user.avatar_url or '',
+            challenge=challenge,
+        )
+        return jsonify({'success': True, 'desktop': True, 'assertion': assertion}), 200
 
-    session_record = UserSession(
-        session_id=session_id,
-        user_id=str(user.user_id),
-        client_id=str(user.client_id),
-        ip_address=ip_address[:45] if ip_address else None,
-        user_agent=user_agent_str[:512] if user_agent_str else None,
-        device=_parse_device(user_agent_str),
-        expires_at=datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS),
-        is_active=True,
-    )
-    db.session.add(session_record)
-    # Single-device policy: revoke other active sessions for this user.
-    enforce_session_limit(
-        user.user_id, session_id, Config.MAX_CONCURRENT_SESSIONS_PER_USER
-    )
-    try:
-        db.session.commit()
-    except Exception as exc:
-        db.session.rollback()
-        logger.error('OAuth session creation failed: %s', exc)
-        return jsonify({'success': False, 'error': 'Login failed. Please try again.'}), 500
+    return _finalize_login(user, client, client_ip)
 
-    # ------------------------------------------------------------------
-    # Issue JWT (same shape as the regular login endpoint)
-    # ------------------------------------------------------------------
-    permissions = get_user_permissions(str(user.user_id))
-    token_payload = {
-        'user_id': str(user.user_id),
-        'email': user.email,
-        'client_id': str(user.client_id),
-        'role': user.role,
-        'is_super_admin': user.is_super_admin or False,
-        'permissions': permissions,
-        'session_id': session_id,
-        'exp': datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS),
-    }
-    jwt_token = jwt.encode(token_payload, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
 
-    # Update last login timestamp and IP
-    user.last_login = datetime.utcnow()
-    user.last_login_ip = client_ip
-    try:
-        db.session.commit()
-    except Exception:
-        db.session.rollback()
+@oauth_bp.route('/desktop-login', methods=['POST'])
+def desktop_login():
+    """
+    Exchange a desktop handoff assertion (minted by the cloud after a verified
+    Google login) for a LOCAL session + JWT. Runs against the offline desktop
+    backend. The Google identity is only trusted via the shared-secret HMAC
+    signature — this endpoint never talks to Google.
+    POST /api/oauth/desktop-login
+    Body: { "assertion": "<jwt>" }
+    """
+    if not Config.DESKTOP_OAUTH_SECRET:
+        return jsonify({'success': False, 'error': 'Desktop sign-in is not configured'}), 501
 
-    user_dict = user.to_dict()
-    user_dict['permissions'] = permissions  # to_dict() omits permissions; add here
+    client_ip = get_client_ip()
+    data = request.get_json() or {}
+    assertion = (data.get('assertion') or '').strip()
+    verifier = (data.get('verifier') or '').strip()
 
-    return jsonify({
-        'success': True,
-        'token': jwt_token,
-        'user': user_dict,
-        'client': {
-            'client_id': str(client.client_id),
-            'client_name': client.client_name,
-            'logo_url': client.logo_url,
-            'address': client.address,
-            'phone': client.phone,
-            'email': client.email,
-            'gstin': client.gst_number,
-            'subscription_status': client.subscription_status,
-            'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
-            'trial_days_remaining': client.trial_days_remaining,
-            'subscription_end_date': client.subscription_end_date.isoformat() if client.subscription_end_date else None,
-            # Regional customization — drives the first-login setup wizard for OAuth signups
-            'country': getattr(client, 'country', None) or 'IN',
-            'currency_code': getattr(client, 'currency_code', None) or 'INR',
-            'currency_symbol': getattr(client, 'currency_symbol', None) or '₹',
-            'locale': getattr(client, 'locale', None) or 'en-IN',
-            'tax_config': getattr(client, 'tax_config', None) or DEFAULT_GST_CONFIG,
-            'setup_completed': getattr(client, 'setup_completed_at', None) is not None,
-        },
-    }), 200
+    payload = _verify_desktop_assertion(assertion)
+    if not payload:
+        return jsonify({'success': False, 'error': 'Invalid or expired sign-in. Please try again.'}), 401
+
+    # PKCE: the assertion is only honored alongside the verifier whose SHA-256
+    # matches the embedded challenge. The verifier never travels in the deep
+    # link, so an app that intercepts the deep link cannot redeem the assertion.
+    challenge = (payload.get('challenge') or '').strip()
+    if not challenge or not verifier or _pkce_challenge(verifier) != challenge:
+        logger.warning('Desktop login PKCE verification failed')
+        return jsonify({'success': False, 'error': 'Invalid or expired sign-in. Please try again.'}), 401
+
+    email = (payload.get('email') or '').lower().strip()
+    google_id = (payload.get('google_id') or '').strip()
+    if not email:
+        return jsonify({'success': False, 'error': 'Invalid sign-in assertion'}), 401
+
+    # The user must already exist on this device (synced from the cloud).
+    user = User.query.filter_by(email=email, is_active=True).first()
+    if not user:
+        return jsonify({
+            'success': False,
+            'error': 'This Google account is not set up on this device yet. '
+                     'Sign in once online to sync, or contact your administrator.',
+        }), 403
+
+    # If the local record is already linked to a Google account, it must match.
+    if user.google_id and google_id and user.google_id != google_id:
+        logger.warning('Desktop login google_id mismatch for %s', email)
+        return jsonify({'success': False, 'error': 'Account mismatch. Please contact your administrator.'}), 401
+
+    # Link the Google id on first desktop login if the synced record lacks one.
+    if not user.google_id and google_id:
+        try:
+            user.google_id = google_id
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
+    client = ClientEntry.query.filter_by(client_id=user.client_id, is_active=True).first()
+    if not client:
+        return jsonify({'success': False, 'error': 'Client account is inactive'}), 401
+
+    return _finalize_login(user, client, client_ip)

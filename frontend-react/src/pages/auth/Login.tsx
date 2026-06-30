@@ -2,6 +2,9 @@ import React, { useState, useRef, useEffect } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
+import { mapOAuthLoginResponse } from '@/lib/oauthSession'
+
+const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
 
 const INPUT_CLASS =
   'w-full px-4 py-3 bg-white/5 border border-white/15 rounded-lg focus:ring-2 focus:ring-[#5227FF] focus:border-transparent outline-none transition-all duration-200 text-white placeholder-slate-500 [&:-webkit-autofill]:[-webkit-box-shadow:0_0_0_1000px_#2d2145_inset] [&:-webkit-autofill]:[-webkit-text-fill-color:#ffffff]'
@@ -12,6 +15,8 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
+  // Desktop Google sign-in: true while the system browser is handling consent.
+  const [googleWaiting, setGoogleWaiting] = useState(false)
 
   // Single-session enforcement state
   const [sessionConflict, setSessionConflict] = useState<null | {
@@ -266,8 +271,33 @@ export default function LoginPage() {
   }
 
   const handleGoogleLogin = async () => {
+    setError('')
+    // Desktop: Google blocks OAuth inside the Electron window, so open the
+    // system browser to the web login. It bounces a signed assertion back via
+    // the valoryx:// deep link, received by the effect below.
+    if (isElectron) {
+      const electronAPI = (window as any).electronAPI
+      if (electronAPI?.loginWithGoogle) {
+        setGoogleWaiting(true)
+        electronAPI.loginWithGoogle()
+        return
+      }
+      setError('Google sign-in is not available right now.')
+      return
+    }
     try {
-      const res = await api.get('/oauth/google/authorize')
+      // Carry the desktop flag + PKCE challenge through when this web page was
+      // opened by the desktop app, so the callback returns a bound assertion.
+      const params = new URLSearchParams(window.location.search)
+      const desktop = params.get('desktop')
+      const challenge = params.get('challenge')
+      let authorizeUrl = '/oauth/google/authorize'
+      if (desktop) {
+        const q = new URLSearchParams({ desktop })
+        if (challenge) q.set('challenge', challenge)
+        authorizeUrl += `?${q.toString()}`
+      }
+      const res = await api.get(authorizeUrl)
       const authUrl: string = res.data.auth_url
       // Validate the URL points to Google before following it
       if (!authUrl?.startsWith('https://accounts.google.com/')) {
@@ -279,6 +309,44 @@ export default function LoginPage() {
       setError('Google sign-in is not available right now.')
     }
   }
+
+  // Desktop only: receive the handoff assertion from the valoryx:// deep link,
+  // exchange it with the LOCAL backend for a local session, then sign in.
+  useEffect(() => {
+    if (!isElectron) return
+    const electronAPI = (window as any).electronAPI
+    if (!electronAPI?.onDesktopOAuth) return
+
+    const processAssertion = async (handoff: { assertion: string; verifier: string | null } | null) => {
+      if (!handoff?.assertion) return
+      try {
+        const res = await api.post('/oauth/desktop-login', {
+          assertion: handoff.assertion,
+          verifier: handoff.verifier,
+        })
+        const { token, user, client, userData, clientData } = mapOAuthLoginResponse(res.data)
+        setClientData(userData, clientData, token)
+        setGoogleWaiting(false)
+        if (user.must_change_password) {
+          localStorage.setItem('must_change_password', 'true')
+          navigate('/change-password', { replace: true })
+        } else if (client.setup_completed === false) {
+          navigate('/setup', { replace: true })
+        } else {
+          navigate('/billing/create', { replace: true })
+        }
+      } catch (err: any) {
+        setGoogleWaiting(false)
+        setError(err?.response?.data?.error || 'Google sign-in failed. Please try again.')
+      }
+    }
+
+    electronAPI.onDesktopOAuth(processAssertion)
+    // Cold start: a handoff may have arrived before this listener attached.
+    electronAPI.getPendingOAuth?.().then((h: DesktopOAuthHandoff | null) => { if (h) processAssertion(h) })
+
+    return () => { electronAPI.removeDesktopOAuth?.() }
+  }, []) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-[#271E37] relative overflow-hidden">
@@ -502,11 +570,11 @@ export default function LoginPage() {
                   <span className="px-2 bg-[#0f0a1e] text-slate-500 uppercase tracking-wider">or</span>
                 </div>
               </div>
-              {!import.meta.env.VITE_ELECTRON && (
               <button
                 type="button"
                 onClick={handleGoogleLogin}
-                className="w-full flex items-center justify-center gap-3 py-3 bg-white/5 border border-white/15 rounded-lg text-white hover:bg-white/10 transition-colors text-sm font-medium"
+                disabled={googleWaiting}
+                className="w-full flex items-center justify-center gap-3 py-3 bg-white/5 border border-white/15 rounded-lg text-white hover:bg-white/10 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <svg viewBox="0 0 24 24" className="w-5 h-5 flex-shrink-0" xmlns="http://www.w3.org/2000/svg">
                   <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" fill="#4285F4"/>
@@ -514,8 +582,12 @@ export default function LoginPage() {
                   <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
                   <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
                 </svg>
-                Continue with Google
+                {googleWaiting ? 'Waiting for browser…' : 'Continue with Google'}
               </button>
+              {googleWaiting && (
+                <p className="text-center mt-3 text-xs text-slate-400">
+                  Complete sign-in in your browser, then return to this window.
+                </p>
               )}
 
               <p className="text-center mt-6 text-sm text-slate-400">
