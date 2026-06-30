@@ -3,6 +3,7 @@
 import { useEffect, useState, useRef, useMemo, useCallback } from 'react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
+import { formatBillNo } from '@/lib/billNumber'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { useClient } from '@/contexts/ClientContext'
 import { useCurrency } from '@/lib/useCurrency'
@@ -1080,7 +1081,7 @@ export default function AllBillsPage() {
                     <div className="flex items-start justify-between gap-2 mb-2">
                       <div>
                         <div className="flex items-center gap-1.5">
-                          <p className="text-sm font-semibold text-gray-900 dark:text-white">#{bill.bill_number}</p>
+                          <p className="text-sm font-semibold text-gray-900 dark:text-white">#{formatBillNo(bill)}</p>
                           {bill.payment_status === 'pending' && bill.status !== 'cancelled' && (
                             <span className="px-1.5 py-0.5 text-[9px] font-bold text-amber-700 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 rounded uppercase">Payment Pending</span>
                           )}
@@ -1209,7 +1210,7 @@ export default function AllBillsPage() {
             <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800">
               <div>
                 <h2 className="text-base font-semibold text-gray-900 dark:text-white">
-                  Bill #{selectedBill.bill_number}
+                  Bill #{formatBillNo(selectedBill)}
                 </h2>
                 <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${selectedBill.type === 'gst' ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300' : 'bg-emerald-100 text-emerald-700 dark:bg-emerald-900/40 dark:text-emerald-300'}`}>
                   {selectedBill.type === 'gst' ? 'GST' : 'Non-GST'}

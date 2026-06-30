@@ -73,14 +73,14 @@ class SyncScheduler:
         logger.info(f"[SyncScheduler] Manual {sync_type} sync triggered")
         try:
             if sync_type == 'upload':
-                return self.sync_service.sync_all()
+                return self.sync_service.sync_all(self.current_client_id)
             elif sync_type == 'download' and self.current_client_id:
                 return self.sync_service.download_all(self.current_client_id)
             elif sync_type == 'full' and self.current_client_id:
                 return self.sync_service.full_sync(self.current_client_id)
             else:
                 # Default to upload if no client_id
-                return self.sync_service.sync_all()
+                return self.sync_service.sync_all(self.current_client_id)
         except Exception as e:
             logger.error(f"[SyncScheduler] Manual sync failed: {e}")
             return {"status": "failed", "error": str(e)}
@@ -121,7 +121,7 @@ class SyncScheduler:
                 logger.info(f"[SyncScheduler] Running scheduled sync (next at {self.next_sync_time.strftime('%H:%M')})")
 
                 # Run upload sync (always)
-                upload_result = self.sync_service.sync_all()
+                upload_result = self.sync_service.sync_all(self.current_client_id)
                 logger.info(f"[SyncScheduler] Upload: {upload_result.get('status', 'unknown')}")
 
                 # Run download sync if client_id is set

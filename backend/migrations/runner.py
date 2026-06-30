@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 31
+CURRENT_SCHEMA_VERSION = 33
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -1784,6 +1784,105 @@ def _m031_attendance_soft_delete(db):
     logging.info("[Migration] v31: employee_attendance soft-delete columns added")
 
 
+# Group-A owner tables brought into full sync in v32. Each needs a `synced_at`
+# dirty-flag so the uploader can find pending rows. (Tables that already had
+# synced_at from earlier migrations — membership_*, payment_type — are omitted.)
+_V32_SYNC_TABLES = (
+    'payment_transaction', 'suppliers', 'supplier_deliveries', 'supplier_delivery_items',
+    'branches', 'branch_inventory', 'stock_transfers', 'stock_transfer_items',
+    'bill_templates', 'bill_template_active', 'bill_template_assets', 'bill_template_versions',
+    'bill_number_counters', 'permission_presets',
+)
+# Every Group-A table that should auto-mark dirty on edit (includes the four that
+# already had synced_at). Triggers are created on SQLite only.
+_V32_DIRTY_TABLES = _V32_SYNC_TABLES + (
+    'membership_card', 'membership_ledger', 'membership_tier', 'payment_type',
+)
+
+
+def _m032_extend_sync_owner_tables(db):
+    """v32: Bring all Group-A owner tables into the offline<->online sync.
+
+    1. Add `synced_at` to the tables that lack it so the dirty-flag uploader can
+       pick up pending rows (existing rows = NULL = "needs first upload").
+    2. On SQLite only, install an AFTER UPDATE trigger per table that re-flags a
+       row dirty (synced_at = NULL) whenever it is edited — so we don't have to
+       touch every route's write path. The trigger fires only on real data
+       edits (NEW.synced_at = OLD.synced_at) and never on the sync's own
+       synced_at writes, so it can't loop.
+
+    Idempotent; engine-agnostic for the column adds, SQLite-guarded for triggers.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return  # table doesn't exist on this engine — skip
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    for table in _V32_SYNC_TABLES:
+        _add_col(table, 'synced_at', 'TIMESTAMP NULL')
+
+    db.session.commit()
+
+    if dialect == 'sqlite':
+        existing = inspector.get_table_names()
+        for table in _V32_DIRTY_TABLES:
+            if table not in existing:
+                continue
+            trg = f"trg_dirty_{table}"
+            db.session.execute(text(
+                f"CREATE TRIGGER IF NOT EXISTS {trg} AFTER UPDATE ON {table} "
+                f"FOR EACH ROW WHEN OLD.synced_at IS NOT NULL AND NEW.synced_at = OLD.synced_at "
+                f"BEGIN UPDATE {table} SET synced_at = NULL WHERE rowid = NEW.rowid; END;"
+            ))
+        db.session.commit()
+        logging.info("[Migration] v32: SQLite auto-dirty triggers installed")
+
+    logging.info("[Migration] v32: Group-A owner tables added to sync")
+
+
+def _m033_bill_prefix(db):
+    """v33: Add `bill_prefix` to the billing tables for per-device numbering.
+
+    Offline desktop installs stamp each bill with their short device code so the
+    human-facing number (``<prefix>-<bill_number>``) is unique across devices
+    after sync — the integer bill_number sequence stays per-device. Nullable:
+    online/web bills leave it NULL (single server authority, no prefix).
+    Idempotent; runs on whichever engine boots.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    for table in ('gst_billing', 'non_gst_billing'):
+        _add_col(table, 'bill_prefix', 'VARCHAR(8) NULL')
+
+    db.session.commit()
+    logging.info("[Migration] v33: bill_prefix columns added")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -1817,6 +1916,8 @@ MIGRATIONS = [
     (29, _m029_regional_customization),
     (30, _m030_salary_sync_columns),
     (31, _m031_attendance_soft_delete),
+    (32, _m032_extend_sync_owner_tables),
+    (33, _m033_bill_prefix),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

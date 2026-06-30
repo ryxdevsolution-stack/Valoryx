@@ -3,6 +3,7 @@ Background Sync Service - Bidirectional SQLite ↔ Supabase (PostgreSQL)
 Syncs local data to cloud and vice versa every 1 hour automatically
 """
 import os
+import re
 import json
 import logging
 from datetime import datetime
@@ -37,6 +38,33 @@ def get_current_time():
     return datetime.now(kolkata_tz)
 
 
+# Group-A owner tables synced GENERICALLY (schema-introspected) from v32 on.
+# Each: table name, primary key (str, or list for composite), and how to scope
+# to one owner. 'scope' is 'client_id', 'via_user', or ('via', parent, fk) for
+# child tables that inherit their owner through a parent row. Order matters for
+# Postgres FKs: parents before their children.
+_OWNER_SYNC_TABLES = [
+    {'table': 'membership_tier',         'pk': 'tier_id',         'scope': 'client_id'},
+    {'table': 'membership_card',         'pk': 'card_id',         'scope': 'client_id'},
+    {'table': 'membership_ledger',       'pk': 'ledger_id',       'scope': 'client_id'},
+    {'table': 'payment_type',            'pk': 'payment_type_id', 'scope': 'client_id'},
+    {'table': 'payment_transaction',     'pk': 'transaction_id',  'scope': 'client_id'},
+    {'table': 'suppliers',               'pk': 'supplier_id',     'scope': 'client_id'},
+    {'table': 'supplier_deliveries',     'pk': 'delivery_id',     'scope': 'client_id'},
+    {'table': 'supplier_delivery_items', 'pk': 'id',              'scope': ('via', 'supplier_deliveries', 'delivery_id')},
+    {'table': 'branches',                'pk': 'branch_id',       'scope': 'client_id'},
+    {'table': 'branch_inventory',        'pk': 'id',              'scope': 'client_id'},
+    {'table': 'stock_transfers',         'pk': 'transfer_id',     'scope': 'client_id'},
+    {'table': 'stock_transfer_items',    'pk': 'id',              'scope': ('via', 'stock_transfers', 'transfer_id')},
+    {'table': 'bill_templates',          'pk': 'template_id',     'scope': 'client_id'},
+    {'table': 'bill_template_active',    'pk': ['client_id', 'output_type', 'bill_type'], 'scope': 'client_id'},
+    {'table': 'bill_template_assets',    'pk': 'asset_id',        'scope': 'client_id'},
+    {'table': 'bill_template_versions',  'pk': 'version_id',      'scope': ('via', 'bill_templates', 'template_id')},
+    {'table': 'bill_number_counters',    'pk': 'client_id',       'scope': 'client_id'},
+    {'table': 'permission_presets',      'pk': 'preset_id',       'scope': 'client_id'},
+]
+
+
 class SyncService:
     """
     Handles bidirectional synchronization between SQLite (local) and PostgreSQL (Supabase).
@@ -59,6 +87,7 @@ class SyncService:
         self.postgres_engine = None
         self.last_sync_time = None
         self.last_download_time = None
+        self._meta_cache = {}  # per-table introspection cache (generic owner sync)
 
     def initialize(self):
         """Initialize database connections for sync"""
@@ -86,6 +115,16 @@ class SyncService:
             with self.postgres_engine.connect() as conn:
                 conn.execute(text("SELECT 1"))
 
+            # Guarantee the remote (Postgres/Supabase) schema has the salary
+            # sync columns BEFORE any upload. The desktop migrates only its own
+            # SQLite; the server migrates Postgres on its own boot. If a desktop
+            # on a newer version syncs before the server is redeployed, the
+            # upserts below would reference columns that don't exist yet and
+            # every salary sync would fail. These idempotent ADD COLUMN IF NOT
+            # EXISTS statements make the desktop independent of server deploy
+            # order. (Postgres-only syntax; harmless no-op once columns exist.)
+            self._ensure_remote_sync_columns()
+
             logger.info("[SyncService] Initialized successfully")
             return True
 
@@ -93,7 +132,44 @@ class SyncService:
             logger.error(f"[SyncService] Initialization failed: {e}")
             return False
 
-    def sync_all(self):
+    def _ensure_remote_sync_columns(self):
+        """Idempotently add salary/attendance sync columns to Postgres.
+
+        Mirrors migrations v30 (synced_at on all four tables + updated_at on
+        salary_advances) and v31 (is_active/deleted_at on employee_attendance)
+        so a desktop client can always upload even if the server schema is a
+        deploy behind. Each statement is guarded individually so one failure
+        (e.g. a table that doesn't exist on this server yet) never blocks the
+        rest of sync.
+        """
+        statements = [
+            "ALTER TABLE employees ADD COLUMN IF NOT EXISTS synced_at TIMESTAMP NULL",
+            "ALTER TABLE salary_cycles ADD COLUMN IF NOT EXISTS synced_at TIMESTAMP NULL",
+            "ALTER TABLE employee_attendance ADD COLUMN IF NOT EXISTS synced_at TIMESTAMP NULL",
+            "ALTER TABLE salary_advances ADD COLUMN IF NOT EXISTS synced_at TIMESTAMP NULL",
+            "ALTER TABLE salary_advances ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NULL",
+            "ALTER TABLE employee_attendance ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
+            "ALTER TABLE employee_attendance ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
+        ]
+        # v32: synced_at on the Group-A owner tables that lacked it (deploy-order
+        # safety — same idempotent guard as above).
+        for t in ('payment_transaction', 'suppliers', 'supplier_deliveries', 'supplier_delivery_items',
+                  'branches', 'branch_inventory', 'stock_transfers', 'stock_transfer_items',
+                  'bill_templates', 'bill_template_active', 'bill_template_assets',
+                  'bill_template_versions', 'bill_number_counters', 'permission_presets'):
+            statements.append(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS synced_at TIMESTAMP NULL")
+        # v33: per-device bill prefix on the billing tables
+        statements.append("ALTER TABLE gst_billing ADD COLUMN IF NOT EXISTS bill_prefix VARCHAR(8) NULL")
+        statements.append("ALTER TABLE non_gst_billing ADD COLUMN IF NOT EXISTS bill_prefix VARCHAR(8) NULL")
+        for stmt in statements:
+            try:
+                with self.postgres_engine.connect() as conn:
+                    conn.execute(text(stmt))
+                    conn.commit()
+            except Exception as e:
+                logger.warning(f"[SyncService] ensure-remote-column skipped ({stmt.split('ADD COLUMN')[0].strip()}): {e}")
+
+    def sync_all(self, client_id=None):
         """
         Sync all unsynced data to Supabase (Upload).
 
@@ -134,7 +210,7 @@ class SyncService:
 
             # Sync GST bills
             try:
-                count = self._sync_gst_bills()
+                count = self._sync_gst_bills(client_id)
                 results["synced"]["gst_bills"] = count
                 logger.info(f"[SyncService] Uploaded {count} GST bills")
             except Exception as e:
@@ -143,7 +219,7 @@ class SyncService:
 
             # Sync non-GST bills
             try:
-                count = self._sync_non_gst_bills()
+                count = self._sync_non_gst_bills(client_id)
                 results["synced"]["non_gst_bills"] = count
                 logger.info(f"[SyncService] Uploaded {count} non-GST bills")
             except Exception as e:
@@ -152,7 +228,7 @@ class SyncService:
 
             # Sync stock
             try:
-                count = self._sync_stock()
+                count = self._sync_stock(client_id)
                 results["synced"]["stock"] = count
                 logger.info(f"[SyncService] Uploaded {count} stock entries")
             except Exception as e:
@@ -161,7 +237,7 @@ class SyncService:
 
             # Sync customers
             try:
-                count = self._sync_customers()
+                count = self._sync_customers(client_id)
                 results["synced"]["customers"] = count
                 logger.info(f"[SyncService] Uploaded {count} customers")
             except Exception as e:
@@ -170,7 +246,7 @@ class SyncService:
 
 # Sync expenses
             try:
-                count = self._sync_expenses()
+                count = self._sync_expenses(client_id)
                 results["synced"]["expenses"] = count
                 logger.info(f"[SyncService] Uploaded {count} expenses")
             except Exception as e:
@@ -179,7 +255,7 @@ class SyncService:
 
             # Sync expense summaries
             try:
-                count = self._sync_expense_summaries()
+                count = self._sync_expense_summaries(client_id)
                 results["synced"]["expense_summaries"] = count
                 logger.info(f"[SyncService] Uploaded {count} expense summaries")
             except Exception as e:
@@ -188,7 +264,7 @@ class SyncService:
 
             # Sync bulk stock orders
             try:
-                count = self._sync_bulk_orders()
+                count = self._sync_bulk_orders(client_id)
                 results["synced"]["bulk_orders"] = count
                 logger.info(f"[SyncService] Uploaded {count} bulk orders")
             except Exception as e:
@@ -197,7 +273,7 @@ class SyncService:
 
             # Sync bulk stock order items
             try:
-                count = self._sync_bulk_order_items()
+                count = self._sync_bulk_order_items(client_id)
                 results["synced"]["bulk_order_items"] = count
                 logger.info(f"[SyncService] Uploaded {count} bulk order items")
             except Exception as e:
@@ -206,7 +282,7 @@ class SyncService:
 
             # Sync users (excluding password_hash for security)
             try:
-                count = self._sync_users()
+                count = self._sync_users(client_id)
                 results["synced"]["users"] = count
                 logger.info(f"[SyncService] Uploaded {count} users")
             except Exception as e:
@@ -215,7 +291,7 @@ class SyncService:
 
             # Sync user permissions
             try:
-                count = self._sync_user_permissions()
+                count = self._sync_user_permissions(client_id)
                 results["synced"]["user_permissions"] = count
                 logger.info(f"[SyncService] Uploaded {count} user permissions")
             except Exception as e:
@@ -224,7 +300,7 @@ class SyncService:
 
             # Sync reports
             try:
-                count = self._sync_reports()
+                count = self._sync_reports(client_id)
                 results["synced"]["reports"] = count
                 logger.info(f"[SyncService] Uploaded {count} reports")
             except Exception as e:
@@ -233,7 +309,7 @@ class SyncService:
 
             # Sync notes
             try:
-                count = self._sync_notes()
+                count = self._sync_notes(client_id)
                 results["synced"]["notes"] = count
                 logger.info(f"[SyncService] Uploaded {count} notes")
             except Exception as e:
@@ -245,7 +321,7 @@ class SyncService:
             # (FK→employees) and advances (FK→cycles). Users are already synced
             # above, so created_by/marked_by/paid_by/recorded_by resolve.
             try:
-                count = self._sync_employees()
+                count = self._sync_employees(client_id)
                 results["synced"]["employees"] = count
                 logger.info(f"[SyncService] Uploaded {count} employees")
             except Exception as e:
@@ -253,7 +329,7 @@ class SyncService:
                 results["errors"].append(f"Employees: {str(e)}")
 
             try:
-                count = self._sync_salary_cycles()
+                count = self._sync_salary_cycles(client_id)
                 results["synced"]["salary_cycles"] = count
                 logger.info(f"[SyncService] Uploaded {count} salary cycles")
             except Exception as e:
@@ -261,7 +337,7 @@ class SyncService:
                 results["errors"].append(f"Salary cycles: {str(e)}")
 
             try:
-                count = self._sync_employee_attendance()
+                count = self._sync_employee_attendance(client_id)
                 results["synced"]["employee_attendance"] = count
                 logger.info(f"[SyncService] Uploaded {count} attendance records")
             except Exception as e:
@@ -269,12 +345,25 @@ class SyncService:
                 results["errors"].append(f"Attendance: {str(e)}")
 
             try:
-                count = self._sync_salary_advances()
+                count = self._sync_salary_advances(client_id)
                 results["synced"]["salary_advances"] = count
                 logger.info(f"[SyncService] Uploaded {count} salary advances")
             except Exception as e:
                 logger.error(f"[SyncService] Salary advance sync failed: {e}")
                 results["errors"].append(f"Salary advances: {str(e)}")
+
+            # Generic Group-A owner tables (registry-driven). FK-safe order is
+            # baked into _OWNER_SYNC_TABLES (parents before children).
+            for entry in _OWNER_SYNC_TABLES:
+                t = entry['table']
+                try:
+                    count = self._sync_owner_table(entry, client_id)
+                    results["synced"][t] = count
+                    if count:
+                        logger.info(f"[SyncService] Uploaded {count} {t}")
+                except Exception as e:
+                    logger.error(f"[SyncService] {t} sync failed: {e}")
+                    results["errors"].append(f"{t}: {str(e)}")
 
             self.last_sync_time = get_current_time()
 
@@ -313,819 +402,543 @@ class SyncService:
             """), params)
             sqlite_conn.commit()
 
-    def _sync_gst_bills(self):
-        """Sync GST bills from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM gst_billing
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            bills = [dict(row._mapping) for row in result]
+    def _push_batch(self, label, insert_sql, payload, ids):
+        """Push pending rows to Postgres in ONE transaction (single commit).
 
-        if not bills:
-            return 0
+        Replaces the old per-row commit pattern — which cost one network
+        round-trip + server fsync PER ROW and was the dominant cause of slow
+        syncs. All rows go in a single executemany + one commit. If the batch
+        fails (e.g. a single malformed row), it rolls back and retries
+        row-by-row so one bad row can't block the rest of the batch.
 
-        synced_ids = []
+        Returns the list of ids that were successfully synced.
+        """
+        if not payload:
+            return []
         with self.postgres_engine.connect() as pg_conn:
-            for bill in bills:
+            try:
+                pg_conn.execute(text(insert_sql), payload)  # executemany
+                pg_conn.commit()
+                return list(ids)
+            except Exception as e:
+                pg_conn.rollback()
+                logger.warning(
+                    f"[SyncService] {label}: batch of {len(payload)} failed "
+                    f"({str(e)[:150]}); retrying row-by-row"
+                )
+            synced = []
+            for rec, _id in zip(payload, ids):
                 try:
-                    converted = TypeConverter.convert_dict_from_sqlite(bill, BILLING_COLUMN_TYPES)
-
-                    if 'customer_address' not in converted or converted['customer_address'] is None:
-                        converted['customer_address'] = ''
-                    if 'gst_percentage' not in converted or converted['gst_percentage'] is None:
-                        converted['gst_percentage'] = 0
-                    if 'items' in converted and not isinstance(converted['items'], str):
-                        converted['items'] = json.dumps(converted['items'])
-
-                    pg_conn.execute(text("""
-                        INSERT INTO gst_billing (
-                            bill_id, client_id, bill_number, customer_name, customer_phone,
-                            customer_address, items, subtotal, gst_percentage, gst_amount, final_amount,
-                            payment_type, amount_received, discount_percentage, discount_amount,
-                            negotiable_amount, status, created_by, created_at, updated_at
-                        ) VALUES (
-                            :bill_id, :client_id, :bill_number, :customer_name, :customer_phone,
-                            :customer_address, :items, :subtotal, :gst_percentage, :gst_amount, :final_amount,
-                            :payment_type, :amount_received, :discount_percentage, :discount_amount,
-                            :negotiable_amount, :status, :created_by, :created_at, :updated_at
-                        )
-                        ON CONFLICT (bill_id) DO UPDATE SET
-                            items = EXCLUDED.items,
-                            subtotal = EXCLUDED.subtotal,
-                            gst_percentage = EXCLUDED.gst_percentage,
-                            gst_amount = EXCLUDED.gst_amount,
-                            final_amount = EXCLUDED.final_amount,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()  # Commit each successful record
-                    synced_ids.append(bill['bill_id'])
-                except Exception as e:
-                    pg_conn.rollback()  # Rollback failed record, continue with others
-                    logger.error(f"[SyncService] Failed to sync GST bill {bill.get('bill_id')}: {e}")
-
-        self._mark_as_synced('gst_billing', 'bill_id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_non_gst_bills(self):
-        """Sync non-GST bills from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM non_gst_billing
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            bills = [dict(row._mapping) for row in result]
-
-        if not bills:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for bill in bills:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(bill, BILLING_COLUMN_TYPES)
-
-                    if 'items' in converted and not isinstance(converted['items'], str):
-                        converted['items'] = json.dumps(converted['items'])
-
-                    pg_conn.execute(text("""
-                        INSERT INTO non_gst_billing (
-                            bill_id, client_id, bill_number, customer_name, customer_phone,
-                            customer_gstin, items, total_amount, payment_type, amount_received,
-                            discount_percentage, discount_amount, negotiable_amount, status,
-                            created_by, created_at, updated_at
-                        ) VALUES (
-                            :bill_id, :client_id, :bill_number, :customer_name, :customer_phone,
-                            :customer_gstin, :items, :total_amount, :payment_type, :amount_received,
-                            :discount_percentage, :discount_amount, :negotiable_amount, :status,
-                            :created_by, :created_at, :updated_at
-                        )
-                        ON CONFLICT (bill_id) DO UPDATE SET
-                            items = EXCLUDED.items,
-                            total_amount = EXCLUDED.total_amount,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()  # Commit each successful record
-                    synced_ids.append(bill['bill_id'])
-                except Exception as e:
-                    pg_conn.rollback()  # Rollback failed record, continue with others
-                    logger.error(f"[SyncService] Failed to sync non-GST bill {bill.get('bill_id')}: {e}")
-
-        self._mark_as_synced('non_gst_billing', 'bill_id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_stock(self):
-        """Sync stock entries from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM stock_entry
-                WHERE synced_at IS NULL
-                ORDER BY updated_at
-                LIMIT 1000
-            """))
-            entries = [dict(row._mapping) for row in result]
-
-        if not entries:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for entry in entries:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(entry, STOCK_COLUMN_TYPES)
-
-                    pg_conn.execute(text("""
-                        INSERT INTO stock_entry (
-                            product_id, client_id, product_name, category, quantity, rate,
-                            cost_price, mrp, pricing, unit, low_stock_alert, item_code,
-                            barcode, gst_percentage, hsn_code, created_at, updated_at
-                        ) VALUES (
-                            :product_id, :client_id, :product_name, :category, :quantity, :rate,
-                            :cost_price, :mrp, :pricing, :unit, :low_stock_alert, :item_code,
-                            :barcode, :gst_percentage, :hsn_code, :created_at, :updated_at
-                        )
-                        ON CONFLICT (product_id) DO UPDATE SET
-                            product_name = EXCLUDED.product_name,
-                            category = EXCLUDED.category,
-                            quantity = EXCLUDED.quantity,
-                            rate = EXCLUDED.rate,
-                            cost_price = EXCLUDED.cost_price,
-                            mrp = EXCLUDED.mrp,
-                            pricing = EXCLUDED.pricing,
-                            unit = EXCLUDED.unit,
-                            low_stock_alert = EXCLUDED.low_stock_alert,
-                            item_code = EXCLUDED.item_code,
-                            barcode = EXCLUDED.barcode,
-                            gst_percentage = EXCLUDED.gst_percentage,
-                            hsn_code = EXCLUDED.hsn_code,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
+                    pg_conn.execute(text(insert_sql), rec)
                     pg_conn.commit()
-                    synced_ids.append(entry['product_id'])
+                    synced.append(_id)
                 except Exception as e:
                     pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync stock {entry.get('product_id')}: {e}")
+                    logger.error(f"[SyncService] {label}: row {_id} failed: {str(e)[:150]}")
+            return synced
 
-        self._mark_as_synced('stock_entry', 'product_id', synced_ids)
-        return len(synced_ids)
+    def _client_scope(self, client_filter, client_id, params):
+        """Return a WHERE fragment that restricts a pending-upload query to a
+        single owner's data, so a device never pushes another owner's rows.
 
-    def _sync_customers(self):
-        """Sync customers from SQLite to PostgreSQL"""
+        client_filter:
+          'client_id' — table has a client_id column (direct match)
+          'via_user'  — no client_id; scope through user_id -> users.client_id
+          'via_order' — no client_id; scope through order_id -> bulk_stock_order
+          None        — no scoping
+        No-op (returns '') when client_id is falsy, preserving the old
+        sync-everything behaviour for callers that don't pass one.
+        """
+        if not client_id or not client_filter:
+            return ""
+        params["client_id"] = client_id
+        if client_filter == 'via_user':
+            return " AND user_id IN (SELECT user_id FROM users WHERE client_id = :client_id)"
+        if client_filter == 'via_order':
+            return " AND order_id IN (SELECT order_id FROM bulk_stock_order WHERE client_id = :client_id)"
+        return " AND client_id = :client_id"
+
+    def _upload_pending(self, table, id_column, column_types, insert_sql,
+                        client_id=None, client_filter='client_id',
+                        order_by='created_at', preprocess=None):
+        """Owner-scoped, batched upload of rows pending sync (synced_at IS NULL)
+        from SQLite -> Postgres.
+
+        - Scopes to one owner via _client_scope when client_id is given.
+        - Batches the whole set into ONE commit via _push_batch (was per-row).
+        Returns the number of rows synced.
+        """
+        params = {}
+        where = "WHERE synced_at IS NULL" + self._client_scope(client_filter, client_id, params)
         with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM customer
-                WHERE synced_at IS NULL
-                ORDER BY updated_at
-                LIMIT 1000
-            """))
-            customers = [dict(row._mapping) for row in result]
-
-        if not customers:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for customer in customers:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(customer, CUSTOMER_COLUMN_TYPES)
-
-                    pg_conn.execute(text("""
-                        INSERT INTO customer (
-                            customer_id, client_id, customer_code, customer_name, customer_phone,
-                            customer_email, customer_address, customer_gstin, customer_city,
-                            customer_state, customer_pincode, total_bills, total_spent,
-                            last_purchase_date, first_purchase_date, status, notes,
-                            created_at, updated_at
-                        ) VALUES (
-                            :customer_id, :client_id, :customer_code, :customer_name, :customer_phone,
-                            :customer_email, :customer_address, :customer_gstin, :customer_city,
-                            :customer_state, :customer_pincode, :total_bills, :total_spent,
-                            :last_purchase_date, :first_purchase_date, :status, :notes,
-                            :created_at, :updated_at
-                        )
-                        ON CONFLICT (customer_id) DO UPDATE SET
-                            customer_code = EXCLUDED.customer_code,
-                            customer_name = EXCLUDED.customer_name,
-                            customer_phone = EXCLUDED.customer_phone,
-                            customer_email = EXCLUDED.customer_email,
-                            customer_address = EXCLUDED.customer_address,
-                            customer_gstin = EXCLUDED.customer_gstin,
-                            customer_city = EXCLUDED.customer_city,
-                            customer_state = EXCLUDED.customer_state,
-                            customer_pincode = EXCLUDED.customer_pincode,
-                            total_bills = EXCLUDED.total_bills,
-                            total_spent = EXCLUDED.total_spent,
-                            last_purchase_date = EXCLUDED.last_purchase_date,
-                            first_purchase_date = EXCLUDED.first_purchase_date,
-                            status = EXCLUDED.status,
-                            notes = EXCLUDED.notes,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(customer['customer_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync customer {customer.get('customer_id')}: {e}")
-
-        self._mark_as_synced('customer', 'customer_id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_expenses(self):
-        """Sync expenses from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM expense
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            expenses = [dict(row._mapping) for row in result]
-
-        if not expenses:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for expense in expenses:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(expense, EXPENSE_COLUMN_TYPES)
-
-                    if 'extra_data' in converted and not isinstance(converted['extra_data'], str):
-                        converted['extra_data'] = json.dumps(converted['extra_data']) if converted['extra_data'] else None
-
-                    pg_conn.execute(text("""
-                        INSERT INTO expense (
-                            expense_id, client_id, category, description, amount, expense_date,
-                            payment_method, receipt_url, notes, extra_data, created_by, created_at, updated_at
-                        ) VALUES (
-                            :expense_id, :client_id, :category, :description, :amount, :expense_date,
-                            :payment_method, :receipt_url, :notes, :extra_data, :created_by, :created_at, :updated_at
-                        )
-                        ON CONFLICT (expense_id) DO UPDATE SET
-                            category = EXCLUDED.category,
-                            description = EXCLUDED.description,
-                            amount = EXCLUDED.amount,
-                            expense_date = EXCLUDED.expense_date,
-                            payment_method = EXCLUDED.payment_method,
-                            receipt_url = EXCLUDED.receipt_url,
-                            notes = EXCLUDED.notes,
-                            extra_data = EXCLUDED.extra_data,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                        """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(expense['expense_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync expense {expense.get('expense_id')}: {e}")
-
-        self._mark_as_synced('expense', 'expense_id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_expense_summaries(self):
-        """Sync expense summaries from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM expense_summary
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            summaries = [dict(row._mapping) for row in result]
-
-        if not summaries:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for summary in summaries:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(summary, EXPENSE_SUMMARY_COLUMN_TYPES)
-
-                    if 'category_breakdown' in converted and not isinstance(converted['category_breakdown'], str):
-                        converted['category_breakdown'] = json.dumps(converted['category_breakdown']) if converted['category_breakdown'] else None
-
-                    pg_conn.execute(text("""
-                        INSERT INTO expense_summary (
-                            summary_id, client_id, period_type, period_start, period_end,
-                            total_expenses, category_breakdown, expense_count, created_at, updated_at
-                        ) VALUES (
-                            :summary_id, :client_id, :period_type, :period_start, :period_end,
-                            :total_expenses, :category_breakdown, :expense_count, :created_at, :updated_at
-                        )
-                        ON CONFLICT (summary_id) DO UPDATE SET
-                            total_expenses = EXCLUDED.total_expenses,
-                            category_breakdown = EXCLUDED.category_breakdown,
-                            expense_count = EXCLUDED.expense_count,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(summary['summary_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync expense summary {summary.get('summary_id')}: {e}")
-
-        self._mark_as_synced('expense_summary', 'summary_id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_bulk_orders(self):
-        """Sync bulk stock orders from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM bulk_stock_order
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            orders = [dict(row._mapping) for row in result]
-
-        if not orders:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for order in orders:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(order, BULK_ORDER_COLUMN_TYPES)
-
-                    pg_conn.execute(text("""
-                        INSERT INTO bulk_stock_order (
-                            order_id, client_id, order_number, supplier_name, supplier_contact,
-                            order_date, expected_delivery_date, status, notes, created_by,
-                            created_at, updated_at, received_at
-                        ) VALUES (
-                            :order_id, :client_id, :order_number, :supplier_name, :supplier_contact,
-                            :order_date, :expected_delivery_date, :status, :notes, :created_by,
-                            :created_at, :updated_at, :received_at
-                        )
-                        ON CONFLICT (order_id) DO UPDATE SET
-                            supplier_name = EXCLUDED.supplier_name,
-                            supplier_contact = EXCLUDED.supplier_contact,
-                            expected_delivery_date = EXCLUDED.expected_delivery_date,
-                            status = EXCLUDED.status,
-                            notes = EXCLUDED.notes,
-                            updated_at = EXCLUDED.updated_at,
-                            received_at = EXCLUDED.received_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(order['order_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync bulk order {order.get('order_id')}: {e}")
-
-        self._mark_as_synced('bulk_stock_order', 'order_id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_bulk_order_items(self):
-        """Sync bulk stock order items from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM bulk_stock_order_item
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            items = [dict(row._mapping) for row in result]
-
-        if not items:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for item in items:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(item, BULK_ORDER_ITEM_COLUMN_TYPES)
-
-                    pg_conn.execute(text("""
-                        INSERT INTO bulk_stock_order_item (
-                            item_id, order_id, product_id, product_name, category,
-                            quantity_ordered, quantity_received, unit, cost_price, selling_price,
-                            mrp, barcode, item_code, gst_percentage, hsn_code, notes,
-                            created_at, updated_at
-                        ) VALUES (
-                            :item_id, :order_id, :product_id, :product_name, :category,
-                            :quantity_ordered, :quantity_received, :unit, :cost_price, :selling_price,
-                            :mrp, :barcode, :item_code, :gst_percentage, :hsn_code, :notes,
-                            :created_at, :updated_at
-                        )
-                        ON CONFLICT (item_id) DO UPDATE SET
-                            product_name = EXCLUDED.product_name,
-                            category = EXCLUDED.category,
-                            quantity_ordered = EXCLUDED.quantity_ordered,
-                            quantity_received = EXCLUDED.quantity_received,
-                            cost_price = EXCLUDED.cost_price,
-                            selling_price = EXCLUDED.selling_price,
-                            mrp = EXCLUDED.mrp,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(item['item_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync bulk order item {item.get('item_id')}: {e}")
-
-        self._mark_as_synced('bulk_stock_order_item', 'item_id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_users(self):
-        """Sync users from SQLite to PostgreSQL (excluding password_hash)"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM users
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            users = [dict(row._mapping) for row in result]
-
-        if not users:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for user in users:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(user, USER_COLUMN_TYPES)
-
-                    pg_conn.execute(text("""
-                        INSERT INTO users (
-                            user_id, email, password_hash, client_id, role, is_super_admin,
-                            created_at, last_login, is_active, full_name, phone, department,
-                            created_by, updated_at, updated_by, deleted_at
-                        ) VALUES (
-                            :user_id, :email, :password_hash, :client_id, :role, :is_super_admin,
-                            :created_at, :last_login, :is_active, :full_name, :phone, :department,
-                            :created_by, :updated_at, :updated_by, :deleted_at
-                        )
-                        ON CONFLICT (user_id) DO UPDATE SET
-                            email = EXCLUDED.email,
-                            role = EXCLUDED.role,
-                            is_super_admin = EXCLUDED.is_super_admin,
-                            last_login = EXCLUDED.last_login,
-                            is_active = EXCLUDED.is_active,
-                            full_name = EXCLUDED.full_name,
-                            phone = EXCLUDED.phone,
-                            department = EXCLUDED.department,
-                            updated_at = EXCLUDED.updated_at,
-                            updated_by = EXCLUDED.updated_by,
-                            deleted_at = EXCLUDED.deleted_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(user['user_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync user {user.get('user_id')}: {e}")
-
-        self._mark_as_synced('users', 'user_id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_user_permissions(self):
-        """Sync user permissions from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM user_permissions
-                WHERE synced_at IS NULL
-                ORDER BY granted_at
-                LIMIT 1000
-            """))
-            permissions = [dict(row._mapping) for row in result]
-
-        if not permissions:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for perm in permissions:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(perm, USER_PERMISSION_COLUMN_TYPES)
-
-                    pg_conn.execute(text("""
-                        INSERT INTO user_permissions (
-                            id, user_id, permission_id, granted_at, granted_by, updated_at
-                        ) VALUES (
-                            :id, :user_id, :permission_id, :granted_at, :granted_by, :updated_at
-                        )
-                        ON CONFLICT (id) DO UPDATE SET
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(perm['id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync user permission {perm.get('id')}: {e}")
-
-        self._mark_as_synced('user_permissions', 'id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_reports(self):
-        """Sync reports from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM report
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            reports = [dict(row._mapping) for row in result]
-
-        if not reports:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for report in reports:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(report, REPORT_COLUMN_TYPES)
-
-                    if 'payment_breakdown' in converted and not isinstance(converted['payment_breakdown'], str):
-                        converted['payment_breakdown'] = json.dumps(converted['payment_breakdown']) if converted['payment_breakdown'] else None
-
-                    pg_conn.execute(text("""
-                        INSERT INTO report (
-                            report_id, client_id, report_type, date_from, date_to,
-                            total_gst_bills, total_non_gst_bills, total_gst_amount, total_non_gst_amount,
-                            total_revenue, payment_breakdown, file_url, generated_by, created_at, updated_at
-                        ) VALUES (
-                            :report_id, :client_id, :report_type, :date_from, :date_to,
-                            :total_gst_bills, :total_non_gst_bills, :total_gst_amount, :total_non_gst_amount,
-                            :total_revenue, :payment_breakdown, :file_url, :generated_by, :created_at, :updated_at
-                        )
-                        ON CONFLICT (report_id) DO UPDATE SET
-                            total_gst_bills = EXCLUDED.total_gst_bills,
-                            total_non_gst_bills = EXCLUDED.total_non_gst_bills,
-                            total_gst_amount = EXCLUDED.total_gst_amount,
-                            total_non_gst_amount = EXCLUDED.total_non_gst_amount,
-                            total_revenue = EXCLUDED.total_revenue,
-                            payment_breakdown = EXCLUDED.payment_breakdown,
-                            file_url = EXCLUDED.file_url,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(report['report_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync report {report.get('report_id')}: {e}")
-
-        self._mark_as_synced('report', 'report_id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_notes(self):
-        """Sync notes from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM notes
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            notes = [dict(row._mapping) for row in result]
-
-        if not notes:
-            return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for note in notes:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(note, NOTES_COLUMN_TYPES)
-
-                    pg_conn.execute(text("""
-                        INSERT INTO notes (
-                            note_id, user_id, title, content, created_at, updated_at, expires_at
-                        ) VALUES (
-                            :note_id, :user_id, :title, :content, :created_at, :updated_at, :expires_at
-                        )
-                        ON CONFLICT (note_id) DO UPDATE SET
-                            title = EXCLUDED.title,
-                            content = EXCLUDED.content,
-                            updated_at = EXCLUDED.updated_at,
-                            expires_at = EXCLUDED.expires_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(note['note_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync note {note.get('note_id')}: {e}")
-
-        self._mark_as_synced('notes', 'note_id', synced_ids)
-        return len(synced_ids)
-
-    def _sync_employees(self):
-        """Sync employees from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM employees
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            rows = [dict(row._mapping) for row in result]
-
+            rows = [dict(r._mapping) for r in sqlite_conn.execute(
+                text(f"SELECT * FROM {table} {where} ORDER BY {order_by} LIMIT 1000"), params)]
         if not rows:
             return 0
-
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for rec in rows:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(rec, EMPLOYEE_COLUMN_TYPES)
-
-                    pg_conn.execute(text("""
-                        INSERT INTO employees (
-                            employee_id, client_id, branch_id, name, phone, pay_type, rate,
-                            is_active, ot_multiplier, created_by, created_at, updated_at
-                        ) VALUES (
-                            :employee_id, :client_id, :branch_id, :name, :phone, :pay_type, :rate,
-                            :is_active, :ot_multiplier, :created_by, :created_at, :updated_at
-                        )
-                        ON CONFLICT (employee_id) DO UPDATE SET
-                            branch_id = EXCLUDED.branch_id,
-                            name = EXCLUDED.name,
-                            phone = EXCLUDED.phone,
-                            pay_type = EXCLUDED.pay_type,
-                            rate = EXCLUDED.rate,
-                            is_active = EXCLUDED.is_active,
-                            ot_multiplier = EXCLUDED.ot_multiplier,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(rec['employee_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync employee {rec.get('employee_id')}: {e}")
-
-        self._mark_as_synced('employees', 'employee_id', synced_ids)
+        # executemany needs every param dict to carry exactly the SQL's bind
+        # keys — SELECT * brings extra columns, so filter to the named binds.
+        bind_keys = set(re.findall(r':(\w+)', insert_sql))
+        payload, ids = [], []
+        for i, rec in enumerate(rows):
+            converted = TypeConverter.convert_dict_from_sqlite(rec, column_types)
+            if preprocess:
+                preprocess(converted)
+            # Surface schema/SQL drift loudly: a bind key absent from the source
+            # row would silently become NULL (and fail a NOT NULL column). Check
+            # once per table rather than swallowing it row-by-row.
+            if i == 0:
+                missing = bind_keys - set(converted.keys())
+                if missing:
+                    logger.warning(
+                        f"[SyncService] {table}: INSERT binds {sorted(missing)} are missing "
+                        f"from source rows — will upload NULL. Check migration/schema drift."
+                    )
+            payload.append({k: converted.get(k) for k in bind_keys})
+            ids.append(rec[id_column])
+        synced_ids = self._push_batch(table, insert_sql, payload, ids)
+        self._mark_as_synced(table, id_column, synced_ids)
         return len(synced_ids)
 
-    def _sync_salary_cycles(self):
-        """Sync salary cycles from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM salary_cycles
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            rows = [dict(row._mapping) for row in result]
+    def _sync_gst_bills(self, client_id=None):
+        """Owner-scoped, batched GST-bill upload."""
+        insert_sql = """
+            INSERT INTO gst_billing (
+                bill_id, client_id, bill_number, bill_prefix, customer_name, customer_phone,
+                customer_address, items, subtotal, gst_percentage, gst_amount, final_amount,
+                payment_type, amount_received, discount_percentage, discount_amount,
+                negotiable_amount, status, created_by, created_at, updated_at
+            ) VALUES (
+                :bill_id, :client_id, :bill_number, :bill_prefix, :customer_name, :customer_phone,
+                :customer_address, :items, :subtotal, :gst_percentage, :gst_amount, :final_amount,
+                :payment_type, :amount_received, :discount_percentage, :discount_amount,
+                :negotiable_amount, :status, :created_by, :created_at, :updated_at
+            )
+            ON CONFLICT (bill_id) DO UPDATE SET
+                items = EXCLUDED.items,
+                subtotal = EXCLUDED.subtotal,
+                gst_percentage = EXCLUDED.gst_percentage,
+                gst_amount = EXCLUDED.gst_amount,
+                final_amount = EXCLUDED.final_amount,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        def _prep(c):
+            if c.get('customer_address') is None:
+                c['customer_address'] = ''
+            if c.get('gst_percentage') is None:
+                c['gst_percentage'] = 0
+            if 'items' in c and not isinstance(c['items'], str):
+                c['items'] = json.dumps(c['items'])
+        return self._upload_pending('gst_billing', 'bill_id', BILLING_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id, preprocess=_prep)
 
-        if not rows:
-            return 0
+    def _sync_non_gst_bills(self, client_id=None):
+        """Owner-scoped, batched non-GST-bill upload."""
+        insert_sql = """
+            INSERT INTO non_gst_billing (
+                bill_id, client_id, bill_number, bill_prefix, customer_name, customer_phone,
+                customer_gstin, items, total_amount, payment_type, amount_received,
+                discount_percentage, discount_amount, negotiable_amount, status,
+                created_by, created_at, updated_at
+            ) VALUES (
+                :bill_id, :client_id, :bill_number, :bill_prefix, :customer_name, :customer_phone,
+                :customer_gstin, :items, :total_amount, :payment_type, :amount_received,
+                :discount_percentage, :discount_amount, :negotiable_amount, :status,
+                :created_by, :created_at, :updated_at
+            )
+            ON CONFLICT (bill_id) DO UPDATE SET
+                items = EXCLUDED.items,
+                total_amount = EXCLUDED.total_amount,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        def _prep(c):
+            if 'items' in c and not isinstance(c['items'], str):
+                c['items'] = json.dumps(c['items'])
+        return self._upload_pending('non_gst_billing', 'bill_id', BILLING_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id, preprocess=_prep)
 
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for rec in rows:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(rec, SALARY_CYCLE_COLUMN_TYPES)
+    def _sync_stock(self, client_id=None):
+        """Owner-scoped, batched stock upload."""
+        insert_sql = """
+            INSERT INTO stock_entry (
+                product_id, client_id, product_name, category, quantity, rate,
+                cost_price, mrp, pricing, unit, low_stock_alert, item_code,
+                barcode, gst_percentage, hsn_code, created_at, updated_at
+            ) VALUES (
+                :product_id, :client_id, :product_name, :category, :quantity, :rate,
+                :cost_price, :mrp, :pricing, :unit, :low_stock_alert, :item_code,
+                :barcode, :gst_percentage, :hsn_code, :created_at, :updated_at
+            )
+            ON CONFLICT (product_id) DO UPDATE SET
+                product_name = EXCLUDED.product_name,
+                category = EXCLUDED.category,
+                quantity = EXCLUDED.quantity,
+                rate = EXCLUDED.rate,
+                cost_price = EXCLUDED.cost_price,
+                mrp = EXCLUDED.mrp,
+                pricing = EXCLUDED.pricing,
+                unit = EXCLUDED.unit,
+                low_stock_alert = EXCLUDED.low_stock_alert,
+                item_code = EXCLUDED.item_code,
+                barcode = EXCLUDED.barcode,
+                gst_percentage = EXCLUDED.gst_percentage,
+                hsn_code = EXCLUDED.hsn_code,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        return self._upload_pending('stock_entry', 'product_id', STOCK_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id, order_by='updated_at')
 
-                    pg_conn.execute(text("""
-                        INSERT INTO salary_cycles (
-                            cycle_id, employee_id, client_id, start_date, end_date, status,
-                            gross_salary, total_advances, net_salary, paid_at, paid_by,
-                            payment_note, rate_snapshot, pay_type_snap, full_day_mins,
-                            created_at, updated_at
-                        ) VALUES (
-                            :cycle_id, :employee_id, :client_id, :start_date, :end_date, :status,
-                            :gross_salary, :total_advances, :net_salary, :paid_at, :paid_by,
-                            :payment_note, :rate_snapshot, :pay_type_snap, :full_day_mins,
-                            :created_at, :updated_at
-                        )
-                        ON CONFLICT (cycle_id) DO UPDATE SET
-                            start_date = EXCLUDED.start_date,
-                            end_date = EXCLUDED.end_date,
-                            status = EXCLUDED.status,
-                            gross_salary = EXCLUDED.gross_salary,
-                            total_advances = EXCLUDED.total_advances,
-                            net_salary = EXCLUDED.net_salary,
-                            paid_at = EXCLUDED.paid_at,
-                            paid_by = EXCLUDED.paid_by,
-                            payment_note = EXCLUDED.payment_note,
-                            rate_snapshot = EXCLUDED.rate_snapshot,
-                            pay_type_snap = EXCLUDED.pay_type_snap,
-                            full_day_mins = EXCLUDED.full_day_mins,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(rec['cycle_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync salary cycle {rec.get('cycle_id')}: {e}")
+    def _sync_customers(self, client_id=None):
+        """Owner-scoped, batched customer upload."""
+        insert_sql = """
+            INSERT INTO customer (
+                customer_id, client_id, customer_code, customer_name, customer_phone,
+                customer_email, customer_address, customer_gstin, customer_city,
+                customer_state, customer_pincode, total_bills, total_spent,
+                last_purchase_date, first_purchase_date, status, notes,
+                created_at, updated_at
+            ) VALUES (
+                :customer_id, :client_id, :customer_code, :customer_name, :customer_phone,
+                :customer_email, :customer_address, :customer_gstin, :customer_city,
+                :customer_state, :customer_pincode, :total_bills, :total_spent,
+                :last_purchase_date, :first_purchase_date, :status, :notes,
+                :created_at, :updated_at
+            )
+            ON CONFLICT (customer_id) DO UPDATE SET
+                customer_code = EXCLUDED.customer_code,
+                customer_name = EXCLUDED.customer_name,
+                customer_phone = EXCLUDED.customer_phone,
+                customer_email = EXCLUDED.customer_email,
+                customer_address = EXCLUDED.customer_address,
+                customer_gstin = EXCLUDED.customer_gstin,
+                customer_city = EXCLUDED.customer_city,
+                customer_state = EXCLUDED.customer_state,
+                customer_pincode = EXCLUDED.customer_pincode,
+                total_bills = EXCLUDED.total_bills,
+                total_spent = EXCLUDED.total_spent,
+                last_purchase_date = EXCLUDED.last_purchase_date,
+                first_purchase_date = EXCLUDED.first_purchase_date,
+                status = EXCLUDED.status,
+                notes = EXCLUDED.notes,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        return self._upload_pending('customer', 'customer_id', CUSTOMER_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id, order_by='updated_at')
 
-        self._mark_as_synced('salary_cycles', 'cycle_id', synced_ids)
-        return len(synced_ids)
+    def _sync_expenses(self, client_id=None):
+        """Owner-scoped, batched expense upload."""
+        insert_sql = """
+            INSERT INTO expense (
+                expense_id, client_id, category, description, amount, expense_date,
+                payment_method, receipt_url, notes, extra_data, created_by, created_at, updated_at
+            ) VALUES (
+                :expense_id, :client_id, :category, :description, :amount, :expense_date,
+                :payment_method, :receipt_url, :notes, :extra_data, :created_by, :created_at, :updated_at
+            )
+            ON CONFLICT (expense_id) DO UPDATE SET
+                category = EXCLUDED.category,
+                description = EXCLUDED.description,
+                amount = EXCLUDED.amount,
+                expense_date = EXCLUDED.expense_date,
+                payment_method = EXCLUDED.payment_method,
+                receipt_url = EXCLUDED.receipt_url,
+                notes = EXCLUDED.notes,
+                extra_data = EXCLUDED.extra_data,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        def _prep(c):
+            if 'extra_data' in c and not isinstance(c['extra_data'], str):
+                c['extra_data'] = json.dumps(c['extra_data']) if c['extra_data'] else None
+        return self._upload_pending('expense', 'expense_id', EXPENSE_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id, preprocess=_prep)
 
-    def _sync_employee_attendance(self):
-        """Sync attendance records from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM employee_attendance
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            rows = [dict(row._mapping) for row in result]
+    def _sync_expense_summaries(self, client_id=None):
+        """Owner-scoped, batched expense-summary upload."""
+        insert_sql = """
+            INSERT INTO expense_summary (
+                summary_id, client_id, period_type, period_start, period_end,
+                total_expenses, category_breakdown, expense_count, created_at, updated_at
+            ) VALUES (
+                :summary_id, :client_id, :period_type, :period_start, :period_end,
+                :total_expenses, :category_breakdown, :expense_count, :created_at, :updated_at
+            )
+            ON CONFLICT (summary_id) DO UPDATE SET
+                total_expenses = EXCLUDED.total_expenses,
+                category_breakdown = EXCLUDED.category_breakdown,
+                expense_count = EXCLUDED.expense_count,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        def _prep(c):
+            if 'category_breakdown' in c and not isinstance(c['category_breakdown'], str):
+                c['category_breakdown'] = json.dumps(c['category_breakdown']) if c['category_breakdown'] else None
+        return self._upload_pending('expense_summary', 'summary_id', EXPENSE_SUMMARY_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id, preprocess=_prep)
 
-        if not rows:
-            return 0
+    def _sync_bulk_orders(self, client_id=None):
+        """Owner-scoped, batched bulk-stock-order upload."""
+        insert_sql = """
+            INSERT INTO bulk_stock_order (
+                order_id, client_id, order_number, supplier_name, supplier_contact,
+                order_date, expected_delivery_date, status, notes, created_by,
+                created_at, updated_at, received_at
+            ) VALUES (
+                :order_id, :client_id, :order_number, :supplier_name, :supplier_contact,
+                :order_date, :expected_delivery_date, :status, :notes, :created_by,
+                :created_at, :updated_at, :received_at
+            )
+            ON CONFLICT (order_id) DO UPDATE SET
+                supplier_name = EXCLUDED.supplier_name,
+                supplier_contact = EXCLUDED.supplier_contact,
+                expected_delivery_date = EXCLUDED.expected_delivery_date,
+                status = EXCLUDED.status,
+                notes = EXCLUDED.notes,
+                updated_at = EXCLUDED.updated_at,
+                received_at = EXCLUDED.received_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        return self._upload_pending('bulk_stock_order', 'order_id', BULK_ORDER_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id)
 
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for rec in rows:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(rec, EMPLOYEE_ATTENDANCE_COLUMN_TYPES)
+    def _sync_bulk_order_items(self, client_id=None):
+        """Owner-scoped, batched bulk-order-item upload.
 
-                    pg_conn.execute(text("""
-                        INSERT INTO employee_attendance (
-                            attendance_id, employee_id, client_id, work_date, check_in, check_out,
-                            total_minutes, status, reason, auto_ot_minutes, approved_ot_minutes,
-                            marked_by, notes, is_active, deleted_at, created_at, updated_at
-                        ) VALUES (
-                            :attendance_id, :employee_id, :client_id, :work_date, :check_in, :check_out,
-                            :total_minutes, :status, :reason, :auto_ot_minutes, :approved_ot_minutes,
-                            :marked_by, :notes, :is_active, :deleted_at, :created_at, :updated_at
-                        )
-                        ON CONFLICT (attendance_id) DO UPDATE SET
-                            work_date = EXCLUDED.work_date,
-                            check_in = EXCLUDED.check_in,
-                            check_out = EXCLUDED.check_out,
-                            total_minutes = EXCLUDED.total_minutes,
-                            status = EXCLUDED.status,
-                            reason = EXCLUDED.reason,
-                            auto_ot_minutes = EXCLUDED.auto_ot_minutes,
-                            approved_ot_minutes = EXCLUDED.approved_ot_minutes,
-                            notes = EXCLUDED.notes,
-                            is_active = EXCLUDED.is_active,
-                            deleted_at = EXCLUDED.deleted_at,
-                            updated_at = EXCLUDED.updated_at,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(rec['attendance_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync attendance {rec.get('attendance_id')}: {e}")
+        Items carry no client_id; they are scoped through their parent order
+        (order_id -> bulk_stock_order.client_id) so only this owner's items sync.
+        """
+        insert_sql = """
+            INSERT INTO bulk_stock_order_item (
+                item_id, order_id, product_id, product_name, category,
+                quantity_ordered, quantity_received, unit, cost_price, selling_price,
+                mrp, barcode, item_code, gst_percentage, hsn_code, notes,
+                created_at, updated_at
+            ) VALUES (
+                :item_id, :order_id, :product_id, :product_name, :category,
+                :quantity_ordered, :quantity_received, :unit, :cost_price, :selling_price,
+                :mrp, :barcode, :item_code, :gst_percentage, :hsn_code, :notes,
+                :created_at, :updated_at
+            )
+            ON CONFLICT (item_id) DO UPDATE SET
+                product_name = EXCLUDED.product_name,
+                category = EXCLUDED.category,
+                quantity_ordered = EXCLUDED.quantity_ordered,
+                quantity_received = EXCLUDED.quantity_received,
+                cost_price = EXCLUDED.cost_price,
+                selling_price = EXCLUDED.selling_price,
+                mrp = EXCLUDED.mrp,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        return self._upload_pending('bulk_stock_order_item', 'item_id', BULK_ORDER_ITEM_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id, client_filter='via_order')
 
-        self._mark_as_synced('employee_attendance', 'attendance_id', synced_ids)
-        return len(synced_ids)
+    def _sync_users(self, client_id=None):
+        """Owner-scoped, batched user upload."""
+        insert_sql = """
+            INSERT INTO users (
+                user_id, email, password_hash, client_id, role, is_super_admin,
+                created_at, last_login, is_active, full_name, phone, department,
+                created_by, updated_at, updated_by, deleted_at
+            ) VALUES (
+                :user_id, :email, :password_hash, :client_id, :role, :is_super_admin,
+                :created_at, :last_login, :is_active, :full_name, :phone, :department,
+                :created_by, :updated_at, :updated_by, :deleted_at
+            )
+            ON CONFLICT (user_id) DO UPDATE SET
+                email = EXCLUDED.email,
+                role = EXCLUDED.role,
+                is_super_admin = EXCLUDED.is_super_admin,
+                last_login = EXCLUDED.last_login,
+                is_active = EXCLUDED.is_active,
+                full_name = EXCLUDED.full_name,
+                phone = EXCLUDED.phone,
+                department = EXCLUDED.department,
+                updated_at = EXCLUDED.updated_at,
+                updated_by = EXCLUDED.updated_by,
+                deleted_at = EXCLUDED.deleted_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        return self._upload_pending('users', 'user_id', USER_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id)
 
-    def _sync_salary_advances(self):
-        """Sync salary advances from SQLite to PostgreSQL"""
-        with self.sqlite_engine.connect() as sqlite_conn:
-            result = sqlite_conn.execute(text("""
-                SELECT * FROM salary_advances
-                WHERE synced_at IS NULL
-                ORDER BY created_at
-                LIMIT 1000
-            """))
-            rows = [dict(row._mapping) for row in result]
+    def _sync_user_permissions(self, client_id=None):
+        """Owner-scoped, batched user-permission upload.
 
-        if not rows:
-            return 0
+        user_permissions has no client_id; scope through user_id -> users.
+        """
+        insert_sql = """
+            INSERT INTO user_permissions (
+                id, user_id, permission_id, granted_at, granted_by, updated_at
+            ) VALUES (
+                :id, :user_id, :permission_id, :granted_at, :granted_by, :updated_at
+            )
+            ON CONFLICT (id) DO UPDATE SET
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        return self._upload_pending('user_permissions', 'id', USER_PERMISSION_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id, client_filter='via_user', order_by='granted_at')
 
-        synced_ids = []
-        with self.postgres_engine.connect() as pg_conn:
-            for rec in rows:
-                try:
-                    converted = TypeConverter.convert_dict_from_sqlite(rec, SALARY_ADVANCE_COLUMN_TYPES)
+    def _sync_reports(self, client_id=None):
+        """Owner-scoped, batched report upload."""
+        insert_sql = """
+            INSERT INTO report (
+                report_id, client_id, report_type, date_from, date_to,
+                total_gst_bills, total_non_gst_bills, total_gst_amount, total_non_gst_amount,
+                total_revenue, payment_breakdown, file_url, generated_by, created_at, updated_at
+            ) VALUES (
+                :report_id, :client_id, :report_type, :date_from, :date_to,
+                :total_gst_bills, :total_non_gst_bills, :total_gst_amount, :total_non_gst_amount,
+                :total_revenue, :payment_breakdown, :file_url, :generated_by, :created_at, :updated_at
+            )
+            ON CONFLICT (report_id) DO UPDATE SET
+                total_gst_bills = EXCLUDED.total_gst_bills,
+                total_non_gst_bills = EXCLUDED.total_non_gst_bills,
+                total_gst_amount = EXCLUDED.total_gst_amount,
+                total_non_gst_amount = EXCLUDED.total_non_gst_amount,
+                total_revenue = EXCLUDED.total_revenue,
+                payment_breakdown = EXCLUDED.payment_breakdown,
+                file_url = EXCLUDED.file_url,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        def _prep(c):
+            if 'payment_breakdown' in c and not isinstance(c['payment_breakdown'], str):
+                c['payment_breakdown'] = json.dumps(c['payment_breakdown']) if c['payment_breakdown'] else None
+        return self._upload_pending('report', 'report_id', REPORT_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id, preprocess=_prep)
 
-                    pg_conn.execute(text("""
-                        INSERT INTO salary_advances (
-                            advance_id, employee_id, client_id, cycle_id, amount, advance_date,
-                            notes, recorded_by, created_at
-                        ) VALUES (
-                            :advance_id, :employee_id, :client_id, :cycle_id, :amount, :advance_date,
-                            :notes, :recorded_by, :created_at
-                        )
-                        ON CONFLICT (advance_id) DO UPDATE SET
-                            amount = EXCLUDED.amount,
-                            advance_date = EXCLUDED.advance_date,
-                            notes = EXCLUDED.notes,
-                            synced_at = CURRENT_TIMESTAMP
-                    """), converted)
-                    pg_conn.commit()
-                    synced_ids.append(rec['advance_id'])
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] Failed to sync salary advance {rec.get('advance_id')}: {e}")
+    def _sync_notes(self, client_id=None):
+        """Owner-scoped, batched note upload.
 
-        self._mark_as_synced('salary_advances', 'advance_id', synced_ids)
-        return len(synced_ids)
+        notes has no client_id; scope through user_id -> users.
+        """
+        insert_sql = """
+            INSERT INTO notes (
+                note_id, user_id, title, content, created_at, updated_at, expires_at
+            ) VALUES (
+                :note_id, :user_id, :title, :content, :created_at, :updated_at, :expires_at
+            )
+            ON CONFLICT (note_id) DO UPDATE SET
+                title = EXCLUDED.title,
+                content = EXCLUDED.content,
+                updated_at = EXCLUDED.updated_at,
+                expires_at = EXCLUDED.expires_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        return self._upload_pending('notes', 'note_id', NOTES_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id, client_filter='via_user')
+
+    def _sync_employees(self, client_id=None):
+        """Owner-scoped, batched employee upload."""
+        insert_sql = """
+            INSERT INTO employees (
+                employee_id, client_id, branch_id, name, phone, pay_type, rate,
+                is_active, ot_multiplier, created_by, created_at, updated_at
+            ) VALUES (
+                :employee_id, :client_id, :branch_id, :name, :phone, :pay_type, :rate,
+                :is_active, :ot_multiplier, :created_by, :created_at, :updated_at
+            )
+            ON CONFLICT (employee_id) DO UPDATE SET
+                branch_id = EXCLUDED.branch_id,
+                name = EXCLUDED.name,
+                phone = EXCLUDED.phone,
+                pay_type = EXCLUDED.pay_type,
+                rate = EXCLUDED.rate,
+                is_active = EXCLUDED.is_active,
+                ot_multiplier = EXCLUDED.ot_multiplier,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        return self._upload_pending('employees', 'employee_id', EMPLOYEE_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id)
+
+    def _sync_salary_cycles(self, client_id=None):
+        """Owner-scoped, batched salary-cycle upload."""
+        insert_sql = """
+            INSERT INTO salary_cycles (
+                cycle_id, employee_id, client_id, start_date, end_date, status,
+                gross_salary, total_advances, net_salary, paid_at, paid_by,
+                payment_note, rate_snapshot, pay_type_snap, full_day_mins,
+                created_at, updated_at
+            ) VALUES (
+                :cycle_id, :employee_id, :client_id, :start_date, :end_date, :status,
+                :gross_salary, :total_advances, :net_salary, :paid_at, :paid_by,
+                :payment_note, :rate_snapshot, :pay_type_snap, :full_day_mins,
+                :created_at, :updated_at
+            )
+            ON CONFLICT (cycle_id) DO UPDATE SET
+                start_date = EXCLUDED.start_date,
+                end_date = EXCLUDED.end_date,
+                status = EXCLUDED.status,
+                gross_salary = EXCLUDED.gross_salary,
+                total_advances = EXCLUDED.total_advances,
+                net_salary = EXCLUDED.net_salary,
+                paid_at = EXCLUDED.paid_at,
+                paid_by = EXCLUDED.paid_by,
+                payment_note = EXCLUDED.payment_note,
+                rate_snapshot = EXCLUDED.rate_snapshot,
+                pay_type_snap = EXCLUDED.pay_type_snap,
+                full_day_mins = EXCLUDED.full_day_mins,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        return self._upload_pending('salary_cycles', 'cycle_id', SALARY_CYCLE_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id)
+
+    def _sync_employee_attendance(self, client_id=None):
+        """Owner-scoped, batched attendance upload (includes soft-deleted rows)."""
+        insert_sql = """
+            INSERT INTO employee_attendance (
+                attendance_id, employee_id, client_id, work_date, check_in, check_out,
+                total_minutes, status, reason, auto_ot_minutes, approved_ot_minutes,
+                marked_by, notes, is_active, deleted_at, created_at, updated_at
+            ) VALUES (
+                :attendance_id, :employee_id, :client_id, :work_date, :check_in, :check_out,
+                :total_minutes, :status, :reason, :auto_ot_minutes, :approved_ot_minutes,
+                :marked_by, :notes, :is_active, :deleted_at, :created_at, :updated_at
+            )
+            ON CONFLICT (attendance_id) DO UPDATE SET
+                work_date = EXCLUDED.work_date,
+                check_in = EXCLUDED.check_in,
+                check_out = EXCLUDED.check_out,
+                total_minutes = EXCLUDED.total_minutes,
+                status = EXCLUDED.status,
+                reason = EXCLUDED.reason,
+                auto_ot_minutes = EXCLUDED.auto_ot_minutes,
+                approved_ot_minutes = EXCLUDED.approved_ot_minutes,
+                notes = EXCLUDED.notes,
+                is_active = EXCLUDED.is_active,
+                deleted_at = EXCLUDED.deleted_at,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        return self._upload_pending('employee_attendance', 'attendance_id', EMPLOYEE_ATTENDANCE_COLUMN_TYPES,
+                                    insert_sql, client_id=client_id)
+
+    def _sync_salary_advances(self, client_id=None):
+        """Owner-scoped, batched salary-advance upload."""
+        insert_sql = """
+            INSERT INTO salary_advances (
+                advance_id, employee_id, client_id, cycle_id, amount, advance_date,
+                notes, recorded_by, created_at, updated_at
+            ) VALUES (
+                :advance_id, :employee_id, :client_id, :cycle_id, :amount, :advance_date,
+                :notes, :recorded_by, :created_at, :updated_at
+            )
+            ON CONFLICT (advance_id) DO UPDATE SET
+                amount = EXCLUDED.amount,
+                advance_date = EXCLUDED.advance_date,
+                notes = EXCLUDED.notes,
+                updated_at = EXCLUDED.updated_at,
+                synced_at = CURRENT_TIMESTAMP
+        """
+        return self._upload_pending('salary_advances', 'advance_id', SALARY_ADVANCE_COLUMN_TYPES, insert_sql,
+                                    client_id=client_id)
 
     # ==========================================
     # DOWNLOAD SYNC METHODS (Supabase → SQLite)
@@ -1200,6 +1013,18 @@ class SyncService:
                 except Exception as e:
                     logger.error(f"[SyncService] {table_name} download failed: {e}")
                     results["errors"].append(f"{table_name}: {str(e)}")
+
+            # Generic Group-A owner tables (registry-driven).
+            for entry in _OWNER_SYNC_TABLES:
+                t = entry['table']
+                try:
+                    count = self._download_owner_table(entry, client_id, last_download)
+                    results["downloaded"][t] = count
+                    if count:
+                        logger.info(f"[SyncService] Downloaded {count} {t}")
+                except Exception as e:
+                    logger.error(f"[SyncService] {t} download failed: {e}")
+                    results["errors"].append(f"{t}: {str(e)}")
 
             # Update last download time
             self._update_last_download_time(client_id)
@@ -1286,6 +1111,18 @@ class SyncService:
                     logger.error(f"[SyncService] {table_name} load failed: {e}")
                     results["errors"].append(f"{table_name}: {str(e)}")
 
+            # Generic Group-A owner tables (registry-driven), full load.
+            for entry in _OWNER_SYNC_TABLES:
+                t = entry['table']
+                try:
+                    count = self._download_owner_table(entry, client_id, None)
+                    results["loaded"][t] = count
+                    if count:
+                        logger.info(f"[SyncService] Loaded {count} {t}")
+                except Exception as e:
+                    logger.error(f"[SyncService] {t} load failed: {e}")
+                    results["errors"].append(f"{t}: {str(e)}")
+
             # Mark initial load complete
             self._update_last_download_time(client_id)
             self._mark_initial_load_complete(client_id)
@@ -1315,7 +1152,7 @@ class SyncService:
         """
         logger.info(f"[SyncService] Starting full bidirectional sync for client {client_id}...")
 
-        upload_results = self.sync_all()
+        upload_results = self.sync_all(client_id)
         download_results = self.download_all(client_id)
 
         return {
@@ -1444,6 +1281,186 @@ class SyncService:
 
         return count
 
+    def _stamp_synced(self, records):
+        """Mark cloud-downloaded rows as already-synced.
+
+        Rows created on the web arrive with synced_at = NULL; without this the
+        next upload pass would bounce them straight back to the server. Setting
+        synced_at here breaks that ping-pong. Locally-edited rows are safe:
+        _upsert_to_sqlite's Last-Write-Wins skips them (local is newer), so
+        their synced_at = NULL is preserved and they still upload.
+        """
+        now_iso = get_current_time().isoformat()
+        for r in records:
+            r['synced_at'] = now_iso
+        return records
+
+    # ==========================================
+    # GENERIC OWNER-TABLE SYNC (registry-driven, schema-introspected)
+    # ==========================================
+    def _owner_table_meta(self, table):
+        """Introspect a table once and cache it. Returns the columns present on
+        BOTH engines (so we never bind a column missing on one side), a type map
+        for conversion, and the set of JSON columns. Cached per table."""
+        if table in self._meta_cache:
+            return self._meta_cache[table]
+        with self.sqlite_engine.connect() as sc:
+            sqlite_cols = {r[1] for r in sc.execute(text(f"PRAGMA table_info({table})"))}
+        pg_types = {}
+        with self.postgres_engine.connect() as pc:
+            for name, dtype in pc.execute(text(
+                "SELECT column_name, data_type FROM information_schema.columns "
+                "WHERE table_schema='public' AND table_name=:t"), {"t": table}):
+                pg_types[name] = dtype
+        common = [c for c in pg_types if c in sqlite_cols]
+        type_map, json_cols = {}, set()
+        for c in common:
+            d = pg_types[c]
+            if d == 'uuid':
+                type_map[c] = 'UUID'
+            elif d == 'boolean':
+                type_map[c] = 'BOOLEAN'
+            elif d == 'date':
+                type_map[c] = 'DATE'
+            elif d.startswith('timestamp'):
+                type_map[c] = 'TIMESTAMP'
+            elif d in ('numeric', 'integer', 'bigint', 'smallint', 'double precision', 'real'):
+                type_map[c] = 'NUMERIC'
+            elif d in ('json', 'jsonb'):
+                json_cols.add(c)
+        meta = {'common': common, 'types': type_map, 'json': json_cols}
+        self._meta_cache[table] = meta
+        return meta
+
+    def _owner_where(self, scope, client_id, params):
+        """WHERE fragment scoping a generic owner table to one owner. Supports
+        'client_id', 'via_user', and ('via', parent_table, fk) where the parent's
+        PK column name equals fk. No-op when client_id is falsy."""
+        if not client_id or not scope:
+            return ""
+        params['client_id'] = client_id
+        if scope == 'client_id':
+            return " AND client_id = :client_id"
+        if scope == 'via_user':
+            return " AND user_id IN (SELECT user_id FROM users WHERE client_id = :client_id)"
+        if isinstance(scope, tuple) and scope[0] == 'via':
+            _, parent, fk = scope
+            return f" AND {fk} IN (SELECT {fk} FROM {parent} WHERE client_id = :client_id)"
+        return ""
+
+    def _mark_synced_by_rowid(self, table, rowids):
+        """Mark uploaded rows synced by SQLite rowid (works for any PK shape)."""
+        if not rowids:
+            return
+        ph = ','.join(f":r{i}" for i in range(len(rowids)))
+        params = {"synced_at": get_current_time().isoformat()}
+        params.update({f"r{i}": rid for i, rid in enumerate(rowids)})
+        with self.sqlite_engine.connect() as sc:
+            sc.execute(text(f"UPDATE {table} SET synced_at = :synced_at WHERE rowid IN ({ph})"), params)
+            sc.commit()
+
+    def _sync_owner_table(self, entry, client_id=None):
+        """Generic owner-scoped, batched upload for a registry table (SQLite -> PG)."""
+        table, pk, scope = entry['table'], entry['pk'], entry['scope']
+        meta = self._owner_table_meta(table)
+        common = meta['common']
+        if 'synced_at' not in common:
+            return 0  # not migrated for upload on this engine yet
+        insert_cols = [c for c in common if c != 'synced_at']
+        pk_cols = pk if isinstance(pk, list) else [pk]
+        set_cols = [c for c in insert_cols if c not in pk_cols]
+        set_clause = ', '.join(f"{c} = EXCLUDED.{c}" for c in set_cols)
+        set_clause = (set_clause + ', ' if set_clause else '') + 'synced_at = CURRENT_TIMESTAMP'
+        insert_sql = (
+            f"INSERT INTO {table} ({', '.join(insert_cols)}) "
+            f"VALUES ({', '.join(':' + c for c in insert_cols)}) "
+            f"ON CONFLICT ({', '.join(pk_cols)}) DO UPDATE SET {set_clause}"
+        )
+        params = {}
+        where = "WHERE synced_at IS NULL" + self._owner_where(scope, client_id, params)
+        order = 'created_at' if 'created_at' in common else pk_cols[0]
+        with self.sqlite_engine.connect() as sc:
+            rows = [dict(r._mapping) for r in sc.execute(
+                text(f"SELECT rowid AS _rowid, * FROM {table} {where} ORDER BY {order} LIMIT 1000"), params)]
+        if not rows:
+            return 0
+        payload, rowids = [], []
+        for rec in rows:
+            converted = TypeConverter.convert_dict_from_sqlite(rec, meta['types'])
+            payload.append({c: converted.get(c) for c in insert_cols})  # JSON cols pass as stored text
+            rowids.append(rec['_rowid'])
+        synced_rowids = self._push_batch(table, insert_sql, payload, rowids)
+        self._mark_synced_by_rowid(table, synced_rowids)
+        return len(synced_rowids)
+
+    def _download_owner_table(self, entry, client_id, last_download):
+        """Generic owner-scoped download for a registry table (PG -> SQLite)."""
+        table, pk, scope = entry['table'], entry['pk'], entry['scope']
+        meta = self._owner_table_meta(table)
+        common = meta['common']
+        if not common:
+            return 0
+        params = {}
+        where = "WHERE 1=1" + self._owner_where(scope, client_id, params)
+        # Incremental filter on the row's most-recent mtime. Include paid_at so
+        # tables like payment_transaction (no updated_at) still re-download when
+        # a later status/paid_at change happens after the original created_at.
+        mtime_cols = [c for c in ('updated_at', 'paid_at', 'created_at') if c in common]
+        if last_download and mtime_cols:
+            expr = mtime_cols[0] if len(mtime_cols) == 1 else f"COALESCE({', '.join(mtime_cols)})"
+            where += f" AND {expr} > :last_download"
+            params['last_download'] = last_download
+        pk_cols = pk if isinstance(pk, list) else [pk]
+        order = 'created_at' if 'created_at' in common else pk_cols[0]
+        with self.postgres_engine.connect() as pc:
+            records = [dict(r._mapping) for r in pc.execute(
+                text(f"SELECT {', '.join(common)} FROM {table} {where} ORDER BY {order} LIMIT 5000"), params)]
+        if not records:
+            return 0
+        converted = []
+        for r in records:
+            c = TypeConverter.convert_dict_to_sqlite(r, meta['types'])
+            for jc in meta['json']:
+                if c.get(jc) is not None and not isinstance(c[jc], str):
+                    c[jc] = json.dumps(c[jc])
+            converted.append(c)
+        self._stamp_synced(converted)
+        return self._upsert_owner_sqlite(table, converted, pk_cols, common)
+
+    def _upsert_owner_sqlite(self, table, records, pk_cols, columns):
+        """Upsert downloaded rows into SQLite (cloud-wins). Handles composite PKs.
+
+        Cloud-wins is safe here because full_sync uploads local dirty rows BEFORE
+        downloading, so a locally-edited row has already been pushed and the
+        cloud copy equals it by the time we overwrite.
+        """
+        if not records:
+            return 0
+        set_cols = [c for c in columns if c not in pk_cols]
+        set_clause = ', '.join(f"{c} = EXCLUDED.{c}" for c in set_cols) or f"{pk_cols[0]} = EXCLUDED.{pk_cols[0]}"
+        sql = (
+            f"INSERT INTO {table} ({', '.join(columns)}) "
+            f"VALUES ({', '.join(':' + c for c in columns)}) "
+            f"ON CONFLICT ({', '.join(pk_cols)}) DO UPDATE SET {set_clause}"
+        )
+        # Don't clobber a local row that has unsynced edits (synced_at IS NULL):
+        # it must upload first. full_sync uploads before download so this is rare,
+        # but a standalone download could otherwise lose local changes.
+        exists_sql = f"SELECT synced_at FROM {table} WHERE " + ' AND '.join(f"{c} = :{c}" for c in pk_cols)
+        count = 0
+        with self.sqlite_engine.connect() as sc:
+            for rec in records:
+                try:
+                    local = sc.execute(text(exists_sql), {c: rec.get(c) for c in pk_cols}).fetchone()
+                    if local is not None and local[0] is None:
+                        continue  # local has pending edits — keep them
+                    sc.execute(text(sql), {c: rec.get(c) for c in columns})
+                    count += 1
+                except Exception as e:
+                    logger.error(f"[SyncService] {table}: sqlite upsert failed: {str(e)[:120]}")
+            sc.commit()
+        return count
+
     def _download_gst_bills(self, client_id, last_download):
         """Download GST bills from Supabase to SQLite"""
         query = """
@@ -1474,7 +1491,7 @@ class SyncService:
                 converted['items'] = json.dumps(converted['items'])
             converted_records.append(converted)
 
-        columns = ['bill_id', 'client_id', 'bill_number', 'customer_id', 'customer_name',
+        columns = ['bill_id', 'client_id', 'bill_number', 'bill_prefix', 'customer_id', 'customer_name',
                    'customer_phone', 'customer_email', 'customer_address', 'items', 'subtotal',
                    'gst_percentage', 'gst_amount', 'final_amount', 'payment_type', 'amount_received',
                    'discount_percentage', 'discount_amount', 'negotiable_amount', 'status',
@@ -1511,7 +1528,7 @@ class SyncService:
                 converted['items'] = json.dumps(converted['items'])
             converted_records.append(converted)
 
-        columns = ['bill_id', 'client_id', 'bill_number', 'customer_id', 'customer_name',
+        columns = ['bill_id', 'client_id', 'bill_number', 'bill_prefix', 'customer_id', 'customer_name',
                    'customer_phone', 'customer_email', 'customer_address', 'customer_gstin',
                    'items', 'total_amount', 'payment_type', 'amount_received', 'discount_percentage',
                    'discount_amount', 'negotiable_amount', 'status', 'created_by',
@@ -1783,7 +1800,7 @@ class SyncService:
         columns = ['employee_id', 'client_id', 'branch_id', 'name', 'phone', 'pay_type', 'rate',
                    'is_active', 'ot_multiplier', 'created_by', 'created_at', 'updated_at', 'synced_at']
 
-        return self._upsert_to_sqlite('employees', converted_records, 'employee_id', columns)
+        return self._upsert_to_sqlite('employees', self._stamp_synced(converted_records), 'employee_id', columns)
 
     def _download_salary_cycles(self, client_id, last_download):
         """Download salary cycles from Supabase to SQLite"""
@@ -1811,7 +1828,7 @@ class SyncService:
                    'payment_note', 'rate_snapshot', 'pay_type_snap', 'full_day_mins',
                    'created_at', 'updated_at', 'synced_at']
 
-        return self._upsert_to_sqlite('salary_cycles', converted_records, 'cycle_id', columns)
+        return self._upsert_to_sqlite('salary_cycles', self._stamp_synced(converted_records), 'cycle_id', columns)
 
     def _download_employee_attendance(self, client_id, last_download):
         """Download attendance records from Supabase to SQLite"""
@@ -1838,17 +1855,19 @@ class SyncService:
                    'total_minutes', 'status', 'reason', 'auto_ot_minutes', 'approved_ot_minutes',
                    'marked_by', 'notes', 'is_active', 'deleted_at', 'created_at', 'updated_at', 'synced_at']
 
-        return self._upsert_to_sqlite('employee_attendance', converted_records, 'attendance_id', columns)
+        return self._upsert_to_sqlite('employee_attendance', self._stamp_synced(converted_records), 'attendance_id', columns)
 
     def _download_salary_advances(self, client_id, last_download):
         """Download salary advances from Supabase to SQLite.
 
-        Advances are append-only and carry no maintained `updated_at`, so the
-        incremental filter uses `created_at` instead.
+        `updated_at` is now stamped on create and maintained on edit, so the
+        incremental filter uses COALESCE(updated_at, created_at) — this catches
+        edited advances while still including legacy rows whose updated_at was
+        never backfilled (NULL).
         """
         query = "SELECT * FROM salary_advances WHERE client_id = :client_id"
         if last_download:
-            query += " AND created_at > :last_download"
+            query += " AND COALESCE(updated_at, created_at) > :last_download"
         query += " ORDER BY created_at LIMIT 5000"
 
         params = {"client_id": client_id}
@@ -1868,7 +1887,7 @@ class SyncService:
         columns = ['advance_id', 'employee_id', 'client_id', 'cycle_id', 'amount', 'advance_date',
                    'notes', 'recorded_by', 'created_at', 'updated_at', 'synced_at']
 
-        return self._upsert_to_sqlite('salary_advances', converted_records, 'advance_id', columns)
+        return self._upsert_to_sqlite('salary_advances', self._stamp_synced(converted_records), 'advance_id', columns)
 
 
 # Global sync service instance

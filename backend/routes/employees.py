@@ -1579,9 +1579,9 @@ def record_advance(employee_id):
         text(
             "INSERT INTO salary_advances "
             "(advance_id, employee_id, client_id, cycle_id, amount, "
-            " advance_date, notes, recorded_by, created_at) "
+            " advance_date, notes, recorded_by, created_at, updated_at) "
             "VALUES (:aid, :eid, :cid, :cycle, :amount, "
-            "        :adv_date, :notes, :recorded_by, :now)"
+            "        :adv_date, :notes, :recorded_by, :now, :now)"
         ),
         {
             'aid': advance_id,

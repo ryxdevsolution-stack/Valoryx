@@ -53,6 +53,7 @@ class GSTBilling(db.Model):
     customer_email = db.Column(db.String(255), nullable=True)
     customer_address = db.Column(db.Text, nullable=True)
     synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
+    bill_prefix = db.Column(db.String(8), nullable=True)  # Offline device code; NULL on web
 
     # lazy='select' — prevents silent JOIN on every COUNT/SUM/aggregate query
     creator = relationship('User', foreign_keys=[created_by], lazy='select')
@@ -62,6 +63,9 @@ class GSTBilling(db.Model):
             'bill_id': str(self.bill_id) if self.bill_id else None,
             'client_id': str(self.client_id) if self.client_id else None,
             'bill_number': self.bill_number,
+            'bill_prefix': self.bill_prefix,
+            'bill_no_display': f"{self.bill_prefix}-{self.bill_number}" if self.bill_prefix else (
+                str(self.bill_number) if self.bill_number is not None else None),
             'customer_name': self.customer_name,
             'customer_phone': self.customer_phone,
             'customer_gstin': self.customer_gstin,
@@ -126,6 +130,7 @@ class NonGSTBilling(db.Model):
     customer_email = db.Column(db.String(255), nullable=True)
     customer_address = db.Column(db.Text, nullable=True)
     synced_at = db.Column(db.DateTime, nullable=True)  # Phase 1: Track sync to Supabase
+    bill_prefix = db.Column(db.String(8), nullable=True)  # Offline device code; NULL on web
 
     # lazy='select' — prevents silent JOIN on every COUNT/SUM/aggregate query
     creator = relationship('User', foreign_keys=[created_by], lazy='select')
@@ -135,6 +140,9 @@ class NonGSTBilling(db.Model):
             'bill_id': str(self.bill_id) if self.bill_id else None,
             'client_id': str(self.client_id) if self.client_id else None,
             'bill_number': self.bill_number,
+            'bill_prefix': self.bill_prefix,
+            'bill_no_display': f"{self.bill_prefix}-{self.bill_number}" if self.bill_prefix else (
+                str(self.bill_number) if self.bill_number is not None else None),
             'customer_name': self.customer_name,
             'customer_phone': self.customer_phone,
             'customer_gstin': self.customer_gstin,

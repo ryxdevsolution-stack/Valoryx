@@ -50,6 +50,8 @@ interface ElectronAPI {
   // Auto-update
   onUpdateStatus?: (callback: (data: UpdateStatusEvent) => void) => void;
   removeUpdateStatus?: () => void;
+  getUpdateStatus?: () => Promise<UpdateStatusEvent | null>;
+  downloadUpdate?: () => Promise<{ success: boolean; error?: string; alreadyInProgress?: boolean }>;
   installUpdate?: () => Promise<void>;
   checkForUpdates?: () => Promise<{ success: boolean; version?: string; error?: string }>;
   getAppVersion?: () => Promise<string>;
