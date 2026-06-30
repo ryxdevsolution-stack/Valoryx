@@ -60,6 +60,7 @@ jobs:
         env:
           BACKEND_ENV_LOCAL_B64: ${{ secrets.BACKEND_ENV_LOCAL_B64 }}
           DESKTOP_OAUTH_SECRET: ${{ secrets.DESKTOP_OAUTH_SECRET }}
+          DB_URL_OVERRIDE: ${{ secrets.DB_URL_OVERRIDE }}
         run: |
           if [ -z "${BACKEND_ENV_LOCAL_B64}" ]; then
             echo "ERROR: BACKEND_ENV_LOCAL_B64 secret is not set in repo settings."
@@ -74,6 +75,15 @@ jobs:
           if [ -n "${DESKTOP_OAUTH_SECRET}" ] && ! grep -q "^DESKTOP_OAUTH_SECRET=" backend/env.local; then
             printf '\nDESKTOP_OAUTH_SECRET=%s\n' "${DESKTOP_OAUTH_SECRET}" >> backend/env.local
             echo "OK: appended DESKTOP_OAUTH_SECRET to env.local"
+          fi
+          # Override DB_URL from a standalone repo secret (e.g. to switch to the
+          # transaction pooler :6543) without re-encoding the whole blob. Replaces
+          # any existing DB_URL line so main.js / config.py read the new value.
+          if [ -n "${DB_URL_OVERRIDE}" ]; then
+            grep -v "^DB_URL=" backend/env.local > backend/env.local.tmp || true
+            printf 'DB_URL=%s\n' "${DB_URL_OVERRIDE}" >> backend/env.local.tmp
+            mv backend/env.local.tmp backend/env.local
+            echo "OK: DB_URL overridden from DB_URL_OVERRIDE secret"
           fi
           # Cheap sanity check without printing values
           for key in JWT_SECRET SECRET_KEY DB_URL; do
