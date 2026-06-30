@@ -46,6 +46,10 @@ def get_current_time():
 # minor clock skew between tills. Re-fetched rows are harmless (Last-Write-Wins).
 WATERMARK_SAFETY_SECONDS = 300
 
+# Downloads are paged so a table with more than one page of changed rows is
+# fully pulled instead of silently truncated at the old fixed LIMIT.
+DOWNLOAD_PAGE_SIZE = 5000
+
 
 # Group-A owner tables synced GENERICALLY (schema-introspected) from v32 on.
 # Each: table name, primary key (str, or list for composite), and how to scope
@@ -434,34 +438,44 @@ class SyncService:
         Replaces the old per-row commit pattern — which cost one network
         round-trip + server fsync PER ROW and was the dominant cause of slow
         syncs. All rows go in a single executemany + one commit. If the batch
-        fails (e.g. a single malformed row), it rolls back and retries
-        row-by-row so one bad row can't block the rest of the batch.
+        fails (e.g. a single bad/orphan row, like a FK to a parent missing on
+        the cloud), it splits the batch in half and retries each half, so a few
+        bad rows are isolated in O(log n) round-trips instead of O(n) row-by-row.
 
         Returns the list of ids that were successfully synced.
         """
         if not payload:
             return []
         with self.postgres_engine.connect() as pg_conn:
-            try:
-                pg_conn.execute(text(insert_sql), payload)  # executemany
-                pg_conn.commit()
-                return list(ids)
-            except Exception as e:
-                pg_conn.rollback()
+            return self._push_batch_split(pg_conn, label, insert_sql, list(payload), list(ids), is_top=True)
+
+    def _push_batch_split(self, pg_conn, label, insert_sql, payload, ids, is_top=False):
+        """Insert payload as one batch; on failure, divide-and-conquer so a few
+        bad rows don't force a full row-by-row pass over the whole set. Clean
+        batches commit in a single round-trip; only the sub-batches that contain
+        a bad row recurse down to it. Returns the ids that synced successfully."""
+        if not payload:
+            return []
+        try:
+            pg_conn.execute(text(insert_sql), payload)  # executemany
+            pg_conn.commit()
+            return list(ids)
+        except Exception as e:
+            pg_conn.rollback()
+            if len(payload) == 1:
+                # Isolated to the offending row — skip it (orphan/bad data) and
+                # let the rest of the sync proceed. Logged, not retried forever.
+                logger.error(f"[SyncService] {label}: row {ids[0]} skipped: {str(e)[:150]}")
+                return []
+            if is_top:
                 logger.warning(
                     f"[SyncService] {label}: batch of {len(payload)} failed "
-                    f"({str(e)[:150]}); retrying row-by-row"
+                    f"({str(e)[:120]}); splitting to isolate bad rows"
                 )
-            synced = []
-            for rec, _id in zip(payload, ids):
-                try:
-                    pg_conn.execute(text(insert_sql), rec)
-                    pg_conn.commit()
-                    synced.append(_id)
-                except Exception as e:
-                    pg_conn.rollback()
-                    logger.error(f"[SyncService] {label}: row {_id} failed: {str(e)[:150]}")
-            return synced
+            mid = len(payload) // 2
+            left = self._push_batch_split(pg_conn, label, insert_sql, payload[:mid], ids[:mid])
+            right = self._push_batch_split(pg_conn, label, insert_sql, payload[mid:], ids[mid:])
+            return left + right
 
     def _client_scope(self, client_filter, client_id, params):
         """Return a WHERE fragment that restricts a pending-upload query to a
@@ -1442,6 +1456,25 @@ class SyncService:
         self._mark_synced_by_rowid(table, synced_rowids)
         return len(synced_rowids)
 
+    def _fetch_all_pg(self, base_query, params, page_size=DOWNLOAD_PAGE_SIZE):
+        """Fetch ALL rows for base_query by paging with LIMIT/OFFSET.
+
+        base_query MUST include an ORDER BY (for stable paging) and MUST NOT
+        already contain a LIMIT. Returns a list of dict rows. This replaces the
+        old fixed `LIMIT 5000`, which silently dropped rows past the first page.
+        """
+        all_rows = []
+        offset = 0
+        with self.postgres_engine.connect() as pg_conn:
+            while True:
+                paged = f"{base_query} LIMIT {int(page_size)} OFFSET {int(offset)}"
+                rows = [dict(r._mapping) for r in pg_conn.execute(text(paged), params)]
+                all_rows.extend(rows)
+                if len(rows) < page_size:
+                    break
+                offset += page_size
+        return all_rows
+
     def _download_owner_table(self, entry, client_id, last_download):
         """Generic owner-scoped download for a registry table (PG -> SQLite)."""
         table, pk, scope = entry['table'], entry['pk'], entry['scope']
@@ -1461,9 +1494,8 @@ class SyncService:
             params['last_download'] = last_download
         pk_cols = pk if isinstance(pk, list) else [pk]
         order = 'created_at' if 'created_at' in common else pk_cols[0]
-        with self.postgres_engine.connect() as pc:
-            records = [dict(r._mapping) for r in pc.execute(
-                text(f"SELECT {', '.join(common)} FROM {table} {where} ORDER BY {order} LIMIT 5000"), params)]
+        query = f"SELECT {', '.join(common)} FROM {table} {where} ORDER BY {order}"
+        records = self._fetch_all_pg(query, params)
         if not records:
             return 0
         converted = []
@@ -1519,15 +1551,13 @@ class SyncService:
         if last_download:
             query += " AND updated_at > :last_download"
 
-        query += " ORDER BY created_at LIMIT 5000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1557,15 +1587,13 @@ class SyncService:
         if last_download:
             query += " AND updated_at > :last_download"
 
-        query += " ORDER BY created_at LIMIT 5000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1594,15 +1622,13 @@ class SyncService:
         if last_download:
             query += " AND updated_at > :last_download"
 
-        query += " ORDER BY updated_at LIMIT 5000"
+        query += " ORDER BY updated_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1624,15 +1650,13 @@ class SyncService:
         if last_download:
             query += " AND updated_at > :last_download"
 
-        query += " ORDER BY updated_at LIMIT 5000"
+        query += " ORDER BY updated_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1656,15 +1680,13 @@ class SyncService:
         if last_download:
             query += " AND updated_at > :last_download"
 
-        query += " ORDER BY created_at LIMIT 5000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1691,15 +1713,13 @@ class SyncService:
         if last_download:
             query += " AND updated_at > :last_download"
 
-        query += " ORDER BY created_at LIMIT 1000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1726,15 +1746,13 @@ class SyncService:
         if last_download:
             query += " AND updated_at > :last_download"
 
-        query += " ORDER BY created_at LIMIT 1000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1771,11 +1789,9 @@ class SyncService:
             query += " AND updated_at > :last_download"
             params["last_download"] = last_download
 
-        query += " ORDER BY created_at LIMIT 5000"
+        query += " ORDER BY created_at"
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1798,15 +1814,13 @@ class SyncService:
         if last_download:
             query += " AND updated_at > :last_download"
 
-        query += " ORDER BY created_at LIMIT 1000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1830,15 +1844,13 @@ class SyncService:
         query = "SELECT * FROM employees WHERE client_id = :client_id"
         if last_download:
             query += " AND updated_at > :last_download"
-        query += " ORDER BY created_at LIMIT 5000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1856,15 +1868,13 @@ class SyncService:
         query = "SELECT * FROM salary_cycles WHERE client_id = :client_id"
         if last_download:
             query += " AND updated_at > :last_download"
-        query += " ORDER BY created_at LIMIT 5000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1884,15 +1894,13 @@ class SyncService:
         query = "SELECT * FROM employee_attendance WHERE client_id = :client_id"
         if last_download:
             query += " AND updated_at > :last_download"
-        query += " ORDER BY created_at LIMIT 5000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1917,15 +1925,13 @@ class SyncService:
         query = "SELECT * FROM salary_advances WHERE client_id = :client_id"
         if last_download:
             query += " AND COALESCE(updated_at, created_at) > :last_download"
-        query += " ORDER BY created_at LIMIT 5000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1945,15 +1951,13 @@ class SyncService:
         query = "SELECT * FROM users WHERE client_id = :client_id"
         if last_download:
             query += " AND updated_at > :last_download"
-        query += " ORDER BY created_at LIMIT 5000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -1976,15 +1980,13 @@ class SyncService:
         """
         if last_download:
             query += " AND updated_at > :last_download"
-        query += " ORDER BY granted_at LIMIT 5000"
+        query += " ORDER BY granted_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
@@ -2004,15 +2006,13 @@ class SyncService:
         """
         if last_download:
             query += " AND updated_at > :last_download"
-        query += " ORDER BY created_at LIMIT 5000"
+        query += " ORDER BY created_at"
 
         params = {"client_id": client_id}
         if last_download:
             params["last_download"] = last_download
 
-        with self.postgres_engine.connect() as pg_conn:
-            result = pg_conn.execute(text(query), params)
-            records = [dict(row._mapping) for row in result]
+        records = self._fetch_all_pg(query, params)
 
         if not records:
             return 0
