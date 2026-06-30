@@ -9,6 +9,7 @@ import logging
 from datetime import datetime
 import pytz
 from sqlalchemy import create_engine, text
+from sqlalchemy.pool import QueuePool
 from sqlalchemy.orm import sessionmaker
 from database.type_converters import (
     TypeConverter,
@@ -102,9 +103,21 @@ class SyncService:
                 logger.warning("[SyncService] No DB_URL found - sync disabled")
                 return False
 
+            # Small, REUSED pool. A full sync makes ~40 per-table connect() calls;
+            # reusing warm connections avoids a fresh TLS+auth handshake each time
+            # (~250ms/op against the ap-south-1 pooler — the cause of slow syncs).
+            # Bounded to 5 (3+2) so one client can't hog Supabase's pool.
+            # IMPORTANT: pair with the TRANSACTION-mode pooler (DB_URL port 6543);
+            # on the session-mode pooler (5432, 15-client cap) even these few
+            # reused connections compete for scarce slots across multiple tills.
             self.postgres_engine = create_engine(
                 db_url,
+                poolclass=QueuePool,
+                pool_size=3,
+                max_overflow=2,
                 pool_pre_ping=True,
+                pool_recycle=1800,
+                pool_timeout=10,
                 connect_args={'connect_timeout': 10}
             )
 
@@ -370,6 +383,11 @@ class SyncService:
             # Calculate totals
             total_synced = sum(results["synced"].values())
             logger.info(f"[SyncService] Upload sync complete. Total: {total_synced} records")
+
+            # Honest status: a per-table failure means the upload is incomplete,
+            # not a full success — surface it so the UI doesn't claim "Synced".
+            if results["errors"]:
+                results["status"] = "partial"
 
             return results
 
@@ -968,6 +986,9 @@ class SyncService:
                 "direction": "download",
                 "client_id": client_id,
                 "downloaded": {
+                    "users": 0,
+                    "user_permissions": 0,
+                    "notes": 0,
                     "gst_bills": 0,
                     "non_gst_bills": 0,
                     "stock": 0,
@@ -988,8 +1009,12 @@ class SyncService:
             # Get last download time for incremental sync
             last_download = self._get_last_download_time(client_id)
 
-            # Download each table
+            # Download each table. users FIRST so user_permissions/notes (which
+            # reference user_id) and any created_by FKs resolve.
             tables = [
+                ("users", self._download_users),
+                ("user_permissions", self._download_user_permissions),
+                ("notes", self._download_notes),
                 ("gst_bills", self._download_gst_bills),
                 ("non_gst_bills", self._download_non_gst_bills),
                 ("stock", self._download_stock),
@@ -1033,6 +1058,9 @@ class SyncService:
             total_downloaded = sum(results["downloaded"].values())
             logger.info(f"[SyncService] Download sync complete. Total: {total_downloaded} records")
 
+            if results["errors"]:
+                results["status"] = "partial"
+
             return results
 
         except Exception as e:
@@ -1068,6 +1096,9 @@ class SyncService:
                 "type": "initial_load",
                 "client_id": client_id,
                 "loaded": {
+                    "users": 0,
+                    "user_permissions": 0,
+                    "notes": 0,
                     "gst_bills": 0,
                     "non_gst_bills": 0,
                     "stock": 0,
@@ -1085,8 +1116,11 @@ class SyncService:
                 "errors": []
             }
 
-            # Download each table (None = get all records)
+            # Download each table (None = get all records). users FIRST for FKs.
             tables = [
+                ("users", self._download_users),
+                ("user_permissions", self._download_user_permissions),
+                ("notes", self._download_notes),
                 ("gst_bills", self._download_gst_bills),
                 ("non_gst_bills", self._download_non_gst_bills),
                 ("stock", self._download_stock),
@@ -1129,6 +1163,9 @@ class SyncService:
 
             total_loaded = sum(results["loaded"].values())
             logger.info(f"[SyncService] Initial load complete. Total: {total_loaded} records")
+
+            if results["errors"]:
+                results["status"] = "partial"
 
             return results
 
@@ -1888,6 +1925,93 @@ class SyncService:
                    'notes', 'recorded_by', 'created_at', 'updated_at', 'synced_at']
 
         return self._upsert_to_sqlite('salary_advances', self._stamp_synced(converted_records), 'advance_id', columns)
+
+    def _download_users(self, client_id, last_download):
+        """Download users from Supabase to SQLite (incl. password_hash so
+        cloud/web-created users can log in offline). Owner-scoped by client_id.
+        Last-Write-Wins protects a locally-newer row from being clobbered."""
+        query = "SELECT * FROM users WHERE client_id = :client_id"
+        if last_download:
+            query += " AND updated_at > :last_download"
+        query += " ORDER BY created_at LIMIT 5000"
+
+        params = {"client_id": client_id}
+        if last_download:
+            params["last_download"] = last_download
+
+        with self.postgres_engine.connect() as pg_conn:
+            result = pg_conn.execute(text(query), params)
+            records = [dict(row._mapping) for row in result]
+
+        if not records:
+            return 0
+
+        converted_records = [
+            TypeConverter.convert_dict_to_sqlite(r, USER_COLUMN_TYPES) for r in records
+        ]
+        columns = ['user_id', 'email', 'password_hash', 'client_id', 'role', 'is_super_admin',
+                   'created_at', 'last_login', 'is_active', 'full_name', 'phone', 'department',
+                   'created_by', 'updated_at', 'updated_by', 'deleted_at', 'synced_at']
+
+        return self._upsert_to_sqlite('users', self._stamp_synced(converted_records), 'user_id', columns)
+
+    def _download_user_permissions(self, client_id, last_download):
+        """Download user permissions. No client_id column — scope via user_id ->
+        users. Must run AFTER _download_users so the FK target exists."""
+        query = """
+            SELECT * FROM user_permissions
+            WHERE user_id IN (SELECT user_id FROM users WHERE client_id = :client_id)
+        """
+        if last_download:
+            query += " AND updated_at > :last_download"
+        query += " ORDER BY granted_at LIMIT 5000"
+
+        params = {"client_id": client_id}
+        if last_download:
+            params["last_download"] = last_download
+
+        with self.postgres_engine.connect() as pg_conn:
+            result = pg_conn.execute(text(query), params)
+            records = [dict(row._mapping) for row in result]
+
+        if not records:
+            return 0
+
+        converted_records = [
+            TypeConverter.convert_dict_to_sqlite(r, USER_PERMISSION_COLUMN_TYPES) for r in records
+        ]
+        columns = ['id', 'user_id', 'permission_id', 'granted_at', 'granted_by', 'updated_at', 'synced_at']
+
+        return self._upsert_to_sqlite('user_permissions', self._stamp_synced(converted_records), 'id', columns)
+
+    def _download_notes(self, client_id, last_download):
+        """Download notes. No client_id column — scope via user_id -> users."""
+        query = """
+            SELECT * FROM notes
+            WHERE user_id IN (SELECT user_id FROM users WHERE client_id = :client_id)
+        """
+        if last_download:
+            query += " AND updated_at > :last_download"
+        query += " ORDER BY created_at LIMIT 5000"
+
+        params = {"client_id": client_id}
+        if last_download:
+            params["last_download"] = last_download
+
+        with self.postgres_engine.connect() as pg_conn:
+            result = pg_conn.execute(text(query), params)
+            records = [dict(row._mapping) for row in result]
+
+        if not records:
+            return 0
+
+        converted_records = [
+            TypeConverter.convert_dict_to_sqlite(r, NOTES_COLUMN_TYPES) for r in records
+        ]
+        columns = ['note_id', 'user_id', 'title', 'content', 'created_at', 'updated_at',
+                   'expires_at', 'synced_at']
+
+        return self._upsert_to_sqlite('notes', self._stamp_synced(converted_records), 'note_id', columns)
 
 
 # Global sync service instance
