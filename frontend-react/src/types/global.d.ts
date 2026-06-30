@@ -52,6 +52,13 @@ interface ElectronAPI {
   removeUpdateStatus?: () => void;
   getUpdateStatus?: () => Promise<UpdateStatusEvent | null>;
   downloadUpdate?: () => Promise<{ success: boolean; error?: string; alreadyInProgress?: boolean }>;
+
+  // Desktop Google OAuth handoff. The deep link carries the assertion; the PKCE
+  // verifier is held in the Electron main process and paired here.
+  loginWithGoogle?: () => Promise<{ success: boolean }>;
+  onDesktopOAuth?: (callback: (handoff: DesktopOAuthHandoff) => void) => void;
+  removeDesktopOAuth?: () => void;
+  getPendingOAuth?: () => Promise<DesktopOAuthHandoff | null>;
   installUpdate?: () => Promise<void>;
   checkForUpdates?: () => Promise<{ success: boolean; version?: string; error?: string }>;
   getAppVersion?: () => Promise<string>;
@@ -63,6 +70,11 @@ interface ElectronAPI {
 }
 
 declare global {
+  interface DesktopOAuthHandoff {
+    assertion: string;
+    verifier: string | null;
+  }
+
   type UpdateEventStatus = 'checking' | 'available' | 'not-available' | 'downloading' | 'downloaded' | 'error';
 
   interface UpdateStatusEvent {

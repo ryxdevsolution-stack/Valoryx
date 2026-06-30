@@ -30,6 +30,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   // Forced logout: quit the app when the account is taken over on another till.
   quitApp: () => ipcRenderer.invoke('quit-app'),
+
+  // Desktop Google OAuth: open the cloud web login in the system browser, and
+  // receive the signed assertion that comes back via the valoryx:// deep link.
+  loginWithGoogle: () => ipcRenderer.invoke('oauth-google-open'),
+  onDesktopOAuth: (callback) =>
+    ipcRenderer.on('desktop-oauth', (_event, handoff) => callback(handoff)),
+  removeDesktopOAuth: () =>
+    ipcRenderer.removeAllListeners('desktop-oauth'),
+  getPendingOAuth: () => ipcRenderer.invoke('oauth-get-pending'),
 });
 
 console.log('[Preload] Context bridge initialized');

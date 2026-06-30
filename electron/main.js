@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain, Tray, Menu, session } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, session, shell } = require('electron');
 
 // Disable HTTP cache so API responses are always fresh
 app.commandLine.appendSwitch('disable-http-cache');
@@ -31,6 +31,87 @@ let lastStartupStatus = { message: 'Initializing…', progress: 5 };
 let lastUpdateStatus = null;
 let updateDownloading = false;
 let updateDownloaded = false;
+
+// =======================
+// Desktop Google OAuth handoff
+// =======================
+// Google blocks OAuth inside an Electron window, so the desktop app opens the
+// canonical cloud web login in the system browser; after consent the web app
+// deep-links a short-lived signed assertion back via the valoryx:// protocol.
+const WEB_APP_URL = 'https://valoryx.ryxtech.in';
+const OAUTH_PROTOCOL = 'valoryx';
+// Handoff captured from a deep link before the renderer was ready to receive it
+// (e.g. cold start launched by the protocol). Replayed via IPC pull on mount.
+// Shape: { assertion, verifier } | null.
+let pendingOAuth = null;
+// PKCE verifier for the in-flight desktop login. Generated before opening the
+// browser, kept ONLY in this process, and never put in the deep link — so an
+// app that intercepts the deep link cannot redeem the stolen assertion.
+let pendingVerifier = null;
+
+// PKCE S256 helpers (base64url, no padding — matches the Python backend).
+function makePkceVerifier() {
+  return crypto.randomBytes(32).toString('base64url');
+}
+function pkceChallenge(verifier) {
+  return crypto.createHash('sha256').update(verifier).digest('base64url');
+}
+
+// Register valoryx:// as this app's protocol handler.
+if (process.defaultApp) {
+  // Dev: include the script path so Windows knows how to relaunch us.
+  if (process.argv.length >= 2) {
+    app.setAsDefaultProtocolClient(OAUTH_PROTOCOL, process.execPath, [path.resolve(process.argv[1])]);
+  }
+} else {
+  app.setAsDefaultProtocolClient(OAUTH_PROTOCOL);
+}
+
+// Single-instance lock — required so the OS hands a valoryx:// invocation to the
+// already-running app (via 'second-instance') instead of spawning a new one.
+const gotSingleInstanceLock = app.requestSingleInstanceLock();
+if (!gotSingleInstanceLock) {
+  app.quit();
+}
+
+function handleOAuthDeepLink(url) {
+  try {
+    const parsed = new URL(url);
+    const assertion = parsed.searchParams.get('assertion');
+    if (!assertion) return;
+    // Pair the assertion with the verifier held only in this process. The deep
+    // link carries the assertion; the verifier never left here.
+    const handoff = { assertion, verifier: pendingVerifier };
+    pendingVerifier = null;
+    if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
+      mainWindow.webContents.send('desktop-oauth', handoff);
+      if (mainWindow.isMinimized()) mainWindow.restore();
+      mainWindow.focus();
+    } else {
+      // Renderer not ready yet — stash for the IPC pull on mount.
+      pendingOAuth = handoff;
+    }
+  } catch (err) {
+    console.error('[OAuth] Malformed deep link:', err.message);
+  }
+}
+
+// Windows/Linux: a protocol invocation relaunches the app; the URL arrives in
+// the second instance's argv and is forwarded here.
+app.on('second-instance', (_event, argv) => {
+  const url = argv.find((a) => typeof a === 'string' && a.startsWith(`${OAUTH_PROTOCOL}://`));
+  if (url) handleOAuthDeepLink(url);
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.focus();
+  }
+});
+
+// macOS: protocol invocations arrive via open-url.
+app.on('open-url', (_event, url) => {
+  _event.preventDefault();
+  if (url.startsWith(`${OAUTH_PROTOCOL}://`)) handleOAuthDeepLink(url);
+});
 
 // =======================
 // Backend Supervisor
@@ -621,12 +702,42 @@ ipcMain.handle('quit-app', () => {
   app.quit();
 });
 
+// IPC: open the cloud web Google login in the system browser (desktop OAuth).
+// Generates a fresh PKCE verifier; only its challenge travels to the web.
+ipcMain.handle('oauth-google-open', () => {
+  pendingVerifier = makePkceVerifier();
+  const challenge = pkceChallenge(pendingVerifier);
+  const url = `${WEB_APP_URL}/auth/login?desktop=${OAUTH_PROTOCOL}&challenge=${encodeURIComponent(challenge)}`;
+  shell.openExternal(url);
+  return { success: true };
+});
+
+// IPC: renderer pulls any handoff captured before it mounted (cold start).
+ipcMain.handle('oauth-get-pending', () => {
+  const handoff = pendingOAuth;
+  pendingOAuth = null;
+  return handoff;
+});
+
 // =======================
 // App Lifecycle
 // =======================
 
 app.on('ready', async () => {
   console.log('[App] Starting Valoryx Desktop…');
+
+  // Windows cold start: if the app was launched by a valoryx:// invocation, the
+  // URL is in argv. Stash it so the renderer can pull it once it mounts.
+  const launchUrl = process.argv.find((a) => typeof a === 'string' && a.startsWith(`${OAUTH_PROTOCOL}://`));
+  if (launchUrl) {
+    try {
+      const assertion = new URL(launchUrl).searchParams.get('assertion');
+      // Cold start has no in-memory verifier (it lived in the prior session), so
+      // the backend will ask the user to retry — which works since the app is
+      // now running. We still stash the assertion to surface that flow.
+      if (assertion) pendingOAuth = { assertion, verifier: null };
+    } catch (_) { /* ignore malformed launch url */ }
+  }
 
   // Clear HTTP cache on every startup so API responses are always fresh
   session.defaultSession.clearCache();

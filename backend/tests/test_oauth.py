@@ -59,6 +59,7 @@ def mock_google(monkeypatch):
         lambda url, *a, **k: _FakeResp({
             "id": "google-uid-new-001",
             "email": "brand-new@example.com",
+            "verified_email": True,
             "name": "Brand New",
             "picture": "https://lh3.googleusercontent.com/a/pic",
         }),
@@ -104,6 +105,7 @@ def test_existing_user_links_google_id(http, monkeypatch, sample_user):
         lambda url, *a, **k: _FakeResp({
             "id": "google-uid-link-002",
             "email": sample_user.email,
+            "verified_email": True,
             "name": "Linked User",
             "picture": "https://lh3.googleusercontent.com/a/pic",
         }),
@@ -137,3 +139,133 @@ def test_redirect_uri_path_matches_frontend_route(app, monkeypatch):
     with app.test_request_context(headers={"Origin": _TEST_ORIGIN}):
         uri = oauth_mod._get_redirect_uri()
     assert uri == f"{_TEST_ORIGIN}/frontend/oauth/callback"
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Desktop Google OAuth handoff (signed-assertion bridge into the offline app)
+# ═══════════════════════════════════════════════════════════════════════════
+
+# A fixed PKCE pair used across the desktop tests.
+_VERIFIER = "test-pkce-verifier-0123456789abcdef"
+
+
+def _challenge_for(verifier):
+    return oauth_mod._pkce_challenge(verifier)
+
+
+def _desktop_login(http, assertion, verifier=_VERIFIER):
+    body = {"assertion": assertion}
+    if verifier is not None:
+        body["verifier"] = verifier
+    return http.post(
+        "/api/oauth/desktop-login",
+        data=json.dumps(body),
+        content_type="application/json",
+        headers={"User-Agent": "pytest-agent"},
+    )
+
+
+def _assertion(email, google_id, *, challenge=None):
+    return oauth_mod._issue_desktop_assertion(
+        email=email, google_id=google_id,
+        challenge=challenge if challenge is not None else _challenge_for(_VERIFIER),
+    )
+
+
+# 5. Desktop-flagged callback returns a signed assertion, NOT a web session.
+def test_desktop_callback_returns_assertion_not_token(http, monkeypatch):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
+    state = oauth_mod._issue_state_token(desktop=True, challenge=_challenge_for(_VERIFIER))
+    resp = _callback(http, state=state)
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    data = resp.get_json()
+    assert data["desktop"] is True
+    assert data["assertion"]
+    assert "token" not in data  # no web session is created for the desktop flow
+
+
+# 5b. Desktop callback WITHOUT a PKCE challenge is rejected (binding required).
+def test_desktop_callback_requires_challenge(http, monkeypatch):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
+    state = oauth_mod._issue_state_token(desktop=True)  # no challenge
+    resp = _callback(http, state=state)
+    assert resp.status_code == 400
+
+
+# 6. A valid assertion + matching verifier mints a LOCAL session token.
+def test_desktop_login_issues_local_token(http, monkeypatch, sample_user):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
+    resp = _desktop_login(http, _assertion(sample_user.email, "g-desk-1"))
+    assert resp.status_code == 200, resp.get_data(as_text=True)
+    data = resp.get_json()
+    assert data["success"] is True
+    assert data["token"]
+    assert data["user"]["email"] == sample_user.email
+
+
+# 6b. Right assertion but WRONG/missing verifier is rejected (PKCE binding).
+def test_desktop_login_wrong_verifier_rejected(http, monkeypatch, sample_user):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
+    assertion = _assertion(sample_user.email, "g-desk-1b")
+    assert _desktop_login(http, assertion, verifier="not-the-verifier").status_code == 401
+    # And with no verifier at all
+    assert _desktop_login(http, _assertion(sample_user.email, "g-desk-1c"), verifier=None).status_code == 401
+
+
+# 7. Unknown email → 403 (user must already be synced to this device).
+def test_desktop_login_unknown_user_rejected(http, monkeypatch):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
+    resp = _desktop_login(http, _assertion("nobody@nowhere.test", "g-x"))
+    assert resp.status_code == 403
+
+
+# 8. Replayed assertion (same nonce) is rejected on the second use.
+def test_desktop_login_replay_rejected(http, monkeypatch, sample_user):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
+    assertion = _assertion(sample_user.email, "g-desk-2")
+    first = _desktop_login(http, assertion)
+    assert first.status_code == 200, first.get_data(as_text=True)
+    second = _desktop_login(http, assertion)
+    assert second.status_code == 401
+
+
+# 9. An assertion signed with a different secret is rejected (shared-secret gate).
+def test_desktop_login_wrong_secret_rejected(http, monkeypatch, sample_user):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "secret-A")
+    assertion = _assertion(sample_user.email, "g-desk-3")
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "secret-B")
+    resp = _desktop_login(http, assertion)
+    assert resp.status_code == 401
+
+
+# 10. A tampered assertion (broken signature) is rejected.
+def test_desktop_login_tampered_rejected(http, monkeypatch, sample_user):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
+    assertion = _assertion(sample_user.email, "g-desk-4")
+    resp = _desktop_login(http, assertion + "tamper")
+    assert resp.status_code == 401
+
+
+# 11. Desktop login is disabled (501) when no shared secret is configured.
+def test_desktop_login_disabled_without_secret(http, monkeypatch):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "")
+    resp = _desktop_login(http, "anything")
+    assert resp.status_code == 501
+
+
+# 12. An unverified Google email is rejected before any account link (takeover guard).
+def test_unverified_google_email_rejected(http, monkeypatch):
+    monkeypatch.setattr(
+        oauth_mod.http_requests,
+        "get",
+        lambda url, *a, **k: _FakeResp({
+            "id": "google-uid-unverified",
+            "email": "attacker@example.com",
+            "verified_email": False,
+            "name": "Mallory",
+            "picture": "https://lh3.googleusercontent.com/a/pic",
+        }),
+    )
+    resp = _callback(http)
+    assert resp.status_code == 400
+    assert resp.get_json()["success"] is False

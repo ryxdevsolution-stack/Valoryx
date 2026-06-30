@@ -269,6 +269,16 @@ class OptimizedConfig:
     GOOGLE_CLIENT_SECRET = os.getenv('GOOGLE_CLIENT_SECRET', '')
 
     # -------------------------------
+    # Desktop OAuth handoff (optional — desktop Google login disabled if not set)
+    # -------------------------------
+    # Shared HMAC secret used to sign/verify the short-lived assertion that
+    # bridges a cloud Google login back into the offline desktop app. MUST be
+    # identical in the cloud .env AND the installer's env.local. This is NOT the
+    # per-install JWT_SECRET — it is a fixed value shared across all installs and
+    # the cloud, and must never ship in the renderer/JS bundle.
+    DESKTOP_OAUTH_SECRET = os.getenv('DESKTOP_OAUTH_SECRET', '')
+
+    # -------------------------------
     # Email (SMTP — optional, emails disabled if not set)
     # -------------------------------
     SMTP_HOST = os.getenv('SMTP_HOST', '')

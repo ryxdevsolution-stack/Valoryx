@@ -1,14 +1,16 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import api from '@/lib/api'
 import { useClient } from '@/contexts/ClientContext'
 import { consumePendingDownload } from '@/lib/pendingDownload'
+import { mapOAuthLoginResponse } from '@/lib/oauthSession'
 
 export default function OAuthCallbackPage() {
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const { setClientData } = useClient()
   const hasRun = useRef(false)
+  const [desktopHandoff, setDesktopHandoff] = useState(false)
 
   useEffect(() => {
     if (hasRun.current) return
@@ -29,39 +31,16 @@ export default function OAuthCallbackPage() {
     api.post('/oauth/google/callback', { code, state }, { signal: controller.signal })
       .then(res => {
         clearTimeout(timeoutId)
-        const { token, user, client } = res.data
-        const userData = {
-          user_id: user.user_id,
-          email: user.email,
-          full_name: user.full_name || user.email.split('@')[0],
-          phone: user.phone || '',
-          department: user.department || '',
-          role: user.role,
-          is_super_admin: user.is_super_admin || false,
-          permissions: user.permissions || [],
-          totp_enabled: user.totp_enabled ?? false,
-          must_change_password: user.must_change_password ?? false,
-          avatar_url: user.avatar_url || null,
+        // Desktop handoff: the cloud verified the Google identity and returned a
+        // short-lived assertion instead of a web session. Bounce it back into
+        // the Electron app via the custom protocol; the desktop app exchanges it
+        // with its LOCAL backend for a local session.
+        if (res.data?.desktop && res.data?.assertion) {
+          setDesktopHandoff(true)
+          window.location.href = `valoryx://auth?assertion=${encodeURIComponent(res.data.assertion)}`
+          return
         }
-        const clientData = {
-          client_id: client.client_id,
-          client_name: client.client_name,
-          logo_url: client.logo_url || null,
-          address: client.address || '',
-          phone: client.phone || '',
-          email: client.email || '',
-          gstin: client.gstin || '',
-          subscription_status: client.subscription_status,
-          trial_end_date: client.trial_end_date || null,
-          trial_days_remaining: client.trial_days_remaining || null,
-          subscription_end_date: client.subscription_end_date || null,
-          country: client.country,
-          currency_code: client.currency_code,
-          currency_symbol: client.currency_symbol,
-          locale: client.locale,
-          tax_config: client.tax_config,
-          setup_completed: client.setup_completed,
-        }
+        const { token, user, client, userData, clientData } = mapOAuthLoginResponse(res.data)
         setClientData(userData, clientData, token)
         // If the user came from the landing "Continue with Google → download"
         // flow, trigger the deferred installer download now.
@@ -93,8 +72,20 @@ export default function OAuthCallbackPage() {
   return (
     <div className="min-h-screen bg-[#0f0a1e] flex items-center justify-center">
       <div className="text-center space-y-3">
-        <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto" />
-        <p className="text-slate-400 text-sm">Signing you in with Google...</p>
+        {desktopHandoff ? (
+          <>
+            <div className="w-12 h-12 rounded-full bg-violet-500/20 flex items-center justify-center mx-auto">
+              <svg className="w-6 h-6 text-violet-400" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><polyline points="20 6 9 17 4 12" /></svg>
+            </div>
+            <p className="text-slate-200 text-sm font-medium">Signed in with Google</p>
+            <p className="text-slate-400 text-xs max-w-xs">Returning you to the Valoryx app… If it doesn't open automatically, switch back to the app window. You can close this tab.</p>
+          </>
+        ) : (
+          <>
+            <div className="w-8 h-8 border-2 border-violet-500 border-t-transparent rounded-full animate-spin mx-auto" />
+            <p className="text-slate-400 text-sm">Signing you in with Google...</p>
+          </>
+        )}
       </div>
     </div>
   )
