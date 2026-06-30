@@ -24,6 +24,13 @@ let tray = null;
 let backendRestartCount = 0;
 let backendReady = false;
 let lastStartupStatus = { message: 'Initializing…', progress: 5 };
+// Auto-update state. lastUpdateStatus is replayed to the renderer on mount
+// (mirrors the startup-status pull) so an event fired before the toast mounted
+// is not lost. The flags stop the periodic re-check from re-emitting
+// 'update-available' once a download is in flight or already staged.
+let lastUpdateStatus = null;
+let updateDownloading = false;
+let updateDownloaded = false;
 
 // =======================
 // Backend Supervisor
@@ -46,13 +53,21 @@ function loadOrCreateLocalSecrets() {
   const secretsPath = path.join(app.getPath('userData'), 'local-secrets.json');
   try {
     const data = JSON.parse(fs.readFileSync(secretsPath, 'utf-8'));
-    if (data.JWT_SECRET && data.SECRET_KEY) return data;
+    if (data.JWT_SECRET && data.SECRET_KEY) {
+      // Backfill DEVICE_CODE for installs created before bill prefixing existed.
+      if (!data.DEVICE_CODE) {
+        data.DEVICE_CODE = generateDeviceCode();
+        try { fs.writeFileSync(secretsPath, JSON.stringify(data), { mode: 0o600 }); } catch (e) {}
+      }
+      return data;
+    }
   } catch (e) {
     // first run or unreadable file — regenerate below
   }
   const data = {
     JWT_SECRET: crypto.randomBytes(32).toString('hex'),
     SECRET_KEY: crypto.randomBytes(32).toString('hex'),
+    DEVICE_CODE: generateDeviceCode(),
   };
   try {
     fs.writeFileSync(secretsPath, JSON.stringify(data), { mode: 0o600 });
@@ -60,6 +75,14 @@ function loadOrCreateLocalSecrets() {
     console.error('[Backend] Could not persist local secrets:', e.message);
   }
   return data;
+}
+
+// Short, human-readable per-install code used to prefix offline bill numbers
+// (e.g. A-101) so two devices billing offline never collide after sync.
+// Single letter; ambiguous I/O excluded for readability.
+function generateDeviceCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  return alphabet[crypto.randomInt(0, alphabet.length)];
 }
 
 function spawnFlask() {
@@ -102,6 +125,7 @@ function spawnFlask() {
       DB_URL: dbUrl,
       JWT_SECRET: localSecrets.JWT_SECRET,
       SECRET_KEY: localSecrets.SECRET_KEY,
+      DEVICE_CODE: localSecrets.DEVICE_CODE,
       // Keep the desktop backend loopback-only and never trust
       // X-Forwarded-For (no proxy in front of it)
       BIND_HOST: '127.0.0.1',
@@ -453,8 +477,11 @@ function setupAutoUpdater() {
   // Don't check for updates in dev mode
   if (isDev) return;
 
-  // Configure: don't auto-download, let user decide when to restart
-  autoUpdater.autoDownload = true;
+  // Configure: don't auto-download. We surface an "Update Available" prompt
+  // and only start the download once the user clicks "Download" (handled by
+  // the 'download-update' IPC below). autoInstallOnAppQuit still applies once
+  // a download has completed, so a deferred update installs on next quit.
+  autoUpdater.autoDownload = false;
   autoUpdater.autoInstallOnAppQuit = true;
 
   // Log all events for debugging
@@ -486,6 +513,7 @@ function setupAutoUpdater() {
   });
 
   autoUpdater.on('download-progress', (progress) => {
+    updateDownloading = true;
     sendUpdateStatus('downloading', {
       percent: Math.round(progress.percent),
       transferred: progress.transferred,
@@ -495,6 +523,8 @@ function setupAutoUpdater() {
 
   autoUpdater.on('update-downloaded', (info) => {
     console.log(`[Updater] Update downloaded: v${info.version}`);
+    updateDownloading = false;
+    updateDownloaded = true;
     sendUpdateStatus('downloaded', {
       version: info.version,
       releaseDate: info.releaseDate,
@@ -503,6 +533,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on('error', (err) => {
     console.error('[Updater] Error:', err.message);
+    updateDownloading = false;
     sendUpdateStatus('error', { message: err.message });
   });
 
@@ -513,8 +544,11 @@ function setupAutoUpdater() {
     });
   }, 5000);
 
-  // Then check every 4 hours
+  // Then check every 4 hours — but not while a download is in flight or already
+  // staged, otherwise the re-emitted 'update-available' would clobber the
+  // downloading/downloaded toast back to the "Download" prompt.
   setInterval(() => {
+    if (updateDownloading || updateDownloaded) return;
     autoUpdater.checkForUpdates().catch((err) => {
       console.error('[Updater] Periodic check failed:', err.message);
     });
@@ -522,10 +556,35 @@ function setupAutoUpdater() {
 }
 
 function sendUpdateStatus(status, data) {
+  lastUpdateStatus = { status, data };
   if (mainWindow && !mainWindow.isDestroyed()) {
     mainWindow.webContents.send('update-status', { status, data });
   }
 }
+
+// IPC: User clicked "Download" on the update-available prompt
+ipcMain.handle('download-update', async () => {
+  // Re-entrancy guard: ignore a second click while a download is running or done.
+  if (updateDownloading || updateDownloaded) {
+    return { success: true, alreadyInProgress: true };
+  }
+  console.log('[Updater] User approved download — starting…');
+  updateDownloading = true;
+  try {
+    await autoUpdater.downloadUpdate();
+    return { success: true };
+  } catch (err) {
+    console.error('[Updater] Download failed:', err.message);
+    updateDownloading = false;
+    // Surface to the toast so the user sees why it stalled.
+    sendUpdateStatus('error', { message: err.message });
+    return { success: false, error: err.message };
+  }
+});
+
+// IPC: Renderer pulls the last update status on mount — covers the case where
+// an update event fired before the toast component had attached its listener.
+ipcMain.handle('get-update-status', () => lastUpdateStatus);
 
 // IPC: User clicked "Restart & Update"
 ipcMain.handle('install-update', () => {

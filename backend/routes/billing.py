@@ -1,5 +1,6 @@
 import uuid
 import re
+import math
 from datetime import datetime
 import pytz
 from dateutil import parser as date_parser
@@ -17,9 +18,23 @@ from utils.helpers import calculate_gst_amount, calculate_final_amount, validate
 from services.membership_service import MembershipError
 from utils.cache_helper import get_cache_manager, invalidate_billing_cache as _invalidate_billing, invalidate_stock_cache as _invalidate_stock
 from utils.bill_number_helper import get_next_bill_number
+from utils.device import get_device_code
 from utils.rate_limiter import rate_limit
 
 billing_bp = Blueprint('billing', __name__)
+
+
+def _round_rupee(value):
+    """Round a money amount to the nearest whole rupee.
+
+    Mirrors the frontend's `Math.round(grandTotal)` "Round Off" display so the
+    total persisted on the bill equals what the cashier saw at checkout. Bill
+    totals are always non-negative, so `floor(x + 0.5)` reproduces JavaScript's
+    round-half-up semantics exactly (Python's built-in round() is banker's
+    rounding and would diverge from the UI on .5 cases).
+    """
+    return float(math.floor(float(value) + 0.5))
+
 
 # Helper function to get current time in Asia/Kolkata timezone
 def get_current_time():
@@ -272,6 +287,7 @@ def create_gst_bill():
             bill_id=str(uuid.uuid4()),
             client_id=client_id,
             bill_number=bill_number,
+            bill_prefix=get_device_code(),
             customer_name=title_case(data['customer_name']),
             customer_phone=data.get('customer_phone'),
             items=data['items'],
@@ -394,6 +410,7 @@ def create_non_gst_bill():
             bill_id=str(uuid.uuid4()),
             client_id=client_id,
             bill_number=bill_number,
+            bill_prefix=get_device_code(),
             customer_name=title_case(data['customer_name']),
             customer_phone=data.get('customer_phone'),
             items=data['items'],
@@ -1054,10 +1071,15 @@ def create_unified_bill():
                     return jsonify({'error': 'Redeemed points exceed the bill total'}), 400
                 final_amount = round(final_amount - membership_redeem_value, 2)
 
+            # Whole-rupee round-off — applied last so the stored payable matches
+            # the rounded Grand Total shown on the create screen (and amount_received).
+            final_amount = _round_rupee(final_amount)
+
             new_bill = GSTBilling(
                 bill_id=str(uuid.uuid4()),
                 client_id=client_id,
                 bill_number=bill_number,
+                bill_prefix=get_device_code(),
                 customer_name=title_case(data.get('customer_name', 'Walk-in Customer')),
                 customer_phone=data.get('customer_phone'),
                 customer_gstin=data.get('customer_gstin'),
@@ -1137,7 +1159,9 @@ def create_unified_bill():
                     'negotiable_amount': round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                     'gst_amount': round(total_gst_amount, 2),
                     'final_amount': round(final_amount, 2),
-                    'total_amount': round(subtotal, 2),
+                    # Mirror final_amount (the rounded payable) for consumers that read
+                    # `total_amount` generically; the pre-tax value lives in `subtotal`.
+                    'total_amount': round(final_amount, 2),
                     'membership_redeemed': membership_redeem_value if membership_redeem_value > 0 else None,
                     'membership': _membership_receipt_block(membership_summary),
                     'payment_type': data['payment_type'],
@@ -1181,10 +1205,15 @@ def create_unified_bill():
                     return jsonify({'error': 'Redeemed points exceed the bill total'}), 400
                 total_amount = round(total_amount - membership_redeem_value, 2)
 
+            # Whole-rupee round-off — applied last so the stored total matches the
+            # rounded Grand Total shown on the create screen (and amount_received).
+            total_amount = _round_rupee(total_amount)
+
             new_bill = NonGSTBilling(
                 bill_id=str(uuid.uuid4()),
                 client_id=client_id,
                 bill_number=bill_number,
+                bill_prefix=get_device_code(),
                 customer_name=title_case(data.get('customer_name', 'Walk-in Customer')),
                 customer_phone=data.get('customer_phone'),
                 customer_gstin=data.get('customer_gstin'),
@@ -1235,7 +1264,7 @@ def create_unified_bill():
                 'bill_id': new_bill.bill_id,
                 'bill_number': bill_number,
                 'bill_type': 'Non-GST',
-                'total_amount': round(subtotal, 2),
+                'total_amount': total_amount,
                 'message': 'Non-GST bill created successfully',
                 # Complete bill data for printing
                 'bill': {
@@ -1250,7 +1279,7 @@ def create_unified_bill():
                     'negotiable_amount': round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                     'gst_amount': 0,
                     'final_amount': total_amount,
-                    'total_amount': round(subtotal, 2),
+                    'total_amount': total_amount,
                     'membership_redeemed': membership_redeem_value if membership_redeem_value > 0 else None,
                     'membership': _membership_receipt_block(membership_summary),
                     'payment_type': data['payment_type'],
@@ -1512,6 +1541,10 @@ def exchange_bill(bill_id):
         new_subtotal = sum(item['quantity'] * item['rate'] for item in new_items)
         new_gst_amount = sum(item.get('gst_amount', 0) for item in new_items)
         new_total = new_subtotal + new_gst_amount
+        # Whole-rupee round-off — same convention as create_unified_bill so an
+        # exchanged bill keeps the rounded total and doesn't drift back to paise.
+        # (non-GST has no GST, so new_total == new_subtotal there.)
+        new_total_rounded = _round_rupee(new_total)
 
         # Step 4: Update the original bill (apply title case to customer name if provided)
         bill.items = new_items
@@ -1527,9 +1560,9 @@ def exchange_bill(bill_id):
             bill.subtotal = round(new_subtotal, 2)
             bill.gst_amount = round(new_gst_amount, 2)
             bill.gst_percentage = round((new_gst_amount / new_subtotal * 100) if new_subtotal > 0 else 0, 2)
-            bill.final_amount = round(new_total, 2)
+            bill.final_amount = new_total_rounded
         else:
-            bill.total_amount = round(new_subtotal, 2)
+            bill.total_amount = new_total_rounded
 
         db.session.commit()
 
@@ -1552,8 +1585,8 @@ def exchange_bill(bill_id):
             'bill_id': bill_id,
             'bill_number': bill.bill_number,
             'returned_amount': round(returned_amount, 2),
-            'new_amount': round(new_total, 2),
-            'difference': round(new_total - returned_amount, 2)
+            'new_amount': new_total_rounded,
+            'difference': round(new_total_rounded - returned_amount, 2)
         }), 200
 
     except Exception as e:

@@ -111,7 +111,6 @@ export default function ReportsPage() {
     start_date: '',
     end_date: '',
   })
-  const [periodType, setPeriodType] = useState<'daily' | 'weekly' | 'monthly'>('monthly')
   const [searchInput, setSearchInput] = useState('')   // immediate input value (responsive)
   const [searchQuery, setSearchQuery] = useState('')   // debounced value used for filtering
   const searchDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -155,40 +154,38 @@ export default function ReportsPage() {
   const ongoingRequest = useRef<Promise<void> | null>(null)
   const hasInitialized = useRef(false)
 
-  // Calculate date range based on period type
-  const calculateDateRange = (type: 'daily' | 'weekly' | 'monthly') => {
+  // Default range shown on first load — last 30 days up to today.
+  const getDefaultRange = () => {
     const today = new Date()
     const endDate = today.toISOString().split('T')[0]
-    let startDate = ''
-
-    if (type === 'daily') {
-      // Today only
-      startDate = endDate
-    } else if (type === 'weekly') {
-      // Last 7 days
-      const weekAgo = new Date()
-      weekAgo.setDate(today.getDate() - 6)
-      startDate = weekAgo.toISOString().split('T')[0]
-    } else if (type === 'monthly') {
-      // Last 30 days
-      const monthAgo = new Date()
-      monthAgo.setDate(today.getDate() - 29)
-      startDate = monthAgo.toISOString().split('T')[0]
-    }
-
-    return { start_date: startDate, end_date: endDate }
+    const monthAgo = new Date()
+    monthAgo.setDate(today.getDate() - 29)
+    return { start_date: monthAgo.toISOString().split('T')[0], end_date: endDate }
   }
 
-  // Handle period type change. Guards against double-tapping the SAME period
-  // but lets users switch periods while a fetch is in flight — `fetchReportData`
-  // itself uses `ongoingRequest` to coalesce concurrent calls. The old blanket
-  // `if (loading) return` silently dropped clicks and looked like "filter broken".
-  const handlePeriodChange = (type: 'daily' | 'weekly' | 'monthly') => {
-    if (type === periodType) return
-    setPeriodType(type)
-    const range = calculateDateRange(type)
-    setDateRange(range)
-    fetchReportData(range.start_date, range.end_date)
+  // Human-readable label for the selected range, used in the exported PDF header.
+  // Single day → "Daily"; otherwise the inclusive span in days (e.g. "7-Day").
+  const describePeriod = (start: string, end: string): string => {
+    if (!start || !end) return 'Report'
+    if (start === end) return 'Daily'
+    const days = Math.round((new Date(end).getTime() - new Date(start).getTime()) / 86400000) + 1
+    return `${days}-Day`
+  }
+
+  // Handle a change to either the start or end date picker. Auto-corrects an
+  // inverted range (start after end) by snapping the other bound to the new
+  // value, then fetches once both bounds are set. `fetchReportData` is
+  // last-write-wins, so firing on every change can't show stale data.
+  const handleDateChange = (field: 'start_date' | 'end_date', value: string) => {
+    const next = { ...dateRange, [field]: value }
+    if (next.start_date && next.end_date && next.start_date > next.end_date) {
+      if (field === 'start_date') next.end_date = value
+      else next.start_date = value
+    }
+    setDateRange(next)
+    if (next.start_date && next.end_date) {
+      fetchReportData(next.start_date, next.end_date)
+    }
   }
 
   useEffect(() => {
@@ -209,7 +206,7 @@ export default function ReportsPage() {
 
     fetchCategories()
 
-    const range = calculateDateRange('monthly')
+    const range = getDefaultRange()
     setDateRange(range)
     fetchReportData(range.start_date, range.end_date)
   }, [])
@@ -368,7 +365,6 @@ export default function ReportsPage() {
       toast.error('No report data to export yet.')
       return
     }
-    const periodLabelMap = { daily: 'Daily', weekly: 'Weekly', monthly: 'Monthly' } as const
     try {
       generateReportPDF({
         client: {
@@ -378,7 +374,7 @@ export default function ReportsPage() {
           email: client?.email,
           gstin: client?.gstin,
         },
-        periodLabel: periodLabelMap[periodType],
+        periodLabel: describePeriod(dateRange.start_date, dateRange.end_date),
         startDate: dateRange.start_date,
         endDate: dateRange.end_date,
         totalBills: reportData.total_bills,
@@ -450,6 +446,13 @@ export default function ReportsPage() {
         await api.put(`/expense/${editingExpense.expense_id}`, expenseFormData)
       } else {
         await api.post('/expense/create', expenseFormData)
+      }
+
+      // Make a freshly-typed category reusable in the dropdown this session
+      // without waiting for the next mount-time categories fetch.
+      const savedCategory = expenseFormData.category.trim()
+      if (savedCategory && !expenseCategories.includes(savedCategory)) {
+        setExpenseCategories(prev => [...prev, savedCategory])
       }
 
       setShowExpenseModal(false)
@@ -603,54 +606,37 @@ export default function ReportsPage() {
               Export PDF
             </button>
 
-            {/* Period Selector Buttons.
-                NOT disabled during load — the user expects instant period-switching.
-                Same-period clicks are idempotent (handlePeriodChange early-returns);
-                different-period clicks trigger a new fetch that last-write-wins.
-                The spinner inside the active button gives visual feedback for in-flight work. */}
-            <div className="flex items-center border border-gray-300 dark:border-gray-600 rounded-lg overflow-hidden">
-              <button
-                type="button"
-                onClick={() => handlePeriodChange('daily')}
-                className={`px-4 py-2 text-sm font-medium transition-colors flex items-center gap-2 ${
-                  periodType === 'daily'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-              >
-                {loading && periodType === 'daily' && (
-                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                )}
-                Daily
-              </button>
-              <button
-                type="button"
-                onClick={() => handlePeriodChange('weekly')}
-                className={`px-4 py-2 text-sm font-medium border-l border-r border-gray-300 dark:border-gray-600 transition-colors flex items-center gap-2 ${
-                  periodType === 'weekly'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-              >
-                {loading && periodType === 'weekly' && (
-                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                )}
-                Weekly
-              </button>
-              <button
-                type="button"
-                onClick={() => handlePeriodChange('monthly')}
-                className={`px-4 py-2 text-sm font-medium transition-colors flex items-center gap-2 ${
-                  periodType === 'monthly'
-                    ? 'bg-indigo-600 text-white'
-                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
-                }`}
-              >
-                {loading && periodType === 'monthly' && (
-                  <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-white"></div>
-                )}
-                Monthly
-              </button>
+            {/* Date Range Selector.
+                Replaces the old Daily/Weekly/Monthly toggle — the user picks any
+                start/end date and the report fetches on change (last-write-wins).
+                A spinner appears while a range fetch is in flight. */}
+            <div className="flex items-center gap-2 border border-gray-300 dark:border-gray-600 rounded-lg px-3 py-1.5 bg-white dark:bg-gray-800">
+              <label className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300">
+                <span className="font-medium">From</span>
+                <input
+                  type="date"
+                  value={dateRange.start_date}
+                  max={dateRange.end_date || undefined}
+                  onChange={(e) => handleDateChange('start_date', e.target.value)}
+                  className="bg-transparent text-sm text-gray-900 dark:text-white focus:outline-none"
+                  aria-label="Report start date"
+                />
+              </label>
+              <span className="text-gray-400">–</span>
+              <label className="flex items-center gap-1.5 text-sm text-gray-700 dark:text-gray-300">
+                <span className="font-medium">To</span>
+                <input
+                  type="date"
+                  value={dateRange.end_date}
+                  min={dateRange.start_date || undefined}
+                  onChange={(e) => handleDateChange('end_date', e.target.value)}
+                  className="bg-transparent text-sm text-gray-900 dark:text-white focus:outline-none"
+                  aria-label="Report end date"
+                />
+              </label>
+              {loading && (
+                <div className="animate-spin rounded-full h-3 w-3 border-b-2 border-indigo-600 dark:border-indigo-400"></div>
+              )}
             </div>
           </div>
         </div>
@@ -1391,17 +1377,24 @@ export default function ReportsPage() {
                     <label className="block text-sm font-medium text-gray-700 dark:text-gray-300 mb-1">
                       Category *
                     </label>
-                    <select
+                    {/* Combobox: pick an existing category from the list OR type a
+                        brand-new one. The backend accepts any category string, so
+                        free text creates a new category on save. */}
+                    <input
+                      type="text"
+                      list="expense-category-options"
                       value={expenseFormData.category}
                       onChange={(e) => setExpenseFormData({ ...expenseFormData, category: e.target.value })}
                       required
+                      autoComplete="off"
+                      placeholder="Select or type a category"
                       className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent bg-white dark:bg-gray-700 text-gray-900 dark:text-white"
-                    >
-                      <option value="">Select category</option>
+                    />
+                    <datalist id="expense-category-options">
                       {expenseCategories.map(cat => (
-                        <option key={cat} value={cat}>{cat}</option>
+                        <option key={cat} value={cat} />
                       ))}
-                    </select>
+                    </datalist>
                   </div>
 
                   <div>

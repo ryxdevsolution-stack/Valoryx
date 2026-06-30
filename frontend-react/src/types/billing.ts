@@ -45,6 +45,8 @@ export interface GSTBill {
   bill_id: string;
   client_id: string;
   bill_number: number;
+  bill_prefix?: string | null;
+  bill_no_display?: string | null;
   customer_name: string;
   customer_phone?: string;
   customer_gstin?: string;
@@ -74,6 +76,8 @@ export interface NonGSTBill {
   bill_id: string;
   client_id: string;
   bill_number: number;
+  bill_prefix?: string | null;
+  bill_no_display?: string | null;
   customer_name: string;
   customer_phone?: string;
   customer_gstin?: string;
@@ -114,6 +118,8 @@ export interface CreateBillResponse {
   success: boolean;
   bill_id: string;
   bill_number: number;
+  bill_prefix?: string | null;
+  bill_no_display?: string | null;
   bill_type: 'GST' | 'Non-GST';
   subtotal?: number;
   gst_amount?: number;
@@ -129,6 +135,8 @@ export interface CreateBillResponse {
 
 export interface PrintableBill {
   bill_number: number;
+  bill_prefix?: string | null;
+  bill_no_display?: string | null;
   customer_name: string;
   customer_phone?: string;
   customer_gstin?: string;
@@ -174,6 +182,8 @@ export interface PrintableBill {
 export interface BillListItem {
   bill_id: string;
   bill_number: number;
+  bill_prefix?: string | null;
+  bill_no_display?: string | null;
   customer_name: string;
   customer_phone?: string;
   final_amount?: number;
@@ -215,6 +225,8 @@ export interface ExchangeBillResponse {
   message: string;
   bill_id: string;
   bill_number: number;
+  bill_prefix?: string | null;
+  bill_no_display?: string | null;
   returned_amount: number;
   new_amount: number;
   difference: number;

@@ -6,6 +6,7 @@
  */
 
 import QRCode from 'qrcode'
+import { formatBillNo } from '@/lib/billNumber'
 import { CURRENCY_SYMBOLS } from '@/lib/regions'
 
 // ============================================================================
@@ -35,6 +36,8 @@ export interface BillItem {
 
 export interface BillData {
   bill_number: number;
+  bill_prefix?: string | null;
+  bill_no_display?: string | null;
   customer_name?: string;
   customer_phone?: string;
   customer_gstin?: string;
@@ -345,7 +348,7 @@ export function generateReceiptHtml(
 <html>
 <head>
   <meta charset="UTF-8">
-  <title>Bill #${bill.bill_number}</title>
+  <title>Bill #${formatBillNo(bill)}</title>
   <style>
     @page { size: 80mm auto; margin: 0mm; }
     @media print {
@@ -398,7 +401,7 @@ export function generateReceiptHtml(
 
   <!-- Bill Info -->
   <div style="font-size: ${FONT_SIZE_SMALL};">
-    <div class="row-flex"><span><strong>Bill No  :</strong> ${bill.bill_number}</span><span>${paymentDisplay}</span></div>
+    <div class="row-flex"><span><strong>Bill No  :</strong> ${formatBillNo(bill)}</span><span>${paymentDisplay}</span></div>
     <div class="row"><strong>Date     :</strong> ${formatDate(bill.created_at)}</div>
     <div class="row"><strong>Time     :</strong> ${formatTime(bill.created_at)}</div>
   </div>
@@ -599,7 +602,7 @@ export function shareWhatsApp(bill: BillData, clientInfo: ClientInfo): PrintResu
     const message = encodeURIComponent(
       `*${clientInfo.client_name || 'Bill'}*\n` +
       `━━━━━━━━━━━━━━━\n` +
-      `Bill No: ${bill.bill_number}\n` +
+      `Bill No: ${formatBillNo(bill)}\n` +
       `Date: ${date}\n` +
       `━━━━━━━━━━━━━━━\n` +
       `Items: ${bill.items.length}\n` +

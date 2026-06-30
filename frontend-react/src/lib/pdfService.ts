@@ -12,6 +12,7 @@
  */
 
 import { PrintableBill } from '@/types/billing'
+import { formatBillNo } from '@/lib/billNumber'
 import { toast } from '@/utils/toast'
 import { CURRENCY_SYMBOLS } from '@/lib/regions'
 import { formatCurrencyWith } from '@/lib/useCurrency'
@@ -330,7 +331,7 @@ export async function generateBillPDF(
 <head>
 <meta charset="UTF-8"/>
 <meta name="viewport" content="width=device-width,initial-scale=1.0"/>
-<title>Invoice #${bill.bill_number} — ${esc(clientInfo.client_name)}</title>
+<title>Invoice #${formatBillNo(bill)} — ${esc(clientInfo.client_name)}</title>
 <style>
 /* ── Reset ─────────────────────────────────────────── */
 *{box-sizing:border-box;margin:0;padding:0}
@@ -604,7 +605,7 @@ body{
 
   <!-- Bill # + masked phone row -->
   <div class="bill-meta-row">
-    <span class="meta-pill">Bill <strong>#${bill.bill_number}</strong></span>
+    <span class="meta-pill">Bill <strong>#${formatBillNo(bill)}</strong></span>
     ${maskedPhone ? `<span class="meta-pill">Mobile <strong>${esc(maskedPhone)}</strong></span>` : `<span class="cashier-note">Cashier: ${esc(bill.user_name || 'Admin')}</span>`}
   </div>
 

@@ -3,6 +3,7 @@
 import { useRef, useEffect, useState } from 'react'
 
 import { printBill, downloadPdf, shareWhatsApp, BillData, ClientInfo } from '@/lib/webPrintService'
+import { formatBillNo } from '@/lib/billNumber'
 import { useCurrency } from '@/lib/useCurrency'
 
 // Extended types for component props (extends imported types)
@@ -186,7 +187,7 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
               {/* Bill Info - 2 COLUMN LAYOUT */}
               <div style={{ fontSize: '7pt', marginBottom: '1mm' }}>
                 <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: '0.5mm' }}>
-                  <span><strong>Bill No  :</strong> {bill.bill_number}</span>
+                  <span><strong>Bill No  :</strong> {formatBillNo(bill)}</span>
                   <span>{getPaymentDisplay()}</span>
                 </div>
                 <div style={{ marginBottom: '0.5mm' }}>

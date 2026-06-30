@@ -1278,7 +1278,7 @@ export default function UnifiedBillingPage() {
     setShowCustomerDropdown(false)
   }
 
-  const handleSubmit = async (e: React.FormEvent, isPending = false) => {
+  const handleSubmit = async (e: React.FormEvent, isPending = false, skipPrint = false) => {
     e.preventDefault()
 
     if (activeTab.items.length === 0) {
@@ -1401,6 +1401,23 @@ export default function UnifiedBillingPage() {
           body: `Bill #${billNum} saved. Payment is pending.`,
         }).catch(() => {/* optional notification */})
         invalidateDataCache('products')
+        if (billNum) setNextBillNumber(billNum + 1)
+        clearDraftFromStorage(activeTabId)
+        closeTabWithoutReload(activeTabId)
+        setLoading(false)
+        return
+      }
+
+      // Save without printing: bill is finalized (paid), just skip the print step
+      if (skipPrint) {
+        const savedBill = response.data.bill || {}
+        const billNum = savedBill.bill_number || response.data.bill_number
+        const billDisplay = savedBill.bill_no_display || billNum
+        toast.success(`Bill #${billDisplay} saved`)
+        invalidateDataCache('products')
+        api.get('/customer/all').then(res => {
+          if (res.data.customers) setAllCustomers(res.data.customers)
+        }).catch(() => {})
         if (billNum) setNextBillNumber(billNum + 1)
         clearDraftFromStorage(activeTabId)
         closeTabWithoutReload(activeTabId)
@@ -2756,30 +2773,36 @@ export default function UnifiedBillingPage() {
               <p className="text-xs text-gray-500 dark:text-gray-400">Total</p>
               <p className="text-lg font-bold text-gray-900 dark:text-white">{cur}{billTotals.grandTotal?.toLocaleString()}</p>
             </div>
-            <div className="grid grid-cols-3 gap-2">
+            <div className="grid grid-cols-4 gap-2">
               <button
                 type="submit"
                 disabled={loading}
-                className="px-2 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm"
+                className="px-2 py-2.5 bg-green-600 hover:bg-green-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm whitespace-nowrap"
               >
                 {loading ? '...' : 'Print'}
               </button>
               <button
                 type="button"
                 disabled={loading}
+                onClick={(e) => handleSubmit(e as any, false, true)}
+                title="Save the bill without printing"
+                className="px-2 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm whitespace-nowrap"
+              >
+                {loading ? '...' : 'Save'}
+              </button>
+              <button
+                type="button"
+                disabled={loading}
                 onClick={(e) => handleSubmit(e as any, true)}
                 title="Save bill without payment — mark as Payment Pending"
-                className="px-2 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm flex items-center justify-center gap-1"
+                className="px-2 py-2.5 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm whitespace-nowrap"
               >
-                <svg className="w-3.5 h-3.5 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                </svg>
                 Pending
               </button>
               <button
                 type="button"
                 onClick={handleClearBill}
-                className="px-2 py-2.5 bg-gray-500 hover:bg-gray-600 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm"
+                className="px-2 py-2.5 bg-gray-500 hover:bg-gray-600 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm whitespace-nowrap"
               >
                 Clear
               </button>
@@ -2908,7 +2931,7 @@ export default function UnifiedBillingPage() {
               </div>
 
               {/* Actions - Right Side */}
-              <div className="lg:col-span-4 flex flex-col md:flex-row items-stretch md:items-center gap-2">
+              <div className="lg:col-span-4 flex flex-row flex-nowrap items-center gap-2">
                 <button
                   ref={printButtonRef}
                   type="submit"
@@ -2919,9 +2942,19 @@ export default function UnifiedBillingPage() {
                       handleSubmit(e as any)
                     }
                   }}
-                  className="flex-1 px-4 py-2 bg-green-600 dark:bg-green-700 text-white rounded hover:bg-green-700 dark:hover:bg-green-800 transition disabled:bg-gray-400 dark:disabled:bg-gray-600 font-bold text-sm shadow-md hover:shadow-lg focus:ring-2 focus:ring-green-500 focus:outline-none"
+                  className="flex-1 min-w-0 whitespace-nowrap px-3 py-2 bg-green-600 dark:bg-green-700 text-white rounded hover:bg-green-700 dark:hover:bg-green-800 transition disabled:bg-gray-400 dark:disabled:bg-gray-600 font-bold text-sm shadow-md hover:shadow-lg focus:ring-2 focus:ring-green-500 focus:outline-none"
                 >
-                  {loading ? 'Processing...' : 'Print Bill'}
+                  {loading ? '...' : 'Print Bill'}
+                </button>
+                {/* Save without printing */}
+                <button
+                  type="button"
+                  disabled={loading}
+                  onClick={(e) => handleSubmit(e as any, false, true)}
+                  title="Save the bill without printing"
+                  className="flex-1 min-w-0 whitespace-nowrap px-3 py-2 bg-blue-600 dark:bg-blue-700 text-white rounded hover:bg-blue-700 dark:hover:bg-blue-800 transition disabled:bg-gray-400 dark:disabled:bg-gray-600 font-bold text-sm shadow-md hover:shadow-lg focus:ring-2 focus:ring-blue-500 focus:outline-none"
+                >
+                  {loading ? '...' : 'Save'}
                 </button>
                 {/* Save as Pending */}
                 <button
@@ -2929,12 +2962,9 @@ export default function UnifiedBillingPage() {
                   disabled={loading}
                   onClick={(e) => handleSubmit(e as any, true)}
                   title="Save bill without payment — mark as Payment Pending"
-                  className="flex-1 px-4 py-2 bg-amber-500 dark:bg-amber-600 text-white rounded hover:bg-amber-600 dark:hover:bg-amber-700 transition disabled:bg-gray-400 dark:disabled:bg-gray-600 font-bold text-sm shadow-md hover:shadow-lg focus:ring-2 focus:ring-amber-400 focus:outline-none flex items-center justify-center gap-1.5"
+                  className="flex-1 min-w-0 whitespace-nowrap px-3 py-2 bg-amber-500 dark:bg-amber-600 text-white rounded hover:bg-amber-600 dark:hover:bg-amber-700 transition disabled:bg-gray-400 dark:disabled:bg-gray-600 font-bold text-sm shadow-md hover:shadow-lg focus:ring-2 focus:ring-amber-400 focus:outline-none flex items-center justify-center"
                 >
-                  <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-                  </svg>
-                  {loading ? 'Saving...' : 'Pending'}
+                  {loading ? '...' : 'Pending'}
                 </button>
                 {isMobile && supportsWebBluetooth && (
                   <button
