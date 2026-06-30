@@ -6,7 +6,7 @@ import os
 import re
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from sqlalchemy import create_engine, text
 from sqlalchemy.pool import QueuePool
@@ -37,6 +37,14 @@ def get_current_time():
     """Returns current datetime in Asia/Kolkata timezone"""
     kolkata_tz = pytz.timezone('Asia/Kolkata')
     return datetime.now(kolkata_tz)
+
+
+# The download watermark is stored in UTC minus this buffer. updated_at is
+# written inconsistently across tables (UTC via _now_iso, IST via
+# get_current_time); a UTC watermark is <= every value, so the incremental
+# "updated_at > watermark" filter never MISSES a cloud row. The buffer absorbs
+# minor clock skew between tills. Re-fetched rows are harmless (Last-Write-Wins).
+WATERMARK_SAFETY_SECONDS = 300
 
 
 # Group-A owner tables synced GENERICALLY (schema-introspected) from v32 on.
@@ -1228,7 +1236,11 @@ class SyncService:
                 """), {
                     "id": str(uuid_module.uuid4()),
                     "client_id": client_id,
-                    "time": get_current_time().isoformat()
+                    # UTC (minus a safety buffer), NOT IST — an IST watermark is
+                    # 5.5h ahead of UTC-stored updated_at, so the next download's
+                    # "updated_at > watermark" filter silently skipped recent
+                    # cloud rows. UTC is <= every value → never misses.
+                    "time": (datetime.utcnow() - timedelta(seconds=WATERMARK_SAFETY_SECONDS)).isoformat()
                 })
                 conn.commit()
         except Exception as e:
