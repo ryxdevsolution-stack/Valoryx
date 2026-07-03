@@ -274,7 +274,17 @@ export default function AttendancePanel({
   }
 
   const totalHours = days.reduce((acc, d) => acc + d.day_total_minutes, 0)
-  const openPunch = days.flatMap(d => d.punches).find(p => p.check_out === null)
+  // A live "clocked in" punch = an ACTUAL work punch that hasn't been checked
+  // out. Day-off rows (paid/unpaid leave, holiday, weekly off) also have
+  // check_out === null (and a sentinel check_in on offline SQLite), so marking
+  // another day off must NOT flip the header to "Clocked In / Check Out" for
+  // today. Exclude day-off statuses and require a real check_in.
+  const openPunch = days.flatMap(d => d.punches).find(
+    p => p.check_out === null
+      && !!p.check_in
+      && !PAID_OFF_STATUSES.has(p.status ?? '')
+      && !UNPAID_OFF_STATUSES.has(p.status ?? '')
+  )
 
   return (
     // Mobile: auto-height (no outer constraint), so the page scrolls naturally.
