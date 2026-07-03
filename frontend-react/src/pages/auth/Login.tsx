@@ -310,6 +310,20 @@ export default function LoginPage() {
     }
   }
 
+  // When the desktop app opens THIS page in the system browser (?desktop=…),
+  // start the Google redirect immediately so the user lands on Google's account
+  // chooser directly, instead of seeing the Valoryx login page and having to
+  // click "Continue with Google" a second time.
+  const autoStartedRef = useRef(false)
+  useEffect(() => {
+    if (isElectron || autoStartedRef.current) return
+    if (new URLSearchParams(window.location.search).get('desktop')) {
+      autoStartedRef.current = true
+      handleGoogleLogin()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Desktop only: receive the handoff assertion from the valoryx:// deep link,
   // exchange it with the LOCAL backend for a local session, then sign in.
   useEffect(() => {
