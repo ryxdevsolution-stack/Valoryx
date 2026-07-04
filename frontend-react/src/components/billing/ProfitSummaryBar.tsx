@@ -38,7 +38,9 @@ function ProfitSummaryBar({ items, userRole }: ProfitSummaryBarProps) {
     return { totalCost: cost, totalRevenue: revenue, profit: p, margin: m, hasCostData: hasData }
   }, [items])
 
-  if (!['owner', 'manager'].includes(userRole)) return null
+  // Cost / profit / margin is owner-only business data — never shown to
+  // managers or staff. Gated before render so non-owners never receive the values.
+  if (userRole !== 'owner') return null
   if (items.length === 0) return null
   if (!hasCostData) return null
 
