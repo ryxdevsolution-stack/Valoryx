@@ -179,3 +179,58 @@ def test_activation_never_shortens_end_date(monkeypatch):
     _apply_activation(client, "plan-A", "monthly", earlier, 99900)
 
     assert client.subscription_end_date == later, "must keep the longer existing period"
+
+
+# ── Reconciler decision logic (the hourly autopay safety-net) ────────────────
+from services.subscription_reconciler import compute_reconciliation
+
+
+def test_reconcile_missed_renewal_extends_access():
+    """The core safety-net: a missed webhook renewal is caught and access extended."""
+    local_end = datetime(2026, 7, 10)
+    rz_end = datetime(2026, 8, 10)  # Razorpay already charged + moved the period forward
+
+    d = compute_reconciliation("active", local_end, "active", rz_end)
+
+    assert d["changed"] is True
+    assert d["status"] == "active"
+    assert d["end_date"] == rz_end
+
+
+def test_reconcile_halted_marks_expired():
+    d = compute_reconciliation("active", datetime(2026, 7, 10), "halted", None)
+    assert d == {"status": "expired", "end_date": datetime(2026, 7, 10), "changed": True}
+
+
+def test_reconcile_cancelled_keeps_end_date():
+    """Cancelled at Razorpay → cancelled locally, but access stays until period end."""
+    end = datetime(2026, 7, 10)
+    d = compute_reconciliation("active", end, "cancelled", None)
+    assert d["status"] == "cancelled"
+    assert d["end_date"] == end
+    assert d["changed"] is True
+
+
+def test_reconcile_steady_state_is_noop():
+    """Already active for the same period → no write, no churn."""
+    end = datetime(2026, 8, 10)
+    d = compute_reconciliation("active", end, "active", end)
+    assert d["changed"] is False
+
+
+def test_reconcile_never_shortens_end_date():
+    """A stale Razorpay current_end must never pull the paid period earlier."""
+    local_end = datetime(2026, 12, 1)
+    rz_end = datetime(2026, 8, 1)
+    d = compute_reconciliation("active", local_end, "active", rz_end)
+    assert d["end_date"] == local_end
+    assert d["changed"] is False
+
+
+def test_reconcile_pending_status_is_untouched():
+    """created/pending/paused are not paid states — leave local state alone."""
+    end = datetime(2026, 7, 10)
+    for rz in ("created", "pending", "paused"):
+        d = compute_reconciliation("trial", end, rz, None)
+        assert d["changed"] is False
+        assert d["status"] == "trial"

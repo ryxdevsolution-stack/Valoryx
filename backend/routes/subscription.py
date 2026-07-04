@@ -1045,6 +1045,32 @@ def admin_activate_subscription():
         return jsonify({'error': 'Failed to activate subscription', 'message': str(e)}), 500
 
 
+@subscription_bp.route('/admin/reconcile-subscriptions', methods=['POST'])
+@authenticate()
+def reconcile_subscriptions():
+    """
+    Super-admin only: run the subscription reconciler immediately.
+
+    Fetches every client's Razorpay subscription and syncs local status/end_date,
+    self-healing any renewal that a missed webhook failed to record. Safe to run
+    repeatedly — it only writes when local state actually differs from Razorpay.
+    """
+    try:
+        if not g.user.get('is_super_admin'):
+            return jsonify({'error': 'Super admin access required'}), 403
+
+        from services.subscription_reconciler import get_subscription_reconciler
+        reconciler = get_subscription_reconciler()
+        if not reconciler:
+            return jsonify({'error': 'Reconciler not available (Razorpay not configured)'}), 503
+
+        summary = reconciler.reconcile_now()
+        return jsonify({'success': True, 'summary': summary}), 200
+
+    except Exception as e:
+        return jsonify({'error': 'Reconciliation failed', 'message': str(e)}), 500
+
+
 @subscription_bp.route('/admin/seed-razorpay-plans', methods=['POST'])
 @authenticate()
 def seed_razorpay_plans():
