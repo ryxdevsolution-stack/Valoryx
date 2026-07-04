@@ -26,6 +26,10 @@ interface AnalyticsDashboard {
     thisWeek: number
     thisMonth: number
     growth: number
+    // Outstanding (billed but not yet paid); today/week/month above are PAID-only.
+    pendingToday?: number
+    pendingWeek?: number
+    pendingMonth?: number
   }
   bills: {
     totalGST: number
@@ -338,8 +342,18 @@ export default function DashboardPage() {
                analytics.revenue.thisMonth).toLocaleString('en-IN')}
           </p>
           <p className="text-[10px] text-gray-500 dark:text-gray-400">
-            {timeRange === 'today' ? 'Today' : timeRange === 'week' ? 'This week' : 'This month'}
+            {timeRange === 'today' ? 'Today' : timeRange === 'week' ? 'This week' : 'This month'} · paid
           </p>
+          {(() => {
+            const pending = timeRange === 'today' ? (analytics.revenue.pendingToday || 0)
+              : timeRange === 'week' ? (analytics.revenue.pendingWeek || 0)
+              : (analytics.revenue.pendingMonth || 0)
+            return pending > 0 ? (
+              <p className="text-[10px] font-medium text-amber-600 dark:text-amber-400 mt-1">
+                {cur}{pending.toLocaleString('en-IN')} pending
+              </p>
+            ) : null
+          })()}
         </motion.div>
 
         {/* Bills Card */}

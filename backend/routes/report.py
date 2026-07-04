@@ -64,26 +64,35 @@ def generate_report():
                 query = query.filter(model.created_by == user_id)
             return query
 
-        # Aggregate totals in SQL — no full row loading
+        # Aggregate totals in SQL — no full row loading.
+        # `total` = PAID revenue only (paid = anything NOT explicitly 'pending',
+        # so legacy/NULL rows still count). `pending` = billed-but-unpaid.
+        from sqlalchemy import case, or_
+        _gst_paid = or_(GSTBilling.payment_status != 'pending', GSTBilling.payment_status.is_(None))
+        _non_paid = or_(NonGSTBilling.payment_status != 'pending', NonGSTBilling.payment_status.is_(None))
+
         gst_agg = _apply_date_user_filter(
             db.session.query(
                 func.count(GSTBilling.bill_id).label('cnt'),
-                func.coalesce(func.sum(GSTBilling.final_amount), 0).label('total')
+                func.coalesce(func.sum(case((_gst_paid, GSTBilling.final_amount))), 0).label('total'),
+                func.coalesce(func.sum(case((GSTBilling.payment_status == 'pending', GSTBilling.final_amount))), 0).label('pending'),
             ), GSTBilling, GSTBilling.final_amount
         ).first()
 
         nongst_agg = _apply_date_user_filter(
             db.session.query(
                 func.count(NonGSTBilling.bill_id).label('cnt'),
-                func.coalesce(func.sum(NonGSTBilling.total_amount), 0).label('total')
+                func.coalesce(func.sum(case((_non_paid, NonGSTBilling.total_amount))), 0).label('total'),
+                func.coalesce(func.sum(case((NonGSTBilling.payment_status == 'pending', NonGSTBilling.total_amount))), 0).label('pending'),
             ), NonGSTBilling, NonGSTBilling.total_amount
         ).first()
 
         total_gst_bills = gst_agg.cnt
         total_non_gst_bills = nongst_agg.cnt
-        total_gst_amount = float(gst_agg.total)
-        total_non_gst_amount = float(nongst_agg.total)
-        total_revenue = total_gst_amount + total_non_gst_amount
+        total_gst_amount = float(gst_agg.total)          # paid only
+        total_non_gst_amount = float(nongst_agg.total)   # paid only
+        total_revenue = total_gst_amount + total_non_gst_amount           # PAID revenue
+        total_pending = float(gst_agg.pending) + float(nongst_agg.pending)  # outstanding
 
         # Payment breakdown via SQL GROUP BY
         payment_breakdown = {}
@@ -140,7 +149,8 @@ def generate_report():
                 'report_id': new_report.report_id,
                 'start_date': str(date_from),
                 'end_date': str(date_to),
-                'total_sales': str(total_revenue),
+                'total_sales': str(total_revenue),          # PAID only
+                'pending_sales': str(total_pending),        # billed but unpaid (outstanding)
                 'gst_sales': str(total_gst_amount),
                 'non_gst_sales': str(total_non_gst_amount),
                 'payment_breakdown': payment_breakdown,

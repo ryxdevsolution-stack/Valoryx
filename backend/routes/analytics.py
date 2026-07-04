@@ -67,14 +67,25 @@ def get_dashboard_analytics():
         # Previously: 12 separate .scalar() calls × ~300ms Supabase latency = 3.6s wasted.
         # Now: 2 queries return all 6 aggregates each via CASE WHEN — 1 scan, 1 round-trip.
 
-        from sqlalchemy import case
+        from sqlalchemy import case, or_
+
+        # Revenue counts only PAID bills. "paid" = anything NOT explicitly
+        # 'pending' (so legacy/NULL payment_status rows still count as revenue).
+        # Pending (unpaid) bills are summed separately as "outstanding".
+        _gst_paid = or_(GSTBilling.payment_status != 'pending', GSTBilling.payment_status.is_(None))
+        _gst_pend = GSTBilling.payment_status == 'pending'
+        _non_paid = or_(NonGSTBilling.payment_status != 'pending', NonGSTBilling.payment_status.is_(None))
+        _non_pend = NonGSTBilling.payment_status == 'pending'
 
         def _gst_aggs(extra_filter=None):
             q = db.session.query(
-                func.coalesce(func.sum(case((GSTBilling.created_at >= today_start, GSTBilling.final_amount))), 0).label('today_rev'),
-                func.coalesce(func.sum(case((GSTBilling.created_at >= week_start, GSTBilling.final_amount))), 0).label('week_rev'),
-                func.coalesce(func.sum(case((GSTBilling.created_at >= month_start, GSTBilling.final_amount))), 0).label('month_rev'),
-                func.coalesce(func.sum(case(((GSTBilling.created_at >= prev_month_start) & (GSTBilling.created_at < month_start), GSTBilling.final_amount))), 0).label('prev_rev'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= today_start) & _gst_paid, GSTBilling.final_amount))), 0).label('today_rev'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= week_start) & _gst_paid, GSTBilling.final_amount))), 0).label('week_rev'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= month_start) & _gst_paid, GSTBilling.final_amount))), 0).label('month_rev'),
+                func.coalesce(func.sum(case((((GSTBilling.created_at >= prev_month_start) & (GSTBilling.created_at < month_start)) & _gst_paid, GSTBilling.final_amount))), 0).label('prev_rev'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= today_start) & _gst_pend, GSTBilling.final_amount))), 0).label('today_pend'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= week_start) & _gst_pend, GSTBilling.final_amount))), 0).label('week_pend'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= month_start) & _gst_pend, GSTBilling.final_amount))), 0).label('month_pend'),
                 func.count(GSTBilling.bill_id).label('total_count'),
                 func.count(case((GSTBilling.created_at >= today_start, GSTBilling.bill_id))).label('today_count'),
             ).filter(GSTBilling.client_id == client_id, GSTBilling.status == 'final')
@@ -84,10 +95,13 @@ def get_dashboard_analytics():
 
         def _non_gst_aggs(extra_filter=None):
             q = db.session.query(
-                func.coalesce(func.sum(case((NonGSTBilling.created_at >= today_start, NonGSTBilling.total_amount))), 0).label('today_rev'),
-                func.coalesce(func.sum(case((NonGSTBilling.created_at >= week_start, NonGSTBilling.total_amount))), 0).label('week_rev'),
-                func.coalesce(func.sum(case((NonGSTBilling.created_at >= month_start, NonGSTBilling.total_amount))), 0).label('month_rev'),
-                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= prev_month_start) & (NonGSTBilling.created_at < month_start), NonGSTBilling.total_amount))), 0).label('prev_rev'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= today_start) & _non_paid, NonGSTBilling.total_amount))), 0).label('today_rev'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= week_start) & _non_paid, NonGSTBilling.total_amount))), 0).label('week_rev'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= month_start) & _non_paid, NonGSTBilling.total_amount))), 0).label('month_rev'),
+                func.coalesce(func.sum(case((((NonGSTBilling.created_at >= prev_month_start) & (NonGSTBilling.created_at < month_start)) & _non_paid, NonGSTBilling.total_amount))), 0).label('prev_rev'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= today_start) & _non_pend, NonGSTBilling.total_amount))), 0).label('today_pend'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= week_start) & _non_pend, NonGSTBilling.total_amount))), 0).label('week_pend'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= month_start) & _non_pend, NonGSTBilling.total_amount))), 0).label('month_pend'),
                 func.count(NonGSTBilling.bill_id).label('total_count'),
                 func.count(case((NonGSTBilling.created_at >= today_start, NonGSTBilling.bill_id))).label('today_count'),
             ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.status == 'final')
@@ -105,6 +119,10 @@ def get_dashboard_analytics():
         revenue_week       = float(ga.week_rev or 0)     + float(na.week_rev or 0)
         revenue_month      = float(ga.month_rev or 0)    + float(na.month_rev or 0)
         revenue_prev_month = float(ga.prev_rev or 0)     + float(na.prev_rev or 0)
+        # Outstanding (billed but not yet paid) — shown alongside revenue.
+        pending_today      = float(ga.today_pend or 0)   + float(na.today_pend or 0)
+        pending_week       = float(ga.week_pend or 0)    + float(na.week_pend or 0)
+        pending_month      = float(ga.month_pend or 0)   + float(na.month_pend or 0)
         total_gst_bills    = int(ga.total_count or 0)
         total_non_gst_bills= int(na.total_count or 0)
         today_gst_count    = int(ga.today_count or 0)
@@ -521,7 +539,12 @@ def get_dashboard_analytics():
                 'today': round(revenue_today, 2),
                 'thisWeek': round(revenue_week, 2),
                 'thisMonth': round(revenue_month, 2),
-                'growth': round(growth_rate, 2)
+                'growth': round(growth_rate, 2),
+                # Outstanding (billed but not yet paid) — 'today'/week/month above
+                # are PAID-only; these are the pending amounts for the same periods.
+                'pendingToday': round(pending_today, 2),
+                'pendingWeek': round(pending_week, 2),
+                'pendingMonth': round(pending_month, 2),
             },
             'bills': {
                 'totalGST': total_gst_bills,
