@@ -234,3 +234,19 @@ def test_reconcile_pending_status_is_untouched():
         d = compute_reconciliation("trial", end, rz, None)
         assert d["changed"] is False
         assert d["status"] == "trial"
+
+
+# ── Dead/stale subscription id classification (soft-skip, not error) ─────────
+from services.subscription_reconciler import _is_missing_subscription_error
+
+
+def test_missing_subscription_error_recognised():
+    """Razorpay 'invalid or could not be found' → treated as a soft-skip."""
+    assert _is_missing_subscription_error(Exception("The ID provided is invalid or could not be found.")) is True
+    assert _is_missing_subscription_error(Exception("No such subscription: sub_x")) is True
+
+
+def test_real_error_is_not_soft_skipped():
+    """Genuine failures (network, auth, 500) must still count as errors."""
+    assert _is_missing_subscription_error(Exception("Connection timed out")) is False
+    assert _is_missing_subscription_error(Exception("Authentication failed")) is False

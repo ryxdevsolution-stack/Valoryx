@@ -30,6 +30,17 @@ _RZ_EXPIRE = ('halted', 'completed', 'expired')
 _RZ_CANCEL = ('cancelled',)
 
 
+def _is_missing_subscription_error(exc):
+    """True when Razorpay says the subscription id doesn't exist.
+
+    Happens for stale ids — e.g. a subscription created against TEST keys but now
+    queried with LIVE keys. Those subs are dead and will never resolve, so we
+    soft-skip them instead of logging an error every cycle.
+    """
+    msg = str(exc).lower()
+    return 'could not be found' in msg or 'does not exist' in msg or 'no such subscription' in msg
+
+
 def compute_reconciliation(local_status, local_end, rz_status, rz_current_end_dt):
     """
     Pure decision function (no I/O) — easy to unit test.
@@ -120,7 +131,7 @@ class SubscriptionReconciler:
         from utils.cache_helper import get_cache_manager
         from config import Config
 
-        summary = {'checked': 0, 'updated': 0, 'errors': 0}
+        summary = {'checked': 0, 'updated': 0, 'skipped': 0, 'errors': 0}
 
         if not Config.RAZORPAY_KEY_ID or not Config.RAZORPAY_KEY_SECRET:
             logger.info('[SubReconciler] Razorpay not configured — skipping')
@@ -167,14 +178,20 @@ class SubscriptionReconciler:
                     f'(rz={rz_status}, sub={sub_id})'
                 )
             except Exception as e:
-                summary['errors'] += 1
                 try:
                     db.session.rollback()
                 except Exception:
                     pass
-                logger.error(f'[SubReconciler] Failed to reconcile {sub_id}: {e}')
-                # Be gentle with the Razorpay API after an error.
-                time.sleep(0.5)
+                if _is_missing_subscription_error(e):
+                    # Dead/stale id (e.g. a test-mode sub queried with live keys) —
+                    # will never resolve. Soft-skip; don't spam the error log hourly.
+                    summary['skipped'] += 1
+                    logger.debug(f'[SubReconciler] Skipping unknown subscription {sub_id}: {e}')
+                else:
+                    summary['errors'] += 1
+                    logger.error(f'[SubReconciler] Failed to reconcile {sub_id}: {e}')
+                    # Be gentle with the Razorpay API after a real error.
+                    time.sleep(0.5)
 
         return summary
 
@@ -184,13 +201,22 @@ subscription_reconciler = None
 
 
 def init_subscription_reconciler(app):
-    """Start the reconciler if Razorpay is configured. Returns the instance or None."""
+    """Start the reconciler if Razorpay is configured. Returns the instance or None.
+
+    Idempotent within a process: if create_app() runs more than once (or the app is
+    imported twice), only ONE reconciler thread is ever started — avoids duplicate
+    hourly Razorpay calls and doubled logs.
+    """
     global subscription_reconciler
     from config import Config
 
     if not Config.RAZORPAY_KEY_ID or not Config.RAZORPAY_KEY_SECRET:
         logger.info('[SubReconciler] Razorpay not configured — reconciler disabled')
         return None
+
+    if subscription_reconciler is not None and subscription_reconciler.running:
+        logger.info('[SubReconciler] Already running — not starting a second instance')
+        return subscription_reconciler
 
     subscription_reconciler = SubscriptionReconciler(app)
     subscription_reconciler.start()
