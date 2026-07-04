@@ -2425,7 +2425,7 @@ export default function UnifiedBillingPage() {
             />
           </div>
 
-          {/* Profit Summary - Owner/Manager only */}
+          {/* Profit Summary - Owner only */}
           <ProfitSummaryBar
             items={activeTab.items}
             userRole={user?.role || 'staff'}
