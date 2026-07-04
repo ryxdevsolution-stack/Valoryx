@@ -35,7 +35,8 @@ interface Expense {
 
 interface ReportData {
   total_bills: number
-  total_revenue: number
+  total_revenue: number      // PAID only
+  total_pending?: number     // billed but unpaid (outstanding)
   bills_growth: number
   revenue_growth: number
   top_customers: Array<{ name: string; total_spend: number; bills_count: number }>
@@ -260,10 +261,13 @@ export default function ReportsPage() {
 
         // Calculate statistics
         const totalBills = bills.length
-        const totalRevenue = bills.reduce((sum: number, bill: any) => {
-          const amount = bill.type === 'gst' ? parseFloat(bill.final_amount || 0) : parseFloat(bill.total_amount || 0)
-          return sum + amount
-        }, 0)
+        // Revenue counts PAID bills only (paid = anything not explicitly
+        // 'pending'). Pending bills are summed separately as outstanding.
+        const billAmt = (bill: any) => bill.type === 'gst' ? parseFloat(bill.final_amount || 0) : parseFloat(bill.total_amount || 0)
+        const totalRevenue = bills.reduce((sum: number, bill: any) =>
+          bill.payment_status === 'pending' ? sum : sum + billAmt(bill), 0)
+        const totalPending = bills.reduce((sum: number, bill: any) =>
+          bill.payment_status === 'pending' ? sum + billAmt(bill) : sum, 0)
 
         // Top customers
         const customersMap = new Map<string, { total_spend: number; bills_count: number }>()
@@ -328,6 +332,7 @@ export default function ReportsPage() {
         setReportData({
           total_bills: totalBills,
           total_revenue: totalRevenue,
+          total_pending: totalPending,
           bills_growth: 0,
           revenue_growth: 0,
           top_customers: topCustomers,
@@ -679,8 +684,13 @@ export default function ReportsPage() {
               {formatCurrency(reportData?.total_revenue || 0)}
             </p>
             <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">
-              Across all bills
+              Paid bills only
             </p>
+            {(reportData?.total_pending || 0) > 0 && (
+              <p className="text-xs font-medium text-amber-600 dark:text-amber-400 mt-1">
+                {formatCurrency(reportData?.total_pending || 0)} pending (unpaid)
+              </p>
+            )}
           </motion.div>
 
           {/* Total Expenses — now includes both general expenses and payroll */}
