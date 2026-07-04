@@ -277,7 +277,10 @@ def receive_bulk_order(order_id):
                 BulkStockOrderItem.item_id.in_(incoming_ids),
                 BulkStockOrderItem.order_id == order_id
             ).all():
-                order_items_map[oi.item_id] = oi
+                # Key by STRING: oi.item_id may be a UUID object while the id
+                # sent from the frontend is a string — a UUID/str key mismatch
+                # would make every lookup miss and silently skip receiving.
+                order_items_map[str(oi.item_id)] = oi
 
         # Pre-load stock entries by product_id and by product_name
         _prod_ids = {oi.product_id for oi in order_items_map.values() if oi.product_id}
@@ -293,6 +296,7 @@ def receive_bulk_order(order_id):
         _stock_by_name: dict = {s.product_name: s for s in _stock_rows if s.product_name}
 
         # Process each received item
+        received_count = 0
         for item_data in data['items']:
             item_id = item_data.get('item_id')
             quantity_received = item_data.get('quantity_received', 0)
@@ -300,12 +304,13 @@ def receive_bulk_order(order_id):
             if quantity_received <= 0:
                 continue
 
-            # Find the order item (dict lookup — no per-item query)
-            order_item = order_items_map.get(item_id)
+            # Find the order item (dict lookup — str key, see note above)
+            order_item = order_items_map.get(str(item_id))
 
             if not order_item:
                 continue
 
+            received_count += 1
             # Update received quantity
             order_item.quantity_received += quantity_received
 
@@ -375,9 +380,17 @@ def receive_bulk_order(order_id):
 
                 log_action('CREATE', 'stock_entry', new_product.product_id, None, new_product.to_dict())
 
-        # Use already-fetched map — avoids a separate SELECT on the dynamic relationship
-        all_items = list(order_items_map.values())
-        fully_received = all(item.quantity_received >= item.quantity_ordered for item in all_items)
+        # Guard: if nothing matched, the receive did nothing — fail loudly
+        # instead of returning a misleading "success" (the frontend shows a
+        # success toast on any 200, which is how this bug hid before).
+        if received_count == 0:
+            db.session.rollback()
+            return jsonify({'error': 'Could not match the items to this order. Nothing was received.'}), 400
+
+        # Status must reflect ALL of the order's items, not just the ones in this
+        # receive batch — otherwise a partial receive could be marked 'received'.
+        all_items = BulkStockOrderItem.query.filter_by(order_id=order_id).all()
+        fully_received = bool(all_items) and all(item.quantity_received >= item.quantity_ordered for item in all_items)
         partially_received = any(item.quantity_received > 0 for item in all_items)
 
         if fully_received:
