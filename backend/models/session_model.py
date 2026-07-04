@@ -20,6 +20,10 @@ class UserSession(db.Model):
     ip_address = db.Column(db.String(45), nullable=True)
     user_agent = db.Column(db.String(512), nullable=True)
     device = db.Column(db.String(100), nullable=True)   # Parsed from user_agent
+    # 'web' or 'desktop' (Electron app). Single-device enforcement is scoped per
+    # platform so a user's browser and desktop-app sessions coexist instead of
+    # displacing each other. NULL = legacy row, treated as 'web'.
+    platform = db.Column(db.String(16), nullable=True)
 
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     last_seen = db.Column(db.DateTime, default=datetime.utcnow)
@@ -33,6 +37,7 @@ class UserSession(db.Model):
             'session_id': self.session_id,
             'ip_address': self.ip_address,
             'device': self.device,
+            'platform': self.platform,
             'user_agent': self.user_agent,
             'created_at': self.created_at.isoformat() if self.created_at else None,
             'last_seen': self.last_seen.isoformat() if self.last_seen else None,

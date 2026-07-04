@@ -111,6 +111,13 @@ def create_test_app():
             "models.supplier_model",
             "models.report_model",
             "models.audit_model",
+            # Subscription + membership models: imported here so their tables are
+            # created up front and their blueprints can be registered before the
+            # app handles its first request (Flask forbids register_blueprint after).
+            "models.subscription_model",
+            "models.membership_tier_model",
+            "models.membership_card_model",
+            "models.membership_ledger_model",
         ]:
             try:
                 __import__(optional)
@@ -258,14 +265,20 @@ def create_test_app():
                 ))
         _db.session.commit()
 
+        # Register ALL blueprints here at app-creation time. Flask locks an app
+        # against register_blueprint once it handles its first request, so any
+        # test that registers lazily (membership, subscription) would fail when it
+        # runs after a request-making test. Registering up front avoids that.
         for _bp_path, _prefix in [
-            ("routes.auth",     "/api/auth"),
-            ("routes.billing",  "/api/billing"),
-            ("routes.stock",    "/api/stock"),
-            ("routes.search",   "/api/search"),
-            ("routes.admin",    "/api/admin"),
-            ("routes.team",     "/api/team"),
-            ("routes.oauth",    "/api/oauth"),
+            ("routes.auth",         "/api/auth"),
+            ("routes.billing",      "/api/billing"),
+            ("routes.stock",        "/api/stock"),
+            ("routes.search",       "/api/search"),
+            ("routes.admin",        "/api/admin"),
+            ("routes.team",         "/api/team"),
+            ("routes.oauth",        "/api/oauth"),
+            ("routes.subscription", "/api/subscription"),
+            ("routes.membership",   "/api/membership"),
             ("routes.electron", None),  # routes carry full /api/electron/* paths
         ]:
             try:

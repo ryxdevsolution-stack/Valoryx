@@ -8,11 +8,13 @@ check in utils/auth_middleware.py.
 """
 from datetime import datetime
 
+from sqlalchemy import or_
+
 from extensions import db
 from models.session_model import UserSession
 
 
-def enforce_session_limit(user_id, keep_session_id, max_sessions):
+def enforce_session_limit(user_id, keep_session_id, max_sessions, platform=None):
     """Revoke oldest active sessions so that, counting the session identified
     by ``keep_session_id``, at most ``max_sessions`` remain active for this user.
 
@@ -24,6 +26,9 @@ def enforce_session_limit(user_id, keep_session_id, max_sessions):
         user_id: the user whose sessions are being trimmed.
         keep_session_id: the just-created session that must always survive.
         max_sessions: cap on simultaneous active sessions. 0 disables enforcement.
+        platform: when given ('web' or 'desktop'), only sessions on the SAME
+            platform are counted/revoked, so a user's web and desktop-app
+            sessions coexist. Legacy rows with NULL platform are treated as 'web'.
 
     Returns:
         int — number of sessions revoked.
@@ -32,13 +37,18 @@ def enforce_session_limit(user_id, keep_session_id, max_sessions):
         return 0
 
     # Active sessions for this user EXCEPT the one we keep, oldest first.
-    others = (
+    query = (
         UserSession.query
         .filter_by(user_id=str(user_id), is_active=True)
         .filter(UserSession.session_id != keep_session_id)
-        .order_by(UserSession.created_at.asc())
-        .all()
     )
+    if platform == 'web':
+        # Legacy NULL rows were all web logins — group them with 'web'.
+        query = query.filter(or_(UserSession.platform == 'web', UserSession.platform.is_(None)))
+    elif platform:
+        query = query.filter(UserSession.platform == platform)
+
+    others = query.order_by(UserSession.created_at.asc()).all()
 
     # We keep the current session plus up to (max_sessions - 1) of the most
     # recent others. Everything older than that is revoked.
