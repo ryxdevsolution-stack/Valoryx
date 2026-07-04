@@ -161,10 +161,14 @@ def _verify_desktop_assertion(token: str):
     return payload
 
 
-def _finalize_login(user, client, client_ip: str):
+def _finalize_login(user, client, client_ip: str, platform: str = 'web'):
     """Create a session, mint the local JWT, and build the {token,user,client}
     response. Shared by the web Google callback and the desktop-login endpoint
-    so both issue identical login payloads with no duplication."""
+    so both issue identical login payloads with no duplication.
+
+    `platform` ('web' or 'desktop') scopes single-device enforcement so the
+    desktop app and the browser can be logged in at once without evicting each
+    other — matching the same behaviour as password login."""
     session_id = secrets.token_urlsafe(32)
     user_agent_str = request.headers.get('User-Agent', '')
 
@@ -175,13 +179,15 @@ def _finalize_login(user, client, client_ip: str):
         ip_address=client_ip[:45] if client_ip else None,
         user_agent=user_agent_str[:512] if user_agent_str else None,
         device=_parse_device(user_agent_str),
+        platform=platform,
         expires_at=datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS),
         is_active=True,
     )
     db.session.add(session_record)
-    # Single-device policy: revoke other active sessions for this user.
+    # Single-device policy, scoped per platform (web vs desktop).
     enforce_session_limit(
-        user.user_id, session_id, Config.MAX_CONCURRENT_SESSIONS_PER_USER
+        user.user_id, session_id, Config.MAX_CONCURRENT_SESSIONS_PER_USER,
+        platform=platform,
     )
     try:
         db.session.commit()
@@ -589,4 +595,5 @@ def desktop_login():
     if not client:
         return jsonify({'success': False, 'error': 'Client account is inactive'}), 401
 
-    return _finalize_login(user, client, client_ip)
+    # This is the offline desktop app exchanging its Google assertion for a local JWT.
+    return _finalize_login(user, client, client_ip, platform='desktop')

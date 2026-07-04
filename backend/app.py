@@ -39,7 +39,7 @@ def create_app():
      origins=cors_origins,
      supports_credentials=True,
      methods=['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS', 'PATCH'],
-     allow_headers=['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With'],
+     allow_headers=['Content-Type', 'Authorization', 'Accept', 'Origin', 'X-Requested-With', 'X-Client-Platform'],
      expose_headers=['Content-Type', 'Authorization'],
      max_age=3600)
 
@@ -245,6 +245,20 @@ def create_app():
             logging.info("[INFO] Telegram scheduler disabled (TELEGRAM_BOT_TOKEN not set)")
     except Exception as e:
         logging.warning(f"[WARNING] Telegram scheduler failed to initialize: {e}")
+
+    # Subscription reconciler — hourly safety-net that syncs local subscription
+    # state from Razorpay so a missed invoice.paid webhook never locks out a
+    # paying customer.
+    try:
+        from services.subscription_reconciler import init_subscription_reconciler
+        sub_reconciler = init_subscription_reconciler(app)
+        if sub_reconciler:
+            app.config['SUBSCRIPTION_RECONCILER'] = sub_reconciler
+            logging.info("[OK] Subscription reconciler initialized")
+        else:
+            logging.info("[INFO] Subscription reconciler disabled (Razorpay not configured)")
+    except Exception as e:
+        logging.warning(f"[WARNING] Subscription reconciler failed to initialize: {e}")
 
     # Account deletion cleanup — runs once per day in a daemon thread.
     # Permanently deletes ClientEntry rows whose deletion_scheduled_at is in the past.
@@ -1090,7 +1104,7 @@ def create_app():
             # else: CORS_ORIGINS is empty — do NOT set Access-Control-Allow-Origin at all (omit header)
 
             response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS, PATCH'
-            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With'
+            response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept, Origin, X-Requested-With, X-Client-Platform'
             response.headers['Access-Control-Allow-Credentials'] = 'true'
             response.headers['Access-Control-Max-Age'] = '3600'
             return response, 200

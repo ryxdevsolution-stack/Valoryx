@@ -14,6 +14,7 @@ from models.client_model import ClientEntry, DEFAULT_GST_CONFIG
 from models.branch_model import Branch
 from models.permission_model import get_user_permissions, Permission, UserPermission
 from models.session_model import UserSession
+from sqlalchemy import or_ as _sa_or
 from utils.session_manager import enforce_session_limit
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
@@ -44,6 +45,16 @@ TOTP_REPLAY_WINDOW = 90  # 90 seconds — covers the ±1 valid_window (3 × 30 s
 
 # How long (seconds) a trusted device token is valid (30 days)
 TRUSTED_DEVICE_TTL = 30 * 24 * 3600
+
+
+def _normalize_platform(raw):
+    """Map a client-supplied client_type to a canonical session platform.
+
+    The Electron desktop app sends 'desktop' (or 'electron'); everything else is
+    treated as 'web'. Used to scope single-device enforcement so a user's browser
+    and desktop-app sessions coexist instead of evicting each other.
+    """
+    return 'desktop' if str(raw or '').strip().lower() in ('desktop', 'electron') else 'web'
 
 # Login brute-force protection (in-memory, keyed per IP and per account)
 import time as _time
@@ -210,20 +221,34 @@ def login():
         # with_for_update is a harmless no-op there.
         db.session.query(User).filter_by(user_id=user.user_id).with_for_update().first()
 
-        # Single-device policy: if the account already has an active session and
-        # the caller hasn't explicitly chosen to take over, surface a 409 so the
-        # UI can warn and confirm before displacing the other device. Placed BEFORE
-        # the 2FA step so a takeover never re-consumes a one-time TOTP/backup code.
+        # Platform of the caller — the desktop (Electron) app and the web app are
+        # tracked separately so they never displace each other. Single-device
+        # enforcement below applies PER platform. Sent as the X-Client-Platform
+        # header by every request (see frontend api.ts); body client_type is a fallback.
+        client_platform = _normalize_platform(
+            data.get('client_type') or request.headers.get('X-Client-Platform')
+        )
+
+        # Single-device policy: if the account already has an active session ON THE
+        # SAME PLATFORM and the caller hasn't explicitly chosen to take over,
+        # surface a 409 so the UI can warn and confirm before displacing the other
+        # device. Placed BEFORE the 2FA step so a takeover never re-consumes a
+        # one-time TOTP/backup code.
         max_sessions = Config.MAX_CONCURRENT_SESSIONS_PER_USER
         force_login = bool(data.get('force_login'))
         if max_sessions > 0 and not force_login:
-            existing_sessions = (
+            existing_q = (
                 UserSession.query
                 .filter_by(user_id=str(user.user_id), is_active=True)
                 .filter(UserSession.expires_at > datetime.utcnow())
-                .order_by(UserSession.last_seen.desc())
-                .all()
             )
+            if client_platform == 'web':
+                existing_q = existing_q.filter(
+                    _sa_or(UserSession.platform == 'web', UserSession.platform.is_(None))
+                )
+            else:
+                existing_q = existing_q.filter(UserSession.platform == client_platform)
+            existing_sessions = existing_q.order_by(UserSession.last_seen.desc()).all()
             if len(existing_sessions) >= max_sessions:
                 latest = existing_sessions[0]
                 return jsonify({
@@ -410,16 +435,20 @@ def login():
             ip_address=incoming_ip,
             user_agent=ua_string[:512],
             device=device,
+            platform=client_platform,
             expires_at=session_expires,
             is_active=True,
         )
         db.session.add(new_session)
 
-        # Single-device policy: revoke the user's other active sessions so the
-        # newest login wins. Displaced devices auto-logout on their next request
-        # via the SESSION_REVOKED check in auth_middleware.
+        # Single-device policy (scoped PER platform): revoke the user's other
+        # active sessions ON THE SAME PLATFORM so the newest login on that platform
+        # wins, while the other platform's session survives. Displaced devices
+        # auto-logout on their next request via the SESSION_REVOKED check in
+        # auth_middleware.
         enforce_session_limit(
-            user.user_id, session_id, Config.MAX_CONCURRENT_SESSIONS_PER_USER
+            user.user_id, session_id, Config.MAX_CONCURRENT_SESSIONS_PER_USER,
+            platform=client_platform,
         )
 
         # Commit the session record + revocations. Unlike last_login, the session
@@ -948,6 +977,7 @@ def verify_email():
         device = 'Desktop'
 
     session_expires = datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS)
+    # Email verification is always opened in a browser → web session.
     new_session = UserSession(
         id=str(uuid.uuid4()),
         session_id=session_id,
@@ -956,14 +986,16 @@ def verify_email():
         ip_address=incoming_ip,
         user_agent=ua_string[:512],
         device=device,
+        platform='web',
         expires_at=session_expires,
         is_active=True,
     )
     db.session.add(new_session)
 
-    # Same single-device policy as login: this is an auto-login, so respect the cap.
+    # Same single-device policy as login (scoped to the web platform).
     enforce_session_limit(
-        owner.user_id, session_id, Config.MAX_CONCURRENT_SESSIONS_PER_USER
+        owner.user_id, session_id, Config.MAX_CONCURRENT_SESSIONS_PER_USER,
+        platform='web',
     )
 
     try:

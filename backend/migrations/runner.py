@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 33
+CURRENT_SCHEMA_VERSION = 34
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -1883,6 +1883,37 @@ def _m033_bill_prefix(db):
     logging.info("[Migration] v33: bill_prefix columns added")
 
 
+def _m034_session_platform(db):
+    """v34: Add `platform` to user_sessions so a user's web and desktop-app
+    (Electron) sessions coexist instead of displacing each other.
+
+    Single-device enforcement is now scoped per platform: a second web login
+    still displaces the first web session, and a second desktop login displaces
+    the first desktop session, but web and desktop never evict one another.
+    Legacy rows keep NULL and are treated as 'web'. Idempotent, engine-agnostic.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    _add_col('user_sessions', 'platform', 'VARCHAR(16) NULL')
+
+    db.session.commit()
+    logging.info("[Migration] v34: user_sessions.platform column added")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -1918,6 +1949,7 @@ MIGRATIONS = [
     (31, _m031_attendance_soft_delete),
     (32, _m032_extend_sync_owner_tables),
     (33, _m033_bill_prefix),
+    (34, _m034_session_platform),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

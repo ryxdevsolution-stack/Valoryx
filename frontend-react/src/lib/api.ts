@@ -1,10 +1,16 @@
 // src/lib/api.ts
 import axios, { AxiosRequestConfig } from 'axios'
 
+// Platform tag sent on every request. The backend scopes single-device session
+// enforcement per platform, so the desktop (Electron) app and the web app can be
+// logged into the same account at once without evicting each other.
+const CLIENT_PLATFORM = !!(window as any).electronAPI?.isElectron ? 'desktop' : 'web'
+
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || 'http://localhost:5017/api',
   headers: {
     'Content-Type': 'application/json',
+    'X-Client-Platform': CLIENT_PLATFORM,
   },
   // PERFORMANCE: Set aggressive timeouts for faster failure detection
   timeout: 30000, // 30 second max (was unlimited)
