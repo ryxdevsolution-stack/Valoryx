@@ -604,12 +604,16 @@ export default function LoginPage() {
                 </p>
               )}
 
-              <p className="text-center mt-6 text-sm text-slate-400">
-                Don't have an account?{' '}
-                <Link to="/auth/register" className="font-semibold text-white hover:text-[#a98bff] transition-colors">
-                  Create account
-                </Link>
-              </p>
+              {/* Desktop app is login-only: the account is already created on
+                  the web before the installer can be downloaded, so no signup. */}
+              {!isElectron && (
+                <p className="text-center mt-6 text-sm text-slate-400">
+                  Don't have an account?{' '}
+                  <Link to="/auth/register" className="font-semibold text-white hover:text-[#a98bff] transition-colors">
+                    Create account
+                  </Link>
+                </p>
+              )}
             </>
           )}
         </div>

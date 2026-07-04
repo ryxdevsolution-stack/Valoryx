@@ -134,7 +134,15 @@ def update_client(client_id):
         if 'telegram_chat_id' in data:
             client.telegram_chat_id = data['telegram_chat_id'] or None
 
-        # Regional customization (country / currency / tax) — editable from settings
+        # Region/currency are immutable after setup for regular users so amounts
+        # never need converting — only a super admin may change them here. Tax
+        # (tax_config) stays editable for everyone. (complete_setup is exempt:
+        # that's where the owner first picks their region.)
+        if not g.user.get('is_super_admin'):
+            for _f in ('country', 'currency_code', 'currency_symbol', 'locale'):
+                data.pop(_f, None)
+
+        # Regional customization (currency/tax) — tax always; region super-admin only
         _apply_regional_fields(client, data)
 
         db.session.commit()

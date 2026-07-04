@@ -1,5 +1,6 @@
 import { useMemo, memo } from 'react'
 import { QRCodeSVG } from 'qrcode.react'
+import { useCurrency } from '@/lib/useCurrency'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -31,6 +32,7 @@ function buildUpiUri(upiId: string, shopName: string, amount: number): string {
 // ---------------------------------------------------------------------------
 
 function UpiQrCodeInner({ upiId, shopName, amount, size = 200 }: UpiQrCodeProps) {
+  const { format } = useCurrency()
   const upiUri = useMemo(
     () => buildUpiUri(upiId, shopName, amount),
     [upiId, shopName, amount],
@@ -49,7 +51,7 @@ function UpiQrCodeInner({ upiId, shopName, amount, size = 200 }: UpiQrCodeProps)
 
       {/* Amount */}
       <p className="text-2xl font-bold text-gray-900 dark:text-white">
-        ₹{amount.toFixed(2)}
+        {format(amount)}
       </p>
 
       {/* QR Code — generated entirely client-side */}

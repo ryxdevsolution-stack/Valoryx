@@ -7,6 +7,7 @@
  */
 import { useEffect, useMemo, useState } from 'react'
 import api from '@/lib/api'
+import { useCurrency } from '@/lib/useCurrency'
 import membershipService, { getMembershipError } from '@/services/membership'
 import type { MembershipCard, MembershipTier } from '@/types/membership'
 
@@ -34,6 +35,7 @@ export default function EnrollMemberModal({ tiers, onClose, onEnrolled, onToast 
   const [customer, setCustomer] = useState<CustomerHit | null>(null)
   const [tierId, setTierId] = useState(tiers[0]?.tier_id ?? '')
   const [saving, setSaving] = useState(false)
+  const { format } = useCurrency()
 
   const activeTiers = useMemo(() => tiers.filter(t => t.is_active), [tiers])
   const tier = activeTiers.find(t => t.tier_id === tierId) ?? null
@@ -140,7 +142,7 @@ export default function EnrollMemberModal({ tiers, onClose, onEnrolled, onToast 
             {tier && (
               <p className="mt-1 text-xs text-gray-500 dark:text-gray-400">
                 {tier.enrollment_fee != null && tier.enrollment_fee > 0
-                  ? `₹${tier.enrollment_fee} enrollment fee`
+                  ? `${format(tier.enrollment_fee)} enrollment fee`
                   : 'Free enrollment'}
                 {tier.validity_days != null ? ` · valid ${tier.validity_days} days` : ' · never expires'}
                 {tier.discount_percentage != null ? ` · ${tier.discount_percentage}% discount` : ''}

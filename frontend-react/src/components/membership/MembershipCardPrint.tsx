@@ -24,20 +24,24 @@ export interface PrintableCardData {
   shopPhone?: string | null
 }
 
-/** Derive the back-of-card benefit lines from a tier's reward settings. */
+/**
+ * Derive the back-of-card benefit lines from a tier's reward settings.
+ * `currencySymbol` is threaded in from the parent component (via useCurrency)
+ * so a non-India client sees their own currency on printed cards.
+ */
 export function tierBenefitLines(tier: {
   discount_percentage?: number | null
   points_per_100?: number | null
   redemption_rate?: number | null
   monthly_negotiable_budget?: number | null
   negotiable_budget_period?: 'monthly' | 'yearly'
-} | null | undefined): string[] {
+} | null | undefined, currencySymbol = '₹'): string[] {
   if (!tier) return []
   const lines: string[] = []
   if (tier.discount_percentage != null) lines.push(`${tier.discount_percentage}% member discount on every bill`)
-  if (tier.points_per_100 != null) lines.push(`Earn ${tier.points_per_100} point${Number(tier.points_per_100) === 1 ? '' : 's'} per ₹100 spent`)
-  if (tier.redemption_rate != null) lines.push(`Redeem points as money off — 1 pt = ₹${tier.redemption_rate}`)
-  if (tier.monthly_negotiable_budget != null) lines.push(`₹${tier.monthly_negotiable_budget} negotiation allowance per ${tier.negotiable_budget_period === 'yearly' ? 'year' : 'month'}`)
+  if (tier.points_per_100 != null) lines.push(`Earn ${tier.points_per_100} point${Number(tier.points_per_100) === 1 ? '' : 's'} per ${currencySymbol}100 spent`)
+  if (tier.redemption_rate != null) lines.push(`Redeem points as money off — 1 pt = ${currencySymbol}${tier.redemption_rate}`)
+  if (tier.monthly_negotiable_budget != null) lines.push(`${currencySymbol}${tier.monthly_negotiable_budget} negotiation allowance per ${tier.negotiable_budget_period === 'yearly' ? 'year' : 'month'}`)
   return lines
 }
 

@@ -24,11 +24,115 @@ logger = logging.getLogger(__name__)
 subscription_bp = Blueprint('subscription', __name__)
 
 
+def _subscription_end_date(rz_sub, billing_cycle):
+    """Derive the subscription end date from Razorpay's current_end, else fall back by cycle."""
+    current_end_ts = rz_sub.get('current_end') if rz_sub else None
+    if current_end_ts:
+        return datetime.utcfromtimestamp(int(current_end_ts))
+    if billing_cycle == 'yearly':
+        return datetime.utcnow() + timedelta(days=365)
+    return datetime.utcnow() + timedelta(days=30)
+
+
+def _capture_authorized_payment(rz_client, payment_id):
+    """
+    Capture a subscription payment that is authorized-but-not-captured.
+
+    On manual-capture Razorpay accounts, an authorized payment is AUTO-REFUNDED by
+    Razorpay (money debited from the customer, then returned) if the merchant never
+    captures it within the capture window. Subscriptions must therefore capture the
+    first charge explicitly instead of relying only on the payment.authorized webhook
+    (which may not even be subscribed on the account).
+
+    Safe to call repeatedly — an already-captured payment raises and is ignored.
+    Returns True if a capture was performed.
+    """
+    try:
+        payment = rz_client.payment.fetch(payment_id)
+        if payment.get('status') == 'authorized' and not payment.get('captured'):
+            amount = payment.get('amount')
+            if amount and amount > 0:
+                rz_client.payment.capture(payment_id, amount)
+                logger.info(f'[Capture] Captured authorized payment {payment_id} amount {amount}')
+                return True
+    except Exception as e:
+        logger.error(f'[Capture] Failed to capture payment {payment_id}: {e}')
+    return False
+
+
+def _send_lifecycle_email(client_entry, old_data, plan_id, billing_cycle, amount, end_date):
+    """Send the correct subscription lifecycle email based on the prior status/plan."""
+    plan = SubscriptionPlan.query.filter_by(plan_id=plan_id).first() if plan_id else None
+    plan_name = plan.name if plan else 'Unknown'
+    end_date_str = end_date.strftime('%d %b %Y') if end_date else 'N/A'
+    user_email = client_entry.email
+    old_status = old_data.get('subscription_status')
+    old_plan_id = old_data.get('plan_id')
+
+    if old_status in ('cancelled', 'expired') and _email_enabled('email_on_subscription_activated'):
+        send_subscription_reactivated(
+            user_email, client_entry.client_name, plan_name,
+            billing_cycle, amount, end_date_str,
+        )
+    elif old_plan_id and str(old_plan_id) != str(plan_id) and _email_enabled('email_on_plan_switched'):
+        old_plan = SubscriptionPlan.query.filter_by(plan_id=old_plan_id).first()
+        old_plan_name = old_plan.name if old_plan else 'Unknown'
+        send_plan_switched(
+            user_email, client_entry.client_name, old_plan_name, plan_name,
+            billing_cycle, amount, end_date_str,
+        )
+    elif _email_enabled('email_on_subscription_activated'):
+        send_subscription_activated(
+            user_email, client_entry.client_name, plan_name,
+            billing_cycle, amount, end_date_str,
+        )
+
+
+def _apply_activation(client_entry, plan_id, billing_cycle, end_date, amount, rz_sub_id=None):
+    """
+    Mark a client active, persist, clear the session cache, audit-log and email.
+    Single source of truth shared by verify-payment, the webhook and the legacy flow.
+
+    Idempotent: when verify-payment and the invoice.paid webhook both fire for the
+    same first charge, the second call finds the client already active for the same
+    plan/period and only syncs fields — no duplicate audit log, no duplicate email.
+    Never shortens an existing subscription_end_date (protects reactivations/renewals).
+    """
+    is_duplicate = (
+        client_entry.subscription_status == 'active'
+        and (not plan_id or str(client_entry.plan_id) == str(plan_id))
+        and client_entry.subscription_end_date is not None
+        and end_date is not None
+        and client_entry.subscription_end_date >= end_date - timedelta(seconds=5)
+    )
+
+    old_data = client_entry.to_dict()
+    client_entry.subscription_status = 'active'
+    if plan_id:
+        client_entry.plan_id = plan_id
+    # Never move the end date earlier than what the client already has.
+    if end_date and (client_entry.subscription_end_date is None or end_date > client_entry.subscription_end_date):
+        client_entry.subscription_end_date = end_date
+    if rz_sub_id:
+        client_entry.razorpay_subscription_id = rz_sub_id
+    db.session.commit()
+
+    # Clear session cache so middleware picks up new status
+    cache = get_cache_manager()
+    cache.delete(f"user_session:{str(client_entry.client_id)}")
+
+    if is_duplicate:
+        # Redundant re-activation (concurrent webhook + verify) — fields already synced above.
+        return
+
+    log_action('UPDATE', 'client_entry', str(client_entry.client_id), old_data, client_entry.to_dict())
+    _send_lifecycle_email(client_entry, old_data, plan_id, billing_cycle, amount, end_date)
+
+
 def _activate_subscription(transaction, payment_id=None, signature=None):
     """
     Shared logic to activate a subscription after payment verification.
     Used for admin manual activation and the legacy order-based flow.
-    For auto-renewal, webhook invoice.paid is the single source of truth.
 
     Returns (success: bool, message: str)
     """
@@ -45,52 +149,11 @@ def _activate_subscription(transaction, payment_id=None, signature=None):
         db.session.commit()
         return True, 'Payment recorded but client not found'
 
-    old_data = client_entry.to_dict()
-
-    if transaction.billing_cycle == 'yearly':
-        end_date = now + timedelta(days=365)
-    else:
-        end_date = now + timedelta(days=30)
-
-    client_entry.subscription_status = 'active'
-    client_entry.plan_id = transaction.plan_id
-    client_entry.subscription_end_date = end_date
-
-    db.session.commit()
-
-    # Clear session cache so middleware picks up new status
-    cache = get_cache_manager()
-    cache.delete(f"user_session:{str(transaction.client_id)}")
-
-    log_action('UPDATE', 'client_entry', str(transaction.client_id), old_data, client_entry.to_dict())
-
-    # Send appropriate email
-    plan = SubscriptionPlan.query.filter_by(plan_id=transaction.plan_id).first()
-    plan_name = plan.name if plan else 'Unknown'
-    end_date_str = end_date.strftime('%d %b %Y')
-    user_email = client_entry.email
-
-    old_status = old_data.get('subscription_status')
-    old_plan_id = old_data.get('plan_id')
-
-    if old_status in ('cancelled', 'expired') and _email_enabled('email_on_subscription_activated'):
-        send_subscription_reactivated(
-            user_email, client_entry.client_name, plan_name,
-            transaction.billing_cycle, transaction.amount, end_date_str,
-        )
-    elif old_plan_id and str(old_plan_id) != str(transaction.plan_id) and _email_enabled('email_on_plan_switched'):
-        old_plan = SubscriptionPlan.query.filter_by(plan_id=old_plan_id).first()
-        old_plan_name = old_plan.name if old_plan else 'Unknown'
-        send_plan_switched(
-            user_email, client_entry.client_name, old_plan_name, plan_name,
-            transaction.billing_cycle, transaction.amount, end_date_str,
-        )
-    elif _email_enabled('email_on_subscription_activated'):
-        send_subscription_activated(
-            user_email, client_entry.client_name, plan_name,
-            transaction.billing_cycle, transaction.amount, end_date_str,
-        )
-
+    end_date = now + timedelta(days=365 if transaction.billing_cycle == 'yearly' else 30)
+    _apply_activation(
+        client_entry, transaction.plan_id, transaction.billing_cycle,
+        end_date, transaction.amount,
+    )
     return True, end_date.isoformat()
 
 
@@ -403,7 +466,6 @@ def verify_payment():
         cache = get_cache_manager()
 
         if razorpay_subscription_id:
-            # Subscription flow: mark authorized only, let webhook do activation
             transaction.status = 'authorized'
             transaction.razorpay_payment_id = razorpay_payment_id
             transaction.razorpay_signature = razorpay_signature
@@ -412,11 +474,59 @@ def verify_payment():
             cache.delete(f"user_session:{g.user['user_id']}")
             cache.delete(f"user_session:{g.user['client_id']}")
 
-            # Return current DB status (webhook may have already fired and activated)
+            # Activate directly — do NOT wait for the webhook (it may be
+            # unregistered/misconfigured). The webhook remains a backup + renewal path.
+            # Capture is done ONLY once the mandate is confirmed active, so we never
+            # leave money captured on a subscription that isn't going to activate; an
+            # uncaptured authorized payment is auto-refunded cleanly by Razorpay.
+            activated = False
+            end_date = None
+            try:
+                rz_sub = rz_client.subscription.fetch(razorpay_subscription_id)
+                if rz_sub.get('status') in ('active', 'authenticated', 'charged'):
+                    _capture_authorized_payment(rz_client, razorpay_payment_id)
+                    end_date = _subscription_end_date(rz_sub, transaction.billing_cycle)
+                    client_entry = ClientEntry.query.filter_by(client_id=g.user['client_id']).first()
+                    if client_entry:
+                        # Link the paid invoice so the webhook's idempotency check
+                        # skips this transaction instead of creating a duplicate.
+                        try:
+                            invoices = rz_client.invoice.all({'subscription_id': razorpay_subscription_id})
+                            paid_inv = next(
+                                (iv for iv in invoices.get('items', []) if iv.get('status') == 'paid'),
+                                None,
+                            )
+                            if paid_inv:
+                                transaction.invoice_id = paid_inv.get('id')
+                                transaction.invoice_number = paid_inv.get('invoice_number') or paid_inv.get('receipt')
+                        except Exception as inv_err:
+                            logger.warning(f'[verify-payment] invoice lookup failed for {razorpay_subscription_id}: {inv_err}')
+
+                        transaction.status = 'paid'
+                        transaction.paid_at = datetime.utcnow()
+                        _apply_activation(
+                            client_entry, transaction.plan_id, transaction.billing_cycle,
+                            end_date, transaction.amount, rz_sub_id=razorpay_subscription_id,
+                        )
+                        activated = True
+            except Exception as e:
+                logger.error(f'[verify-payment] Could not confirm subscription {razorpay_subscription_id}: {e}')
+
             client_entry = ClientEntry.query.filter_by(client_id=g.user['client_id']).first()
+            if activated:
+                return jsonify({
+                    'success': True,
+                    'message': 'Payment verified and subscription activated',
+                    'subscription_status': 'active',
+                    'subscription_end_date': end_date.isoformat() if end_date else None,
+                    'plan_id': str(transaction.plan_id) if transaction else None,
+                }), 200
+
+            # Mandate still confirming (UPI Autopay / eMandate can take time)
             return jsonify({
                 'success': True,
-                'message': 'Payment verified. Subscription activation in progress.',
+                'pending': True,
+                'message': 'Payment received. Your auto-pay mandate is being confirmed — this can take a little while. We\'ll email you the moment it\'s active.',
                 'subscription_status': client_entry.subscription_status if client_entry else 'trial',
                 'subscription_end_date': client_entry.subscription_end_date.isoformat() if client_entry and client_entry.subscription_end_date else None,
                 'plan_id': str(client_entry.plan_id) if client_entry and client_entry.plan_id else None,
@@ -486,15 +596,10 @@ def razorpay_webhook():
         if event == 'payment.authorized':
             payment_entity = payload.get('payload', {}).get('payment', {}).get('entity', {})
             payment_id = payment_entity.get('id')
-            amount = payment_entity.get('amount')
-            if payment_id and amount and (payment_entity.get('recurring') or payment_entity.get('subscription_id')):
-                try:
-                    import razorpay
-                    rz_client = razorpay.Client(auth=(Config.RAZORPAY_KEY_ID, Config.RAZORPAY_KEY_SECRET))
-                    rz_client.payment.capture(payment_id, amount)
-                    logger.info(f'[Webhook] Captured subscription payment {payment_id} amount {amount}')
-                except Exception as e:
-                    logger.error(f'[Webhook] Failed to capture payment {payment_id}: {e}')
+            if payment_id and (payment_entity.get('recurring') or payment_entity.get('subscription_id')):
+                import razorpay
+                rz_client = razorpay.Client(auth=(Config.RAZORPAY_KEY_ID, Config.RAZORPAY_KEY_SECRET))
+                _capture_authorized_payment(rz_client, payment_id)
             return jsonify({'status': 'captured'}), 200
 
         # ----------------------------------------------------------------
@@ -520,6 +625,26 @@ def razorpay_webhook():
                 existing = PaymentTransaction.query.filter_by(invoice_id=invoice_id).first()
                 if existing:
                     logger.info(f'[Webhook] Invoice {invoice_id} already processed — skipping')
+                    return jsonify({'status': 'already_processed'}), 200
+
+            # Fallback idempotency: verify-payment may have already captured + activated
+            # this first charge synchronously and left invoice_id unlinked (capture ->
+            # invoice.paid is async, so the invoice wasn't 'paid' yet at verify time).
+            # Link the invoice to that paid row and stop — do NOT create a duplicate
+            # renewal transaction or re-activate. A genuine later renewal won't match
+            # here because the first charge's row now carries an invoice_id.
+            if invoice_id:
+                unlinked_paid = PaymentTransaction.query.filter_by(
+                    razorpay_subscription_id=rz_sub_id, status='paid', invoice_id=None
+                ).order_by(PaymentTransaction.created_at.desc()).first()
+                if unlinked_paid:
+                    unlinked_paid.invoice_id = invoice_id
+                    if invoice_number:
+                        unlinked_paid.invoice_number = invoice_number
+                    if rz_payment_id and not unlinked_paid.razorpay_payment_id:
+                        unlinked_paid.razorpay_payment_id = rz_payment_id
+                    db.session.commit()
+                    logger.info(f'[Webhook] Linked invoice {invoice_id} to verify-activated tx — skipping duplicate')
                     return jsonify({'status': 'already_processed'}), 200
 
             # Resolve client_id and plan info from notes or existing transaction
@@ -592,55 +717,23 @@ def razorpay_webhook():
                 logger.warning(f'[Webhook] ClientEntry not found for client_id {client_id}')
                 return jsonify({'status': 'ignored', 'reason': 'client not found'}), 200
 
-            old_data = client_entry.to_dict()
-            client_entry.subscription_status = 'active'
-            if plan_id:
-                client_entry.plan_id = plan_id
-            client_entry.subscription_end_date = end_date
-            client_entry.razorpay_subscription_id = rz_sub_id  # set here for first time
-            db.session.commit()
-
-            # Clear cache
-            cache = get_cache_manager()
-            cache.delete(f"user_session:{str(client_id)}")
-
-            log_action('UPDATE', 'client_entry', str(client_id), old_data, client_entry.to_dict())
-
-            # Send appropriate email
-            plan_obj = SubscriptionPlan.query.filter_by(plan_id=plan_id).first() if plan_id else None
-            plan_name = plan_obj.name if plan_obj else 'Unknown'
-            end_date_str = end_date.strftime('%d %b %Y')
             amount_val = active_tx.amount if active_tx else 0
-            old_status = old_data.get('subscription_status')
-            old_plan_id = old_data.get('plan_id')
-
-            if old_status in ('cancelled', 'expired') and _email_enabled('email_on_subscription_activated'):
-                send_subscription_reactivated(
-                    client_entry.email, client_entry.client_name, plan_name,
-                    billing_cycle, amount_val, end_date_str,
-                )
-            elif old_plan_id and str(old_plan_id) != str(plan_id) and _email_enabled('email_on_plan_switched'):
-                old_plan = SubscriptionPlan.query.filter_by(plan_id=old_plan_id).first()
-                old_plan_name = old_plan.name if old_plan else 'Unknown'
-                send_plan_switched(
-                    client_entry.email, client_entry.client_name, old_plan_name, plan_name,
-                    billing_cycle, amount_val, end_date_str,
-                )
-            elif _email_enabled('email_on_subscription_activated'):
-                send_subscription_activated(
-                    client_entry.email, client_entry.client_name, plan_name,
-                    billing_cycle, amount_val, end_date_str,
-                )
+            _apply_activation(
+                client_entry, plan_id, billing_cycle, end_date, amount_val, rz_sub_id=rz_sub_id,
+            )
 
             logger.info(f'[Webhook] Subscription activated for client {client_id}, end_date {end_date}')
             return jsonify({'status': 'activated'}), 200
 
         # ----------------------------------------------------------------
-        # invoice.payment_failed — track retry count, don't restrict access
+        # subscription.pending / invoice.payment_failed — a charge failed and
+        # Razorpay will retry. Track the attempt; do NOT restrict access yet
+        # (subscription.halted handles final expiry once all retries are exhausted).
         # ----------------------------------------------------------------
-        elif event == 'invoice.payment_failed':
+        elif event in ('subscription.pending', 'invoice.payment_failed'):
             invoice_entity = payload.get('payload', {}).get('invoice', {}).get('entity', {})
-            rz_sub_id = invoice_entity.get('subscription_id')
+            sub_entity = payload.get('payload', {}).get('subscription', {}).get('entity', {})
+            rz_sub_id = invoice_entity.get('subscription_id') or sub_entity.get('id')
 
             if not rz_sub_id:
                 return jsonify({'status': 'ignored', 'reason': 'no subscription_id'}), 200

@@ -4,6 +4,7 @@ import { useRef } from 'react'
 import Highcharts from 'highcharts'
 import HighchartsReact from 'highcharts-react-official'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useCurrency } from '@/lib/useCurrency'
 import { getDarkModeChartOptions } from '@/lib/highcharts-config'
 
 interface CategoryVariablePieChartProps {
@@ -13,6 +14,7 @@ interface CategoryVariablePieChartProps {
 export default function CategoryVariablePieChart({ data }: CategoryVariablePieChartProps) {
   const chartRef = useRef<HighchartsReact.RefObject>(null)
   const { isDarkMode } = useTheme()
+  const { symbol } = useCurrency()
 
   const options: Highcharts.Options = {
     ...getDarkModeChartOptions(isDarkMode),
@@ -30,7 +32,7 @@ export default function CategoryVariablePieChart({ data }: CategoryVariablePieCh
     tooltip: {
       headerFormat: '',
       pointFormat: '<span style="color:{point.color}">\u25CF</span> <b>{point.name}</b><br/>' +
-        'Revenue: <b>₹{point.y}</b><br/>' +
+        `Revenue: <b>${symbol}{point.y}</b><br/>` +
         'Items Sold: <b>{point.z}</b><br/>',
       backgroundColor: isDarkMode ? '#1f2937' : undefined,
       borderColor: isDarkMode ? '#374151' : undefined,

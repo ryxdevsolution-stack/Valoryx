@@ -2,9 +2,12 @@ import React, { useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import api from '@/lib/api'
 import { useClient, type TaxConfig } from '@/contexts/ClientContext'
-import { COUNTRY_PRESETS, presetForCountry } from '@/lib/regions'
+import { COUNTRY_PRESETS, presetForCountry, detectCountryFromTimezone } from '@/lib/regions'
 
 type TaxMode = 'split' | 'single' | 'none'
+
+// Format a rate for display without trailing zeros (9 not 9.00, 2.5 stays 2.5).
+const fmtRate = (n: number) => String(Number(n.toFixed(2)))
 
 /**
  * First-login setup wizard: collects country, currency and tax configuration.
@@ -30,9 +33,10 @@ export default function SetupWizard() {
   const [taxName, setTaxName] = useState('GST')
   const [taxMode, setTaxMode] = useState<TaxMode>('split')
   const [taxRate, setTaxRate] = useState('18')
-  const [components, setComponents] = useState<{ name: string; ratioPct: string }[]>([
-    { name: 'CGST', ratioPct: '50' },
-    { name: 'SGST', ratioPct: '50' },
+  // Split components hold ACTUAL rates (e.g. CGST 9, SGST 9); total = their sum.
+  const [components, setComponents] = useState<{ name: string; ratePct: string }[]>([
+    { name: 'CGST', ratePct: '9' },
+    { name: 'SGST', ratePct: '9' },
   ])
 
   // Already configured? Don't trap the user here.
@@ -51,16 +55,25 @@ export default function SetupWizard() {
     setTaxMode(p.tax.mode)
     setTaxRate(String(p.tax.default_rate))
     if (p.tax.mode === 'split') {
-      setComponents(p.tax.components.map(c => ({ name: c.name, ratioPct: String(Math.round(c.ratio * 100)) })))
+      setComponents(p.tax.components.map(c => ({ name: c.name, ratePct: fmtRate(c.ratio * p.tax.default_rate) })))
     } else if (p.tax.mode === 'single') {
-      setComponents([{ name: p.tax.name, ratioPct: '100' }])
+      setComponents([{ name: p.tax.name, ratePct: String(p.tax.default_rate) }])
     } else {
       setComponents([])
     }
   }
 
-  const ratioSum = useMemo(
-    () => components.reduce((s, c) => s + (parseFloat(c.ratioPct) || 0), 0),
+  // Suggest the country from the device timezone on first load so most users
+  // don't have to change it. Suggest-only: the dropdown stays fully editable,
+  // and this runs once — later OS timezone changes never touch the saved region.
+  useEffect(() => {
+    const detected = detectCountryFromTimezone()
+    if (detected) applyCountry(detected)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  const splitTotal = useMemo(
+    () => components.reduce((s, c) => s + (parseFloat(c.ratePct) || 0), 0),
     [components],
   )
 
@@ -77,14 +90,16 @@ export default function SetupWizard() {
         components: [{ name: taxName.trim() || 'Tax', ratio: 1 }],
       }
     }
+    // Split: total is the sum of the entered rates; ratio = rate / total.
+    const total = splitTotal
     return {
       name: taxName.trim() || 'Tax',
       mode: 'split',
-      default_rate: parseFloat(taxRate) || 0,
+      default_rate: Number(total.toFixed(2)),
       inclusive: false,
       components: components.map(c => ({
         name: c.name.trim() || 'Tax',
-        ratio: (parseFloat(c.ratioPct) || 0) / 100,
+        ratio: total > 0 ? (parseFloat(c.ratePct) || 0) / total : 0,
       })),
     }
   }
@@ -92,13 +107,17 @@ export default function SetupWizard() {
   const validateTax = (): string | null => {
     if (taxMode === 'none') return null
     if (!taxName.trim()) return 'Tax name is required'
-    const rate = parseFloat(taxRate)
-    if (!Number.isFinite(rate) || rate < 0 || rate > 100) return 'Tax rate must be between 0 and 100'
-    if (taxMode === 'split') {
-      if (components.length === 0) return 'Add at least one tax component'
-      if (components.some(c => !c.name.trim())) return 'Each component needs a name'
-      if (Math.abs(ratioSum - 100) > 0.1) return 'Component percentages must add up to 100%'
+    if (taxMode === 'single') {
+      const rate = parseFloat(taxRate)
+      if (!Number.isFinite(rate) || rate < 0 || rate > 100) return 'Tax rate must be between 0 and 100'
+      return null
     }
+    // split — each component is an actual rate; total is their sum
+    if (components.length === 0) return 'Add at least one tax component'
+    if (components.some(c => !c.name.trim())) return 'Each component needs a name'
+    if (components.some(c => { const v = parseFloat(c.ratePct); return !Number.isFinite(v) || v < 0 })) return 'Each rate must be 0 or more'
+    if (splitTotal <= 0) return 'Total tax must be greater than 0% — pick “No tax” instead'
+    if (splitTotal > 100) return `Total tax can’t exceed 100% (currently ${fmtRate(splitTotal)}%)`
     return null
   }
 
@@ -225,47 +244,51 @@ export default function SetupWizard() {
               </div>
             </div>
 
-            {taxMode !== 'none' && (
+            {taxMode === 'single' && (
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className={label}>Tax name</label>
+                  <input className={input} value={taxName} onChange={e => setTaxName(e.target.value)} placeholder="GST / VAT" />
+                </div>
+                <div>
+                  <label className={label}>Rate (%)</label>
+                  <input className={input} type="number" value={taxRate} min={0} max={100}
+                    onChange={e => setTaxRate(e.target.value)} placeholder="18" />
+                </div>
+              </div>
+            )}
+
+            {taxMode === 'split' && (
               <>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className={label}>Tax name</label>
-                    <input className={input} value={taxName} onChange={e => setTaxName(e.target.value)} placeholder="GST / VAT" />
+                <div>
+                  <label className={label}>Tax name</label>
+                  <input className={input} value={taxName} onChange={e => setTaxName(e.target.value)} placeholder="GST" />
+                </div>
+                <div>
+                  <label className={label}>Components &amp; their rates</label>
+                  <div className="space-y-2">
+                    {components.map((c, i) => (
+                      <div key={i} className="flex gap-2 items-center">
+                        <input className={input} value={c.name} placeholder="CGST"
+                          onChange={e => setComponents(prev => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
+                        <div className="relative w-28 shrink-0">
+                          <input className={`${input} pr-7`} type="number" min={0} max={100} value={c.ratePct} placeholder="9"
+                            onChange={e => setComponents(prev => prev.map((x, j) => j === i ? { ...x, ratePct: e.target.value } : x))} />
+                          <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
+                        </div>
+                        <button type="button" onClick={() => setComponents(prev => prev.filter((_, j) => j !== i))}
+                          className="text-gray-400 hover:text-red-500 px-1" aria-label="Remove">✕</button>
+                      </div>
+                    ))}
                   </div>
-                  <div>
-                    <label className={label}>Default rate (%)</label>
-                    <input className={input} type="number" value={taxRate} min={0} max={100}
-                      onChange={e => setTaxRate(e.target.value)} placeholder="18" />
+                  <div className="flex items-center justify-between mt-2">
+                    <button type="button" onClick={() => setComponents(prev => [...prev, { name: '', ratePct: '' }])}
+                      className="text-sm text-indigo-600 hover:text-indigo-700">+ Add component</button>
+                    <span className={`text-xs font-medium ${splitTotal > 100 ? 'text-red-500' : 'text-gray-500'}`}>
+                      Total tax: {fmtRate(splitTotal)}%
+                    </span>
                   </div>
                 </div>
-
-                {taxMode === 'split' && (
-                  <div>
-                    <label className={label}>Components</label>
-                    <div className="space-y-2">
-                      {components.map((c, i) => (
-                        <div key={i} className="flex gap-2 items-center">
-                          <input className={input} value={c.name} placeholder="CGST"
-                            onChange={e => setComponents(prev => prev.map((x, j) => j === i ? { ...x, name: e.target.value } : x))} />
-                          <div className="relative w-28 shrink-0">
-                            <input className={`${input} pr-7`} type="number" value={c.ratioPct} placeholder="50"
-                              onChange={e => setComponents(prev => prev.map((x, j) => j === i ? { ...x, ratioPct: e.target.value } : x))} />
-                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 text-sm">%</span>
-                          </div>
-                          <button type="button" onClick={() => setComponents(prev => prev.filter((_, j) => j !== i))}
-                            className="text-gray-400 hover:text-red-500 px-1" aria-label="Remove">✕</button>
-                        </div>
-                      ))}
-                    </div>
-                    <div className="flex items-center justify-between mt-2">
-                      <button type="button" onClick={() => setComponents(prev => [...prev, { name: '', ratioPct: '' }])}
-                        className="text-sm text-indigo-600 hover:text-indigo-700">+ Add component</button>
-                      <span className={`text-xs ${Math.abs(ratioSum - 100) > 0.1 ? 'text-red-500' : 'text-gray-400'}`}>
-                        Total: {ratioSum}% (must be 100%)
-                      </span>
-                    </div>
-                  </div>
-                )}
               </>
             )}
           </div>
@@ -280,7 +303,7 @@ export default function SetupWizard() {
             <Row label="Tax" value={
               taxMode === 'none' ? 'No tax'
                 : taxMode === 'single' ? `${taxName} @ ${taxRate}%`
-                : `${taxName} @ ${taxRate}% → ${components.map(c => `${c.name} ${c.ratioPct}%`).join(' + ')}`
+                : `${taxName} @ ${fmtRate(splitTotal)}% (${components.map(c => `${c.name} ${c.ratePct}%`).join(' + ')})`
             } />
             <p className="text-xs text-gray-400 pt-2">
               These settings apply to new bills and receipts. You can edit them anytime from

@@ -5,10 +5,8 @@
  */
 import { useCallback, useEffect, useState } from 'react'
 import membershipService, { getMembershipError } from '@/services/membership'
+import { useCurrency } from '@/lib/useCurrency'
 import type { MembershipReport } from '@/types/membership'
-
-const fmtCurrency = new Intl.NumberFormat('en-IN', { maximumFractionDigits: 2 })
-const money = (n: number) => `₹${fmtCurrency.format(n)}`
 
 function StatCard({ label, value, accent }: { label: string; value: string; accent?: string }) {
   return (
@@ -23,6 +21,7 @@ export default function Reporting() {
   const [report, setReport] = useState<MembershipReport | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
+  const { format: money } = useCurrency()
 
   const load = useCallback(async () => {
     setLoading(true)

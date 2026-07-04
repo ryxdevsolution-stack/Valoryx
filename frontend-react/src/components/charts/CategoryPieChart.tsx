@@ -4,6 +4,7 @@ import { useRef } from 'react'
 import Highcharts from 'highcharts'
 import HighchartsReact from 'highcharts-react-official'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useCurrency } from '@/lib/useCurrency'
 import { getDarkModeChartOptions } from '@/lib/highcharts-config'
 
 interface CategoryPieChartProps {
@@ -13,6 +14,7 @@ interface CategoryPieChartProps {
 export default function CategoryPieChart({ data }: CategoryPieChartProps) {
   const chartRef = useRef<HighchartsReact.RefObject>(null)
   const { isDarkMode } = useTheme()
+  const { symbol, locale } = useCurrency()
 
   const options: Highcharts.Options = {
     ...getDarkModeChartOptions(isDarkMode),
@@ -54,7 +56,7 @@ export default function CategoryPieChart({ data }: CategoryPieChartProps) {
         return `
           <div style="padding: 8px;">
             <strong style="font-size: 13px; color: ${textColor};">${point.name}</strong><br/>
-            <span style="color: ${point.color}; font-size: 12px;">●</span> Revenue: <strong style="color: ${textColor};">₹${point.y.toLocaleString('en-IN')}</strong><br/>
+            <span style="color: ${point.color}; font-size: 12px;">●</span> Revenue: <strong style="color: ${textColor};">${symbol}${point.y.toLocaleString(locale)}</strong><br/>
             <span style="font-size: 11px; color: ${metaColor};">Items: ${point.items_sold}</span><br/>
             <span style="font-size: 11px; color: ${metaColor};">Share: ${point.percentage.toFixed(1)}%</span>
           </div>

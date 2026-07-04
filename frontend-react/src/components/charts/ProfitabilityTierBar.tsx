@@ -1,4 +1,5 @@
 import { motion } from 'framer-motion'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface ProfitabilityTierBarProps {
   profitMargin: number
@@ -25,11 +26,9 @@ function currentTier(margin: number) {
   return TIERS[0]
 }
 
-function fmtINR(n: number) {
-  return new Intl.NumberFormat('en-IN', { maximumFractionDigits: 0 }).format(n)
-}
-
 export default function ProfitabilityTierBar({ profitMargin, totalProfit }: ProfitabilityTierBarProps) {
+  const { symbol, locale } = useCurrency()
+  const fmtProfit = (n: number) => n.toLocaleString(locale, { maximumFractionDigits: 0 })
   const tier = currentTier(profitMargin)
   // Clamp the marker to the visual axis so extreme values stay on-chart
   const markerPct = Math.max(0, Math.min(profitMargin, VISUAL_AXIS_MAX))
@@ -53,7 +52,7 @@ export default function ProfitabilityTierBar({ profitMargin, totalProfit }: Prof
         <div>
           <h3 className="text-sm font-semibold text-gray-900 dark:text-white">Profitability</h3>
           <p className="text-2xl font-bold text-gray-900 dark:text-white mt-1">
-            ₹{fmtINR(totalProfit)}
+            {symbol}{fmtProfit(totalProfit)}
             <span className={`text-sm font-semibold ml-2 ${tier.textColor}`}>
               {profitMargin.toFixed(1)}%
             </span>

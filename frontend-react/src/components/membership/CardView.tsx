@@ -190,7 +190,7 @@ export default function CardView({ cardId, onError }: CardViewProps) {
             cardNumber: card.membership_number,
             description: validTo ? `Valid ${validFrom} – ${validTo}` : `Valid from ${validFrom}`,
             qrValue: card.membership_number,
-            benefits: tierBenefitLines(tier),
+            benefits: tierBenefitLines(tier, cur),
             shopPhone,
           }}
         />

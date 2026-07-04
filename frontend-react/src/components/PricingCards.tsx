@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Check, Star, Zap, Crown, Loader2 } from 'lucide-react'
+import { Check, Star, Zap, Crown, Loader2, Clock } from 'lucide-react'
 import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
 
@@ -58,6 +58,8 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
   const [loading, setLoading] = useState(true)
   const [payingPlanId, setPayingPlanId] = useState<string | null>(null)
   const [error, setError] = useState('')
+  const [pendingMsg, setPendingMsg] = useState('')
+  const [pollingActive, setPollingActive] = useState(false)
 
   useEffect(() => {
     fetchPlans()
@@ -102,13 +104,19 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
     }
   }
 
-  async function pollForActivation(maxAttempts: number, intervalMs: number) {
+  // Poll the client status until the subscription flips to active. Returns true
+  // if activation was detected (and redirects), false if it's still pending.
+  async function pollForActivation(maxAttempts: number, intervalMs: number): Promise<boolean> {
     for (let i = 0; i < maxAttempts; i++) {
       await new Promise(r => setTimeout(r, intervalMs))
-      await refreshClientData()
+      const fresh = await refreshClientData()
+      if (fresh?.subscription_status === 'active') {
+        updateSubscriptionStatus('active', fresh.subscription_end_date, fresh.plan_id)
+        redirectToDashboard()
+        return true
+      }
     }
-    // Redirect regardless — webhook will have caught up by now
-    redirectToDashboard()
+    return false
   }
 
   async function handleSubscribe(plan: Plan) {
@@ -146,6 +154,7 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
         description: `${plan_name} Plan - ${billingCycle === 'yearly' ? 'Yearly' : 'Monthly'}`,
         handler: async function (response: any) {
           try {
+            setPendingMsg('')
             const verifyRes = await api.post('/subscription/verify-payment', {
               razorpay_payment_id: response.razorpay_payment_id,
               razorpay_subscription_id: response.razorpay_subscription_id,
@@ -153,7 +162,7 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
             })
 
             if (verifyRes.data?.subscription_status === 'active') {
-              // Webhook already fired and activated — update context and redirect
+              // Verified & activated synchronously — update context and redirect
               updateSubscriptionStatus(
                 verifyRes.data.subscription_status,
                 verifyRes.data.subscription_end_date,
@@ -161,12 +170,23 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
               )
               redirectToDashboard()
             } else {
-              // Webhook hasn't fired yet — poll up to 3 times (3s apart), then redirect
-              await pollForActivation(3, 3000)
+              // Auto-pay mandate (UPI Autopay / eMandate) still confirming.
+              // Show a clear pending message and poll a few times before giving up.
+              setPendingMsg(
+                verifyRes.data?.message ||
+                  'Payment received. Your auto-pay mandate is being confirmed — this can take a little while. We\'ll email you the moment it\'s active.',
+              )
+              // pollForActivation redirects on success; otherwise stop the spinner
+              // and leave the (now static) pending message visible.
+              setPollingActive(true)
+              const activated = await pollForActivation(5, 4000)
+              setPollingActive(false)
+              if (!activated) setPayingPlanId(null)
             }
           } catch {
-            setError('Payment verification failed. Please contact support.')
-          } finally {
+            setPendingMsg('')
+            setPollingActive(false)
+            setError('We could not confirm your payment. If any money was debited, it is not captured and Razorpay will release it back automatically. Please retry, or contact support with your payment ID.')
             setPayingPlanId(null)
           }
         },
@@ -245,6 +265,25 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
       {error && (
         <div className="mb-6 p-3 bg-red-50 dark:bg-red-900/20 text-red-700 dark:text-red-400 rounded-lg text-center text-sm">
           {error}
+        </div>
+      )}
+
+      {pendingMsg && (
+        <div className="mb-6 p-4 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 text-amber-800 dark:text-amber-300 rounded-lg flex items-start gap-3 text-sm">
+          {pollingActive ? (
+            <Loader2 className="w-5 h-5 animate-spin flex-shrink-0 mt-0.5" aria-hidden="true" />
+          ) : (
+            <Clock className="w-5 h-5 flex-shrink-0 mt-0.5" aria-hidden="true" />
+          )}
+          <div>
+            <p className="font-semibold mb-0.5">
+              {pollingActive ? 'Confirming your auto-pay mandate' : 'Auto-pay mandate pending'}
+            </p>
+            <p>{pendingMsg}</p>
+            {!pollingActive && (
+              <p className="mt-1">You can safely close this — we'll email you once it's active.</p>
+            )}
+          </div>
         </div>
       )}
 
