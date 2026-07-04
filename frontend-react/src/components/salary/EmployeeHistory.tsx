@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
 import { X, Clock, TrendingUp, Banknote, Calendar, ChevronDown, ChevronUp, CheckCircle2, Circle } from 'lucide-react'
 import api from '@/lib/api'
+import { useCurrency } from '@/lib/useCurrency'
 import type { Employee } from '@/pages/Salary'
 import { formatMinutes as fmtMins, formatSalaryDate as fmtDate } from '@/utils/salary'
 
@@ -53,8 +54,17 @@ interface HistoryData {
   }
 }
 
+// Region-aware currency (module helper, no hook): resolve the client's symbol +
+// locale from localStorage — same pattern as the print/PDF services — so this
+// never hardcodes ₹/INR.
 function fmt(n: number | string) {
-  return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 2 }).format(Number(n))
+  let symbol = '₹', locale = 'en-IN'
+  try {
+    const c = JSON.parse(localStorage.getItem('client') || '{}')
+    if (c.currency_symbol) symbol = c.currency_symbol
+    if (c.locale) locale = c.locale
+  } catch { /* localStorage unavailable / bad JSON */ }
+  return symbol + Number(n).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 interface Props {
@@ -66,6 +76,7 @@ export default function EmployeeHistory({ employee, onClose }: Props) {
   const [data, setData] = useState<HistoryData | null>(null)
   const [loading, setLoading] = useState(true)
   const [expandedCycle, setExpandedCycle] = useState<string | null>(null)
+  const { symbol } = useCurrency()
 
   useEffect(() => {
     api.get(`/employees/${employee.employee_id}/history`)
@@ -82,7 +93,7 @@ export default function EmployeeHistory({ employee, onClose }: Props) {
           <div>
             <h2 className="text-lg font-bold text-gray-900 dark:text-white">{employee.name}</h2>
             <p className="text-xs text-gray-400 mt-0.5">
-              Complete Employment History · ₹{employee.rate}/{employee.pay_type === 'hourly' ? 'hr' : 'day'}
+              Complete Employment History · {symbol}{employee.rate}/{employee.pay_type === 'hourly' ? 'hr' : 'day'}
             </p>
           </div>
           <button

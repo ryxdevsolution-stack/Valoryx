@@ -1,4 +1,5 @@
 import { useState, useMemo, useRef, memo } from 'react'
+import { useCurrency } from '@/lib/useCurrency'
 
 interface Product {
   product_id: string
@@ -36,6 +37,7 @@ function ProductCardGrid({ products, billItems, onProductTap, isLoading }: Produ
   const [selectedCategory, setSelectedCategory] = useState('All')
   const [searchQuery, setSearchQuery] = useState('')
   const tabsRef = useRef<HTMLDivElement>(null)
+  const { format } = useCurrency()
 
   const categories = useMemo(() => {
     const cats = [...new Set(products.map(p => p.category || 'Uncategorized').filter(Boolean))]
@@ -209,7 +211,7 @@ function ProductCardGrid({ products, billItems, onProductTap, isLoading }: Produ
                   </p>
 
                   <p className="text-base font-extrabold text-blue-600 dark:text-blue-400 leading-none">
-                    ₹{Number(product.rate).toFixed(2)}
+                    {format(product.rate)}
                   </p>
 
                   <div className="flex items-center justify-between mt-2 pt-2 border-t border-gray-100 dark:border-gray-700">

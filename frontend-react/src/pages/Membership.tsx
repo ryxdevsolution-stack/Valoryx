@@ -267,7 +267,7 @@ export default function MembershipPage() {
                           cardNumber: sampleNumber,
                           description: t.description,
                           qrValue: sampleNumber,
-                          benefits: tierBenefitLines(t),
+                          benefits: tierBenefitLines(t, cur),
                           shopPhone: client?.phone,
                         }}
                       />

@@ -69,7 +69,7 @@ interface ClientContextType {
   setClientData: (user: User, client: Client, token: string) => void
   hasPermission: (permission: string) => boolean
   isSuperAdmin: () => boolean
-  refreshClientData: () => Promise<void>
+  refreshClientData: () => Promise<Client | null>
   refreshUserData: () => Promise<void>
   updateSubscriptionStatus: (status: string, endDate?: string, planId?: string) => void
 }
@@ -312,8 +312,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
   }, [user])
 
   // Refresh client data from API (can be called manually if needed)
-  const refreshClientData = useCallback(async () => {
-    if (!token || !client?.client_id) return
+  const refreshClientData = useCallback(async (): Promise<Client | null> => {
+    if (!token || !client?.client_id) return null
 
     try {
       const response = await api.get(`/clients/${client.client_id}`)
@@ -341,10 +341,12 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         }
         setClient(updatedClient)
         localStorage.setItem('client', JSON.stringify(updatedClient))
+        return updatedClient
       }
     } catch (error) {
       console.error('Failed to refresh client data:', error)
     }
+    return null
   }, [token, client?.client_id])
 
   // Update subscription status locally (after payment verification)

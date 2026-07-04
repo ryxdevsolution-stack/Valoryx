@@ -52,6 +52,41 @@ export function presetForCountry(code?: string): CountryPreset {
   return COUNTRY_PRESETS.find(c => c.code === code) || COUNTRY_PRESETS[0]
 }
 
+// Maps common IANA timezones to a supported country code. SUGGEST-ONLY: used to
+// pre-select the setup wizard's country so most users don't have to change it.
+// The user always sees the dropdown and can override; changing the OS timezone
+// later never affects the saved region (it's chosen once, then read-only).
+const TIMEZONE_COUNTRY: Record<string, string> = {
+  'Asia/Kolkata': 'IN', 'Asia/Calcutta': 'IN',
+  'Asia/Dubai': 'AE',
+  'Asia/Riyadh': 'SA',
+  'Europe/London': 'GB',
+  'Asia/Singapore': 'SG',
+  'Asia/Kuala_Lumpur': 'MY',
+  'America/New_York': 'US', 'America/Chicago': 'US', 'America/Denver': 'US',
+  'America/Los_Angeles': 'US', 'America/Phoenix': 'US', 'America/Anchorage': 'US',
+  'America/Detroit': 'US', 'Pacific/Honolulu': 'US',
+  'America/Toronto': 'CA', 'America/Vancouver': 'CA', 'America/Edmonton': 'CA',
+  'America/Winnipeg': 'CA', 'America/Halifax': 'CA', 'America/Montreal': 'CA',
+}
+
+/**
+ * Best-effort guess of the business country from the device's IANA timezone.
+ * Returns a supported COUNTRY_PRESETS code, or null when it can't tell (caller
+ * keeps its own default). Works fully offline — no network/geo-IP.
+ */
+export function detectCountryFromTimezone(): string | null {
+  try {
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone
+    if (!tz) return null
+    if (TIMEZONE_COUNTRY[tz]) return TIMEZONE_COUNTRY[tz]
+    if (tz.startsWith('Australia/')) return 'AU'   // any AU city
+    return null
+  } catch {
+    return null
+  }
+}
+
 // Common currency symbols, used when a client_entry has a code but no explicit symbol.
 export const CURRENCY_SYMBOLS: Record<string, string> = {
   INR: '₹', USD: '$', AED: 'د.إ', SAR: '﷼', GBP: '£', EUR: '€',

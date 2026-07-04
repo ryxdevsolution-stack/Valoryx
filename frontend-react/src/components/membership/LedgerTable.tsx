@@ -3,6 +3,7 @@
  * Handles loading / error / empty states.
  */
 import { useMemo } from 'react'
+import { useCurrency } from '@/lib/useCurrency'
 import type { LedgerEntry, LedgerEventType } from '@/types/membership'
 
 interface LedgerTableProps {
@@ -45,6 +46,7 @@ function signed(n: number): string {
 
 export default function LedgerTable({ entries, loading = false, error = null }: LedgerTableProps) {
   const rows = useMemo(() => entries ?? [], [entries])
+  const { symbol } = useCurrency()
 
   if (loading) {
     return <div className="text-center py-10 text-gray-400 dark:text-gray-500 text-sm">Loading history…</div>
@@ -81,7 +83,7 @@ export default function LedgerTable({ entries, loading = false, error = null }: 
                 {e.points_delta !== 0 ? signed(e.points_delta) : '—'}
               </td>
               <td className={`px-4 py-2.5 text-right font-medium ${e.amount_delta > 0 ? 'text-green-600 dark:text-green-400' : e.amount_delta < 0 ? 'text-red-500' : 'text-gray-400'}`}>
-                {e.amount_delta !== 0 ? `₹${signed(e.amount_delta)}` : '—'}
+                {e.amount_delta !== 0 ? `${symbol}${signed(e.amount_delta)}` : '—'}
               </td>
               <td className="px-4 py-2.5 text-gray-600 dark:text-gray-400">{e.note || '—'}</td>
             </tr>

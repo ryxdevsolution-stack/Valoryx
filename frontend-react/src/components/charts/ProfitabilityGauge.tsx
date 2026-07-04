@@ -4,6 +4,7 @@ import { useRef, useEffect, useState } from 'react'
 import { initializeHighcharts } from '@/lib/highcharts-config'
 import { getDarkModeChartOptions } from '@/lib/highcharts-config'
 import { useTheme } from '@/contexts/ThemeContext'
+import { useCurrency } from '@/lib/useCurrency'
 import HighchartsReact from 'highcharts-react-official'
 
 interface ProfitabilityGaugeProps {
@@ -13,6 +14,7 @@ interface ProfitabilityGaugeProps {
 
 export default function ProfitabilityGauge({ profitMargin, totalProfit }: ProfitabilityGaugeProps) {
   const { isDarkMode } = useTheme()
+  const { symbol, locale } = useCurrency()
   const chartRef = useRef<HighchartsReact.RefObject>(null)
   const [Highcharts, setHighcharts] = useState<any>(null)
 
@@ -50,7 +52,7 @@ export default function ProfitabilityGauge({ profitMargin, totalProfit }: Profit
       }
     },
     subtitle: {
-      text: `₹${totalProfit.toLocaleString('en-IN')}`,
+      text: `${symbol}${totalProfit.toLocaleString(locale)}`,
       align: 'left',
       style: {
         fontSize: '28px',

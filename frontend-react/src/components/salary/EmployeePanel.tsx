@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { Plus, Search, Clock, DollarSign, History } from 'lucide-react'
+import { useCurrency } from '@/lib/useCurrency'
 import type { Employee } from '@/pages/Salary'
 
 interface EmployeePanelProps {
@@ -20,6 +21,7 @@ export default function EmployeePanel({
   onHistory,
 }: EmployeePanelProps) {
   const [search, setSearch] = useState('')
+  const { symbol } = useCurrency()
 
   const filtered = employees.filter(emp =>
     emp.name.toLowerCase().includes(search.toLowerCase()) ||
@@ -116,7 +118,7 @@ export default function EmployeePanel({
                         <DollarSign className={`w-3 h-3 ${selectedId === emp.employee_id ? 'text-gray-300 dark:text-gray-600' : 'text-gray-400'}`} />
                       )}
                       <span className={`text-xs ${selectedId === emp.employee_id ? 'text-gray-300 dark:text-gray-600' : 'text-gray-500 dark:text-gray-400'}`}>
-                        ₹{emp.rate}/{emp.pay_type === 'hourly' ? 'hr' : 'day'}
+                        {symbol}{emp.rate}/{emp.pay_type === 'hourly' ? 'hr' : 'day'}
                       </span>
                       <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-medium ${
                         emp.pay_type === 'hourly'

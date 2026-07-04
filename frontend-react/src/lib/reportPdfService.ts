@@ -72,13 +72,17 @@ export interface ReportPdfParams {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-const CURRENCY_FMT = new Intl.NumberFormat('en-IN', {
-  minimumFractionDigits: 2,
-  maximumFractionDigits: 2,
-})
-
+// Region-aware currency (no hooks — this module builds PDFs). Resolve the
+// client's symbol + locale from localStorage, same pattern as pdfService /
+// webPrintService, so reports never hardcode ₹/INR.
 function formatCurrency(amount: number): string {
-  return '₹' + CURRENCY_FMT.format(amount || 0)
+  let symbol = '₹', locale = 'en-IN'
+  try {
+    const c = JSON.parse(localStorage.getItem('client') || '{}')
+    if (c.currency_symbol) symbol = c.currency_symbol
+    if (c.locale) locale = c.locale
+  } catch { /* localStorage unavailable / bad JSON */ }
+  return symbol + (amount || 0).toLocaleString(locale, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
 }
 
 function formatDate(iso: string): string {
