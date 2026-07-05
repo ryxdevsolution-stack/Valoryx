@@ -596,7 +596,7 @@ def razorpay_webhook():
         if event == 'payment.authorized':
             payment_entity = payload.get('payload', {}).get('payment', {}).get('entity', {})
             payment_id = payment_entity.get('id')
-            if payment_id and (payment_entity.get('recurring') or payment_entity.get('subscription_id')):
+            if payment_id:
                 import razorpay
                 rz_client = razorpay.Client(auth=(Config.RAZORPAY_KEY_ID, Config.RAZORPAY_KEY_SECRET))
                 _capture_authorized_payment(rz_client, payment_id)
