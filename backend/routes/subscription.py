@@ -589,6 +589,7 @@ def razorpay_webhook():
         payload = request.get_json()
         event = payload.get('event', '')
         logger.info(f'[Webhook] Received event: {event}')
+        logger.info(f'[Webhook] Full payload: {payload}')
 
         # ----------------------------------------------------------------
         # payment.authorized — capture subscription payment immediately
