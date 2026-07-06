@@ -31,6 +31,12 @@ class User(db.Model):
     synced_at = db.Column(db.DateTime, nullable=True)  # For SQLite-Supabase sync
     telegram_chat_id = db.Column(db.String(50), nullable=True)  # Telegram chat ID for daily reports
 
+    # Daily/weekly business summary emails — opt-in, defaults to 'off' so nobody
+    # gets an email they didn't ask for. 'off' | 'daily' | 'weekly'.
+    report_email_frequency = db.Column(db.String(10), nullable=False, default='off')
+    # Random token embedded in the one-click unsubscribe link sent with every report email.
+    report_unsubscribe_token = db.Column(db.String(64), nullable=True, index=True)
+
     # Branch assignment (nullable — unassigned = access to all branches)
     branch_id = db.Column(FlexibleUUID, db.ForeignKey('branches.branch_id'), nullable=True, index=True)
 
@@ -91,6 +97,7 @@ class User(db.Model):
             'deleted_at': self.deleted_at.isoformat() if self.deleted_at else None,
             'synced_at': self.synced_at.isoformat() if self.synced_at else None,
             'telegram_chat_id': self.telegram_chat_id,
+            'report_email_frequency': self.report_email_frequency,
             'branch_id': str(self.branch_id) if self.branch_id else None,
             'reports_to_id': str(self.reports_to_id) if self.reports_to_id else None,
             'invite_accepted': self.invite_accepted,

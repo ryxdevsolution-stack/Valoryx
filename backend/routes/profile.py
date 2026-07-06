@@ -61,6 +61,7 @@ def get_profile():
             'created_at': user.created_at.isoformat() if user.created_at else None,
             'last_login': user.last_login.isoformat() if user.last_login else None,
             'telegram_chat_id': user.telegram_chat_id,
+            'report_email_frequency': user.report_email_frequency,
             'must_change_password': user.must_change_password,
             'totp_enabled': user.totp_enabled,
             'permissions': permissions,
@@ -105,6 +106,11 @@ def update_profile():
             if raw_id and not raw_id.lstrip('-').isdigit():
                 return jsonify({'error': 'telegram_chat_id must be a numeric Telegram chat ID'}), 400
             user.telegram_chat_id = raw_id or None
+        if 'report_email_frequency' in data:
+            freq = str(data['report_email_frequency']).strip().lower()
+            if freq not in ('off', 'daily', 'weekly'):
+                return jsonify({'error': "report_email_frequency must be 'off', 'daily' or 'weekly'"}), 400
+            user.report_email_frequency = freq
 
         user.updated_at = datetime.utcnow()
         user.updated_by = user_id
@@ -127,6 +133,7 @@ def update_profile():
                 'phone': user.phone,
                 'department': user.department,
                 'telegram_chat_id': user.telegram_chat_id,
+                'report_email_frequency': user.report_email_frequency,
             }
         }), 200
 

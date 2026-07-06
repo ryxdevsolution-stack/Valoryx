@@ -65,6 +65,9 @@ interface AccountTabProps {
   handleSaveTelegramChatId: () => void
   testingTelegram: boolean
   handleSendTestReport: () => void
+  // Business summary emails (owner only)
+  savingReportFreq: boolean
+  handleReportFrequencyChange: (freq: 'off' | 'daily' | 'weekly') => void
   // Utilities
   formatDate: (d: string | null) => string
 }
@@ -97,6 +100,8 @@ export default function AccountTab({
   handleSaveTelegramChatId,
   testingTelegram,
   handleSendTestReport,
+  savingReportFreq,
+  handleReportFrequencyChange,
   formatDate,
 }: AccountTabProps) {
   return (
@@ -527,6 +532,45 @@ export default function AccountTab({
           )}
         </div>
       </div>}
+
+      {/* Business Summary Emails — owner only */}
+      {user?.role === 'owner' && (
+        <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-sm border border-gray-200 dark:border-gray-700 p-6">
+          <div className="flex items-center gap-2 mb-1">
+            <Mail className="w-5 h-5 text-indigo-500" />
+            <h3 className="text-lg font-semibold text-gray-900 dark:text-white">Business Summary Emails</h3>
+          </div>
+          <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">
+            Get a revenue and invoice summary emailed to you. Sent only on days with activity —
+            you won't get an email for a day with zero sales.
+          </p>
+
+          <div className="inline-flex items-center bg-gray-100 dark:bg-gray-700 rounded-lg p-1">
+            {(['off', 'daily', 'weekly'] as const).map((freq) => (
+              <button
+                key={freq}
+                type="button"
+                disabled={savingReportFreq}
+                onClick={() => handleReportFrequencyChange(freq)}
+                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all disabled:opacity-50 ${
+                  (user?.report_email_frequency ?? 'off') === freq
+                    ? 'bg-white dark:bg-gray-600 text-gray-900 dark:text-white shadow-sm'
+                    : 'text-gray-600 dark:text-gray-300 hover:text-gray-900 dark:hover:text-white'
+                }`}
+              >
+                {freq === 'off' ? 'Off' : freq === 'daily' ? 'Daily' : 'Weekly'}
+              </button>
+            ))}
+          </div>
+
+          {(user?.report_email_frequency ?? 'off') !== 'off' && (
+            <p className="text-xs text-gray-500 dark:text-gray-400 mt-3">
+              Sent to <span className="font-medium">{user?.email}</span> around 9:00 PM IST.
+              You can unsubscribe anytime from a link in the email, or by switching this back to Off.
+            </p>
+          )}
+        </div>
+      )}
     </>
   )
 }

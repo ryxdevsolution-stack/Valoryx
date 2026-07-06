@@ -17,6 +17,7 @@ interface User {
   created_at?: string | null
   last_login?: string | null
   telegram_chat_id?: string
+  report_email_frequency?: 'off' | 'daily' | 'weekly'
   must_change_password?: boolean
   totp_enabled?: boolean
   avatar_url?: string | null
@@ -152,6 +153,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
                 created_at: profile.created_at ?? null,
                 last_login: profile.last_login ?? null,
                 telegram_chat_id: profile.telegram_chat_id,
+                report_email_frequency: profile.report_email_frequency ?? 'off',
                 totp_enabled: profile.totp_enabled ?? false,
               }
               setUser(updatedUser)
@@ -193,6 +195,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         branch_id: user.branch_id ?? null,
         branch_name: user.branch_name ?? null,
         telegram_chat_id: user.telegram_chat_id,
+        report_email_frequency: user.report_email_frequency ?? 'off',
         must_change_password: user.must_change_password ?? false,
         totp_enabled: user.totp_enabled ?? false,
       }
@@ -379,6 +382,7 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           branch_id: profile.branch_id ?? null,
           branch_name: profile.branch_name ?? null,
           telegram_chat_id: profile.telegram_chat_id,
+          report_email_frequency: profile.report_email_frequency ?? 'off',
           created_at: profile.created_at ?? null,
           last_login: profile.last_login ?? null,
           must_change_password: profile.must_change_password ?? false,

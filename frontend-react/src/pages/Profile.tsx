@@ -94,6 +94,7 @@ export default function ProfilePage() {
   const [telegramChatId, setTelegramChatId] = useState(user?.telegram_chat_id || '')
   const [savingTelegram, setSavingTelegram] = useState(false)
   const [testingTelegram, setTestingTelegram] = useState(false)
+  const [savingReportFreq, setSavingReportFreq] = useState(false)
 
   // Danger Zone state
   const [showDeleteConfirm, setShowDeleteConfirm] = useState(false)
@@ -375,6 +376,25 @@ export default function ProfilePage() {
     }
   }
 
+  const handleReportFrequencyChange = async (freq: 'off' | 'daily' | 'weekly') => {
+    if (freq === (user?.report_email_frequency ?? 'off') || savingReportFreq) return
+    try {
+      setSavingReportFreq(true)
+      await api.put('/profile', { report_email_frequency: freq })
+      await refreshUserData()
+      setMessage({
+        type: 'success',
+        text: freq === 'off'
+          ? 'Business summary emails turned off.'
+          : `You'll get a ${freq} business summary by email.`,
+      })
+    } catch (error: any) {
+      setMessage({ type: 'error', text: error.response?.data?.error || 'Failed to update report preference' })
+    } finally {
+      setSavingReportFreq(false)
+    }
+  }
+
   const formatDate = (dateString: string | null) => {
     if (!dateString) return 'N/A'
     return new Date(dateString).toLocaleDateString('en-IN', {
@@ -482,6 +502,8 @@ export default function ProfilePage() {
               handleSaveTelegramChatId={handleSaveTelegramChatId}
               testingTelegram={testingTelegram}
               handleSendTestReport={handleSendTestReport}
+              savingReportFreq={savingReportFreq}
+              handleReportFrequencyChange={handleReportFrequencyChange}
               formatDate={formatDate}
             />
           )}
