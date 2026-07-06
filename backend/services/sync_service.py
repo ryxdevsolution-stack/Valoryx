@@ -107,6 +107,7 @@ class SyncService:
         try:
             # SQLite connection (local database)
             sqlite_path = os.getenv('SQLITE_DB_PATH', os.path.expanduser('~/.valoryx/local.db'))
+            os.makedirs(os.path.dirname(sqlite_path), exist_ok=True)
             self.sqlite_engine = create_engine(f'sqlite:///{sqlite_path}')
 
             # PostgreSQL connection (Supabase)
