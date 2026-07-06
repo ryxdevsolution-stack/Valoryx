@@ -612,6 +612,10 @@ class SyncService:
             f"ON CONFLICT (client_id) DO UPDATE SET {updates}"
         )
 
+        # client_entry has no cloud FK, but plan_id points at the subscription_plan
+        # catalog whose UUIDs differ. Remap local->cloud by name so the WEB can
+        # resolve which plan the owner selected (a local-only test plan stays as-is).
+        plan_up = self._plan_id_maps()[0] if 'plan_id' in insert_cols else None
         payload, ids = [], []
         for rec in rows:
             row = {}
@@ -623,6 +627,8 @@ class SyncService:
                 elif isinstance(v, (dict, list)):
                     v = json.dumps(v)
                 row[c] = v
+            if plan_up is not None and row.get('plan_id') is not None:
+                row['plan_id'] = plan_up.get(str(row['plan_id']), row['plan_id'])
             payload.append(row)
             ids.append(rec['client_id'])
         return len(self._push_batch('client_entry', insert_sql, payload, ids))
@@ -893,10 +899,74 @@ class SyncService:
         return self._upload_pending('users', 'user_id', USER_COLUMN_TYPES, insert_sql,
                                     client_id=client_id)
 
+    def _perm_id_maps(self):
+        """Local<->cloud permission_id maps, matched by the stable permission_name.
+
+        `permissions` is a GLOBAL reference catalog seeded INDEPENDENTLY in SQLite
+        and Postgres, so the SAME permission has DIFFERENT UUIDs on each side.
+        user_permissions.permission_id is an FK to it — uploading the raw local
+        UUID fails (the cloud has never seen it). We remap by permission_name
+        rather than pushing duplicate catalog rows into the shared table.
+        Cached per process. Returns (local_to_cloud, cloud_to_local).
+        """
+        if getattr(self, '_perm_maps', None) is not None:
+            return self._perm_maps
+        local_to_cloud, cloud_to_local = {}, {}
+        try:
+            with self.sqlite_engine.connect() as s:
+                local = {r[0]: r[1] for r in s.execute(
+                    text("SELECT permission_id, permission_name FROM permissions"))}
+            with self.postgres_engine.connect() as p:
+                cloud = {r[1]: str(r[0]) for r in p.execute(
+                    text("SELECT permission_id, permission_name FROM permissions"))}
+            for lid, name in local.items():
+                cid = cloud.get(name)
+                if cid:
+                    local_to_cloud[str(lid)] = cid
+                    cloud_to_local[cid] = str(lid)
+        except Exception as e:
+            logger.error(f"[SyncService] Could not build permission id map: {e}")
+        self._perm_maps = (local_to_cloud, cloud_to_local)
+        return self._perm_maps
+
+    def _plan_id_maps(self):
+        """Local<->cloud subscription_plan.plan_id maps, matched by plan `name`.
+
+        Same problem as permissions: subscription_plan is a catalog seeded with
+        DIFFERENT UUIDs locally vs. cloud, and payment_transaction.plan_id is a
+        NOT-NULL FK to it. Remap by the stable plan name. A local-only plan (e.g.
+        the throwaway 1-rupee test plan whose name has no cloud twin) simply
+        stays unmapped — its payment row is skipped rather than syncing a dangling
+        plan into the shared catalog. Cached per process.
+        Returns (local_to_cloud, cloud_to_local).
+        """
+        if getattr(self, '_plan_maps', None) is not None:
+            return self._plan_maps
+        local_to_cloud, cloud_to_local = {}, {}
+        try:
+            with self.sqlite_engine.connect() as s:
+                local = {r[0]: r[1] for r in s.execute(
+                    text("SELECT plan_id, name FROM subscription_plan"))}
+            with self.postgres_engine.connect() as p:
+                cloud = {r[1]: str(r[0]) for r in p.execute(
+                    text("SELECT plan_id, name FROM subscription_plan"))}
+            for lid, name in local.items():
+                cid = cloud.get(name)
+                if cid:
+                    local_to_cloud[str(lid)] = cid
+                    cloud_to_local[cid] = str(lid)
+        except Exception as e:
+            logger.error(f"[SyncService] Could not build plan id map: {e}")
+        self._plan_maps = (local_to_cloud, cloud_to_local)
+        return self._plan_maps
+
     def _sync_user_permissions(self, client_id=None):
         """Owner-scoped, batched user-permission upload.
 
         user_permissions has no client_id; scope through user_id -> users.
+        permission_id is remapped local->cloud by name (see _perm_id_maps); rows
+        for a permission the cloud catalog lacks stay unmapped and are isolated
+        out by the FK-split logic.
         """
         insert_sql = """
             INSERT INTO user_permissions (
@@ -905,11 +975,20 @@ class SyncService:
                 :id, :user_id, :permission_id, :granted_at, :granted_by, :updated_at
             )
             ON CONFLICT (id) DO UPDATE SET
+                permission_id = EXCLUDED.permission_id,
                 updated_at = EXCLUDED.updated_at,
                 synced_at = CURRENT_TIMESTAMP
         """
+        local_to_cloud, _ = self._perm_id_maps()
+
+        def _prep(c):
+            pid = c.get('permission_id')
+            if pid is not None:
+                c['permission_id'] = local_to_cloud.get(str(pid), pid)
+
         return self._upload_pending('user_permissions', 'id', USER_PERMISSION_COLUMN_TYPES, insert_sql,
-                                    client_id=client_id, client_filter='via_user', order_by='granted_at')
+                                    client_id=client_id, client_filter='via_user', order_by='granted_at',
+                                    preprocess=_prep)
 
     def _sync_reports(self, client_id=None):
         """Owner-scoped, batched report upload."""
@@ -1535,9 +1614,18 @@ class SyncService:
                 text(f"SELECT rowid AS _rowid, * FROM {table} {where} ORDER BY {order} LIMIT 1000"), params)]
         if not rows:
             return 0
+        # payment_transaction.plan_id is a NOT-NULL FK to the subscription_plan
+        # catalog, which has different UUIDs in cloud. Remap local->cloud by plan
+        # name; rows whose plan has no cloud twin stay unmapped and are isolated
+        # out by the FK-split (a local-only test plan shouldn't reach prod).
+        plan_up = self._plan_id_maps()[0] if table == 'payment_transaction' else None
         payload, rowids = [], []
         for rec in rows:
             converted = TypeConverter.convert_dict_from_sqlite(rec, meta['types'])
+            if plan_up is not None:
+                pid = converted.get('plan_id')
+                if pid is not None:
+                    converted['plan_id'] = plan_up.get(str(pid), pid)
             payload.append({c: converted.get(c) for c in insert_cols})  # JSON cols pass as stored text
             rowids.append(rec['_rowid'])
         synced_rowids = self._push_batch(table, insert_sql, payload, rowids)
@@ -1586,12 +1674,21 @@ class SyncService:
         records = self._fetch_all_pg(query, params)
         if not records:
             return 0
+        # Reverse the upload plan-id remap: cloud plan UUID -> local catalog UUID.
+        plan_down = self._plan_id_maps()[1] if table == 'payment_transaction' else None
         converted = []
         for r in records:
             c = TypeConverter.convert_dict_to_sqlite(r, meta['types'])
             for jc in meta['json']:
                 if c.get(jc) is not None and not isinstance(c[jc], str):
                     c[jc] = json.dumps(c[jc])
+            if plan_down is not None:
+                pid = c.get('plan_id')
+                if pid is not None:
+                    local_pid = plan_down.get(str(pid))
+                    if local_pid is None:
+                        continue  # plan not in local catalog — skip (local FK)
+                    c['plan_id'] = local_pid
             converted.append(c)
         self._stamp_synced(converted)
         return self._upsert_owner_sqlite(table, converted, pk_cols, common)
@@ -2082,6 +2179,24 @@ class SyncService:
         converted_records = [
             TypeConverter.convert_dict_to_sqlite(r, USER_PERMISSION_COLUMN_TYPES) for r in records
         ]
+        # Reverse the upload remap: cloud permission UUIDs -> local catalog UUIDs
+        # (matched by name). Drop rows for a permission the LOCAL catalog lacks —
+        # they can't satisfy the local FK.
+        _, cloud_to_local = self._perm_id_maps()
+        remapped = []
+        for r in converted_records:
+            pid = r.get('permission_id')
+            if pid is None:
+                remapped.append(r)
+                continue
+            local_pid = cloud_to_local.get(str(pid))
+            if local_pid is not None:
+                r['permission_id'] = local_pid
+                remapped.append(r)
+            # else: unknown permission locally — skip to avoid a local FK violation
+        converted_records = remapped
+        if not converted_records:
+            return 0
         columns = ['id', 'user_id', 'permission_id', 'granted_at', 'granted_by', 'updated_at', 'synced_at']
 
         return self._upsert_to_sqlite('user_permissions', self._stamp_synced(converted_records), 'id', columns)
