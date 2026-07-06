@@ -1,6 +1,6 @@
 
-import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Cloud, Check, AlertCircle } from 'lucide-react';
+import { useState, useEffect, useCallback, useRef } from 'react';
+import { RefreshCw, Cloud, Check, AlertCircle, CloudOff } from 'lucide-react';
 import api from '@/lib/api';
 import { useClient } from '@/contexts/ClientContext';
 
@@ -24,9 +24,11 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
   const { client } = useClient();
   const [status, setStatus] = useState<SyncStatus | null>(null);
   const [syncing, setSyncing] = useState(false);
-  const [syncResult, setSyncResult] = useState<'success' | 'partial' | 'error' | null>(null);
+  const [syncResult, setSyncResult] = useState<'success' | 'partial' | 'error' | 'offline' | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [details, setDetails] = useState<string | null>(null);
+  // Guards against overlapping runs (manual click racing the auto-retry).
+  const syncingRef = useRef(false);
 
   const fetchStatus = useCallback(async () => {
     try {
@@ -41,7 +43,9 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
     fetchStatus();
   }, [fetchStatus]);
 
-  const triggerSync = async () => {
+  const triggerSync = useCallback(async () => {
+    if (syncingRef.current) return;  // never overlap a manual click with an auto-retry
+    syncingRef.current = true;
     setSyncing(true);
     setSyncResult(null);
     setError(null);
@@ -72,6 +76,11 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
         setSyncResult('success');
         setDetails(summary);
         setTimeout(() => { setSyncResult(null); setDetails(null); }, 5000);
+      } else if (data.status === 'offline') {
+        // Cloud unreachable — this is expected offline behaviour, not a failure.
+        // Local data is safe; say so plainly instead of a red "Failed".
+        setSyncResult('offline');
+        setError(data.message || "You're offline — changes are saved locally and will sync later.");
       } else if (data.status === 'partial') {
         // One direction worked, the other didn't — surface which, not a blanket fail.
         setSyncResult('partial');
@@ -88,12 +97,35 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
 
       await fetchStatus();
     } catch (err: any) {
-      setSyncResult('error');
-      setError(err.response?.data?.message || err.response?.data?.error || 'Failed to sync');
+      // A network-level failure (no response at all) means the local backend or
+      // network dropped — treat it as offline so auto-retry kicks in, rather
+      // than a hard red "Failed".
+      if (!err.response) {
+        setSyncResult('offline');
+        setError("You're offline — changes are saved locally and will sync when you're back online.");
+      } else {
+        setSyncResult('error');
+        setError(err.response?.data?.message || err.response?.data?.error || 'Failed to sync');
+      }
     } finally {
       setSyncing(false);
+      syncingRef.current = false;
     }
-  };
+  }, [client]);
+
+  // Auto-retry when connectivity returns: while offline, retry the moment the
+  // browser reports it's back online, plus a periodic fallback (a NAT64/pooler
+  // outage may never flip navigator.onLine, so we can't rely on the event alone).
+  useEffect(() => {
+    if (syncResult !== 'offline') return;
+    const retry = () => { if (!syncingRef.current) triggerSync(); };
+    window.addEventListener('online', retry);
+    const intervalId = window.setInterval(retry, 45000);
+    return () => {
+      window.removeEventListener('online', retry);
+      window.clearInterval(intervalId);
+    };
+  }, [syncResult, triggerSync]);
 
   const formatLastSync = (dateStr: string) => {
     const date = new Date(dateStr);
@@ -120,6 +152,7 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
           ${syncResult === 'success' ? 'bg-green-100 dark:bg-green-900/30' : ''}
           ${syncResult === 'partial' ? 'bg-amber-100 dark:bg-amber-900/30' : ''}
           ${syncResult === 'error' ? 'bg-red-100 dark:bg-red-900/30' : ''}
+          ${syncResult === 'offline' ? 'bg-slate-100 dark:bg-slate-800' : ''}
         `}
         title={error || 'Sync with cloud database'}
       >
@@ -127,6 +160,8 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
           <Check className="w-4 h-4 text-green-600" />
         ) : syncResult === 'partial' ? (
           <AlertCircle className="w-4 h-4 text-amber-600" />
+        ) : syncResult === 'offline' ? (
+          <CloudOff className="w-4 h-4 text-slate-500" />
         ) : syncResult === 'error' ? (
           <AlertCircle className="w-4 h-4 text-red-600" />
         ) : (
@@ -161,7 +196,9 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
                 ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-700 dark:text-amber-300'
                 : syncResult === 'error'
                   ? 'bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300'
-                  : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20'
+                  : syncResult === 'offline'
+                    ? 'bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300'
+                    : 'bg-white dark:bg-gray-800 text-gray-700 dark:text-gray-300 border border-gray-200 dark:border-gray-700 hover:border-blue-300 dark:hover:border-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/20'
           }
         `}
       >
@@ -179,6 +216,11 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
           <>
             <AlertCircle className="w-3.5 h-3.5" />
             Partial
+          </>
+        ) : syncResult === 'offline' ? (
+          <>
+            <CloudOff className="w-3.5 h-3.5" />
+            Offline
           </>
         ) : syncResult === 'error' ? (
           <>
@@ -200,7 +242,10 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
       )}
 
       {error && (
-        <span className="text-[10px] text-red-500" title={error}>
+        <span
+          className={`text-[10px] ${syncResult === 'offline' ? 'text-slate-500 dark:text-slate-400' : 'text-red-500'}`}
+          title={error}
+        >
           {error.length > 30 ? error.substring(0, 30) + '...' : error}
         </span>
       )}

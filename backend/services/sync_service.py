@@ -319,7 +319,10 @@ class SyncService:
                 logger.error(f"[SyncService] Bulk order item sync failed: {e}")
                 results["errors"].append(f"Bulk order items: {str(e)}")
 
-            # Sync users (excluding password_hash for security)
+            # Sync users (password_hash included on both INSERT and the
+            # ON CONFLICT UPDATE, so a local password change actually reaches the
+            # cloud — without the UPDATE clause the old hash stayed valid on the
+            # live server / other devices).
             try:
                 count = self._sync_users(client_id)
                 results["synced"]["users"] = count
@@ -885,6 +888,7 @@ class SyncService:
             )
             ON CONFLICT (user_id) DO UPDATE SET
                 email = EXCLUDED.email,
+                password_hash = EXCLUDED.password_hash,
                 role = EXCLUDED.role,
                 is_super_admin = EXCLUDED.is_super_admin,
                 last_login = EXCLUDED.last_login,
@@ -1367,6 +1371,51 @@ class SyncService:
                 "timestamp": get_current_time().isoformat()
             }
 
+    def _cloud_reachable(self, budget=4.0, per_try=1.5):
+        """Fast preflight: can we open a TCP socket to the cloud DB host within a
+        hard time budget? Offline-first must FAIL-FAST, not hang.
+
+        Why this exists: the Postgres pooler host can resolve to several
+        addresses (e.g. 3 IPv6/NAT64 entries). libpq applies connect_timeout
+        PER address, so a dead network stalls ~3x the timeout (~30s) before the
+        driver gives up — long enough to blow the client's 30s HTTP timeout and
+        surface a scary "Failed to sync". A cheap socket probe with a shared
+        wall-clock deadline lets us detect "offline" in a couple of seconds and
+        skip the whole sync cleanly.
+        """
+        import socket
+        import time as _time
+        from urllib.parse import urlparse
+        db_url = os.getenv('DB_URL', '')
+        if not db_url:
+            return False
+        try:
+            p = urlparse(db_url)
+            host, port = p.hostname, (p.port or 5432)
+        except Exception:
+            return False
+        if not host:
+            return False
+        deadline = _time.monotonic() + budget
+        try:
+            infos = socket.getaddrinfo(host, port, proto=socket.IPPROTO_TCP)
+        except Exception:
+            return False  # DNS itself failed — treat as offline
+        for family, socktype, proto, _canon, sockaddr in infos:
+            remaining = deadline - _time.monotonic()
+            if remaining <= 0:
+                break
+            s = socket.socket(family, socktype, proto)
+            try:
+                s.settimeout(min(per_try, max(0.5, remaining)))
+                s.connect(sockaddr)
+                return True
+            except Exception:
+                continue
+            finally:
+                s.close()
+        return False
+
     def full_sync(self, client_id):
         """
         Perform full bidirectional sync (upload then download).
@@ -1377,6 +1426,19 @@ class SyncService:
         Returns:
             dict: Combined sync results
         """
+        # Offline-first fail-fast: if the cloud DB isn't reachable, don't grind
+        # through ~30s of per-address connect timeouts — return a clear "offline"
+        # result in a couple of seconds. Local data is untouched and safe.
+        if not self._cloud_reachable():
+            logger.warning("[SyncService] Cloud unreachable — skipping sync (offline).")
+            return {
+                "status": "offline",
+                "reason": "cloud_unreachable",
+                "message": "Can't reach the sync server — you appear to be offline. "
+                           "Your changes are saved locally and will sync automatically when you're back online.",
+                "timestamp": get_current_time().isoformat(),
+            }
+
         logger.info(f"[SyncService] Starting full bidirectional sync for client {client_id}...")
 
         upload_results = self.sync_all(client_id)

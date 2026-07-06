@@ -1,1 +1,0 @@
-import{a}from"./index-DI8KrP0S.js";async function o(){const{data:t}=await a.get("/shop-settings");return t.data}async function e(t){const{data:s}=await a.put("/shop-settings",t);return s.data}export{o as g,e as u};

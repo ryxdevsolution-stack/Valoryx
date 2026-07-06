@@ -416,6 +416,7 @@ def login():
         # Update last_login and last_login_ip
         user.last_login = datetime.utcnow()
         user.last_login_ip = incoming_ip
+        user.synced_at = None  # re-queue so last_login reaches the cloud / live server
 
         # Create a tracked session record for this login
         ua_string = request.headers.get('User-Agent', '')
@@ -868,6 +869,7 @@ def reset_password():
         user.password_hash = bcrypt.hashpw(new_password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
         user.reset_token = None
         user.reset_token_expires = None
+        user.synced_at = None  # re-queue so the new password_hash reaches the cloud
         db.session.commit()
 
         # Invalidate any cached sessions for this user
