@@ -78,16 +78,30 @@ if DB_URL:
 now = datetime.now(timezone.utc)
 renewed = overdue = drift = 0
 
+_LIVE_STATES = ('active', 'authenticated', 'charged')
+
+# Count active subscriptions per owning client (from the sub's notes.client_id).
+# Two live subs for the same client = a duplicate → double-billing risk.
+active_by_client = {}
+for s in subs:
+    if s.get('status') in _LIVE_STATES:
+        cid = (s.get('notes') or {}).get('client_id')
+        if cid:
+            active_by_client.setdefault(cid, []).append(s['id'])
+dupe_clients = {c: ids for c, ids in active_by_client.items() if len(ids) > 1}
+
 print(f'{"SUBSCRIPTION":24} {"RZ_STATUS":11} {"PAID":4} {"NEXT_CHG":10} {"CUR_END":10} '
       f'{"DB_STATUS":11} {"DB_END":11} FLAGS')
-print('-' * 108)
+print('-' * 116)
 
+orphan = dupe = 0
 for s in sorted(subs, key=lambda x: x.get('paid_count', 0), reverse=True):
     sid = s['id']
     st = s.get('status')
     pc = s.get('paid_count', 0) or 0
     ca = s.get('charge_at')
     ce = s.get('current_end')
+    cid = (s.get('notes') or {}).get('client_id')
     db = db_map.get(sid, {})
 
     flags = []
@@ -97,16 +111,28 @@ for s in sorted(subs, key=lambda x: x.get('paid_count', 0), reverse=True):
     if st == 'active' and ca and datetime.fromtimestamp(ca, timezone.utc) < now:
         overdue += 1
         flags.append('OVERDUE')
-    if db and st in ('active', 'authenticated', 'charged') and db.get('status') != 'active':
+    if db and st in _LIVE_STATES and db.get('status') != 'active':
         drift += 1
         flags.append('DB≠ACTIVE')
+    # Active on Razorpay but no client_entry points here — a paying customer the app doesn't track.
+    if st in _LIVE_STATES and not db:
+        orphan += 1
+        flags.append('ORPHAN(client=%s)' % (cid[:8] if cid else '?'))
+    if cid in dupe_clients and st in _LIVE_STATES:
+        dupe += 1
+        flags.append('DUPLICATE')
 
     print(f'{sid:24} {str(st):11} {pc:<4} {_ts(ca):10} {_ts(ce):10} '
           f'{str(db.get("status", "-")):11} {str(db.get("end", "-"))[:10]:11} {",".join(flags)}')
 
-print('-' * 108)
+print('-' * 116)
 print(f'\nSUMMARY: {len(subs)} subscriptions | renewed (paid_count>=2): {renewed} | '
-      f'overdue-active: {overdue} | DB-drift: {drift}')
+      f'overdue-active: {overdue} | DB-drift: {drift} | orphan-active: {orphan} | duplicate-active: {dupe}')
+
+if dupe_clients:
+    print('\n🔴 DUPLICATE ACTIVE SUBSCRIPTIONS (same client, >1 active = double-billing risk):')
+    for c, ids in dupe_clients.items():
+        print(f'   client {c}: {", ".join(ids)}')
 
 if MODE == 'TEST':
     print('\nNOTE: TEST mode does NOT auto-fire recurring charges — paid_count stays 1 '

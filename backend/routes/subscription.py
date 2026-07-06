@@ -589,7 +589,9 @@ def razorpay_webhook():
         payload = request.get_json()
         event = payload.get('event', '')
         logger.info(f'[Webhook] Received event: {event}')
-        logger.info(f'[Webhook] Full payload: {payload}')
+        # Full payload carries payment/customer PII — only at DEBUG level, so it is
+        # available when actively diagnosing but not dumped into production logs.
+        logger.debug(f'[Webhook] Full payload: {payload}')
 
         # ----------------------------------------------------------------
         # payment.authorized — capture subscription payment immediately
