@@ -114,6 +114,11 @@ def update_profile():
 
         user.updated_at = datetime.utcnow()
         user.updated_by = user_id
+        # Re-queue this row for upload: the sync uploader only picks up rows
+        # WHERE synced_at IS NULL. Without this, an edit made after the row's
+        # first successful sync is skipped forever and never reaches the cloud
+        # (and therefore never reaches other devices / the live server).
+        user.synced_at = None
 
         db.session.commit()
 
@@ -176,6 +181,10 @@ def change_password():
         user.updated_by = user_id
         # Clear force-change flag now that the user has chosen their own password
         user.must_change_password = False
+        # Re-queue for upload (see update_profile): a locally-changed password
+        # that never syncs would leave the OLD password working on the live
+        # server and other devices — a correctness and security gap.
+        user.synced_at = None
 
         # Security: revoke all OTHER active sessions on password change.
         # Keeps the current session alive (so user stays logged in here) but

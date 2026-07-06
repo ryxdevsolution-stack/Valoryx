@@ -794,6 +794,7 @@ def update_team_member(user_id):
 
         user.updated_at = datetime.utcnow()
         user.updated_by = g.user['user_id']
+        user.synced_at = None  # re-queue for cloud upload (uploader skips non-NULL synced_at)
 
         new_data = {
             'email': user.email,
@@ -888,6 +889,7 @@ def delete_team_member(user_id):
         user.is_active = False
         user.updated_at = datetime.utcnow()
         user.updated_by = g.user['user_id']
+        user.synced_at = None  # re-queue for cloud upload (uploader skips non-NULL synced_at)
 
         _log_team_action(
             action_type='team_member_deleted',
@@ -939,6 +941,7 @@ def toggle_team_member_status(user_id):
         user.is_active = not old_active
         user.updated_at = datetime.utcnow()
         user.updated_by = g.user['user_id']
+        user.synced_at = None  # re-queue for cloud upload (uploader skips non-NULL synced_at)
 
         _log_team_action(
             action_type='team_member_status_toggled',
@@ -1018,6 +1021,10 @@ def reset_team_member_password(user_id):
         user.must_change_password = True  # Force user to change password on next login
         user.updated_at = datetime.utcnow()
         user.updated_by = g.user['user_id']
+        # re-queue for cloud upload so the new password_hash propagates. NOTE:
+        # must_change_password is NOT yet in the _sync_users upsert columns, so
+        # the force-change flag itself won't reach the cloud (follow-up).
+        user.synced_at = None
 
         _log_team_action(
             action_type='team_member_password_reset',
