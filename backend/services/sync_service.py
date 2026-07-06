@@ -213,6 +213,7 @@ class SyncService:
                 "timestamp": get_current_time().isoformat(),
                 "direction": "upload",
                 "synced": {
+                    "client_entry": 0,
                     "gst_bills": 0,
                     "non_gst_bills": 0,
                     "stock": 0,
@@ -232,6 +233,18 @@ class SyncService:
                 },
                 "errors": []
             }
+
+            # Sync the client_entry (ACCOUNT/tenant row) FIRST. Every child table
+            # below carries a client_id FK to it — if the account was created
+            # locally (offline) and its client_entry never reached Supabase, every
+            # child insert fails its FK and the whole sync uploads 0 rows.
+            try:
+                count = self._sync_client_entry(client_id)
+                results["synced"]["client_entry"] = count
+                logger.info(f"[SyncService] Uploaded {count} client_entry (account)")
+            except Exception as e:
+                logger.error(f"[SyncService] client_entry sync failed: {e}")
+                results["errors"].append(f"client_entry: {str(e)}")
 
             # Sync GST bills
             try:
@@ -538,6 +551,81 @@ class SyncService:
         synced_ids = self._push_batch(table, insert_sql, payload, ids)
         self._mark_as_synced(table, id_column, synced_ids)
         return len(synced_ids)
+
+    def _pg_client_entry_types(self):
+        """Cache {column_name: data_type} for the CLOUD client_entry table, so we
+        only upload columns the cloud actually has (its schema may lag local
+        drift: custom_monthly_amount, lemon_squeezy_*, etc.)."""
+        if getattr(self, '_client_entry_pg_types', None) is not None:
+            return self._client_entry_pg_types
+        types = {}
+        try:
+            with self.postgres_engine.connect() as pg_conn:
+                for r in pg_conn.execute(text(
+                    "SELECT column_name, data_type FROM information_schema.columns "
+                    "WHERE table_name = 'client_entry'"
+                )):
+                    types[r[0]] = r[1]
+        except Exception as e:
+            logger.error(f"[SyncService] Could not read cloud client_entry schema: {e}")
+        self._client_entry_pg_types = types
+        return types
+
+    def _sync_client_entry(self, client_id=None):
+        """Upload the client_entry (the ACCOUNT/tenant row) to Postgres.
+
+        Runs FIRST in sync_all, before any child table. users/billing/stock/
+        payment_transaction/branches all carry a client_id FK to client_entry —
+        an account created locally (offline) whose client_entry never reached
+        the cloud makes every child insert fail its FK, so the whole sync lands
+        0 rows. This upserts the parent so the children can follow.
+
+        client_entry has no `synced_at` column (it's a single master row per
+        tenant, not an append-only stream), so this can't use _upload_pending.
+        It always upserts — idempotent via ON CONFLICT — which is trivially cheap
+        for one row and guarantees the parent exists.
+        """
+        params = {}
+        where = "WHERE 1=1"
+        if client_id:
+            where += " AND client_id = :client_id"
+            params["client_id"] = client_id
+        with self.sqlite_engine.connect() as sqlite_conn:
+            rows = [dict(r._mapping) for r in sqlite_conn.execute(
+                text(f"SELECT * FROM client_entry {where}"), params)]
+        if not rows:
+            return 0
+
+        pg_types = self._pg_client_entry_types()
+        if not pg_types:
+            return 0
+
+        # Only upload columns present on BOTH sides.
+        insert_cols = [c for c in rows[0].keys() if c in pg_types]
+        if 'client_id' not in insert_cols:
+            return 0
+        cols_sql = ', '.join(insert_cols)
+        binds_sql = ', '.join(f':{c}' for c in insert_cols)
+        updates = ', '.join(f'{c} = EXCLUDED.{c}' for c in insert_cols if c != 'client_id')
+        insert_sql = (
+            f"INSERT INTO client_entry ({cols_sql}) VALUES ({binds_sql}) "
+            f"ON CONFLICT (client_id) DO UPDATE SET {updates}"
+        )
+
+        payload, ids = [], []
+        for rec in rows:
+            row = {}
+            for c in insert_cols:
+                v = rec.get(c)
+                # SQLite has no bool type (stores 0/1); Postgres won't cast int->bool.
+                if pg_types[c] == 'boolean' and isinstance(v, int):
+                    v = bool(v)
+                elif isinstance(v, (dict, list)):
+                    v = json.dumps(v)
+                row[c] = v
+            payload.append(row)
+            ids.append(rec['client_id'])
+        return len(self._push_batch('client_entry', insert_sql, payload, ids))
 
     def _sync_gst_bills(self, client_id=None):
         """Owner-scoped, batched GST-bill upload."""
