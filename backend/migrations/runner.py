@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 34
+CURRENT_SCHEMA_VERSION = 35
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -1914,6 +1914,65 @@ def _m034_session_platform(db):
     logging.info("[Migration] v34: user_sessions.platform column added")
 
 
+def _m035_schema_drift_reconcile(db):
+    """v35: Add columns that were added to models over time but never migrated,
+    causing 'column does not exist' failures (login, subscribe) on any DB that
+    predates them:
+      - users: report_email_frequency, report_unsubscribe_token (broke LOGIN)
+      - payment_transaction: gateway + Lemon Squeezy ids + invoice/failure tracking
+      - client_entry: lemon_squeezy_subscription_id
+    Every add is guarded (only runs if the column is absent), so it is safe on
+    DBs already patched by hand. Idempotent, engine-agnostic.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    # users — scheduled email-report feature (this drift broke login)
+    _add_col('users', 'report_email_frequency', "VARCHAR(10) NOT NULL DEFAULT 'off'")
+    _add_col('users', 'report_unsubscribe_token', 'VARCHAR(64) NULL')
+
+    # payment_transaction — multi-gateway abstraction + invoice/failure tracking
+    _add_col('payment_transaction', 'gateway', "VARCHAR(20) NOT NULL DEFAULT 'razorpay'")
+    _add_col('payment_transaction', 'ls_subscription_id', 'VARCHAR(100) NULL')
+    _add_col('payment_transaction', 'ls_order_id', 'VARCHAR(100) NULL')
+    _add_col('payment_transaction', 'razorpay_subscription_id', 'VARCHAR(100) NULL')
+    _add_col('payment_transaction', 'invoice_id', 'VARCHAR(100) NULL')
+    _add_col('payment_transaction', 'invoice_number', 'VARCHAR(100) NULL')
+    _add_col('payment_transaction', 'payment_failure_count', 'INTEGER DEFAULT 0')
+    _add_col('payment_transaction', 'last_failure_at', 'DATETIME NULL')
+
+    # client_entry — Lemon Squeezy subscription id
+    _add_col('client_entry', 'lemon_squeezy_subscription_id', 'VARCHAR(100) NULL')
+
+    # Helpful indexes for the newly-added lookup columns.
+    for idx_sql in (
+        "CREATE INDEX IF NOT EXISTS ix_users_report_unsubscribe_token ON users (report_unsubscribe_token)",
+        "CREATE UNIQUE INDEX IF NOT EXISTS uq_payment_invoice_id ON payment_transaction (invoice_id)",
+        "CREATE INDEX IF NOT EXISTS ix_payment_ls_subscription_id ON payment_transaction (ls_subscription_id)",
+        "CREATE INDEX IF NOT EXISTS ix_payment_razorpay_subscription_id ON payment_transaction (razorpay_subscription_id)",
+    ):
+        try:
+            db.session.execute(text(idx_sql))
+        except Exception as _idx_err:
+            logging.warning(f"[Migration] v35 index skipped: {_idx_err}")
+
+    db.session.commit()
+    logging.info("[Migration] v35: schema-drift columns reconciled")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -1950,6 +2009,7 @@ MIGRATIONS = [
     (32, _m032_extend_sync_owner_tables),
     (33, _m033_bill_prefix),
     (34, _m034_session_platform),
+    (35, _m035_schema_drift_reconcile),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────
