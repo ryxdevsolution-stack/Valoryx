@@ -234,17 +234,33 @@ def create_app():
                 db.session.rollback()
             logging.warning(f"[Seed] Permission seeding skipped: {_e}")
 
-    # Telegram daily report scheduler (runs at TELEGRAM_REPORT_HOUR:TELEGRAM_REPORT_MINUTE IST)
+    # Telegram daily report scheduler — DISABLED. Replaced by the report email
+    # scheduler below (email, not Telegram, is now the daily/weekly summary
+    # channel). telegram_scheduler.py / telegram_service.py are left in place
+    # untouched but no longer auto-start, so users can't get both.
+    #
+    # try:
+    #     from services.telegram_scheduler import init_telegram_scheduler
+    #     tg_scheduler = init_telegram_scheduler(app)
+    #     if tg_scheduler:
+    #         app.config['TELEGRAM_SCHEDULER'] = tg_scheduler
+    #         logging.info("[OK] Telegram daily report scheduler initialized")
+    #     else:
+    #         logging.info("[INFO] Telegram scheduler disabled (TELEGRAM_BOT_TOKEN not set)")
+    # except Exception as e:
+    #     logging.warning(f"[WARNING] Telegram scheduler failed to initialize: {e}")
+
+    # Report email scheduler — opt-in daily/weekly business summary emails
+    # (replaces Telegram as the default channel; report_email_frequency
+    # defaults to 'off' so this never emails anyone who hasn't asked for it).
     try:
-        from services.telegram_scheduler import init_telegram_scheduler
-        tg_scheduler = init_telegram_scheduler(app)
-        if tg_scheduler:
-            app.config['TELEGRAM_SCHEDULER'] = tg_scheduler
-            logging.info("[OK] Telegram daily report scheduler initialized")
-        else:
-            logging.info("[INFO] Telegram scheduler disabled (TELEGRAM_BOT_TOKEN not set)")
+        from services.report_email_scheduler import init_report_email_scheduler
+        report_scheduler = init_report_email_scheduler(app)
+        if report_scheduler:
+            app.config['REPORT_EMAIL_SCHEDULER'] = report_scheduler
+            logging.info("[OK] Report email scheduler initialized")
     except Exception as e:
-        logging.warning(f"[WARNING] Telegram scheduler failed to initialize: {e}")
+        logging.warning(f"[WARNING] Report email scheduler failed to initialize: {e}")
 
     # Subscription reconciler — hourly safety-net that syncs local subscription
     # state from Razorpay so a missed invoice.paid webhook never locks out a
@@ -809,6 +825,57 @@ def create_app():
             return jsonify({'success': True, 'message': f'Test message sent to chat ID {user.telegram_chat_id}'}), 200
         return jsonify({'error': 'Failed to send — check TELEGRAM_BOT_TOKEN and chat ID'}), 502
 
+    # Report email: manually trigger the daily/weekly run (super-admin only)
+    @app.route('/api/reports/trigger', methods=['POST'])
+    def trigger_report_email():
+        """Fire the report email run immediately. Requires super-admin JWT."""
+        token = (request.headers.get('Authorization') or '').removeprefix('Bearer ').strip()
+        if not token:
+            return jsonify({'error': 'Authentication required'}), 401
+
+        try:
+            import jwt as _jwt
+            from config import Config as _Cfg
+            decoded = _jwt.decode(token, _Cfg.JWT_SECRET_KEY, algorithms=['HS256'])
+        except Exception:
+            return jsonify({'error': 'Invalid or expired token'}), 401
+
+        if not decoded.get('is_super_admin'):
+            return jsonify({'error': 'Super-admin access required'}), 403
+
+        sched = app.config.get('REPORT_EMAIL_SCHEDULER')
+        if not sched:
+            return jsonify({'error': 'Report email scheduler not configured'}), 400
+
+        import threading as _threading
+        _threading.Thread(target=sched.trigger_now, daemon=True).start()
+        return jsonify({'status': 'triggered', 'message': 'Report emails are being sent in the background'}), 200
+
+    # Report email: one-click unsubscribe (public — no auth, opened straight
+    # from the email link). Token-only so it can't be used to guess/target
+    # other users' settings.
+    @app.route('/api/reports/unsubscribe', methods=['GET'])
+    def unsubscribe_report_email():
+        token = request.args.get('token', '').strip()
+        if not token:
+            return jsonify({'error': 'Missing unsubscribe token'}), 400
+
+        from models.user_model import User
+        user = User.query.filter_by(report_unsubscribe_token=token).first()
+        if not user:
+            return jsonify({'error': 'Invalid or already-used unsubscribe link'}), 404
+
+        user.report_email_frequency = 'off'
+        db.session.commit()
+
+        return (
+            "<html><body style='font-family:sans-serif;text-align:center;padding:60px 20px;'>"
+            "<h2>You've been unsubscribed</h2>"
+            "<p>You will no longer receive business summary emails. "
+            "You can turn them back on anytime from Profile &rarr; Notifications.</p>"
+            "</body></html>"
+        ), 200
+
     # Health check endpoint (basic uptime check)
     @app.route('/api/health', methods=['GET'])
     def health_check():
@@ -1283,6 +1350,27 @@ if __name__ == '__main__':
         except Exception as e:
             db.session.rollback()
             print(f"[Migration] telegram_chat_id (users) skipped (may already exist): {e}")
+
+        # Daily/weekly report email opt-in columns (users table)
+        try:
+            from sqlalchemy import text, inspect as sa_inspect
+            inspector = sa_inspect(db.engine)
+            existing_cols = [col['name'] for col in inspector.get_columns('users')]
+            if 'report_email_frequency' not in existing_cols:
+                print("[Migration] Adding report_email_frequency to users table...")
+                db.session.execute(text(
+                    "ALTER TABLE users ADD COLUMN report_email_frequency VARCHAR(10) NOT NULL DEFAULT 'off'"
+                ))
+                db.session.commit()
+                print("[Migration] ✓ report_email_frequency column added to users")
+            if 'report_unsubscribe_token' not in existing_cols:
+                print("[Migration] Adding report_unsubscribe_token to users table...")
+                db.session.execute(text("ALTER TABLE users ADD COLUMN report_unsubscribe_token VARCHAR(64) NULL"))
+                db.session.commit()
+                print("[Migration] ✓ report_unsubscribe_token column added to users")
+        except Exception as e:
+            db.session.rollback()
+            print(f"[Migration] report email columns (users) skipped (may already exist): {e}")
 
         # Phase 1.6: Subscription tables + plan_id column migration
         try:

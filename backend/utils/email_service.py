@@ -758,3 +758,50 @@ def send_webhook_disabled_email(to_email: str, business_name: str, webhook_url: 
         </p>
     """)
     _send_async(to_email, subject, html)
+
+
+# ---------------------------------------------------------------------------
+# Daily / weekly business summary report
+# ---------------------------------------------------------------------------
+
+def send_daily_summary_email(to_email: str, summary: dict, unsubscribe_link: str, frequency: str = 'daily'):
+    """
+    Send a business summary email. Only called when there was actual activity
+    that day (report_email_scheduler skips clients with zero invoices) —
+    keeps this from ever reading as a spammy "nothing happened" email.
+    """
+    cadence = 'Daily' if frequency == 'daily' else 'Weekly'
+    subject = f"{cadence} summary for {summary['client_name']} — {summary['date_display']}"
+
+    rows = (
+        _info_row('Revenue (paid)', f"₹{summary['total_revenue']:,.2f}", first=True)
+        + _info_row('Invoices generated', str(summary['total_invoices']))
+        + _info_row('Average bill value', f"₹{summary['avg_bill']:,.2f}")
+    )
+    if summary.get('top_item'):
+        rows += _info_row('Top selling item', f"{summary['top_item']} ({int(summary['top_qty'])} units)")
+
+    pending_block = ''
+    if summary.get('pending_amount', 0) > 0:
+        pending_block = _alert_box(
+            f"₹{summary['pending_amount']:,.2f} is still pending collection from bills marked "
+            f"'pay later' — not counted in the revenue above.",
+            kind='info',
+        )
+
+    body = f"""
+        <h2 style="margin:0 0 6px 0;font-size:22px;font-weight:700;color:#111111;">{cadence} summary — {summary['date_display']}</h2>
+        <p style="margin:0 0 20px 0;color:#555555;">Here's how <strong>{summary['client_name']}</strong> performed.</p>
+
+        {_info_table(rows)}
+        {pending_block}
+
+        <p style="font-size:13px;color:#888888;margin-top:24px;">
+            Don't want these emails? <a href="{unsubscribe_link}" style="color:#888888;">Unsubscribe</a>
+            or change the frequency anytime from <strong>Profile → Notifications</strong>.
+        </p>
+    """
+    _send_async(to_email, subject, _base_layout(
+        preheader=f"{cadence} summary for {summary['date_display']}: ₹{summary['total_revenue']:,.2f} revenue.",
+        body_html=body,
+    ))
