@@ -59,6 +59,10 @@ export const APP_CONFIG = {
   name: 'Valoryx',
   version: import.meta.env.VITE_APP_VERSION || '1.0.0',
   supportEmail: 'support@ryxbilling.com',
+  // Support WhatsApp (digits only, incl. country code). Overridable via env so
+  // it is never hardcoded per-page. Set VITE_SUPPORT_WHATSAPP to the real number.
+  supportWhatsapp: import.meta.env.VITE_SUPPORT_WHATSAPP || '919876543210',
+  trialDays: 14,
 } as const;
 
 // ============================================================================

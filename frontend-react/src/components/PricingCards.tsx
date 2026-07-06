@@ -150,7 +150,9 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
       const options = {
         key: razorpay_key_id,
         subscription_id: subscription_id,
-        name: 'Valoryx',
+        name: client?.client_name || 'Valoryx',
+        // Brand the Razorpay checkout modal with the tenant's logo when available.
+        image: client?.logo_url || undefined,
         description: `${plan_name} Plan - ${billingCycle === 'yearly' ? 'Yearly' : 'Monthly'}`,
         handler: async function (response: any) {
           try {
@@ -233,33 +235,39 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
     )
   }
 
+  const maxSavings = plans.length ? Math.max(0, ...plans.map(getYearlySavings)) : 0
+
   return (
     <div>
-      {/* Monthly/Yearly Toggle */}
-      <div className="flex items-center justify-center gap-3 mb-8">
-        <span className={`text-sm font-medium ${billingCycle === 'monthly' ? 'text-gray-900 dark:text-white' : 'text-gray-500'}`}>
-          Monthly
-        </span>
-        <button
-          onClick={() => setBillingCycle(billingCycle === 'monthly' ? 'yearly' : 'monthly')}
-          className={`relative w-14 h-7 rounded-full transition-colors ${
-            billingCycle === 'yearly' ? 'bg-blue-600' : 'bg-gray-300 dark:bg-gray-600'
-          }`}
-        >
-          <span
-            className={`absolute top-0.5 left-0.5 w-6 h-6 bg-white rounded-full shadow transition-transform ${
-              billingCycle === 'yearly' ? 'translate-x-7' : ''
-            }`}
-          />
-        </button>
-        <span className={`text-sm font-medium ${billingCycle === 'yearly' ? 'text-gray-900 dark:text-white' : 'text-gray-500'}`}>
-          Yearly
-        </span>
-        {billingCycle === 'yearly' && (
-          <span className="bg-green-100 text-green-700 text-xs font-semibold px-2 py-0.5 rounded-full">
-            Save up to {Math.max(...plans.map(getYearlySavings))}%
-          </span>
-        )}
+      {/* Monthly / Yearly segmented toggle */}
+      <div className="flex flex-col items-center gap-2 mb-8">
+        <div className="inline-flex items-center p-1 rounded-full bg-gray-100 dark:bg-gray-800 border border-gray-200 dark:border-gray-700">
+          {(['monthly', 'yearly'] as const).map((cycle) => (
+            <button
+              key={cycle}
+              type="button"
+              onClick={() => setBillingCycle(cycle)}
+              aria-pressed={billingCycle === cycle}
+              className={`relative px-5 py-2 rounded-full text-sm font-semibold transition-all cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-500 ${
+                billingCycle === cycle
+                  ? 'bg-white dark:bg-gray-700 text-gray-900 dark:text-white shadow-sm'
+                  : 'text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200'
+              }`}
+            >
+              {cycle === 'monthly' ? 'Monthly' : 'Yearly'}
+              {cycle === 'yearly' && maxSavings > 0 && (
+                <span className="ml-1.5 inline-block bg-emerald-100 dark:bg-emerald-900/40 text-emerald-700 dark:text-emerald-400 text-[10px] font-bold px-1.5 py-0.5 rounded-full align-middle">
+                  −{maxSavings}%
+                </span>
+              )}
+            </button>
+          ))}
+        </div>
+        <p className="text-xs text-gray-500 dark:text-gray-400">
+          {billingCycle === 'yearly'
+            ? `Billed annually${maxSavings > 0 ? ` · save up to ${maxSavings}%` : ''}`
+            : 'Billed monthly · switch to yearly to save'}
+        </p>
       </div>
 
       {error && (
@@ -288,69 +296,89 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
       )}
 
       {/* Plan Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 max-w-5xl mx-auto">
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-5 max-w-5xl mx-auto items-stretch">
         {plans.map((plan) => {
           const Icon = planIcons[plan.name] || Zap
           const price = billingCycle === 'yearly' ? plan.yearly_price : plan.monthly_price
           const savings = getYearlySavings(plan)
           const isPaying = payingPlanId === plan.plan_id
           const isCurrentPlan = client?.subscription_status === 'active' && client?.plan_id === plan.plan_id
+          const highlight = plan.is_popular && !isCurrentPlan
 
           return (
             <div
               key={plan.plan_id}
-              className={`relative rounded-2xl border-2 p-6 flex flex-col ${
-                plan.is_popular
-                  ? 'border-blue-600 shadow-xl shadow-blue-100 dark:shadow-blue-900/20'
-                  : 'border-gray-200 dark:border-gray-700'
+              className={`relative flex flex-col rounded-2xl bg-white dark:bg-gray-800 p-6 pt-7 transition-all duration-200 hover:-translate-y-1 motion-reduce:transform-none ${
+                highlight
+                  ? 'border-2 border-blue-600 shadow-xl shadow-blue-200/50 dark:shadow-blue-900/30 md:scale-[1.04] md:z-10'
+                  : 'border border-gray-200 dark:border-gray-700 shadow-sm hover:shadow-md hover:border-gray-300 dark:hover:border-gray-600'
               }`}
             >
+              {/* top accent bar on the highlighted plan */}
+              {highlight && (
+                <span className="absolute inset-x-0 top-0 h-1.5 rounded-t-2xl bg-gradient-to-r from-blue-500 to-blue-600" aria-hidden="true" />
+              )}
+
               {isCurrentPlan && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-600 text-white text-xs font-bold px-3 py-1 rounded-full">
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-emerald-600 text-white text-[11px] font-bold uppercase tracking-wide px-3 py-1 rounded-full shadow-sm">
                   Current Plan
                 </div>
               )}
-              {plan.is_popular && !isCurrentPlan && (
-                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-xs font-bold px-3 py-1 rounded-full">
+              {highlight && (
+                <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-[11px] font-bold uppercase tracking-wide px-3 py-1 rounded-full shadow-sm">
                   Most Popular
                 </div>
               )}
 
-              <div className="flex items-center gap-2 mb-2">
-                <Icon className={`w-5 h-5 ${plan.is_popular ? 'text-blue-600' : 'text-gray-600 dark:text-gray-400'}`} />
+              {/* Header */}
+              <div className="flex items-center gap-3 mb-1">
+                <span className={`inline-flex items-center justify-center w-10 h-10 rounded-xl ${
+                  highlight
+                    ? 'bg-blue-100 dark:bg-blue-900/40 text-blue-600 dark:text-blue-400'
+                    : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-300'
+                }`}>
+                  <Icon className="w-5 h-5" aria-hidden="true" />
+                </span>
                 <h3 className="text-lg font-bold text-gray-900 dark:text-white">{plan.name}</h3>
               </div>
-              <p className="text-sm text-gray-500 dark:text-gray-400 mb-4">{plan.description}</p>
+              <p className="text-sm text-gray-500 dark:text-gray-400 mb-5 min-h-[2.5rem]">{plan.description}</p>
 
-              <div className="mb-6">
-                <span className="text-3xl font-bold text-gray-900 dark:text-white">
-                  {formatPrice(price)}
-                </span>
-                <span className="text-gray-500 dark:text-gray-400 text-sm">
-                  /{billingCycle === 'yearly' ? 'year' : 'month'}
-                </span>
-                {billingCycle === 'yearly' && savings > 0 && (
-                  <div className="text-green-600 text-xs font-medium mt-1">
-                    Save {savings}% vs monthly
-                  </div>
-                )}
+              {/* Price */}
+              <div className="mb-5">
+                <div className="flex items-baseline gap-1">
+                  <span className="text-4xl font-extrabold tracking-tight text-gray-900 dark:text-white tabular-nums">
+                    {formatPrice(price)}
+                  </span>
+                  <span className="text-gray-500 dark:text-gray-400 text-sm font-medium">
+                    /{billingCycle === 'yearly' ? 'yr' : 'mo'}
+                  </span>
+                </div>
+                <div className="h-4 mt-1">
+                  {billingCycle === 'yearly' && savings > 0 && (
+                    <span className="text-emerald-600 dark:text-emerald-400 text-xs font-semibold">
+                      Save {savings}% vs monthly
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Limits */}
-              <div className="flex gap-3 mb-4 text-xs">
-                <span className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">
+              <div className="flex flex-wrap gap-2 mb-5">
+                <span className="inline-flex items-center gap-1 bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-xs font-medium px-2.5 py-1 rounded-lg tabular-nums">
                   {formatLimit(plan.limits.users)} users
                 </span>
-                <span className="bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded">
+                <span className="inline-flex items-center gap-1 bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-xs font-medium px-2.5 py-1 rounded-lg tabular-nums">
                   {formatLimit(plan.limits.bills_per_month)} bills/mo
                 </span>
               </div>
 
               {/* Features */}
-              <ul className="space-y-2 mb-6 flex-1">
+              <ul className="space-y-2.5 mb-6 flex-1">
                 {plan.features.map((feature) => (
-                  <li key={feature} className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-300">
-                    <Check className="w-4 h-4 text-green-500 flex-shrink-0 mt-0.5" />
+                  <li key={feature} className="flex items-start gap-2.5 text-sm text-gray-600 dark:text-gray-300">
+                    <span className="mt-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex-shrink-0">
+                      <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" strokeWidth={3} />
+                    </span>
                     {feature}
                   </li>
                 ))}
@@ -359,40 +387,38 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
               {/* CTA */}
               {showTrialCTA ? (
                 <a
-                  href={
-                    (window as any).electronAPI?.isElectron
-                      ? '#/auth/register'
-                      : '/auth/register'
-                  }
-                  className={`block text-center py-3 px-4 rounded-lg font-semibold transition ${
-                    plan.is_popular
-                      ? 'bg-blue-600 hover:bg-blue-700 text-white'
-                      : 'border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700'
+                  href={(window as any).electronAPI?.isElectron ? '#/auth/register' : '/auth/register'}
+                  className={`block text-center py-3 px-4 rounded-xl font-semibold transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 dark:focus-visible:ring-offset-gray-800 ${
+                    highlight
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm shadow-blue-600/20'
+                      : 'border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
                   }`}
                 >
                   Start Free Trial
                 </a>
               ) : isCurrentPlan ? (
                 <button
+                  type="button"
                   disabled
-                  className="w-full py-3 px-4 rounded-lg font-semibold bg-emerald-100 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 cursor-default"
+                  className="w-full py-3 px-4 rounded-xl font-semibold bg-emerald-50 dark:bg-emerald-900/30 text-emerald-700 dark:text-emerald-400 border border-emerald-200 dark:border-emerald-800 cursor-default"
                 >
                   Current Plan
                 </button>
               ) : (
                 <button
+                  type="button"
                   onClick={() => handleSubscribe(plan)}
                   disabled={isPaying}
-                  className={`w-full py-3 px-4 rounded-lg font-semibold transition flex items-center justify-center gap-2 ${
-                    plan.is_popular
-                      ? 'bg-blue-600 hover:bg-blue-700 text-white disabled:bg-blue-400'
-                      : 'border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50'
+                  className={`w-full py-3 px-4 rounded-xl font-semibold transition-colors flex items-center justify-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 dark:focus-visible:ring-offset-gray-800 disabled:cursor-not-allowed ${
+                    highlight
+                      ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm shadow-blue-600/20 disabled:bg-blue-400'
+                      : 'border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50'
                   }`}
                 >
                   {isPaying ? (
                     <>
-                      <Loader2 className="w-4 h-4 animate-spin" />
-                      Processing...
+                      <Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />
+                      Processing…
                     </>
                   ) : client?.subscription_status === 'active' ? (
                     'Switch to This Plan'
@@ -405,6 +431,11 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
           )
         })}
       </div>
+
+      {/* Trust line */}
+      <p className="mt-8 text-center text-xs text-gray-500 dark:text-gray-400">
+        14-day free trial · Cancel anytime · Payments secured by Razorpay
+      </p>
     </div>
   )
 }
