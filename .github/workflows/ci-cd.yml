@@ -3,6 +3,11 @@ name: CI/CD
 on:
   push:
     branches: [main, development]
+    paths-ignore:
+      - 'package.json'
+      - 'package-lock.json'
+      - 'electron/**'
+      - '.github/workflows/release.yml'
   pull_request:
     branches: [main]
 
