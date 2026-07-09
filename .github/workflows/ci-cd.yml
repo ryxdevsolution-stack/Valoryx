@@ -28,6 +28,12 @@ jobs:
 
       - name: Run pytest (offline/SQLite mode)
         working-directory: backend
+        env:
+          # Dummy values for CI only — tests run against a throwaway
+          # in-memory SQLite DB; no real service or secret is involved.
+          JWT_SECRET: ci-only-jwt-secret-not-used-in-production-0000
+          SECRET_KEY: ci-only-flask-secret-not-used-in-production-00
+          DB_MODE: offline
         run: pytest
 
   frontend-tests:

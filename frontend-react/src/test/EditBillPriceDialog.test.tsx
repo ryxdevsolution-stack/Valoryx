@@ -7,6 +7,18 @@ vi.mock('@/services/billingService', () => ({
   updateBillFromAudit: vi.fn(() => Promise.resolve({ success: true, message: 'ok', bill: {}, scope: 'audit_only' })),
 }));
 vi.mock('@/utils/toast', () => ({ toast: { success: vi.fn(), error: vi.fn() } }));
+// The dialog reads the client's currency via useCurrency → ClientContext;
+// tests render it without a ClientProvider, so stub the hook.
+vi.mock('@/lib/useCurrency', () => ({
+  useCurrency: () => ({
+    symbol: '₹',
+    locale: 'en-IN',
+    code: 'INR',
+    taxLabel: 'GST',
+    format: (n: number | string | null | undefined) =>
+      `₹${Number(n ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`,
+  }),
+}));
 
 const sampleBill = {
   bill_id: 'bill-1',

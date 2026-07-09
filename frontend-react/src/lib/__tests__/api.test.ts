@@ -173,14 +173,16 @@ describe('response caching', () => {
     let callCount = 0
 
     server.use(
-      http.get(`${BASE}/stock`, () => {
+      // Note: /stock/lookup, not /stock — plain /stock has no entry in
+      // CACHE_TTLS (stock lists must always be fresh) so it is never cached.
+      http.get(`${BASE}/stock/lookup`, () => {
         callCount++
         return HttpResponse.json([{ product_id: 'p1', product_name: 'Cached Widget' }])
       })
     )
 
-    const first = await cachedGet('/stock')
-    const second = await cachedGet('/stock')
+    const first = await cachedGet('/stock/lookup')
+    const second = await cachedGet('/stock/lookup')
 
     expect(callCount).toBe(1) // only one network request
     expect(second.data).toEqual(first.data)
@@ -215,7 +217,8 @@ describe('invalidateCache', () => {
     let billingCalls = 0
 
     server.use(
-      http.get(`${BASE}/stock`, () => {
+      // /stock/lookup is a cacheable endpoint (plain /stock is never cached)
+      http.get(`${BASE}/stock/lookup`, () => {
         stockCalls++
         return HttpResponse.json([])
       }),
@@ -226,7 +229,7 @@ describe('invalidateCache', () => {
     )
 
     // Prime both caches
-    await cachedGet('/stock')
+    await cachedGet('/stock/lookup')
     await cachedGet('/billing/list')
     expect(stockCalls).toBe(1)
     expect(billingCalls).toBe(1)
@@ -235,7 +238,7 @@ describe('invalidateCache', () => {
     invalidateCache('billing')
 
     // Stock still cached; billing fetches again
-    await cachedGet('/stock')
+    await cachedGet('/stock/lookup')
     await cachedGet('/billing/list')
 
     expect(stockCalls).toBe(1)   // no new stock request

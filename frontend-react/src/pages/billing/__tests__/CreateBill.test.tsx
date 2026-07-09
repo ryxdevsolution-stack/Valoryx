@@ -32,6 +32,12 @@ vi.mock('@/components/billing/MobileCartList', () => ({
 vi.mock('@/utils/notifications', () => ({
   SystemNotification: { requestPermission: vi.fn() },
 }))
+// Toasts render through a container in the real DashboardLayout, which is
+// mocked here — so assert against the toast API instead of DOM text.
+vi.mock('@/utils/toast', () => ({
+  toast: { success: vi.fn(), error: vi.fn(), warning: vi.fn(), info: vi.fn() },
+}))
+import { toast } from '@/utils/toast'
 
 const mockProducts = [
   {
@@ -320,7 +326,50 @@ describe('CreateBill component', () => {
 
   // ── 12. API error shows error message ──────────────────────────────────────
   it('shows an error notification when bill submission returns 500', async () => {
+    // Seed a draft with one item so the submit handler actually fires the
+    // API call instead of bailing out with a "no items" warning.
+    localStorage.setItem(
+      'billing_draft_tabs_guest',
+      JSON.stringify({
+        tabs: [
+          {
+            id: '1',
+            // No customer: a name without a phone fails validation before
+            // the API call this test needs to reach.
+            customer_name: '',
+            customer_phone: '',
+            customer_gstin: '',
+            // Splits must be non-empty and match the bill total (1180),
+            // or validation bails before submitting.
+            payment_splits: [{ payment_type: 'Cash', amount: 1180 }],
+            items: [
+              {
+                product_id: 'p1',
+                product_name: 'Widget',
+                item_code: 'W1',
+                hsn_code: '',
+                unit: 'pcs',
+                quantity: 1,
+                rate: 1000,
+                gst_percentage: 18,
+                gst_amount: 180,
+                amount: 1180,
+              },
+            ],
+            discountPercentage: 0,
+            negotiableAmount: 0,
+            useNegotiablePrice: false,
+            amountReceived: 0,
+          },
+        ],
+        activeTabId: '1',
+      })
+    )
+
     server.use(
+      http.post('http://localhost:5017/api/billing/create', () =>
+        HttpResponse.json({ error: 'Internal server error' }, { status: 500 })
+      ),
       http.post('http://localhost:5017/api/billing/gst', () =>
         HttpResponse.json({ error: 'Internal server error' }, { status: 500 })
       ),
@@ -332,25 +381,20 @@ describe('CreateBill component', () => {
     renderBillingPage()
     await waitFor(() => expect(screen.getByTestId('layout')).toBeInTheDocument())
 
-    // The component uses alert() or inline error text on failure
-    const alertMock = vi.spyOn(window, 'alert').mockImplementation(() => {})
-
     const allButtons = screen.queryAllByRole('button')
     const billButton = allButtons.find((btn) =>
       /create.*bill|print.*bill|save.*bill/i.test(btn.textContent ?? '')
     )
+    expect(billButton).toBeDefined()
+    expect(billButton!.hasAttribute('disabled')).toBe(false)
 
-    if (billButton && !billButton.hasAttribute('disabled')) {
-      fireEvent.click(billButton)
-      await waitFor(() => {
-        // Either alert was called, or an error element is in the DOM
-        const hasError =
-          alertMock.mock.calls.length > 0 ||
-          screen.queryByText(/error|failed|could not/i) !== null
-        expect(hasError).toBe(true)
-      }, { timeout: 2000 })
-    }
+    fireEvent.click(billButton!)
 
-    alertMock.mockRestore()
+    // The component surfaces submission failures via toast.error(...)
+    await waitFor(() => {
+      expect(toast.error).toHaveBeenCalled()
+    }, { timeout: 2000 })
+    const message = String(vi.mocked(toast.error).mock.calls[0][0])
+    expect(message).toMatch(/error|failed|could not/i)
   })
 })
