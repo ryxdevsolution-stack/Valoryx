@@ -27,7 +27,7 @@ def stock_headers(sample_user, sample_client):
     token = make_token(
         sample_user.user_id,
         sample_client.client_id,
-        permissions=["view_stock", "add_product", "edit_product_details"],
+        permissions=["view_stock", "add_product", "edit_product_details", "delete_product"],
     )
     return auth_hdr(token)
 
