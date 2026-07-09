@@ -65,6 +65,7 @@ _OWNER_SYNC_TABLES = [
     {'table': 'suppliers',               'pk': 'supplier_id',     'scope': 'client_id'},
     {'table': 'supplier_deliveries',     'pk': 'delivery_id',     'scope': 'client_id'},
     {'table': 'supplier_delivery_items', 'pk': 'id',              'scope': ('via', 'supplier_deliveries', 'delivery_id')},
+    {'table': 'supplier_delivery_payments', 'pk': 'payment_id',   'scope': ('via', 'supplier_deliveries', 'delivery_id')},
     {'table': 'branches',                'pk': 'branch_id',       'scope': 'client_id'},
     {'table': 'branch_inventory',        'pk': 'id',              'scope': 'client_id'},
     {'table': 'stock_transfers',         'pk': 'transfer_id',     'scope': 'client_id'},

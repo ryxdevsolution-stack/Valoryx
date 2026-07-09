@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 35
+CURRENT_SCHEMA_VERSION = 36
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -1973,6 +1973,43 @@ def _m035_schema_drift_reconcile(db):
     logging.info("[Migration] v35: schema-drift columns reconciled")
 
 
+def _m036_supplier_delivery_payments(db):
+    """v36: Create supplier_delivery_payments — a child ledger table of
+    supplier_deliveries recording partial/full payments toward a delivery's
+    balance ("pay half now, pay the rest later").
+
+    Includes synced_at + updated_at from the start (v30's follow-up fix for
+    salary_advances taught us not to ship a new table without them) so the
+    generic owner-sync registry (_OWNER_SYNC_TABLES in sync_service.py) can
+    pick it up with no custom sync code.
+    """
+    inspector = sa_inspect(db.engine)
+    tables = inspector.get_table_names()
+
+    if 'supplier_delivery_payments' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS supplier_delivery_payments (
+                payment_id   VARCHAR(36) PRIMARY KEY,
+                delivery_id  VARCHAR(36) NOT NULL
+                             REFERENCES supplier_deliveries(delivery_id) ON DELETE CASCADE,
+                amount       NUMERIC      NOT NULL,
+                payment_date DATE         NOT NULL,
+                notes        TEXT         NULL,
+                recorded_by  VARCHAR(36)  NULL,
+                created_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at   TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at    TIMESTAMP    NULL
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_sdelpay_delivery ON supplier_delivery_payments (delivery_id)"
+        ))
+        logging.info("[Migration] v36: supplier_delivery_payments table created")
+
+    db.session.commit()
+    logging.info("[Migration] v36: supplier delivery payments done")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -2010,6 +2047,7 @@ MIGRATIONS = [
     (33, _m033_bill_prefix),
     (34, _m034_session_platform),
     (35, _m035_schema_drift_reconcile),
+    (36, _m036_supplier_delivery_payments),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

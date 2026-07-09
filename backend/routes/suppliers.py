@@ -210,17 +210,28 @@ def list_deliveries():
     deliveries = q.order_by(SupplierDelivery.created_at.desc()).all()
 
     # HIGH-5: Only load suppliers referenced by the fetched deliveries (not the full table)
-    from models.supplier_model import Supplier
+    from models.supplier_model import Supplier, SupplierDeliveryPayment
     needed_sids = {d.supplier_id for d in deliveries}
     supplier_map = {s.supplier_id: s.name for s in Supplier.query.filter(
         Supplier.supplier_id.in_(needed_sids),
         Supplier.client_id == client_id
     ).all()} if needed_sids else {}
 
+    # Batch paid_amount per delivery in one grouped query (avoid N+1)
+    needed_dids = [d.delivery_id for d in deliveries]
+    paid_map = dict(
+        db.session.query(
+            SupplierDeliveryPayment.delivery_id,
+            db.func.sum(SupplierDeliveryPayment.amount)
+        ).filter(SupplierDeliveryPayment.delivery_id.in_(needed_dids))
+         .group_by(SupplierDeliveryPayment.delivery_id).all()
+    ) if needed_dids else {}
+
     data = []
     for d in deliveries:
         row = d.to_dict()
         row['supplier_name'] = supplier_map.get(d.supplier_id, '')
+        row['paid_amount'] = float(paid_map.get(d.delivery_id) or 0)
         data.append(row)
 
     return jsonify({'success': True, 'data': data, 'total': len(data)}), 200
@@ -305,7 +316,9 @@ def get_delivery(delivery_id):
     delivery = _get_delivery_or_404(delivery_id, client_id)
     if not delivery:
         return jsonify({'success': False, 'error': 'Delivery not found'}), 404
-    return jsonify({'success': True, 'data': delivery.to_dict(include_supplier=True)}), 200
+    data = delivery.to_dict(include_supplier=True, include_payments=True)
+    data['paid_amount'] = sum(p['amount'] for p in data['payments'])
+    return jsonify({'success': True, 'data': data}), 200
 
 
 @suppliers_bp.route('/deliveries/<delivery_id>', methods=['PUT'])
@@ -601,6 +614,88 @@ def complete_delivery(delivery_id):
         'data': delivery.to_dict(include_supplier=True),
         'errors': errors,
     }), 200
+
+
+@suppliers_bp.route('/deliveries/<delivery_id>/payments', methods=['GET'])
+@authenticate
+@require_permission('view_suppliers')
+def list_delivery_payments(delivery_id):
+    client_id = g.user['client_id']
+    delivery = _get_delivery_or_404(delivery_id, client_id)
+    if not delivery:
+        return jsonify({'success': False, 'error': 'Delivery not found'}), 404
+
+    data = [p.to_dict() for p in delivery.payments]
+    paid_amount = sum(p['amount'] for p in data)
+    return jsonify({'success': True, 'data': data, 'paid_amount': paid_amount}), 200
+
+
+@suppliers_bp.route('/deliveries/<delivery_id>/payments', methods=['POST'])
+@authenticate
+@require_permission('manage_deliveries')
+def record_delivery_payment(delivery_id):
+    client_id = g.user['client_id']
+    delivery = _get_delivery_or_404(delivery_id, client_id)
+    if not delivery:
+        return jsonify({'success': False, 'error': 'Delivery not found'}), 404
+
+    body = request.get_json(silent=True) or {}
+
+    amount = body.get('amount')
+    try:
+        amount = float(amount)
+        if amount <= 0:
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'amount must be a positive number'}), 400
+
+    payment_date = date.today()
+    if body.get('payment_date'):
+        try:
+            payment_date = date.fromisoformat(body['payment_date'])
+        except ValueError:
+            pass
+
+    from models.supplier_model import SupplierDeliveryPayment
+    payment = SupplierDeliveryPayment(
+        payment_id   = str(uuid.uuid4()),
+        delivery_id  = delivery_id,
+        amount       = amount,
+        payment_date = payment_date,
+        notes        = (body.get('notes') or '').strip() or None,
+        recorded_by  = g.user.get('user_id'),
+    )
+    db.session.add(payment)
+    db.session.commit()
+    _invalidate_delivery_cache(client_id)
+
+    paid_amount = sum(float(p.amount) for p in delivery.payments)
+    return jsonify({
+        'success': True,
+        'data': payment.to_dict(),
+        'paid_amount': paid_amount,
+        'message': 'Payment recorded',
+    }), 201
+
+
+@suppliers_bp.route('/deliveries/<delivery_id>/payments/<payment_id>', methods=['DELETE'])
+@authenticate
+@require_permission('manage_deliveries')
+def delete_delivery_payment(delivery_id, payment_id):
+    client_id = g.user['client_id']
+    delivery = _get_delivery_or_404(delivery_id, client_id)
+    if not delivery:
+        return jsonify({'success': False, 'error': 'Delivery not found'}), 404
+
+    from models.supplier_model import SupplierDeliveryPayment
+    payment = SupplierDeliveryPayment.query.filter_by(payment_id=payment_id, delivery_id=delivery_id).first()
+    if not payment:
+        return jsonify({'success': False, 'error': 'Payment not found'}), 404
+
+    db.session.delete(payment)
+    db.session.commit()
+    _invalidate_delivery_cache(client_id)
+    return jsonify({'success': True, 'message': 'Payment removed'}), 200
 
 
 @suppliers_bp.route('/deliveries/<delivery_id>', methods=['DELETE'])

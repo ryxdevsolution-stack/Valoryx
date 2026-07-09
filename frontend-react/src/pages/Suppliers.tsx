@@ -43,6 +43,16 @@ interface DeliveryItem {
   hsn_code: string
 }
 
+interface DeliveryPayment {
+  payment_id: string
+  delivery_id: string
+  amount: number
+  payment_date: string | null
+  notes: string | null
+  recorded_by?: string | null
+  created_at?: string
+}
+
 interface Delivery {
   delivery_id: string
   supplier_id: string
@@ -64,6 +74,8 @@ interface Delivery {
   completed_at: string | null
   added_by_label?: string | null
   items: DeliveryItem[]
+  paid_amount?: number
+  payments?: DeliveryPayment[]
   created_at: string
 }
 
@@ -109,6 +121,11 @@ export default function SuppliersPage() {
   const [suppSaving, setSuppSaving] = useState(false)
   const [deleteConfirm, setDeleteConfirm] = useState<string | null>(null)
 
+  // ── supplier detail drawer state
+  const [supplierDetail, setSupplierDetail] = useState<Supplier | null>(null)
+  const [supplierDeliveries, setSupplierDeliveries] = useState<Delivery[]>([])
+  const [supplierDelLoading, setSupplierDelLoading] = useState(false)
+
   // ── deliveries state
   const [deliveries, setDeliveries] = useState<Delivery[]>([])
   const [delLoading, setDelLoading] = useState(false)
@@ -133,9 +150,17 @@ export default function SuppliersPage() {
   const [uploading, setUploading] = useState(false)
   const [completing, setCompleting] = useState(false)
   const [savingDraft, setSavingDraft] = useState(false)
+  const [initialPaymentAmount, setInitialPaymentAmount] = useState('')
   const fileInputRef  = useRef<HTMLInputElement>(null)
   const csvInputRef   = useRef<HTMLInputElement>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+
+  // ── record payment modal state (delivery detail view)
+  const [showPaymentModal, setShowPaymentModal] = useState(false)
+  const [paymentAmount, setPaymentAmount] = useState('')
+  const [paymentDate, setPaymentDate] = useState('')
+  const [paymentNotes, setPaymentNotes] = useState('')
+  const [savingPayment, setSavingPayment] = useState(false)
 
   // ── barcode scanner state (for delivery item entry)
   const [showScanner, setShowScanner]       = useState(false)
@@ -182,6 +207,38 @@ export default function SuppliersPage() {
   useEffect(() => { fetchSuppliers() }, [fetchSuppliers])
   useEffect(() => { if (tab === 'deliveries') fetchDeliveries() }, [tab, fetchDeliveries])
 
+  // ─── Supplier detail drawer ───────────────────────────────────────────────
+  const openSupplierDetail = useCallback(async (supplier: Supplier) => {
+    setSupplierDetail(supplier)
+    setSupplierDelLoading(true)
+    try {
+      const res = await api.get('/suppliers/deliveries', { params: { supplier_id: supplier.supplier_id } })
+      setSupplierDeliveries(res.data.data || [])
+    } catch {
+      showToast('Failed to load deliveries', 'error')
+    } finally {
+      setSupplierDelLoading(false)
+    }
+  }, [showToast])
+
+  const closeSupplierDetail = useCallback(() => {
+    setSupplierDetail(null)
+    setSupplierDeliveries([])
+  }, [])
+
+  const supplierDeliveryTotals = useMemo(() =>
+    supplierDeliveries.map(d => {
+      const total = d.items.reduce((sum, item) => sum + (parseFloat(String(item.cost_price)) || 0) * item.quantity, 0)
+      const paid = d.paid_amount || 0
+      return { ...d, total, paid, balance: Math.max(total - paid, 0) }
+    }), [supplierDeliveries])
+
+  const supplierGrandTotal = useMemo(() =>
+    supplierDeliveryTotals.reduce((sum, d) => sum + d.total, 0), [supplierDeliveryTotals])
+
+  const supplierBalanceTotal = useMemo(() =>
+    supplierDeliveryTotals.reduce((sum, d) => sum + d.balance, 0), [supplierDeliveryTotals])
+
   // Deep-link focus: scroll to and highlight the supplier card or delivery row
   // matching ?focus=<id> (with optional ?tab=deliveries for delivery deep-links).
   // Two-pass approach:
@@ -227,6 +284,10 @@ export default function SuppliersPage() {
       return (d.supplier_name || '').toLowerCase().includes(q) ||
         (d.invoice_number || '').toLowerCase().includes(q)
     }), [deliveries, delSearch])
+
+  const wizardTotalCost = useMemo(() =>
+    delItems.reduce((sum, item) => sum + (parseFloat(item.cost_price) || 0) * item.quantity, 0),
+    [delItems])
 
   // ─── Supplier form ────────────────────────────────────────────────────────
   function openAddSupplier() {
@@ -286,12 +347,14 @@ export default function SuppliersPage() {
     setProductsConfirmed(false)
     setUploadedFile(null)
     setUploadPreview(null)
+    setInitialPaymentAmount('')
     setShowNewDelivery(true)
   }
 
   function closeWizard() {
     setShowNewDelivery(false)
     setCurrentDeliveryId(null)
+    setInitialPaymentAmount('')
   }
 
   function continueDraft(delivery: Delivery) {
@@ -321,6 +384,7 @@ export default function SuppliersPage() {
     setProductsConfirmed(delivery.products_confirmed || false)
     setUploadedFile(null)
     setUploadPreview(null)
+    setInitialPaymentAmount('')
     // Resume at the right step: has items → step 3, else → step 2
     setStep(hasItems ? 3 : 2)
     setActiveDelivery(null)
@@ -450,6 +514,16 @@ export default function SuppliersPage() {
       if (!productsConfirmed) await confirmProducts()
 
       const res = await api.post(`/suppliers/deliveries/${currentDeliveryId}/complete`)
+
+      const initialPayment = parseFloat(initialPaymentAmount) || 0
+      if (initialPayment > 0) {
+        await api.post(`/suppliers/deliveries/${currentDeliveryId}/payments`, {
+          amount: initialPayment,
+          payment_date: new Date().toISOString().slice(0, 10),
+          notes: 'Initial payment',
+        })
+      }
+
       showToast(res.data.message || 'Delivery completed. Stock updated!')
       closeWizard()
       fetchDeliveries()
@@ -575,6 +649,30 @@ export default function SuppliersPage() {
     }
   }
 
+  async function recordPayment() {
+    if (!activeDelivery) return
+    const amount = parseFloat(paymentAmount)
+    if (!amount || amount <= 0) { showToast('Enter a valid payment amount', 'error'); return }
+
+    setSavingPayment(true)
+    try {
+      await api.post(`/suppliers/deliveries/${activeDelivery.delivery_id}/payments`, {
+        amount,
+        payment_date: paymentDate || new Date().toISOString().slice(0, 10),
+        notes: paymentNotes.trim() || null,
+      })
+      showToast('Payment recorded')
+      setShowPaymentModal(false)
+      await openDelivery(activeDelivery.delivery_id)
+      fetchDeliveries()
+      if (supplierDetail) await openSupplierDetail(supplierDetail)
+    } catch (e: any) {
+      showToast(e?.response?.data?.error || 'Failed to record payment', 'error')
+    } finally {
+      setSavingPayment(false)
+    }
+  }
+
   // ─── Render ───────────────────────────────────────────────────────────────
   return (
     <DashboardLayout>
@@ -644,7 +742,7 @@ export default function SuppliersPage() {
             ) : (
               <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                 {filteredSuppliers.map(s => (
-                  <div key={s.supplier_id} data-focus-id={s.supplier_id} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-5 hover:shadow-md hover:border-gray-300 dark:hover:border-gray-600 transition-all group">
+                  <div key={s.supplier_id} data-focus-id={s.supplier_id} onClick={() => openSupplierDetail(s)} className="bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-2xl p-5 hover:shadow-md hover:border-gray-300 dark:hover:border-gray-600 transition-all group cursor-pointer">
 
                     {/* Card header */}
                     <div className="flex items-start justify-between gap-2 mb-4">
@@ -662,13 +760,13 @@ export default function SuppliersPage() {
                         </div>
                       </div>
                       <div className="flex gap-1 shrink-0 opacity-0 group-hover:opacity-100 transition-opacity">
-                        <button onClick={() => openEditSupplier(s)} title="Edit"
+                        <button onClick={e => { e.stopPropagation(); openEditSupplier(s) }} title="Edit"
                           className="p-1.5 text-gray-400 hover:text-blue-600 hover:bg-blue-50 dark:hover:bg-blue-900/30 rounded-lg transition-colors">
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M11 5H6a2 2 0 00-2 2v11a2 2 0 002 2h11a2 2 0 002-2v-5m-1.414-9.414a2 2 0 112.828 2.828L11.828 15H9v-2.828l8.586-8.586z" />
                           </svg>
                         </button>
-                        <button onClick={() => setDeleteConfirm(s.supplier_id)} title="Remove"
+                        <button onClick={e => { e.stopPropagation(); setDeleteConfirm(s.supplier_id) }} title="Remove"
                           className="p-1.5 text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/30 rounded-lg transition-colors">
                           <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
@@ -768,6 +866,7 @@ export default function SuppliersPage() {
                       <th className="px-4 py-3 text-left">Date</th>
                       <th className="px-4 py-3 text-left">Items</th>
                       <th className="px-4 py-3 text-left">Status</th>
+                      <th className="px-4 py-3 text-left">Payment</th>
                       <th className="px-4 py-3 text-left">Note</th>
                       <th className="px-4 py-3 text-left">Added By</th>
                       <th className="px-4 py-3 text-left"></th>
@@ -784,6 +883,17 @@ export default function SuppliersPage() {
                           <span className={`inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium ${STATUS_BADGE[d.status]}`}>
                             {STATUS_LABEL[d.status]}
                           </span>
+                        </td>
+                        <td className="px-4 py-3">
+                          {(() => {
+                            const total = d.items.reduce((sum, item) => sum + (parseFloat(String(item.cost_price)) || 0) * item.quantity, 0)
+                            if (total <= 0) return <span className="text-gray-300 dark:text-gray-600 text-xs">—</span>
+                            const paid = d.paid_amount || 0
+                            const balance = Math.max(total - paid, 0)
+                            if (balance <= 0) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 dark:bg-green-900/40 text-green-700 dark:text-green-300">Paid</span>
+                            if (paid > 0) return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-amber-100 dark:bg-amber-900/40 text-amber-700 dark:text-amber-300">Partial · {cur}{balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })} due</span>
+                            return <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 dark:bg-red-900/40 text-red-700 dark:text-red-300">Unpaid</span>
+                          })()}
                         </td>
                         <td className="px-4 py-3">
                           {d.has_delivery_note ? (
@@ -1156,7 +1266,25 @@ export default function SuppliersPage() {
                         </div>
                       ))}
                     </div>
+                    {wizardTotalCost > 0 && (
+                      <div className="flex justify-between text-sm font-semibold text-gray-900 dark:text-white border-t border-gray-200 dark:border-gray-700 mt-2 pt-2">
+                        <span>Total Purchase Value</span>
+                        <span>{cur}{wizardTotalCost.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                      </div>
+                    )}
                   </div>
+
+                  {/* Optional payment to supplier */}
+                  {wizardTotalCost > 0 && (
+                    <div>
+                      <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Amount Paid Now ({cur}) — optional</label>
+                      <input type="number" min="0" step="0.01" max={wizardTotalCost}
+                        value={initialPaymentAmount} onChange={e => setInitialPaymentAmount(e.target.value)}
+                        placeholder="0 — pay the balance later"
+                        className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                      <p className="text-xs text-gray-400 dark:text-gray-500 mt-1">Leave blank if paying the full amount later. You can record the balance payment anytime from the delivery's detail view.</p>
+                    </div>
+                  )}
 
                   {/* Product confirmation checkbox */}
                   <div className={`border-2 rounded-xl p-4 transition-colors ${productsConfirmed ? 'border-green-400 dark:border-green-600 bg-green-50 dark:bg-green-900/20' : 'border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800'}`}>
@@ -1269,6 +1397,113 @@ export default function SuppliersPage() {
         </div>
       )}
 
+      {/* ── SUPPLIER DETAIL DRAWER ── */}
+      {supplierDetail && (
+        <div className="fixed inset-0 z-50 flex justify-end" onClick={closeSupplierDetail}>
+          <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" />
+          <div
+            className="relative w-full max-w-md bg-white dark:bg-gray-900 h-full shadow-2xl overflow-y-auto flex flex-col"
+            onClick={e => e.stopPropagation()}
+          >
+            {/* Header */}
+            <div className="flex items-center justify-between px-5 py-4 border-b border-gray-200 dark:border-gray-700 bg-gray-50 dark:bg-gray-800 flex-shrink-0">
+              <div className="flex items-center gap-3 min-w-0">
+                <div className="w-10 h-10 rounded-lg bg-blue-50 dark:bg-blue-900/30 flex items-center justify-center shrink-0">
+                  <svg className="w-5 h-5 text-blue-600" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 18.75a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h6m-9 0H3.375a1.125 1.125 0 01-1.125-1.125V14.25m17.25 4.5a1.5 1.5 0 01-3 0m3 0a1.5 1.5 0 00-3 0m3 0h1.125c.621 0 1.129-.504 1.09-1.124a17.902 17.902 0 00-3.213-9.193 2.056 2.056 0 00-1.58-.86H14.25M16.5 18.75h-2.25m0-11.177v-.958c0-.568-.422-1.048-.987-1.106a48.554 48.554 0 00-10.026 0 1.106 1.106 0 00-.987 1.106v7.635m12-6.677v6.677m0 4.5v-4.5m0 0h-12" />
+                  </svg>
+                </div>
+                <div className="min-w-0">
+                  <h2 className="text-base font-semibold text-gray-900 dark:text-white truncate">{supplierDetail.name}</h2>
+                  {supplierDetail.contact_person && (
+                    <p className="text-xs text-gray-500 dark:text-gray-400 truncate">{supplierDetail.contact_person}</p>
+                  )}
+                </div>
+              </div>
+              <button
+                type="button"
+                onClick={closeSupplierDetail}
+                className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors shrink-0">
+                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+
+            {/* Stats */}
+            <div className="px-5 py-4 grid grid-cols-3 gap-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+              <div>
+                <p className="text-[10px] text-gray-400 uppercase font-medium">Total Deliveries</p>
+                <p className="text-sm text-gray-800 dark:text-gray-200 font-semibold">{supplierDeliveries.length}</p>
+              </div>
+              <div>
+                <p className="text-[10px] text-gray-400 uppercase font-medium">Total Amount</p>
+                <p className="text-sm font-semibold text-green-600 dark:text-green-400">
+                  {cur}{supplierGrandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] text-gray-400 uppercase font-medium">Balance Due</p>
+                <p className={`text-sm font-semibold ${supplierBalanceTotal > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
+                  {cur}{supplierBalanceTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+            </div>
+
+            {/* Delivery list */}
+            <div className="px-5 py-4 flex-1 overflow-y-auto">
+              <h3 className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase mb-3">Delivery History</h3>
+
+              {supplierDelLoading ? (
+                <div className="flex items-center justify-center py-8">
+                  <div className="animate-spin rounded-full h-6 w-6 border-b-2 border-gray-600 dark:border-gray-400"></div>
+                  <span className="ml-2 text-sm text-gray-500 dark:text-gray-400">Loading deliveries…</span>
+                </div>
+              ) : supplierDeliveryTotals.length === 0 ? (
+                <div className="text-center py-6 text-gray-400 dark:text-gray-500">
+                  <p className="text-sm">No deliveries yet for this supplier</p>
+                </div>
+              ) : (
+                <div className="space-y-2">
+                  {supplierDeliveryTotals.map(d => (
+                    <button
+                      key={d.delivery_id}
+                      type="button"
+                      onClick={() => openDelivery(d.delivery_id)}
+                      className="w-full px-3 py-2.5 flex items-center justify-between text-left rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                      <div className="flex-1 min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
+                            {d.invoice_number ? `Invoice #${d.invoice_number}` : 'Delivery'}
+                          </span>
+                          <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-medium ${STATUS_BADGE[d.status]}`}>
+                            {STATUS_LABEL[d.status]}
+                          </span>
+                        </div>
+                        <p className="text-[10px] text-gray-500 dark:text-gray-400 mt-0.5">
+                          {d.delivery_date
+                            ? new Date(d.delivery_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+                            : '—'}
+                          {' · '}{d.items.length} item{d.items.length !== 1 ? 's' : ''}
+                        </p>
+                        {d.total > 0 && (
+                          <p className={`text-[10px] mt-0.5 font-medium ${d.balance <= 0 ? 'text-green-600 dark:text-green-400' : d.paid > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
+                            {d.balance <= 0 ? 'Paid' : `${cur}${d.balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })} due`}
+                          </p>
+                        )}
+                      </div>
+                      <span className="text-sm font-bold text-gray-900 dark:text-white shrink-0 ml-3">
+                        {cur}{d.total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* ── DELIVERY DETAIL MODAL ── */}
       {activeDelivery && (() => {
         const supplierDetail = suppliers.find(s => s.supplier_id === activeDelivery.supplier_id)
@@ -1276,6 +1511,8 @@ export default function SuppliersPage() {
           const cost = parseFloat(String(item.cost_price)) || 0
           return sum + cost * item.quantity
         }, 0)
+        const paidAmount = activeDelivery.paid_amount || 0
+        const balanceDue = Math.max(totalCost - paidAmount, 0)
         return (
           <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col">
@@ -1357,6 +1594,47 @@ export default function SuppliersPage() {
                       <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
                     </svg>
                     <p className="text-gray-700 dark:text-gray-300 leading-relaxed">{activeDelivery.notes}</p>
+                  </div>
+                )}
+
+                {/* Payments */}
+                {totalCost > 0 && (
+                  <div>
+                    <div className="flex items-center justify-between mb-2">
+                      <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Payments</p>
+                      {balanceDue > 0 && (
+                        <button type="button"
+                          onClick={() => { setPaymentAmount(''); setPaymentDate(new Date().toISOString().slice(0, 10)); setPaymentNotes(''); setShowPaymentModal(true) }}
+                          className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium">
+                          + Record Payment
+                        </button>
+                      )}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3 bg-gray-50 dark:bg-gray-900/50 rounded-xl p-4 text-sm mb-2">
+                      <div>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">Paid</p>
+                        <p className="font-semibold text-green-600 dark:text-green-400">{cur}{paidAmount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>
+                      </div>
+                      <div>
+                        <p className="text-xs text-gray-400 dark:text-gray-500 mb-0.5">Balance Due</p>
+                        <p className={`font-semibold ${balanceDue > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-green-600 dark:text-green-400'}`}>
+                          {cur}{balanceDue.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </p>
+                      </div>
+                    </div>
+                    {activeDelivery.payments && activeDelivery.payments.length > 0 && (
+                      <div className="space-y-1">
+                        {activeDelivery.payments.map(p => (
+                          <div key={p.payment_id} className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 px-1">
+                            <span>
+                              {p.payment_date ? new Date(p.payment_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
+                              {p.notes ? ` · ${p.notes}` : ''}
+                            </span>
+                            <span className="font-medium text-gray-800 dark:text-gray-200">{cur}{p.amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
                 )}
 
@@ -1479,6 +1757,54 @@ export default function SuppliersPage() {
           </div>
         )
       })()}
+
+      {/* ── RECORD PAYMENT MODAL ── */}
+      {showPaymentModal && activeDelivery && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-700">
+              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Record Payment</h2>
+              <button onClick={() => setShowPaymentModal(false)}
+                className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
+                <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+              </button>
+            </div>
+            <div className="p-6 space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Amount ({cur}) *</label>
+                <input type="number" min="0.01" step="0.01" autoFocus
+                  value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)}
+                  placeholder="0.00"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Date</label>
+                <input type="date" value={paymentDate} onChange={e => setPaymentDate(e.target.value)}
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+              <div>
+                <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Notes (optional)</label>
+                <input value={paymentNotes} onChange={e => setPaymentNotes(e.target.value)}
+                  placeholder="e.g. Paid via UPI"
+                  className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+              </div>
+            </div>
+            <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-b-2xl">
+              <button onClick={() => setShowPaymentModal(false)}
+                className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
+                Cancel
+              </button>
+              <button onClick={recordPayment} disabled={savingPayment}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-colors">
+                {savingPayment ? 'Saving…' : 'Save Payment'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Barcode scanner modal — for delivery item entry */}
       <BarcodeScannerModal
         isOpen={showScanner}

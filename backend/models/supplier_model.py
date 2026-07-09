@@ -89,6 +89,7 @@ class SupplierDelivery(db.Model):
     updated_at            = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
     items = db.relationship('SupplierDeliveryItem', backref='delivery', lazy='joined', cascade='all, delete-orphan')
+    payments = db.relationship('SupplierDeliveryPayment', backref='delivery', lazy='dynamic', cascade='all, delete-orphan', order_by='SupplierDeliveryPayment.payment_date')
 
     def _lookup_user_name(self, user_id):
         """Resolve a user_id → display name. Returns None if user not found."""
@@ -100,7 +101,7 @@ class SupplierDelivery(db.Model):
             return None
         return user.full_name or user.email or None
 
-    def to_dict(self, include_supplier=False):
+    def to_dict(self, include_supplier=False, include_payments=False):
         data = {
             'delivery_id':            self.delivery_id,
             'client_id':              self.client_id,
@@ -128,6 +129,8 @@ class SupplierDelivery(db.Model):
         }
         if include_supplier and self.supplier:
             data['supplier'] = self.supplier.to_dict()
+        if include_payments:
+            data['payments'] = [p.to_dict() for p in self.payments]
         return data
 
 
@@ -177,4 +180,33 @@ class SupplierDeliveryItem(db.Model):
             'gst_percentage':float(self.gst_percentage) if self.gst_percentage else 0,
             'hsn_code':      self.hsn_code,
             'created_at':    self.created_at.isoformat() if self.created_at else None,
+        }
+
+
+class SupplierDeliveryPayment(db.Model):
+    """One payment recorded toward a delivery's balance (partial or full)."""
+    __tablename__ = 'supplier_delivery_payments'
+
+    __table_args__ = (
+        db.Index('idx_sdelpay_delivery', 'delivery_id'),
+    )
+
+    payment_id   = db.Column(FlexibleUUID, primary_key=True)
+    delivery_id  = db.Column(FlexibleUUID, db.ForeignKey('supplier_deliveries.delivery_id'), nullable=False)
+    amount       = db.Column(FlexibleNumeric, nullable=False)
+    payment_date = db.Column(db.Date, nullable=False)
+    notes        = db.Column(db.Text, nullable=True)
+    recorded_by  = db.Column(FlexibleUUID, nullable=True)
+    created_at   = db.Column(db.DateTime, default=datetime.utcnow)
+    updated_at   = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    def to_dict(self):
+        return {
+            'payment_id':   self.payment_id,
+            'delivery_id':  self.delivery_id,
+            'amount':       float(self.amount) if self.amount else 0,
+            'payment_date': self.payment_date.isoformat() if self.payment_date else None,
+            'notes':        self.notes,
+            'recorded_by':  self.recorded_by,
+            'created_at':   self.created_at.isoformat() if self.created_at else None,
         }
