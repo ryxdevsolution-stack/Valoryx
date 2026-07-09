@@ -155,8 +155,8 @@ export default function SuppliersPage() {
   const csvInputRef   = useRef<HTMLInputElement>(null)
   const toastTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
-  // ── record payment modal state (delivery detail view)
-  const [showPaymentModal, setShowPaymentModal] = useState(false)
+  // ── record payment modal state (opened from delivery detail OR supplier drawer)
+  const [paymentTarget, setPaymentTarget] = useState<{ delivery_id: string; label: string; balance: number } | null>(null)
   const [paymentAmount, setPaymentAmount] = useState('')
   const [paymentDate, setPaymentDate] = useState('')
   const [paymentNotes, setPaymentNotes] = useState('')
@@ -235,6 +235,9 @@ export default function SuppliersPage() {
 
   const supplierGrandTotal = useMemo(() =>
     supplierDeliveryTotals.reduce((sum, d) => sum + d.total, 0), [supplierDeliveryTotals])
+
+  const supplierPaidTotal = useMemo(() =>
+    supplierDeliveryTotals.reduce((sum, d) => sum + d.paid, 0), [supplierDeliveryTotals])
 
   const supplierBalanceTotal = useMemo(() =>
     supplierDeliveryTotals.reduce((sum, d) => sum + d.balance, 0), [supplierDeliveryTotals])
@@ -505,6 +508,11 @@ export default function SuppliersPage() {
   async function completeDelivery() {
     if (!currentDeliveryId) return
     if (!productsConfirmed) { showToast('Confirm all products are available first', 'error'); return }
+    const plannedPayment = parseFloat(initialPaymentAmount) || 0
+    if (plannedPayment > 0 && wizardTotalCost > 0 && plannedPayment > wizardTotalCost + 0.009) {
+      showToast(`Amount paid cannot exceed the total purchase value (${cur}${wizardTotalCost.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`, 'error')
+      return
+    }
 
     setCompleting(true)
     try {
@@ -649,27 +657,53 @@ export default function SuppliersPage() {
     }
   }
 
+  function openPaymentModal(delivery_id: string, label: string, balance: number) {
+    setPaymentAmount('')
+    setPaymentDate(new Date().toISOString().slice(0, 10))
+    setPaymentNotes('')
+    setPaymentTarget({ delivery_id, label, balance })
+  }
+
   async function recordPayment() {
-    if (!activeDelivery) return
+    if (!paymentTarget) return
     const amount = parseFloat(paymentAmount)
     if (!amount || amount <= 0) { showToast('Enter a valid payment amount', 'error'); return }
+    if (paymentTarget.balance > 0 && amount > paymentTarget.balance + 0.009) {
+      showToast(`Amount exceeds balance due (${cur}${paymentTarget.balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})`, 'error')
+      return
+    }
 
     setSavingPayment(true)
     try {
-      await api.post(`/suppliers/deliveries/${activeDelivery.delivery_id}/payments`, {
+      await api.post(`/suppliers/deliveries/${paymentTarget.delivery_id}/payments`, {
         amount,
         payment_date: paymentDate || new Date().toISOString().slice(0, 10),
         notes: paymentNotes.trim() || null,
       })
       showToast('Payment recorded')
-      setShowPaymentModal(false)
-      await openDelivery(activeDelivery.delivery_id)
+      const paidDeliveryId = paymentTarget.delivery_id
+      setPaymentTarget(null)
+      if (activeDelivery?.delivery_id === paidDeliveryId) await openDelivery(paidDeliveryId)
       fetchDeliveries()
       if (supplierDetail) await openSupplierDetail(supplierDetail)
     } catch (e: any) {
       showToast(e?.response?.data?.error || 'Failed to record payment', 'error')
     } finally {
       setSavingPayment(false)
+    }
+  }
+
+  async function deletePayment(payment_id: string) {
+    if (!activeDelivery) return
+    if (!window.confirm('Remove this payment? The balance due will increase.')) return
+    try {
+      await api.delete(`/suppliers/deliveries/${activeDelivery.delivery_id}/payments/${payment_id}`)
+      showToast('Payment removed')
+      await openDelivery(activeDelivery.delivery_id)
+      fetchDeliveries()
+      if (supplierDetail) await openSupplierDetail(supplierDetail)
+    } catch (e: any) {
+      showToast(e?.response?.data?.error || 'Failed to remove payment', 'error')
     }
   }
 
@@ -1431,15 +1465,21 @@ export default function SuppliersPage() {
             </div>
 
             {/* Stats */}
-            <div className="px-5 py-4 grid grid-cols-3 gap-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
+            <div className="px-5 py-4 grid grid-cols-2 sm:grid-cols-4 gap-3 border-b border-gray-200 dark:border-gray-700 flex-shrink-0">
               <div>
                 <p className="text-[10px] text-gray-400 uppercase font-medium">Total Deliveries</p>
                 <p className="text-sm text-gray-800 dark:text-gray-200 font-semibold">{supplierDeliveries.length}</p>
               </div>
               <div>
                 <p className="text-[10px] text-gray-400 uppercase font-medium">Total Amount</p>
-                <p className="text-sm font-semibold text-green-600 dark:text-green-400">
+                <p className="text-sm font-semibold text-gray-800 dark:text-gray-200">
                   {cur}{supplierGrandTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                </p>
+              </div>
+              <div>
+                <p className="text-[10px] text-gray-400 uppercase font-medium">Paid Amount</p>
+                <p className="text-sm font-semibold text-green-600 dark:text-green-400">
+                  {cur}{supplierPaidTotal.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
                 </p>
               </div>
               <div>
@@ -1466,11 +1506,13 @@ export default function SuppliersPage() {
               ) : (
                 <div className="space-y-2">
                   {supplierDeliveryTotals.map(d => (
-                    <button
+                    <div
                       key={d.delivery_id}
-                      type="button"
+                      role="button"
+                      tabIndex={0}
                       onClick={() => openDelivery(d.delivery_id)}
-                      className="w-full px-3 py-2.5 flex items-center justify-between text-left rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors">
+                      onKeyDown={e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); openDelivery(d.delivery_id) } }}
+                      className="w-full px-3 py-2.5 flex items-center justify-between text-left rounded-lg border border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 hover:bg-gray-50 dark:hover:bg-gray-700/50 transition-colors cursor-pointer">
                       <div className="flex-1 min-w-0">
                         <div className="flex items-center gap-2">
                           <span className="text-xs font-semibold text-gray-700 dark:text-gray-300">
@@ -1488,14 +1530,31 @@ export default function SuppliersPage() {
                         </p>
                         {d.total > 0 && (
                           <p className={`text-[10px] mt-0.5 font-medium ${d.balance <= 0 ? 'text-green-600 dark:text-green-400' : d.paid > 0 ? 'text-amber-600 dark:text-amber-400' : 'text-red-600 dark:text-red-400'}`}>
-                            {d.balance <= 0 ? 'Paid' : `${cur}${d.balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })} due`}
+                            {d.balance <= 0
+                              ? 'Paid'
+                              : d.paid > 0
+                                ? `Paid ${cur}${d.paid.toLocaleString('en-IN', { maximumFractionDigits: 0 })} · ${cur}${d.balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })} due`
+                                : `${cur}${d.balance.toLocaleString('en-IN', { maximumFractionDigits: 0 })} due`}
                           </p>
                         )}
                       </div>
-                      <span className="text-sm font-bold text-gray-900 dark:text-white shrink-0 ml-3">
-                        {cur}{d.total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                      </span>
-                    </button>
+                      <div className="flex flex-col items-end gap-1.5 shrink-0 ml-3">
+                        <span className="text-sm font-bold text-gray-900 dark:text-white">
+                          {cur}{d.total.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                        </span>
+                        {d.balance > 0 && (
+                          <button
+                            type="button"
+                            onClick={e => {
+                              e.stopPropagation()
+                              openPaymentModal(d.delivery_id, d.invoice_number ? `Invoice #${d.invoice_number}` : 'Delivery', d.balance)
+                            }}
+                            className="text-[10px] px-2.5 py-1 rounded-md bg-blue-600 hover:bg-blue-700 text-white font-medium transition-colors">
+                            Pay
+                          </button>
+                        )}
+                      </div>
+                    </div>
                   ))}
                 </div>
               )}
@@ -1604,7 +1663,7 @@ export default function SuppliersPage() {
                       <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide">Payments</p>
                       {balanceDue > 0 && (
                         <button type="button"
-                          onClick={() => { setPaymentAmount(''); setPaymentDate(new Date().toISOString().slice(0, 10)); setPaymentNotes(''); setShowPaymentModal(true) }}
+                          onClick={() => openPaymentModal(activeDelivery.delivery_id, activeDelivery.invoice_number ? `Invoice #${activeDelivery.invoice_number}` : 'Delivery', balanceDue)}
                           className="text-xs text-blue-600 dark:text-blue-400 hover:underline font-medium">
                           + Record Payment
                         </button>
@@ -1625,12 +1684,21 @@ export default function SuppliersPage() {
                     {activeDelivery.payments && activeDelivery.payments.length > 0 && (
                       <div className="space-y-1">
                         {activeDelivery.payments.map(p => (
-                          <div key={p.payment_id} className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 px-1">
+                          <div key={p.payment_id} className="flex items-center justify-between text-xs text-gray-600 dark:text-gray-400 px-1 group">
                             <span>
                               {p.payment_date ? new Date(p.payment_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                               {p.notes ? ` · ${p.notes}` : ''}
                             </span>
-                            <span className="font-medium text-gray-800 dark:text-gray-200">{cur}{p.amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                            <span className="flex items-center gap-2">
+                              <span className="font-medium text-gray-800 dark:text-gray-200">{cur}{p.amount.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
+                              <button type="button" title="Remove payment"
+                                onClick={() => deletePayment(p.payment_id)}
+                                className="opacity-0 group-hover:opacity-100 text-red-400 hover:text-red-600 transition-opacity">
+                                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                              </button>
+                            </span>
                           </div>
                         ))}
                       </div>
@@ -1759,12 +1827,20 @@ export default function SuppliersPage() {
       })()}
 
       {/* ── RECORD PAYMENT MODAL ── */}
-      {showPaymentModal && activeDelivery && (
+      {paymentTarget && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-700">
-              <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Record Payment</h2>
-              <button onClick={() => setShowPaymentModal(false)}
+              <div>
+                <h2 className="text-lg font-semibold text-gray-900 dark:text-white">Record Payment</h2>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  {paymentTarget.label}
+                  {paymentTarget.balance > 0 && (
+                    <> · <span className="text-amber-600 dark:text-amber-400 font-medium">{cur}{paymentTarget.balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} due</span></>
+                  )}
+                </p>
+              </div>
+              <button onClick={() => setPaymentTarget(null)}
                 className="p-1.5 text-gray-400 hover:text-gray-600 dark:hover:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-lg transition-colors">
                 <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                   <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
@@ -1775,9 +1851,17 @@ export default function SuppliersPage() {
               <div>
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Amount ({cur}) *</label>
                 <input type="number" min="0.01" step="0.01" autoFocus
+                  max={paymentTarget.balance > 0 ? paymentTarget.balance : undefined}
                   value={paymentAmount} onChange={e => setPaymentAmount(e.target.value)}
                   placeholder="0.00"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                {paymentTarget.balance > 0 && (
+                  <button type="button"
+                    onClick={() => setPaymentAmount(String(paymentTarget.balance.toFixed(2)))}
+                    className="text-[11px] text-blue-600 dark:text-blue-400 hover:underline mt-1">
+                    Pay full balance ({cur}{paymentTarget.balance.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })})
+                  </button>
+                )}
               </div>
               <div>
                 <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Date</label>
@@ -1792,7 +1876,7 @@ export default function SuppliersPage() {
               </div>
             </div>
             <div className="flex justify-end gap-2 px-6 py-4 border-t border-gray-100 dark:border-gray-700 bg-gray-50 dark:bg-gray-900/50 rounded-b-2xl">
-              <button onClick={() => setShowPaymentModal(false)}
+              <button onClick={() => setPaymentTarget(null)}
                 className="px-4 py-2 border border-gray-300 dark:border-gray-600 rounded-lg text-sm text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors">
                 Cancel
               </button>

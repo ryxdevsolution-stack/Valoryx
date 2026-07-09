@@ -649,6 +649,21 @@ def record_delivery_payment(delivery_id):
     except (TypeError, ValueError):
         return jsonify({'success': False, 'error': 'amount must be a positive number'}), 400
 
+    # Reject overpayment: total paid may not exceed the delivery's purchase value.
+    # Deliveries with no priced items (total 0) accept any amount — nothing to cap against.
+    items_total = sum(
+        float(i.cost_price or 0) * float(i.quantity or 0) for i in delivery.items
+    )
+    if items_total > 0:
+        already_paid = sum(float(p.amount) for p in delivery.payments)
+        balance = items_total - already_paid
+        if amount > balance + 0.01:
+            return jsonify({
+                'success': False,
+                'error': f'Amount exceeds balance due ({balance:.2f})',
+                'balance_due': round(max(balance, 0), 2),
+            }), 400
+
     payment_date = date.today()
     if body.get('payment_date'):
         try:
