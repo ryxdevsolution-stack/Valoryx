@@ -15,6 +15,7 @@ interface Plan {
   description: string
   monthly_price: number
   yearly_price: number
+  currency?: string
   features: string[]
   limits: PlanLimits
   is_popular: boolean
@@ -61,13 +62,18 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
   const [pendingMsg, setPendingMsg] = useState('')
   const [pollingActive, setPollingActive] = useState(false)
 
+  // Region-based pricing: show plans in the client's currency (AED for UAE
+  // clients, etc.); the backend falls back to INR when no regional plan exists.
+  const clientCurrency = (client?.currency_code || 'INR').toUpperCase()
+
   useEffect(() => {
     fetchPlans()
-  }, [])
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [clientCurrency])
 
   async function fetchPlans() {
     try {
-      const res = await api.get('/subscription/plans')
+      const res = await api.get(`/subscription/plans?currency=${encodeURIComponent(clientCurrency)}`)
       setPlans(res.data.plans || [])
     } catch {
       setError('Failed to load pricing plans')
@@ -76,12 +82,13 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
     }
   }
 
-  function formatPrice(paise: number) {
-    return new Intl.NumberFormat('en-IN', {
+  function formatPrice(subunits: number, currency?: string) {
+    const code = currency || 'INR'
+    return new Intl.NumberFormat(code === 'INR' ? 'en-IN' : 'en', {
       style: 'currency',
-      currency: 'INR',
+      currency: code,
       maximumFractionDigits: 0,
-    }).format(paise / 100)
+    }).format(subunits / 100)
   }
 
   function getYearlySavings(plan: Plan) {
@@ -347,7 +354,7 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
               <div className="mb-5">
                 <div className="flex items-baseline gap-1">
                   <span className="text-4xl font-extrabold tracking-tight text-gray-900 dark:text-white tabular-nums">
-                    {formatPrice(price)}
+                    {formatPrice(price, plan.currency)}
                   </span>
                   <span className="text-gray-500 dark:text-gray-400 text-sm font-medium">
                     /{billingCycle === 'yearly' ? 'yr' : 'mo'}

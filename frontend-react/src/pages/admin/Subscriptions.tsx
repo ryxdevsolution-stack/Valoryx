@@ -15,21 +15,48 @@ import {
   Star,
   Infinity,
   RefreshCw,
-  AlertCircle
+  AlertCircle,
+  Plus,
+  Loader2
 } from 'lucide-react';
 
+interface PlanLimits {
+  users?: number;
+  bills_per_month?: number;
+  storage_gb?: number;
+}
+
 interface Plan {
-  id: string;
+  plan_id: string;
   name: string;
   description: string;
-  price_monthly: number;
-  price_yearly: number;
+  monthly_price: number;   // currency subunits (paise / fils)
+  yearly_price: number;
+  currency?: string;
   features: string[];
-  max_users: number | null;
-  max_bills_per_month: number | null;
+  limits: PlanLimits;
   is_popular: boolean;
   is_active: boolean;
 }
+
+interface NewPlanForm {
+  name: string;
+  description: string;
+  currency: string;
+  monthly_price: string;   // major units as typed; converted to subunits on submit
+  yearly_price: string;
+  features: string;        // one per line
+  users: string;
+  bills_per_month: string;
+  is_popular: boolean;
+}
+
+const EMPTY_PLAN_FORM: NewPlanForm = {
+  name: '', description: '', currency: 'INR', monthly_price: '', yearly_price: '',
+  features: '', users: '', bills_per_month: '', is_popular: false,
+};
+
+const CURRENCY_OPTIONS = ['INR', 'AED', 'USD'];
 
 interface SubscriptionHistory {
   id: string;
@@ -42,8 +69,14 @@ interface SubscriptionHistory {
   auto_renew: boolean;
 }
 
-const formatCurrency = (amount: number) =>
-  new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(amount);
+const formatCurrency = (amount: number, currency: string = 'INR') =>
+  new Intl.NumberFormat(currency === 'INR' ? 'en-IN' : 'en', {
+    style: 'currency', currency, maximumFractionDigits: 0,
+  }).format(amount);
+
+// Plan prices are stored in currency subunits (paise / fils)
+const formatPlanPrice = (subunits: number, currency?: string) =>
+  formatCurrency(subunits / 100, currency || 'INR');
 
 const getStatusColor = (status: string) => {
   switch (status) {
@@ -68,13 +101,18 @@ export default function SubscriptionManagementPage() {
   const [history, setHistory] = useState<SubscriptionHistory[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [showCreateModal, setShowCreateModal] = useState(false);
+  const [planForm, setPlanForm] = useState<NewPlanForm>(EMPTY_PLAN_FORM);
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState('');
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const [plansRes, historyRes] = await Promise.allSettled([
-        api.get('/subscription/plans'),
+        // 'all' so the admin sees every region's plans, not just INR
+        api.get('/subscription/plans?currency=all'),
         api.get('/subscription/history')
       ]);
 
@@ -92,6 +130,48 @@ export default function SubscriptionManagementPage() {
   }, []);
 
   useEffect(() => { fetchData(); }, [fetchData]);
+
+  const setFormField = (field: keyof NewPlanForm, value: string | boolean) =>
+    setPlanForm(prev => ({ ...prev, [field]: value }));
+
+  async function handleCreatePlan(e: React.FormEvent) {
+    e.preventDefault();
+    setCreateError('');
+
+    const monthly = Number(planForm.monthly_price);
+    const yearly = Number(planForm.yearly_price);
+    if (!planForm.name.trim()) { setCreateError('Plan name is required'); return; }
+    if (!monthly || monthly <= 0 || !yearly || yearly <= 0) {
+      setCreateError('Monthly and yearly prices must be positive numbers');
+      return;
+    }
+
+    const limits: PlanLimits = {};
+    if (planForm.users.trim()) limits.users = Number(planForm.users);
+    if (planForm.bills_per_month.trim()) limits.bills_per_month = Number(planForm.bills_per_month);
+
+    setCreating(true);
+    try {
+      await api.post('/subscription/admin/plans', {
+        name: planForm.name.trim(),
+        description: planForm.description.trim(),
+        currency: planForm.currency,
+        // UI takes major units (₹999 / AED 99); API expects subunits
+        monthly_price: Math.round(monthly * 100),
+        yearly_price: Math.round(yearly * 100),
+        features: planForm.features.split('\n').map(f => f.trim()).filter(Boolean),
+        limits,
+        is_popular: planForm.is_popular,
+      });
+      setShowCreateModal(false);
+      setPlanForm(EMPTY_PLAN_FORM);
+      await fetchData();
+    } catch (err: any) {
+      setCreateError(err?.response?.data?.message || err?.response?.data?.error || 'Failed to create plan');
+    } finally {
+      setCreating(false);
+    }
+  }
 
   if (loading) {
     return (
@@ -131,10 +211,16 @@ export default function SubscriptionManagementPage() {
           <h1 className="text-3xl font-bold text-slate-900 dark:text-white">Subscription Management</h1>
           <p className="text-slate-500 dark:text-slate-400 mt-1">Manage plans and client subscriptions</p>
         </div>
-        <button onClick={fetchData} className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl transition-colors shadow-sm">
-          <RefreshCw className="w-4 h-4" />
-          Refresh
-        </button>
+        <div className="flex items-center gap-3">
+          <button onClick={() => { setCreateError(''); setShowCreateModal(true); }} className="flex items-center gap-2 px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl transition-colors shadow-sm">
+            <Plus className="w-4 h-4" />
+            Create Plan
+          </button>
+          <button onClick={fetchData} className="flex items-center gap-2 px-4 py-2 bg-violet-600 hover:bg-violet-700 text-white rounded-xl transition-colors shadow-sm">
+            <RefreshCw className="w-4 h-4" />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Stats */}
@@ -213,7 +299,7 @@ export default function SubscriptionManagementPage() {
         ) : (
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {plans.map((plan) => (
-              <div key={plan.id} className={`relative bg-white dark:bg-slate-800 rounded-2xl shadow-sm border-2 transition-all hover:shadow-lg ${plan.is_popular ? 'border-violet-500 dark:border-violet-400' : 'border-slate-200 dark:border-slate-700'}`}>
+              <div key={plan.plan_id} className={`relative bg-white dark:bg-slate-800 rounded-2xl shadow-sm border-2 transition-all hover:shadow-lg ${plan.is_popular ? 'border-violet-500 dark:border-violet-400' : 'border-slate-200 dark:border-slate-700'}`}>
                 {plan.is_popular && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                     <span className="px-4 py-1 bg-violet-600 text-white text-xs font-semibold rounded-full">Most Popular</span>
@@ -224,27 +310,35 @@ export default function SubscriptionManagementPage() {
                     <div className={`p-3 rounded-xl ${plan.name.toLowerCase().includes('enterprise') ? 'bg-amber-100 dark:bg-amber-900/30 text-amber-600' : plan.name.toLowerCase().includes('pro') ? 'bg-violet-100 dark:bg-violet-900/30 text-violet-600' : 'bg-blue-100 dark:bg-blue-900/30 text-blue-600'}`}>
                       {getPlanIcon(plan.name)}
                     </div>
-                    <span className={`text-xs font-medium px-2 py-1 rounded-full ${plan.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                      {plan.is_active ? 'Active' : 'Inactive'}
-                    </span>
+                    <div className="flex items-center gap-2">
+                      <span className="text-xs font-semibold px-2 py-1 rounded-full bg-slate-100 text-slate-600 dark:bg-slate-700 dark:text-slate-300">
+                        {plan.currency || 'INR'}
+                      </span>
+                      <span className={`text-xs font-medium px-2 py-1 rounded-full ${plan.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
+                        {plan.is_active ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
                   </div>
                   <h3 className="text-xl font-bold text-slate-900 dark:text-white">{plan.name}</h3>
                   <p className="text-sm text-slate-500 dark:text-slate-400 mt-1">{plan.description}</p>
                   <div className="mt-4">
-                    <span className="text-3xl font-bold text-slate-900 dark:text-white">{formatCurrency(plan.price_monthly)}</span>
+                    <span className="text-3xl font-bold text-slate-900 dark:text-white">{formatPlanPrice(plan.monthly_price, plan.currency)}</span>
                     <span className="text-slate-500 dark:text-slate-400">/mo</span>
+                    <div className="text-sm text-slate-500 dark:text-slate-400 mt-1">
+                      {formatPlanPrice(plan.yearly_price, plan.currency)}/yr
+                    </div>
                   </div>
                   <div className="mt-6 space-y-3">
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-slate-600 dark:text-slate-400">Users</span>
                       <span className="font-semibold text-slate-900 dark:text-white flex items-center gap-1">
-                        {plan.max_users === null ? <><Infinity className="w-4 h-4" /> Unlimited</> : `Up to ${plan.max_users}`}
+                        {plan.limits?.users == null || plan.limits.users === -1 ? <><Infinity className="w-4 h-4" /> Unlimited</> : `Up to ${plan.limits.users}`}
                       </span>
                     </div>
                     <div className="flex items-center justify-between text-sm">
                       <span className="text-slate-600 dark:text-slate-400">Bills/Month</span>
                       <span className="font-semibold text-slate-900 dark:text-white">
-                        {plan.max_bills_per_month === null ? 'Unlimited' : plan.max_bills_per_month}
+                        {plan.limits?.bills_per_month == null || plan.limits.bills_per_month === -1 ? 'Unlimited' : plan.limits.bills_per_month}
                       </span>
                     </div>
                   </div>
@@ -372,6 +466,106 @@ export default function SubscriptionManagementPage() {
           </div>
           </>
         )
+      )}
+
+      {/* Create Plan Modal */}
+      {showCreateModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={() => !creating && setShowCreateModal(false)}>
+          <div className="bg-white dark:bg-slate-800 rounded-2xl shadow-xl w-full max-w-lg max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+            <form onSubmit={handleCreatePlan} className="p-6">
+              <h2 className="text-xl font-bold text-slate-900 dark:text-white mb-1">Create Plan</h2>
+              <p className="text-sm text-slate-500 dark:text-slate-400 mb-5">
+                Creates the plan here and in Razorpay (monthly + yearly) for the selected currency.
+              </p>
+
+              {createError && (
+                <div className="mb-4 p-3 rounded-xl bg-red-50 dark:bg-red-900/20 text-red-600 dark:text-red-400 text-sm">
+                  {createError}
+                </div>
+              )}
+
+              <div className="space-y-4">
+                <div>
+                  <label htmlFor="plan-name" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Plan Name *</label>
+                  <input id="plan-name" type="text" value={planForm.name} onChange={(e) => setFormField('name', e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-violet-500 focus:border-transparent outline-none"
+                    placeholder="e.g. Professional" required />
+                </div>
+
+                <div>
+                  <label htmlFor="plan-desc" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Description</label>
+                  <input id="plan-desc" type="text" value={planForm.description} onChange={(e) => setFormField('description', e.target.value)}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-violet-500 focus:border-transparent outline-none"
+                    placeholder="Short description shown on the pricing card" />
+                </div>
+
+                <div className="grid grid-cols-3 gap-3">
+                  <div>
+                    <label htmlFor="plan-currency" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Currency *</label>
+                    <select id="plan-currency" value={planForm.currency} onChange={(e) => setFormField('currency', e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-violet-500 outline-none">
+                      {CURRENCY_OPTIONS.map(c => <option key={c} value={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label htmlFor="plan-monthly" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Monthly *</label>
+                    <input id="plan-monthly" type="number" min="1" step="0.01" value={planForm.monthly_price} onChange={(e) => setFormField('monthly_price', e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-violet-500 outline-none"
+                      placeholder="999" required />
+                  </div>
+                  <div>
+                    <label htmlFor="plan-yearly" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Yearly *</label>
+                    <input id="plan-yearly" type="number" min="1" step="0.01" value={planForm.yearly_price} onChange={(e) => setFormField('yearly_price', e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-violet-500 outline-none"
+                      placeholder="9990" required />
+                  </div>
+                </div>
+                <p className="text-xs text-slate-500 dark:text-slate-400 -mt-2">
+                  Prices in major units ({planForm.currency} 999, not subunits) — converted automatically.
+                </p>
+
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label htmlFor="plan-users" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Max Users</label>
+                    <input id="plan-users" type="number" value={planForm.users} onChange={(e) => setFormField('users', e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-violet-500 outline-none"
+                      placeholder="-1 = unlimited" />
+                  </div>
+                  <div>
+                    <label htmlFor="plan-bills" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Bills / Month</label>
+                    <input id="plan-bills" type="number" value={planForm.bills_per_month} onChange={(e) => setFormField('bills_per_month', e.target.value)}
+                      className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-violet-500 outline-none"
+                      placeholder="-1 = unlimited" />
+                  </div>
+                </div>
+
+                <div>
+                  <label htmlFor="plan-features" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">Features (one per line)</label>
+                  <textarea id="plan-features" value={planForm.features} onChange={(e) => setFormField('features', e.target.value)} rows={4}
+                    className="w-full px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-700 text-slate-900 dark:text-white focus:ring-2 focus:ring-violet-500 outline-none resize-none"
+                    placeholder={'Unlimited billing\nInventory management\nPriority support'} />
+                </div>
+
+                <label className="flex items-center gap-2 text-sm text-slate-700 dark:text-slate-300 cursor-pointer">
+                  <input type="checkbox" checked={planForm.is_popular} onChange={(e) => setFormField('is_popular', e.target.checked)}
+                    className="rounded border-slate-300 text-violet-600 focus:ring-violet-500" />
+                  Mark as "Most Popular"
+                </label>
+              </div>
+
+              <div className="flex gap-3 mt-6">
+                <button type="button" onClick={() => setShowCreateModal(false)} disabled={creating}
+                  className="flex-1 px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors disabled:opacity-50">
+                  Cancel
+                </button>
+                <button type="submit" disabled={creating}
+                  className="flex-1 flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl bg-emerald-600 hover:bg-emerald-700 text-white font-medium transition-colors disabled:opacity-50">
+                  {creating ? <><Loader2 className="w-4 h-4 animate-spin" /> Creating…</> : 'Create Plan'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
       )}
     </div>
   );

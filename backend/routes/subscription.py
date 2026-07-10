@@ -159,18 +159,37 @@ def _activate_subscription(transaction, payment_id=None, signature=None):
 
 @subscription_bp.route('/plans', methods=['GET'])
 def get_plans():
-    """Public endpoint — list active subscription plans"""
+    """Public endpoint — list active subscription plans.
+
+    Region-aware: ?currency=AED returns plans priced in AED, falling back to
+    INR when no plan exists for that currency (so a client from an unsupported
+    region still sees pricing). ?currency=all returns every currency (admin UI).
+    """
     try:
+        currency = (request.args.get('currency') or 'INR').strip().upper()[:3]
+
         cache = get_cache_manager()
-        cached = cache.get("subscription:plans")
+        cache_key = f"subscription:plans:{currency}"
+        cached = cache.get(cache_key)
         if cached is not None:
             return jsonify(cached), 200
 
-        plans = SubscriptionPlan.query.filter_by(is_active=True).order_by(
-            SubscriptionPlan.display_order
-        ).all()
+        query = SubscriptionPlan.query.filter_by(is_active=True)
+        if currency != 'ALL':
+            plans = query.filter_by(currency=currency).order_by(
+                SubscriptionPlan.display_order
+            ).all()
+            if not plans and currency != 'INR':
+                plans = SubscriptionPlan.query.filter_by(
+                    is_active=True, currency='INR'
+                ).order_by(SubscriptionPlan.display_order).all()
+        else:
+            plans = query.order_by(
+                SubscriptionPlan.currency, SubscriptionPlan.display_order
+            ).all()
+
         result = {'success': True, 'plans': [p.to_dict() for p in plans]}
-        cache.set("subscription:plans", result, 600)
+        cache.set(cache_key, result, 600)
         return jsonify(result), 200
     except Exception as e:
         return jsonify({'error': 'Failed to fetch plans', 'message': str(e)}), 500
@@ -229,13 +248,14 @@ def create_order():
             return jsonify({'error': 'Plan not found'}), 404
 
         amount = plan.yearly_price if billing_cycle == 'yearly' else plan.monthly_price
+        plan_currency = plan.currency or 'INR'
 
         import razorpay
         rz_client = razorpay.Client(auth=(Config.RAZORPAY_KEY_ID, Config.RAZORPAY_KEY_SECRET))
 
         order_data = {
             'amount': amount,
-            'currency': 'INR',
+            'currency': plan_currency,
             'receipt': f"rcpt_{g.user['client_id'][:8]}_{str(uuid.uuid4())[:8]}",
             'notes': {
                 'client_id': g.user['client_id'],
@@ -252,7 +272,7 @@ def create_order():
             plan_id=plan_id,
             razorpay_order_id=razorpay_order['id'],
             amount=amount,
-            currency='INR',
+            currency=plan_currency,
             billing_cycle=billing_cycle,
             status='created',
             created_at=datetime.utcnow(),
@@ -264,7 +284,7 @@ def create_order():
             'success': True,
             'order_id': razorpay_order['id'],
             'amount': amount,
-            'currency': 'INR',
+            'currency': plan_currency,
             'razorpay_key_id': Config.RAZORPAY_KEY_ID,
             'plan_name': plan.name,
             'billing_cycle': billing_cycle,
@@ -363,7 +383,7 @@ def create_subscription():
             plan_id=plan_id,
             razorpay_subscription_id=rz_sub_id,
             amount=amount,
-            currency='INR',
+            currency=plan.currency or 'INR',
             billing_cycle=billing_cycle,
             status='created',
             created_at=datetime.utcnow(),
@@ -696,7 +716,7 @@ def razorpay_webhook():
                     invoice_id=invoice_id,
                     invoice_number=invoice_number,
                     amount=amount_paid,
-                    currency='INR',
+                    currency=(invoice_entity.get('currency') or 'INR'),
                     billing_cycle=billing_cycle,
                     status='paid',
                     paid_at=datetime.utcnow(),
@@ -1033,7 +1053,7 @@ def seed_razorpay_plans():
                         'item': {
                             'name': f'{plan.name} - Monthly',
                             'amount': plan.monthly_price,
-                            'currency': 'INR',
+                            'currency': plan.currency or 'INR',
                         },
                         'notes': {'internal_plan_id': str(plan.plan_id)},
                     })
@@ -1055,7 +1075,7 @@ def seed_razorpay_plans():
                         'item': {
                             'name': f'{plan.name} - Yearly',
                             'amount': plan.yearly_price,
-                            'currency': 'INR',
+                            'currency': plan.currency or 'INR',
                         },
                         'notes': {'internal_plan_id': str(plan.plan_id)},
                     })
@@ -1077,3 +1097,131 @@ def seed_razorpay_plans():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to seed plans', 'message': str(e)}), 500
+
+
+@subscription_bp.route('/admin/plans', methods=['POST'])
+@authenticate()
+def admin_create_plan():
+    """
+    Super-admin only: create a region-specific subscription plan AND its
+    Razorpay Plan objects (monthly + yearly) in one step, so the new plan is
+    immediately subscribable with auto-renewal.
+
+    Body: {
+        name: str, description?: str,
+        currency: ISO-4217 code, e.g. 'INR' | 'AED',
+        monthly_price: int, yearly_price: int   # currency subunits (paise/fils)
+        features?: [str], limits?: {users, bills_per_month, storage_gb},
+        is_popular?: bool, display_order?: int
+    }
+    """
+    try:
+        if not g.user.get('is_super_admin'):
+            return jsonify({'error': 'Super admin access required'}), 403
+
+        if not Config.RAZORPAY_KEY_ID or not Config.RAZORPAY_KEY_SECRET:
+            return jsonify({'error': 'Razorpay not configured'}), 503
+
+        data = request.get_json() or {}
+        name = (data.get('name') or '').strip()
+        description = (data.get('description') or '').strip()
+        currency = (data.get('currency') or 'INR').strip().upper()
+        monthly_price = data.get('monthly_price')
+        yearly_price = data.get('yearly_price')
+        features = data.get('features') or []
+        limits = data.get('limits') or {}
+        is_popular = bool(data.get('is_popular'))
+        display_order = data.get('display_order')
+
+        if not name:
+            return jsonify({'error': 'name is required'}), 400
+        if len(currency) != 3 or not currency.isalpha():
+            return jsonify({'error': 'currency must be a 3-letter ISO code, e.g. INR or AED'}), 400
+        if not isinstance(monthly_price, int) or monthly_price <= 0:
+            return jsonify({'error': 'monthly_price must be a positive integer in currency subunits'}), 400
+        if not isinstance(yearly_price, int) or yearly_price <= 0:
+            return jsonify({'error': 'yearly_price must be a positive integer in currency subunits'}), 400
+        if not isinstance(features, list) or not all(isinstance(f, str) for f in features):
+            return jsonify({'error': 'features must be a list of strings'}), 400
+        if not isinstance(limits, dict):
+            return jsonify({'error': 'limits must be an object'}), 400
+
+        duplicate = SubscriptionPlan.query.filter_by(
+            name=name, currency=currency, is_active=True
+        ).first()
+        if duplicate:
+            return jsonify({
+                'error': 'Plan already exists',
+                'message': f'An active plan named "{name}" already exists for {currency}.'
+            }), 409
+
+        plan_id = str(uuid.uuid4())
+
+        # Create the Razorpay plans FIRST — if the gateway rejects the currency
+        # (multi-currency not enabled) or the amount, no local row is left behind.
+        import razorpay
+        rz_client = razorpay.Client(auth=(Config.RAZORPAY_KEY_ID, Config.RAZORPAY_KEY_SECRET))
+
+        try:
+            rz_monthly = rz_client.plan.create(data={
+                'period': 'monthly',
+                'interval': 1,
+                'item': {
+                    'name': f'{name} - Monthly',
+                    'amount': monthly_price,
+                    'currency': currency,
+                },
+                'notes': {'internal_plan_id': plan_id},
+            })
+            rz_yearly = rz_client.plan.create(data={
+                'period': 'yearly',
+                'interval': 1,
+                'item': {
+                    'name': f'{name} - Yearly',
+                    'amount': yearly_price,
+                    'currency': currency,
+                },
+                'notes': {'internal_plan_id': plan_id},
+            })
+        except Exception as rz_err:
+            logger.error(f'[Admin Plans] Razorpay plan creation failed for {name}/{currency}: {rz_err}')
+            return jsonify({
+                'error': 'Razorpay rejected the plan',
+                'message': str(rz_err),
+            }), 502
+
+        if display_order is None:
+            max_order = db.session.query(
+                db.func.max(SubscriptionPlan.display_order)
+            ).filter_by(currency=currency).scalar()
+            display_order = (max_order or 0) + 1
+
+        plan = SubscriptionPlan(
+            plan_id=plan_id,
+            name=name,
+            description=description,
+            currency=currency,
+            monthly_price=monthly_price,
+            yearly_price=yearly_price,
+            features=features,
+            limits=limits,
+            is_popular=is_popular,
+            is_active=True,
+            display_order=display_order,
+            razorpay_monthly_plan_id=rz_monthly['id'],
+            razorpay_yearly_plan_id=rz_yearly['id'],
+        )
+        db.session.add(plan)
+        db.session.commit()
+
+        get_cache_manager().delete_pattern('subscription:plans:*')
+        log_action('INSERT', 'subscription_plan', plan_id, None, plan.to_dict())
+        logger.info(f'[Admin Plans] {g.user["user_id"]} created plan {name}/{currency} '
+                    f'rz_monthly={rz_monthly["id"]} rz_yearly={rz_yearly["id"]}')
+
+        return jsonify({'success': True, 'plan': plan.to_dict()}), 201
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'[Admin Plans] Create failed: {e}')
+        return jsonify({'error': 'Failed to create plan', 'message': str(e)}), 500

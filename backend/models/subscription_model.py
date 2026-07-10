@@ -11,8 +11,9 @@ class SubscriptionPlan(db.Model):
     plan_id = db.Column(FlexibleUUID, primary_key=True, default=lambda: str(uuid.uuid4()))
     name = db.Column(db.String(50), nullable=False)
     description = db.Column(db.String(255))
-    monthly_price = db.Column(db.Integer, nullable=False)  # Price in paise (99900 = Rs.999)
-    yearly_price = db.Column(db.Integer, nullable=False)    # Price in paise
+    monthly_price = db.Column(db.Integer, nullable=False)  # Price in currency subunits (99900 = Rs.999 / AED 999)
+    yearly_price = db.Column(db.Integer, nullable=False)    # Price in currency subunits
+    currency = db.Column(db.String(3), nullable=False, default='INR')  # ISO-4217; plans are shown to clients whose region matches
     features = db.Column(FlexibleJSON)       # List of feature strings
     limits = db.Column(FlexibleJSON)         # {users, bills_per_month, storage_gb}
     is_popular = db.Column(db.Boolean, default=False)
@@ -30,6 +31,7 @@ class SubscriptionPlan(db.Model):
             'description': self.description,
             'monthly_price': self.monthly_price,
             'yearly_price': self.yearly_price,
+            'currency': self.currency or 'INR',
             'features': self.features or [],
             'limits': self.limits or {},
             'is_popular': self.is_popular,

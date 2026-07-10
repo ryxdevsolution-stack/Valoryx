@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 36
+CURRENT_SCHEMA_VERSION = 37
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -2010,6 +2010,27 @@ def _m036_supplier_delivery_payments(db):
     logging.info("[Migration] v36: supplier delivery payments done")
 
 
+def _m037_subscription_plan_currency(db):
+    """v37: Multi-currency subscription plans. Adds a currency column to
+    subscription_plan so region-specific plans (e.g. AED for UAE clients) can
+    coexist with the INR ones. Existing rows are backfilled to INR — they were
+    all implicitly INR before this column existed."""
+    inspector = sa_inspect(db.engine)
+    cols = [c['name'] for c in inspector.get_columns('subscription_plan')]
+
+    if 'currency' not in cols:
+        db.session.execute(text(
+            "ALTER TABLE subscription_plan ADD COLUMN currency VARCHAR(3) DEFAULT 'INR'"
+        ))
+        logging.info("[Migration] v37: subscription_plan.currency added")
+
+    db.session.execute(text(
+        "UPDATE subscription_plan SET currency = 'INR' WHERE currency IS NULL OR currency = ''"
+    ))
+    db.session.commit()
+    logging.info("[Migration] v37: subscription plan currency done")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -2048,6 +2069,7 @@ MIGRATIONS = [
     (34, _m034_session_platform),
     (35, _m035_schema_drift_reconcile),
     (36, _m036_supplier_delivery_payments),
+    (37, _m037_subscription_plan_currency),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────
