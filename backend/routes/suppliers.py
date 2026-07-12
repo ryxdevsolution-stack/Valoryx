@@ -135,10 +135,15 @@ def create_supplier():
         phone          = (body.get('phone') or '').strip() or None,
         email          = (body.get('email') or '').strip() or None,
         address        = (body.get('address') or '').strip() or None,
+        state          = (body.get('state') or '').strip() or None,
         gst_number     = (body.get('gst_number') or '').strip() or None,
         transport_fee  = body.get('transport_fee') or 0,
         payment_terms  = (body.get('payment_terms') or '').strip() or None,
         notes          = (body.get('notes') or '').strip() or None,
+        bank_account_name   = (body.get('bank_account_name') or '').strip() or None,
+        bank_name           = (body.get('bank_name') or '').strip() or None,
+        bank_account_number = (body.get('bank_account_number') or '').strip() or None,
+        bank_ifsc_code      = (body.get('bank_ifsc_code') or '').strip() or None,
     )
     db.session.add(supplier)
     db.session.commit()
@@ -164,7 +169,8 @@ def update_supplier(supplier_id):
             return jsonify({'success': False, 'error': 'Name cannot be empty'}), 400
         supplier.name = name
 
-    for field in ('contact_person', 'phone', 'email', 'address', 'gst_number', 'payment_terms', 'notes'):
+    for field in ('contact_person', 'phone', 'email', 'address', 'state', 'gst_number', 'payment_terms', 'notes',
+                  'bank_account_name', 'bank_name', 'bank_account_number', 'bank_ifsc_code'):
         if field in body:
             setattr(supplier, field, (body[field] or '').strip() or None)
 

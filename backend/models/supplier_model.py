@@ -19,10 +19,16 @@ class Supplier(db.Model):
     phone          = db.Column(db.String(20),  nullable=True)
     email          = db.Column(db.String(255), nullable=True)
     address        = db.Column(db.Text,        nullable=True)
+    state          = db.Column(db.String(100), nullable=True)  # for GST place-of-supply / invoice header
     gst_number     = db.Column(db.String(15),  nullable=True)
     transport_fee  = db.Column(FlexibleNumeric, default=0)   # default freight/delivery charge
     payment_terms  = db.Column(db.String(100), nullable=True)  # COD, Net 30, Advance, etc.
     notes          = db.Column(db.Text,        nullable=True)
+    # Bank details — shown on the generated Tax Invoice PDF; all optional
+    bank_account_name   = db.Column(db.String(255), nullable=True)
+    bank_name           = db.Column(db.String(255), nullable=True)
+    bank_account_number = db.Column(db.String(50),  nullable=True)
+    bank_ifsc_code      = db.Column(db.String(20),  nullable=True)
     is_active      = db.Column(db.Boolean, default=True, nullable=False)
     created_at     = db.Column(db.DateTime, default=datetime.utcnow)
     updated_at     = db.Column(db.DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
@@ -38,10 +44,15 @@ class Supplier(db.Model):
             'phone':          self.phone,
             'email':          self.email,
             'address':        self.address,
+            'state':          self.state,
             'gst_number':     self.gst_number,
             'transport_fee':  float(self.transport_fee) if self.transport_fee else 0,
             'payment_terms':  self.payment_terms,
             'notes':          self.notes,
+            'bank_account_name':   self.bank_account_name,
+            'bank_name':           self.bank_name,
+            'bank_account_number': self.bank_account_number,
+            'bank_ifsc_code':      self.bank_ifsc_code,
             'is_active':      self.is_active,
             'created_at':     self.created_at.isoformat() if self.created_at else None,
             'updated_at':     self.updated_at.isoformat() if self.updated_at else None,

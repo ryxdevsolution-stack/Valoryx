@@ -7,6 +7,11 @@ import { useMobileDetect } from '@/hooks/useMobileDetect'
 import { getAddedByLabel, setAddedByLabel } from '@/utils/addedByLabel'
 import { focusRowById } from '@/utils/focusRow'
 import { useCurrency } from '@/lib/useCurrency'
+import { useClient } from '@/contexts/ClientContext'
+import { generateSupplierStatementPDF } from '@/lib/supplierPdfService'
+import { generateDeliveryTaxInvoicePDF } from '@/lib/deliveryInvoicePdfService'
+import { encodeDeliveryNotes, decodeDeliveryNotes } from '@/lib/deliveryNotesEncoding'
+import { getShopSettings } from '@/services/shopSettingsService'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -17,10 +22,15 @@ interface Supplier {
   phone: string | null
   email: string | null
   address: string | null
+  state: string | null
   gst_number: string | null
   transport_fee: number
   payment_terms: string | null
   notes: string | null
+  bank_account_name: string | null
+  bank_name: string | null
+  bank_account_number: string | null
+  bank_ifsc_code: string | null
   is_active: boolean
   created_at: string
 }
@@ -80,8 +90,9 @@ interface Delivery {
 }
 
 const EMPTY_SUPPLIER: Omit<Supplier, 'supplier_id' | 'is_active' | 'created_at'> = {
-  name: '', contact_person: '', phone: '', email: '', address: '',
+  name: '', contact_person: '', phone: '', email: '', address: '', state: '',
   gst_number: '', transport_fee: 0, payment_terms: '', notes: null,
+  bank_account_name: '', bank_name: '', bank_account_number: '', bank_ifsc_code: '',
 }
 
 const EMPTY_ITEM: DeliveryItem = {
@@ -105,6 +116,7 @@ const STATUS_LABEL: Record<string, string> = {
 
 export default function SuppliersPage() {
   const { symbol: cur, taxLabel } = useCurrency()
+  const { client } = useClient()
   const [searchParams] = useSearchParams()
   const navigate = useNavigate()
   const location = useLocation()
@@ -133,6 +145,7 @@ export default function SuppliersPage() {
   const [delStatusFilter, setDelStatusFilter] = useState('')
   const [showNewDelivery, setShowNewDelivery] = useState(false)
   const [activeDelivery, setActiveDelivery] = useState<Delivery | null>(null)
+  const [loadingDelivery, setLoadingDelivery] = useState(false)
   const [toast, setToast] = useState<{ msg: string; type: 'success' | 'error' } | null>(null)
 
   // ── delivery wizard state
@@ -141,6 +154,10 @@ export default function SuppliersPage() {
   const [delForm, setDelForm] = useState({
     supplier_id: '', branch_id: '', invoice_number: '',
     delivery_date: '', transport_fee: '', notes: '',
+    // Logistics fields — packed into `notes` on save, see lib/deliveryNotesEncoding.ts
+    buyer_order_no: '', buyer_order_date: '',
+    dispatched_through: '', destination: '',
+    vehicle_no: '', lr_rr_no: '',
   })
   const [delItems, setDelItems] = useState<DeliveryItem[]>([{ ...EMPTY_ITEM }])
   const [currentDeliveryId, setCurrentDeliveryId] = useState<string | null>(null)
@@ -226,6 +243,32 @@ export default function SuppliersPage() {
     setSupplierDeliveries([])
   }, [])
 
+  function downloadSupplierStatement() {
+    if (!supplierDetail) return
+    generateSupplierStatementPDF({
+      client: {
+        client_name: client?.client_name || 'Business',
+        address: client?.address,
+        phone: client?.phone,
+        email: client?.email,
+        gstin: client?.gstin,
+      },
+      supplier: {
+        name: supplierDetail.name,
+        contact_person: supplierDetail.contact_person,
+        phone: supplierDetail.phone,
+        email: supplierDetail.email,
+        address: supplierDetail.address,
+        state: supplierDetail.state,
+        gst_number: supplierDetail.gst_number,
+      },
+      deliveries: supplierDeliveryTotals,
+      totalAmount: supplierGrandTotal,
+      paidAmount: supplierPaidTotal,
+      balanceDue: supplierBalanceTotal,
+    })
+  }
+
   const supplierDeliveryTotals = useMemo(() =>
     supplierDeliveries.map(d => {
       const total = d.items.reduce((sum, item) => sum + (parseFloat(String(item.cost_price)) || 0) * item.quantity, 0)
@@ -303,9 +346,11 @@ export default function SuppliersPage() {
     setEditingSupplier(s)
     setSuppForm({
       name: s.name, contact_person: s.contact_person || '', phone: s.phone || '',
-      email: s.email || '', address: s.address || '', gst_number: s.gst_number || '',
+      email: s.email || '', address: s.address || '', state: s.state || '', gst_number: s.gst_number || '',
       transport_fee: s.transport_fee, payment_terms: s.payment_terms || '',
       notes: s.notes || '',
+      bank_account_name: s.bank_account_name || '', bank_name: s.bank_name || '',
+      bank_account_number: s.bank_account_number || '', bank_ifsc_code: s.bank_ifsc_code || '',
     })
     setShowSupplierModal(true)
   }
@@ -315,8 +360,14 @@ export default function SuppliersPage() {
     setSuppSaving(true)
     try {
       if (editingSupplier) {
-        await api.put(`/suppliers/${editingSupplier.supplier_id}`, suppForm)
+        const res = await api.put(`/suppliers/${editingSupplier.supplier_id}`, suppForm)
         showToast('Supplier updated')
+        // Keep the open drawer (if any) in sync — it holds its own copy of the
+        // supplier fetched when it was opened, so a plain fetchSuppliers() below
+        // wouldn't refresh it and PDFs would still use stale field values.
+        if (supplierDetail?.supplier_id === editingSupplier.supplier_id) {
+          setSupplierDetail(res.data.data)
+        }
       } else {
         await api.post('/suppliers/', suppForm)
         showToast('Supplier added')
@@ -344,7 +395,10 @@ export default function SuppliersPage() {
   // ─── Delivery wizard ──────────────────────────────────────────────────────
   function openNewDelivery() {
     setStep(1)
-    setDelForm({ supplier_id: '', branch_id: '', invoice_number: '', delivery_date: '', transport_fee: '', notes: '' })
+    setDelForm({
+      supplier_id: '', branch_id: '', invoice_number: '', delivery_date: '', transport_fee: '', notes: '',
+      buyer_order_no: '', buyer_order_date: '', dispatched_through: '', destination: '', vehicle_no: '', lr_rr_no: '',
+    })
     setDelItems([{ ...EMPTY_ITEM }])
     setCurrentDeliveryId(null)
     setProductsConfirmed(false)
@@ -362,13 +416,20 @@ export default function SuppliersPage() {
 
   function continueDraft(delivery: Delivery) {
     setCurrentDeliveryId(delivery.delivery_id)
+    const logistics = decodeDeliveryNotes(delivery.notes)
     setDelForm({
       supplier_id:    delivery.supplier_id,
       branch_id:      delivery.branch_id || '',
       invoice_number: delivery.invoice_number || '',
       delivery_date:  delivery.delivery_date || '',
       transport_fee:  delivery.transport_fee ? String(delivery.transport_fee) : '',
-      notes:          delivery.notes || '',
+      notes:          logistics.text,
+      buyer_order_no:     logistics.buyer_order_no || '',
+      buyer_order_date:   logistics.buyer_order_date || '',
+      dispatched_through: logistics.dispatched_through || '',
+      destination:        logistics.destination || '',
+      vehicle_no:         logistics.vehicle_no || '',
+      lr_rr_no:           logistics.lr_rr_no || '',
     })
     const hasItems = delivery.items && delivery.items.length > 0
     setDelItems(hasItems
@@ -417,7 +478,15 @@ export default function SuppliersPage() {
         invoice_number: delForm.invoice_number || null,
         delivery_date:  delForm.delivery_date || null,
         transport_fee:  parseFloat(delForm.transport_fee) || 0,
-        notes:          delForm.notes || null,
+        notes:          encodeDeliveryNotes({
+          text: delForm.notes,
+          buyer_order_no: delForm.buyer_order_no,
+          buyer_order_date: delForm.buyer_order_date,
+          dispatched_through: delForm.dispatched_through,
+          destination: delForm.destination,
+          vehicle_no: delForm.vehicle_no,
+          lr_rr_no: delForm.lr_rr_no,
+        }) || null,
         added_by_label: delAddedByLabel.trim(),
       }
       if (currentDeliveryId) {
@@ -542,25 +611,6 @@ export default function SuppliersPage() {
     }
   }
 
-  // ─── Download delivery note (blob — no hardcoded URL) ────────────────────
-  async function downloadNote(delivery_id: string, filename: string | null) {
-    try {
-      const res = await api.get(`/suppliers/deliveries/${delivery_id}/download-note`, { responseType: 'blob' })
-      const url = window.URL.createObjectURL(new Blob([res.data]))
-      const a = document.createElement('a')
-      a.href = url
-      a.target = '_blank'
-      a.rel = 'noopener noreferrer'
-      a.download = filename || 'delivery_note'
-      document.body.appendChild(a)
-      a.click()
-      document.body.removeChild(a)
-      window.URL.revokeObjectURL(url)
-    } catch {
-      showToast('Failed to download delivery note', 'error')
-    }
-  }
-
   // ─── Barcode scan handler ─────────────────────────────────────────────────
   async function handleBarcodeScan(barcode: string) {
     setShowScanner(false)
@@ -649,11 +699,14 @@ export default function SuppliersPage() {
 
   // ─── View delivery detail ─────────────────────────────────────────────────
   async function openDelivery(delivery_id: string) {
+    setLoadingDelivery(true)
     try {
       const res = await api.get(`/suppliers/deliveries/${delivery_id}`)
       setActiveDelivery(res.data.data)
     } catch {
       showToast('Failed to load delivery details', 'error')
+    } finally {
+      setLoadingDelivery(false)
     }
   }
 
@@ -1007,8 +1060,14 @@ export default function SuppliersPage() {
               <div>
                 <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-3">Address</p>
                 <textarea value={suppForm.address || ''} onChange={e => setSuppForm(f => ({ ...f, address: e.target.value }))}
-                  rows={3} placeholder="Street, City, State, PIN"
+                  rows={3} placeholder="Street, City, PIN"
                   className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
+                <div className="mt-3">
+                  <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">State</label>
+                  <input value={suppForm.state || ''} onChange={e => setSuppForm(f => ({ ...f, state: e.target.value }))}
+                    placeholder="e.g. Tamil Nadu"
+                    className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                </div>
               </div>
 
               {/* Divider */}
@@ -1036,6 +1095,40 @@ export default function SuppliersPage() {
                       value={suppForm.transport_fee} onChange={e => setSuppForm(f => ({ ...f, transport_fee: parseFloat(e.target.value) || 0 }))}
                       placeholder="0"
                       className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className="border-t border-gray-100 dark:border-gray-700" />
+
+              {/* Section: Bank Details */}
+              <div>
+                <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-3">Bank Details <span className="normal-case font-normal text-gray-400">(for invoice PDF)</span></p>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">A/c Holder's Name</label>
+                    <input value={suppForm.bank_account_name || ''} onChange={e => setSuppForm(f => ({ ...f, bank_account_name: e.target.value }))}
+                      placeholder="As per bank records"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Bank Name</label>
+                    <input value={suppForm.bank_name || ''} onChange={e => setSuppForm(f => ({ ...f, bank_name: e.target.value }))}
+                      placeholder="e.g. Indian Overseas Bank"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                  <div>
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">A/c No.</label>
+                    <input value={suppForm.bank_account_number || ''} onChange={e => setSuppForm(f => ({ ...f, bank_account_number: e.target.value }))}
+                      placeholder="Account number"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                  </div>
+                  <div className="col-span-2">
+                    <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Branch &amp; IFSC Code</label>
+                    <input value={suppForm.bank_ifsc_code || ''} onChange={e => setSuppForm(f => ({ ...f, bank_ifsc_code: e.target.value.toUpperCase() }))}
+                      placeholder="e.g. R.S. Puram & IOBA0000079"
+                      className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
                   </div>
                 </div>
               </div>
@@ -1087,7 +1180,7 @@ export default function SuppliersPage() {
 
       {/* ── NEW DELIVERY WIZARD ── */}
       {showNewDelivery && (
-        <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-3xl max-h-[92vh] flex flex-col">
 
             {/* Wizard header */}
@@ -1155,6 +1248,49 @@ export default function SuppliersPage() {
                         rows={2} placeholder="Any notes for this delivery…"
                         className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none" />
                     </div>
+
+                    {/* Invoice/logistics fields — shown on the Tax Invoice PDF; stored inside Notes */}
+                    <div className="col-span-2 border-t border-gray-100 dark:border-gray-700 pt-4">
+                      <p className="text-xs font-semibold text-gray-400 dark:text-gray-500 uppercase tracking-wide mb-3">Invoice Details (optional)</p>
+                      <div className="grid grid-cols-2 gap-3">
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Buyer's Order No.</label>
+                          <input value={delForm.buyer_order_no} onChange={e => setDelForm(f => ({ ...f, buyer_order_no: e.target.value }))}
+                            placeholder="PO number"
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Order Dated</label>
+                          <input type="date" value={delForm.buyer_order_date} onChange={e => setDelForm(f => ({ ...f, buyer_order_date: e.target.value }))}
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Dispatched Through</label>
+                          <input value={delForm.dispatched_through} onChange={e => setDelForm(f => ({ ...f, dispatched_through: e.target.value }))}
+                            placeholder="e.g. Tempo, Courier"
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Destination</label>
+                          <input value={delForm.destination} onChange={e => setDelForm(f => ({ ...f, destination: e.target.value }))}
+                            placeholder="Drop location"
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Motor Vehicle No.</label>
+                          <input value={delForm.vehicle_no} onChange={e => setDelForm(f => ({ ...f, vehicle_no: e.target.value }))}
+                            placeholder="e.g. TN66AB7031"
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                        <div>
+                          <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Bill of Lading/LR-RR No.</label>
+                          <input value={delForm.lr_rr_no} onChange={e => setDelForm(f => ({ ...f, lr_rr_no: e.target.value }))}
+                            placeholder="LR/RR number"
+                            className="w-full px-3 py-2 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-lg text-sm font-mono focus:outline-none focus:ring-2 focus:ring-blue-500" />
+                        </div>
+                      </div>
+                    </div>
+
                     <div className="col-span-2">
                       <label className="block text-xs font-medium text-gray-700 dark:text-gray-300 mb-1">Added By *</label>
                       <input
@@ -1454,14 +1590,25 @@ export default function SuppliersPage() {
                   )}
                 </div>
               </div>
-              <button
-                type="button"
-                onClick={closeSupplierDetail}
-                className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors shrink-0">
-                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
-                </svg>
-              </button>
+              <div className="flex items-center gap-1 shrink-0">
+                <button
+                  type="button"
+                  onClick={downloadSupplierStatement}
+                  title="Download PDF statement"
+                  className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+                  </svg>
+                </button>
+                <button
+                  type="button"
+                  onClick={closeSupplierDetail}
+                  className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors">
+                  <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                  </svg>
+                </button>
+              </div>
             </div>
 
             {/* Stats */}
@@ -1564,7 +1711,20 @@ export default function SuppliersPage() {
       )}
 
       {/* ── DELIVERY DETAIL MODAL ── */}
-      {activeDelivery && (() => {
+      {(loadingDelivery || activeDelivery) && (() => {
+        if (!activeDelivery) {
+          return (
+            <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
+              <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl p-16 flex flex-col items-center justify-center gap-3">
+                <svg className="w-8 h-8 text-blue-600 animate-spin" fill="none" viewBox="0 0 24 24">
+                  <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                  <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                </svg>
+                <p className="text-sm text-gray-500 dark:text-gray-400">Loading delivery…</p>
+              </div>
+            </div>
+          )
+        }
         const supplierDetail = suppliers.find(s => s.supplier_id === activeDelivery.supplier_id)
         const totalCost = activeDelivery.items.reduce((sum, item) => {
           const cost = parseFloat(String(item.cost_price)) || 0
@@ -1572,8 +1732,9 @@ export default function SuppliersPage() {
         }, 0)
         const paidAmount = activeDelivery.paid_amount || 0
         const balanceDue = Math.max(totalCost - paidAmount, 0)
+        const deliveryLogistics = decodeDeliveryNotes(activeDelivery.notes)
         return (
-          <div className="fixed inset-0 z-40 flex items-center justify-center bg-black/40 p-4">
+          <div className="fixed inset-0 z-[60] flex items-center justify-center bg-black/40 p-4">
             <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-2xl max-h-[92vh] flex flex-col">
 
               {/* Header */}
@@ -1647,12 +1808,12 @@ export default function SuppliersPage() {
                 )}
 
                 {/* Notes */}
-                {activeDelivery.notes && (
+                {deliveryLogistics.text && (
                   <div className="flex items-start gap-2 text-sm text-gray-600 dark:text-gray-400">
                     <svg className="w-4 h-4 text-gray-400 dark:text-gray-500 shrink-0 mt-0.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                       <path strokeLinecap="round" strokeLinejoin="round" d="M7.5 8.25h9m-9 3H12m-9.75 1.51c0 1.6 1.123 2.994 2.707 3.227 1.129.166 2.27.293 3.423.379.35.026.67.21.865.501L12 21l2.755-4.133a1.14 1.14 0 01.865-.501 48.172 48.172 0 003.423-.379c1.584-.233 2.707-1.626 2.707-3.228V6.741c0-1.602-1.123-2.995-2.707-3.228A48.394 48.394 0 0012 3c-2.392 0-4.744.175-7.043.513C3.373 3.746 2.25 5.14 2.25 6.741v6.018z" />
                     </svg>
-                    <p className="text-gray-700 dark:text-gray-300 leading-relaxed">{activeDelivery.notes}</p>
+                    <p className="text-gray-700 dark:text-gray-300 leading-relaxed">{deliveryLogistics.text}</p>
                   </div>
                 )}
 
@@ -1794,14 +1955,54 @@ export default function SuppliersPage() {
                 )}
 
                 <div className="flex gap-2">
-                  {activeDelivery.has_delivery_note && (
+                  {supplierDetail && (
                     <button type="button"
-                      onClick={() => downloadNote(activeDelivery.delivery_id, activeDelivery.delivery_note_filename)}
-                      className="flex items-center gap-1.5 px-3 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-medium transition-colors">
+                      onClick={async () => {
+                        let upi_id: string | null = null
+                        try {
+                          upi_id = (await getShopSettings()).upi_id || null
+                        } catch {
+                          upi_id = null
+                        }
+                        generateDeliveryTaxInvoicePDF({
+                          upi_id,
+                          client: {
+                            client_name: client?.client_name || 'Business',
+                            address: client?.address,
+                            phone: client?.phone,
+                            email: client?.email,
+                            gstin: client?.gstin,
+                          },
+                          supplier: {
+                            name: supplierDetail.name,
+                            address: supplierDetail.address,
+                            state: supplierDetail.state,
+                            gst_number: supplierDetail.gst_number,
+                            email: supplierDetail.email,
+                            phone: supplierDetail.phone,
+                            payment_terms: supplierDetail.payment_terms,
+                            bank_account_name: supplierDetail.bank_account_name,
+                            bank_name: supplierDetail.bank_name,
+                            bank_account_number: supplierDetail.bank_account_number,
+                            bank_ifsc_code: supplierDetail.bank_ifsc_code,
+                          },
+                          invoice_number: activeDelivery.invoice_number,
+                          delivery_date: activeDelivery.delivery_date,
+                          notes: deliveryLogistics.text,
+                          buyer_order_no: deliveryLogistics.buyer_order_no,
+                          buyer_order_date: deliveryLogistics.buyer_order_date,
+                          dispatched_through: deliveryLogistics.dispatched_through,
+                          destination: deliveryLogistics.destination,
+                          vehicle_no: deliveryLogistics.vehicle_no,
+                          lr_rr_no: deliveryLogistics.lr_rr_no,
+                          items: activeDelivery.items,
+                        })
+                      }}
+                      className="flex items-center gap-1.5 px-4 py-1.5 border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-700 hover:bg-gray-50 dark:hover:bg-gray-600 text-gray-700 dark:text-gray-300 rounded-lg text-xs font-medium transition-colors">
                       <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
                       </svg>
-                      Download Note
+                      Download PDF
                     </button>
                   )}
                   {activeDelivery.status === 'draft' && (
@@ -1828,7 +2029,7 @@ export default function SuppliersPage() {
 
       {/* ── RECORD PAYMENT MODAL ── */}
       {paymentTarget && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-black/40 p-4">
           <div className="bg-white dark:bg-gray-800 rounded-2xl shadow-2xl w-full max-w-sm">
             <div className="flex items-center justify-between px-6 py-4 border-b border-gray-100 dark:border-gray-700">
               <div>

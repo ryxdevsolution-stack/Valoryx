@@ -647,8 +647,8 @@ export default function ShopSettingsPage() {
             </div>
           </div>
 
-          {/* Bluetooth Printer Section (mobile only) */}
-          {supportsWebBluetooth && (
+          {/* Bluetooth Printer Section — hidden for now (kept in code, not rendered) */}
+          {false && supportsWebBluetooth && (
             <div className="lg:col-span-2 rounded-2xl border border-gray-200 bg-white p-6 shadow-sm dark:border-gray-800 dark:bg-gray-900">
               <h3 className="text-sm font-semibold text-gray-900 dark:text-white mb-4">Bluetooth Printer</h3>
 
@@ -660,7 +660,7 @@ export default function ShopSettingsPage() {
                     {btConnected ? `Connected to ${btDeviceName || 'Printer'}` : 'No printer connected'}
                   </p>
                   {btConnected && bluetoothPrinterService.connectedDevice?.id && (
-                    <p className="text-xs text-gray-500 font-mono truncate">{bluetoothPrinterService.connectedDevice.id}</p>
+                    <p className="text-xs text-gray-500 font-mono truncate">{bluetoothPrinterService.connectedDevice?.id}</p>
                   )}
                 </div>
               </div>

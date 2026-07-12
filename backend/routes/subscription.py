@@ -614,16 +614,14 @@ def razorpay_webhook():
         logger.debug(f'[Webhook] Full payload: {payload}')
 
         # ----------------------------------------------------------------
-        # payment.authorized — capture subscription payment immediately
+        # payment.authorized — informational only. Razorpay captures
+        # subscription/autopay charges itself; a manual capture call here
+        # races Razorpay's own capture ("another payment operation is in
+        # progress") and can void the charge, halting the subscription.
+        # Actual activation happens on invoice.paid below.
         # ----------------------------------------------------------------
         if event == 'payment.authorized':
-            payment_entity = payload.get('payload', {}).get('payment', {}).get('entity', {})
-            payment_id = payment_entity.get('id')
-            if payment_id:
-                import razorpay
-                rz_client = razorpay.Client(auth=(Config.RAZORPAY_KEY_ID, Config.RAZORPAY_KEY_SECRET))
-                _capture_authorized_payment(rz_client, payment_id)
-            return jsonify({'status': 'captured'}), 200
+            return jsonify({'status': 'acknowledged'}), 200
 
         # ----------------------------------------------------------------
         # invoice.paid — activate or renew subscription

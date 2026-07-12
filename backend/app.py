@@ -1485,6 +1485,29 @@ if __name__ == '__main__':
             db.session.rollback()
             print(f"[Migration] Subscription migration/seed skipped: {e}")
 
+        # State + bank details columns (suppliers table) — used on the generated Tax Invoice PDF
+        try:
+            from sqlalchemy import text, inspect as sa_inspect
+            inspector = sa_inspect(db.engine)
+            if 'suppliers' in inspector.get_table_names():
+                existing_cols = [col['name'] for col in inspector.get_columns('suppliers')]
+                supplier_new_cols = {
+                    'state':               'VARCHAR(100)',
+                    'bank_account_name':   'VARCHAR(255)',
+                    'bank_name':           'VARCHAR(255)',
+                    'bank_account_number': 'VARCHAR(50)',
+                    'bank_ifsc_code':      'VARCHAR(20)',
+                }
+                for col_name, col_type in supplier_new_cols.items():
+                    if col_name not in existing_cols:
+                        print(f"[Migration] Adding {col_name} to suppliers table...")
+                        db.session.execute(text(f"ALTER TABLE suppliers ADD COLUMN {col_name} {col_type} NULL"))
+                        db.session.commit()
+                        print(f"[Migration] ✓ {col_name} column added to suppliers")
+        except Exception as e:
+            db.session.rollback()
+            print(f"[Migration] suppliers state/bank columns skipped (may already exist): {e}")
+
         # Phase 1.7: Seed default permissions (inserts only missing entries)
         try:
             from models.permission_model import Permission
