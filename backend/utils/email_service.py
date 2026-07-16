@@ -595,6 +595,35 @@ def send_invite_email(to_email: str, inviter_name: str, business_name: str, role
     ))
 
 
+def send_developer_approved_email(to_email: str, developer_name: str, api_key: str):
+    """Send a newly-approved dev partner their dev-level API key (shown once)."""
+    from html import escape
+    safe_name = escape(developer_name)
+
+    body = f"""
+        <h2 style="margin:0 0 6px 0;font-size:22px;font-weight:700;color:#111111;">You're approved.</h2>
+        <p style="margin:0 0 20px 0;color:#555555;">
+            Hi <strong>{safe_name}</strong>, your developer account has been approved.
+            Use the API key below to create clients and issue their stock-management keys.
+        </p>
+
+        {_info_table(
+            _info_row('Your API key', f'<code style="font-size:13px">{api_key}</code>', first=True) +
+            _info_row('Scope', 'client_provisioning')
+        )}
+
+        {_alert_box(
+            'Save this key now — it will not be shown again. Send it as the '
+            '<code>X-API-Key</code> header on requests to <code>POST /api/external/clients</code>.',
+            kind='warning'
+        )}
+    """
+    _send_async(to_email, 'Your Ryx developer API key', _base_layout(
+        preheader="You're approved — here is your developer API key.",
+        body_html=body,
+    ))
+
+
 def send_audit_report_email(
     to_email: str,
     client_name: str,

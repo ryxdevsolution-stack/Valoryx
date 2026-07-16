@@ -26,7 +26,11 @@ from utils.email_service import (
     send_account_reactivated_email,
     send_account_deleted_email,
     send_welcome_email,
+    send_developer_approved_email,
 )
+from models.developer_model import Developer
+from models.api_key_model import ApiKey
+from utils.api_key_auth import generate_api_key, SCOPE_CLIENT_PROVISIONING
 import bcrypt
 import json as _json
 from datetime import datetime, timedelta
@@ -2063,3 +2067,81 @@ def update_admin_settings():
         return jsonify({'success': True, 'settings': current, 'message': 'Settings saved'}), 200
     except Exception as e:
         return jsonify({'success': False, 'error': str(e)}), 500
+
+
+# ---------------------------------------------------------------------------
+# Developer partner approval (Ryx external stock API)
+# ---------------------------------------------------------------------------
+
+@admin_bp.route('/developers', methods=['GET'])
+@authenticate
+@require_super_admin
+def list_developers():
+    """List developers, optionally filtered by status (?status=pending)."""
+    status = request.args.get('status')
+    query = Developer.query
+    if status:
+        query = query.filter_by(status=status)
+    developers = query.order_by(Developer.created_at.desc()).all()
+    return jsonify({'success': True, 'developers': [d.to_dict() for d in developers]}), 200
+
+
+@admin_bp.route('/developers/<dev_id>/approve', methods=['POST'])
+@authenticate
+@require_super_admin
+def approve_developer(dev_id):
+    """Approve a pending developer, issue their dev-level API key, and email it once."""
+    dev = Developer.query.filter_by(dev_id=dev_id).first()
+    if not dev:
+        return jsonify({'success': False, 'error': 'Developer not found'}), 404
+
+    if dev.status == 'approved':
+        return jsonify({'success': False, 'error': 'Developer is already approved'}), 409
+
+    dev.status = 'approved'
+    dev.approved_at = datetime.utcnow()
+
+    raw_key, key_hash, key_prefix = generate_api_key()
+    dev_key = ApiKey(
+        dev_id=dev.dev_id,
+        key_hash=key_hash,
+        key_prefix=key_prefix,
+        label=f"Dev-level key for {dev.name}",
+        scope=SCOPE_CLIENT_PROVISIONING,
+    )
+    db.session.add(dev_key)
+    db.session.commit()
+
+    log_admin_action('UPDATE', 'developers', record_id=dev.dev_id, new_data={'status': 'approved'})
+    send_developer_approved_email(dev.email, dev.name, raw_key)
+
+    return jsonify({
+        'success': True,
+        'developer': dev.to_dict(),
+        'api_key': raw_key,
+        'message': f'Approved — API key emailed to {dev.email}',
+    }), 200
+
+
+@admin_bp.route('/developers/<dev_id>/suspend', methods=['POST'])
+@authenticate
+@require_super_admin
+def suspend_developer(dev_id):
+    """Suspend a developer and deactivate all of their issued API keys (dev-level and
+    every client-level key created under them)."""
+    dev = Developer.query.filter_by(dev_id=dev_id).first()
+    if not dev:
+        return jsonify({'success': False, 'error': 'Developer not found'}), 404
+
+    dev.status = 'suspended'
+    ApiKey.query.filter_by(dev_id=dev.dev_id).update({'is_active': False, 'revoked_at': datetime.utcnow()})
+
+    client_ids = [c.client_id for c in ClientEntry.query.filter_by(dev_id=dev.dev_id).all()]
+    if client_ids:
+        ApiKey.query.filter(ApiKey.client_id.in_(client_ids)).update(
+            {'is_active': False, 'revoked_at': datetime.utcnow()}, synchronize_session=False
+        )
+
+    db.session.commit()
+    log_admin_action('UPDATE', 'developers', record_id=dev.dev_id, new_data={'status': 'suspended'})
+    return jsonify({'success': True, 'developer': dev.to_dict()}), 200

@@ -478,6 +478,15 @@ def create_app():
         import_errors.append(f"webhooks: {str(e)}")
         logging.error(f"Failed to import webhooks blueprint: {e}")
 
+    external_bp = None
+    try:
+        from routes.external import external_bp
+        from models.developer_model import Developer  # noqa: F401 — table creation
+        from models.api_key_model import ApiKey  # noqa: F401 — table creation
+    except Exception as e:
+        import_errors.append(f"external: {str(e)}")
+        logging.error(f"Failed to import external blueprint: {e}")
+
     try:
         from routes.electron import electron_bp
     except Exception as e:
@@ -699,6 +708,13 @@ def create_app():
             blueprints_registered.append('webhooks')
         except Exception as e:
             print(f"Warning: Could not register webhooks blueprint: {e}")
+
+    if external_bp:
+        try:
+            app.register_blueprint(external_bp, url_prefix='/api/external')
+            blueprints_registered.append('external')
+        except Exception as e:
+            print(f"Warning: Could not register external blueprint: {e}")
 
     try:
         app.register_blueprint(electron_bp)

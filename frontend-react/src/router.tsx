@@ -11,6 +11,7 @@ const Register = React.lazy(() => import('@/pages/auth/Register'))
 const ForgotPassword = React.lazy(() => import('@/pages/auth/ForgotPassword'))
 const ResetPassword = React.lazy(() => import('@/pages/auth/ResetPassword'))
 const AcceptInvite = React.lazy(() => import('@/pages/auth/AcceptInvite'))
+const DeveloperSignup = React.lazy(() => import('@/pages/developers/DeveloperSignup'))
 const Dashboard = React.lazy(() => import('@/pages/Dashboard'))
 const BillingList = React.lazy(() => import('@/pages/billing/BillingList'))
 const CreateBill = React.lazy(() => import('@/pages/billing/CreateBill'))
@@ -53,6 +54,7 @@ const AdminAudit = React.lazy(() => import('@/pages/admin/AdminAudit'))
 const AdminSettings = React.lazy(() => import('@/pages/admin/Settings'))
 const AdminSubscriptions = React.lazy(() => import('@/pages/admin/Subscriptions'))
 const AdminImpersonate = React.lazy(() => import('@/pages/admin/ImpersonateClient'))
+const AdminPendingDevelopers = React.lazy(() => import('@/pages/admin/PendingDevelopers'))
 
 function SkeletonBlock({ className }: { className: string }) {
   return (
@@ -141,6 +143,10 @@ export function AppRoutes() {
           element={<Suspense fallback={<AuthFallback />}><AcceptInvite /></Suspense>}
         />
         <Route
+          path="/developers/register"
+          element={<Suspense fallback={<AuthFallback />}><DeveloperSignup /></Suspense>}
+        />
+        <Route
           path="/oauth/callback"
           element={<Suspense fallback={<AuthFallback />}><OAuthCallbackPage /></Suspense>}
         />
@@ -225,6 +231,7 @@ export function AppRoutes() {
           <Route path="settings" element={<AdminSettings />} />
           <Route path="subscriptions" element={<AdminSubscriptions />} />
           <Route path="impersonate" element={<AdminImpersonate />} />
+          <Route path="developers" element={<AdminPendingDevelopers />} />
         </Route>
       </Routes>
     </Suspense>

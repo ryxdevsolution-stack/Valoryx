@@ -30,6 +30,7 @@ class ClientEntry(db.Model):
     phone = db.Column(db.String(20))
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
     is_active = db.Column(db.Boolean, default=True)
+    dev_id = db.Column(FlexibleUUID, db.ForeignKey('developers.dev_id', ondelete='SET NULL'), nullable=True)
 
     # Trial / Subscription fields
     subscription_status = db.Column(db.String(20), nullable=True)  # 'trial' | 'active' | 'cancelled' | 'expired'

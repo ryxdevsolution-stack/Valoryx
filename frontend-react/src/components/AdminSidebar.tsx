@@ -11,6 +11,7 @@ import {
   Shield,
   Home,
   LogOut,
+  Code2,
 } from 'lucide-react';
 
 const navigationGroups = [
@@ -26,6 +27,7 @@ const navigationGroups = [
       { name: 'Clients',       href: '/admin/clients',       icon: Building2 },
       { name: 'Users',         href: '/admin/users',         icon: Users },
       { name: 'Subscriptions', href: '/admin/subscriptions', icon: CreditCard },
+      { name: 'Developers',    href: '/admin/developers',    icon: Code2 },
     ],
   },
   {
