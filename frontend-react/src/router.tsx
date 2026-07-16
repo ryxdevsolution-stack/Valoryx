@@ -12,6 +12,7 @@ const ForgotPassword = React.lazy(() => import('@/pages/auth/ForgotPassword'))
 const ResetPassword = React.lazy(() => import('@/pages/auth/ResetPassword'))
 const AcceptInvite = React.lazy(() => import('@/pages/auth/AcceptInvite'))
 const DeveloperSignup = React.lazy(() => import('@/pages/developers/DeveloperSignup'))
+const DeveloperDocs = React.lazy(() => import('@/pages/developers/DeveloperDocs'))
 const Dashboard = React.lazy(() => import('@/pages/Dashboard'))
 const BillingList = React.lazy(() => import('@/pages/billing/BillingList'))
 const CreateBill = React.lazy(() => import('@/pages/billing/CreateBill'))
@@ -120,6 +121,7 @@ export function AppRoutes() {
         <Route path="/landing" element={<Landing />} />
         <Route path="/privacy" element={<PrivacyPolicy />} />
         <Route path="/terms" element={<TermsOfService />} />
+        <Route path="/developers" element={<DeveloperDocs />} />
 
         {/* Auth routes — use dark fallback so no white flash on lazy load */}
         <Route

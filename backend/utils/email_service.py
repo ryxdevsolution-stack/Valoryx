@@ -595,6 +595,40 @@ def send_invite_email(to_email: str, inviter_name: str, business_name: str, role
     ))
 
 
+def send_developer_signup_notification(dev_name: str, dev_email: str, company: str | None, phone: str | None):
+    """Notify the Valoryx team when a new developer partner registers, so someone
+    knows to review it in Admin → Developers."""
+    from html import escape
+    safe_name = escape(dev_name)
+    safe_email = escape(dev_email)
+    safe_company = escape(company) if company else None
+    safe_phone = escape(phone) if phone else None
+
+    rows = _info_row('Name', safe_name, first=True) + _info_row('Email', safe_email)
+    if safe_company:
+        rows += _info_row('Company', safe_company)
+    if safe_phone:
+        rows += _info_row('Phone', safe_phone)
+
+    body = f"""
+        <h2 style="margin:0 0 6px 0;font-size:22px;font-weight:700;color:#111111;">New developer signup</h2>
+        <p style="margin:0 0 20px 0;color:#555555;">
+            A new developer partner registered for Ryx External API access and is awaiting approval.
+        </p>
+
+        {_info_table(rows)}
+
+        {_alert_box(
+            'Review and approve (or reject) this developer in Admin &rarr; Developers to issue their API key.',
+            kind='info'
+        )}
+    """
+    _send_async(Config.DEV_SIGNUP_NOTIFY_EMAIL, f'New developer signup: {dev_name}', _base_layout(
+        preheader=f"{dev_name} ({dev_email}) registered for developer API access.",
+        body_html=body,
+    ))
+
+
 def send_developer_approved_email(to_email: str, developer_name: str, api_key: str):
     """Send a newly-approved dev partner their dev-level API key (shown once)."""
     from html import escape

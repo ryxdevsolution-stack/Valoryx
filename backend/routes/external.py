@@ -2,9 +2,14 @@
 Ryx external API — the ONLY surface exposed to third-party devs/partners.
 
 Two endpoint groups, gated by different key scopes (see utils/api_key_auth.py):
-  - POST /external/clients        (dev-level key, client_provisioning)
-  - GET  /external/stock           (client-level key, stock_management)
-  - POST /external/stock/reduce    (client-level key, stock_management)
+  - POST   /external/clients             (dev-level key, client_provisioning)
+  - GET    /external/stock                (client-level key, stock_management)
+  - POST   /external/stock                (client-level key, stock_management)
+  - PUT    /external/stock/<product_id>   (client-level key, stock_management)
+  - DELETE /external/stock/<product_id>   (client-level key, stock_management)
+  - POST   /external/stock/reduce         (client-level key, stock_management)
+  - POST   /external/stock/upload         (client-level key, stock_management)
+  - GET    /external/stock/lookup/<code>  (client-level key, stock_management)
 
 Nothing else in Valoryx's backend is reachable through these keys.
 """
@@ -28,6 +33,8 @@ from utils.api_key_auth import (
 from utils.cache_helper import invalidate_stock_cache
 from utils.helpers import title_case
 from utils.rate_limiter import rate_limit
+from utils.email_service import send_developer_signup_notification
+from routes.stock import _to_num, _to_int, _to_str_or_none, generate_item_code
 
 external_bp = Blueprint('external', __name__)
 
@@ -62,6 +69,8 @@ def register_developer():
     db.session.add(dev)
     db.session.commit()
 
+    send_developer_signup_notification(name, email, data.get('company'), data.get('phone'))
+
     return jsonify({
         'dev_id': str(dev.dev_id),
         'status': dev.status,
@@ -94,6 +103,7 @@ def create_client():
         is_active=True,
     )
     db.session.add(client)
+    db.session.flush()  # Ensure client_entry row exists before api_keys FK references it
 
     raw_key, key_hash, key_prefix = generate_api_key()
     stock_key = ApiKey(
@@ -118,23 +128,217 @@ def create_client():
 @rate_limit(max_requests=120, window_seconds=60, key_func=_api_key_bucket)
 @authenticate_api_key(SCOPE_STOCK_MANAGEMENT)
 def get_stock():
+    """Single product by ?product_id=, or the client's whole catalog (paginated) if omitted."""
+    client_id = g.api_key['client_id']
     product_id = request.args.get('product_id')
-    if not product_id:
-        return jsonify({'error': 'product_id is required'}), 400
 
-    product = StockEntry.query.filter_by(
-        product_id=product_id,
-        client_id=g.api_key['client_id'],
-    ).first()
+    if product_id:
+        product = StockEntry.query.filter_by(product_id=product_id, client_id=client_id).first()
+        if not product:
+            return jsonify({'error': 'Product not found'}), 404
+        return jsonify(product.to_dict())
+
+    MAX_LIMIT = 500
+    requested_limit = request.args.get('limit', 100, type=int)
+    limit = min(requested_limit, MAX_LIMIT) if requested_limit > 0 else 100
+    search = request.args.get('search', '')
+
+    query = StockEntry.query.filter_by(client_id=client_id)
+    if search:
+        query = query.filter(StockEntry.product_name.ilike(f'%{search}%'))
+    products = query.order_by(StockEntry.product_name).limit(limit).all()
+
+    return jsonify({'products': [p.to_dict() for p in products]})
+
+
+@external_bp.route('/stock', methods=['POST'])
+@rate_limit(max_requests=60, window_seconds=60, key_func=_api_key_bucket)
+@authenticate_api_key(SCOPE_STOCK_MANAGEMENT)
+def create_stock():
+    """Create a single product, or add quantity to it if product_name already exists
+    for this client (same auto-sum behavior as the internal add-stock flow)."""
+    client_id = g.api_key['client_id']
+    data = request.get_json(silent=True) or {}
+
+    product_name_raw = data.get('product_name')
+    if not product_name_raw or not str(product_name_raw).strip():
+        return jsonify({'error': 'product_name is required'}), 400
+
+    quantity = _to_int(data.get('quantity'))
+    if quantity is None or quantity < 0:
+        return jsonify({'error': 'quantity is required and must be zero or positive'}), 400
+
+    rate = _to_num(data.get('rate'))
+    if rate is None or rate < 0:
+        return jsonify({'error': 'rate is required and must be zero or positive'}), 400
+
+    product_name = title_case(str(product_name_raw).strip())
+    category = title_case(str(data.get('category') or 'Other').strip() or 'Other')
+    unit = _to_str_or_none(data.get('unit')) or 'pcs'
+    hsn_code = _to_str_or_none(data.get('hsn_code'))
+    item_code_in = _to_str_or_none(data.get('item_code'))
+    gst_percentage = _to_num(data.get('gst_percentage'), default=0)
+
+    existing = StockEntry.query.filter_by(client_id=client_id, product_name=product_name).first()
+
+    if existing:
+        existing.quantity += quantity
+        existing.rate = rate
+        existing.category = category
+        existing.unit = unit
+        existing.gst_percentage = gst_percentage
+        if hsn_code is not None:
+            existing.hsn_code = hsn_code
+        if item_code_in:
+            existing.item_code = item_code_in
+        elif not existing.item_code:
+            existing.item_code = generate_item_code(client_id, existing.product_name)
+        existing.updated_at = datetime.utcnow()
+        db.session.commit()
+        invalidate_stock_cache(client_id)
+        return jsonify({'success': True, 'message': 'Quantity added to existing product', 'product': existing.to_dict()}), 200
+
+    new_product = StockEntry(
+        product_id=str(uuid.uuid4()),
+        client_id=client_id,
+        product_name=product_name,
+        category=category,
+        quantity=quantity,
+        rate=rate,
+        unit=unit,
+        item_code=item_code_in or generate_item_code(client_id, product_name),
+        gst_percentage=gst_percentage,
+        hsn_code=hsn_code,
+        created_at=datetime.utcnow(),
+        added_by_label='Ryx External API',
+    )
+    db.session.add(new_product)
+    db.session.commit()
+    invalidate_stock_cache(client_id)
+
+    return jsonify({'success': True, 'message': 'Product created', 'product': new_product.to_dict()}), 201
+
+
+@external_bp.route('/stock/<product_id>', methods=['PUT'])
+@rate_limit(max_requests=60, window_seconds=60, key_func=_api_key_bucket)
+@authenticate_api_key(SCOPE_STOCK_MANAGEMENT)
+def update_stock_external(product_id):
+    client_id = g.api_key['client_id']
+    product = StockEntry.query.filter_by(product_id=product_id, client_id=client_id).first()
+    if not product:
+        return jsonify({'error': 'Product not found'}), 404
+
+    data = request.get_json(silent=True) or {}
+
+    if 'product_name' in data:
+        new_name = _to_str_or_none(data['product_name'])
+        if new_name:
+            product.product_name = title_case(new_name)
+    if 'category' in data:
+        new_cat = _to_str_or_none(data['category'])
+        product.category = title_case(new_cat) if new_cat else product.category
+    if 'unit' in data:
+        new_unit = _to_str_or_none(data['unit'])
+        if new_unit:
+            product.unit = new_unit
+    if 'hsn_code' in data:
+        product.hsn_code = _to_str_or_none(data['hsn_code'])
+    if 'quantity' in data:
+        qty = _to_int(data['quantity'])
+        if qty is None or qty < 0:
+            return jsonify({'error': 'Invalid quantity'}), 400
+        product.quantity = qty
+    if 'rate' in data:
+        rate = _to_num(data['rate'])
+        if rate is None or rate < 0:
+            return jsonify({'error': 'Invalid rate'}), 400
+        product.rate = rate
+    if 'gst_percentage' in data:
+        product.gst_percentage = _to_num(data['gst_percentage'], default=0)
+    if 'item_code' in data:
+        new_code = _to_str_or_none(data['item_code'])
+        if new_code:
+            product.item_code = new_code
+    if 'barcode' in data:
+        product.barcode = _to_str_or_none(data['barcode'])
+
+    product.updated_at = datetime.utcnow()
+    db.session.commit()
+    invalidate_stock_cache(client_id)
+
+    return jsonify({'success': True, 'message': 'Product updated', 'product': product.to_dict()})
+
+
+@external_bp.route('/stock/<product_id>', methods=['DELETE'])
+@rate_limit(max_requests=30, window_seconds=60, key_func=_api_key_bucket)
+@authenticate_api_key(SCOPE_STOCK_MANAGEMENT)
+def delete_stock_external(product_id):
+    client_id = g.api_key['client_id']
+
+    is_sqlite = str(db.engine.url).startswith('sqlite')
+    ph = '?' if is_sqlite else '%s'
+    pid, cid = str(product_id), str(client_id)
+
+    conn = db.engine.raw_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(f"SELECT product_id FROM stock_entry WHERE product_id = {ph} AND client_id = {ph}", (pid, cid))
+        if not cur.fetchone():
+            conn.close()
+            return jsonify({'error': 'Product not found'}), 404
+
+        # Same cascade as the internal delete route — bypasses the ORM's
+        # BranchInventory backref, which would otherwise try to SET NULL a
+        # NOT NULL column during session flush.
+        cur.execute(f"DELETE FROM branch_inventory WHERE product_id = {ph}", (pid,))
+        cur.execute(f"DELETE FROM stock_transfer_items WHERE product_id = {ph}", (pid,))
+        cur.execute(f"DELETE FROM bulk_stock_order_item WHERE product_id = {ph}", (pid,))
+        cur.execute(f"UPDATE supplier_delivery_items SET product_id = NULL WHERE product_id = {ph}", (pid,))
+        cur.execute(f"DELETE FROM stock_entry WHERE product_id = {ph} AND client_id = {ph}", (pid, cid))
+        conn.commit()
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
+
+    db.session.expire_all()
+    invalidate_stock_cache(client_id)
+
+    return jsonify({'success': True, 'message': 'Product deleted'})
+
+
+@external_bp.route('/stock/lookup/<code>', methods=['GET'])
+@rate_limit(max_requests=120, window_seconds=60, key_func=_api_key_bucket)
+@authenticate_api_key(SCOPE_STOCK_MANAGEMENT)
+def lookup_stock_external(code):
+    """Look up a product by barcode, item code, or exact product name — same
+    resolution order as the internal barcode-scanner lookup."""
+    client_id = g.api_key['client_id']
+    normalized_code = (code or '').strip()
+    if not normalized_code:
+        return jsonify({'error': 'Product not found'}), 404
+
+    product = StockEntry.query.filter_by(client_id=client_id, barcode=normalized_code).first()
+
+    if not product:
+        code_no_spaces = normalized_code.replace(' ', '')
+        if code_no_spaces != normalized_code:
+            product = StockEntry.query.filter_by(client_id=client_id, barcode=code_no_spaces).first()
+
+    if not product:
+        product = StockEntry.query.filter_by(client_id=client_id, item_code=normalized_code).first()
+
+    if not product:
+        product = StockEntry.query.filter(
+            StockEntry.client_id == client_id,
+            StockEntry.product_name.ilike(normalized_code),
+        ).first()
 
     if not product:
         return jsonify({'error': 'Product not found'}), 404
 
-    return jsonify({
-        'product_id': str(product.product_id),
-        'product_name': product.product_name,
-        'quantity': product.quantity,
-    })
+    return jsonify({'success': True, 'product': product.to_dict()})
 
 
 @external_bp.route('/stock/reduce', methods=['POST'])

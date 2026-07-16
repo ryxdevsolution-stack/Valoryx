@@ -2123,6 +2123,50 @@ def approve_developer(dev_id):
     }), 200
 
 
+@admin_bp.route('/developers/<dev_id>/regenerate-key', methods=['POST'])
+@authenticate
+@require_super_admin
+def regenerate_developer_key(dev_id):
+    """Revoke an approved developer's current dev-level key and issue a new one.
+
+    The old key is dead the instant this runs — there's no way to recover a
+    previously-issued raw key (only its hash is ever stored), so this is the
+    only way for an admin to give a developer working access again without
+    suspending them first.
+    """
+    dev = Developer.query.filter_by(dev_id=dev_id).first()
+    if not dev:
+        return jsonify({'success': False, 'error': 'Developer not found'}), 404
+
+    if dev.status != 'approved':
+        return jsonify({'success': False, 'error': 'Developer must be approved to regenerate a key'}), 409
+
+    ApiKey.query.filter_by(dev_id=dev.dev_id, is_active=True).update(
+        {'is_active': False, 'revoked_at': datetime.utcnow()}
+    )
+
+    raw_key, key_hash, key_prefix = generate_api_key()
+    dev_key = ApiKey(
+        dev_id=dev.dev_id,
+        key_hash=key_hash,
+        key_prefix=key_prefix,
+        label=f"Dev-level key for {dev.name}",
+        scope=SCOPE_CLIENT_PROVISIONING,
+    )
+    db.session.add(dev_key)
+    db.session.commit()
+
+    log_admin_action('UPDATE', 'developers', record_id=dev.dev_id, new_data={'action': 'key_regenerated'})
+    send_developer_approved_email(dev.email, dev.name, raw_key)
+
+    return jsonify({
+        'success': True,
+        'developer': dev.to_dict(),
+        'api_key': raw_key,
+        'message': f'New API key emailed to {dev.email}',
+    }), 200
+
+
 @admin_bp.route('/developers/<dev_id>/suspend', methods=['POST'])
 @authenticate
 @require_super_admin

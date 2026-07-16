@@ -12,7 +12,7 @@ import {
   EmptyState,
   ConfirmDialog,
 } from '@/lib/admin';
-import { RefreshCw, Check, Ban, AlertTriangle, Code2, Copy } from 'lucide-react';
+import { RefreshCw, Check, Ban, AlertTriangle, Code2, Copy, KeyRound } from 'lucide-react';
 
 interface DeveloperPartner {
   dev_id: string;
@@ -52,8 +52,8 @@ export default function PendingDevelopers() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [statusFilter, setStatusFilter] = useState('pending');
-  const [confirm, setConfirm] = useState<{ dev: DeveloperPartner; action: 'approve' | 'suspend' } | null>(null);
-  const [issuedKey, setIssuedKey] = useState<{ email: string; key: string } | null>(null);
+  const [confirm, setConfirm] = useState<{ dev: DeveloperPartner; action: 'approve' | 'suspend' | 'regenerate' } | null>(null);
+  const [issuedKey, setIssuedKey] = useState<{ email: string; key: string; title: string } | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
 
   const fetchDevelopers = useCallback(async () => {
@@ -79,13 +79,17 @@ export default function PendingDevelopers() {
   const handleConfirm = async () => {
     if (!confirm) return;
     const { dev, action } = confirm;
+    const endpoint = action === 'regenerate' ? 'regenerate-key' : action;
     setBusyId(dev.dev_id);
     try {
-      const response = await api.post(`/admin/developers/${dev.dev_id}/${action}`, {});
+      const response = await api.post(`/admin/developers/${dev.dev_id}/${endpoint}`, {});
       if (action === 'approve') {
         // The raw key only ever appears in this one response — show it now.
-        setIssuedKey({ email: dev.email, key: response.data.api_key });
+        setIssuedKey({ email: dev.email, key: response.data.api_key, title: 'Developer approved' });
         toast.success(`Approved — API key emailed to ${dev.email}`);
+      } else if (action === 'regenerate') {
+        setIssuedKey({ email: dev.email, key: response.data.api_key, title: 'Key regenerated' });
+        toast.success(`New key emailed to ${dev.email} — old key revoked`);
       } else {
         toast.success(`${dev.name} suspended — all their API keys were revoked`);
       }
@@ -189,15 +193,26 @@ export default function PendingDevelopers() {
                         </button>
                       )}
                       {dev.status === 'approved' && (
-                        <button
-                          type="button"
-                          disabled={busyId === dev.dev_id}
-                          onClick={() => setConfirm({ dev, action: 'suspend' })}
-                          className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
-                          title="Suspend"
-                        >
-                          <Ban className="h-4 w-4" />
-                        </button>
+                        <>
+                          <Button
+                            variant="outline"
+                            size="sm"
+                            icon={KeyRound}
+                            disabled={busyId === dev.dev_id}
+                            onClick={() => setConfirm({ dev, action: 'regenerate' })}
+                          >
+                            Regenerate
+                          </Button>
+                          <button
+                            type="button"
+                            disabled={busyId === dev.dev_id}
+                            onClick={() => setConfirm({ dev, action: 'suspend' })}
+                            className="p-1.5 rounded-lg text-slate-500 dark:text-slate-400 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 transition-colors disabled:opacity-50"
+                            title="Suspend"
+                          >
+                            <Ban className="h-4 w-4" />
+                          </button>
+                        </>
                       )}
                     </div>
                   </td>
@@ -226,6 +241,8 @@ export default function PendingDevelopers() {
         title={
           confirm?.action === 'approve'
             ? (confirm.dev.status === 'suspended' ? 'Reactivate developer' : 'Approve developer')
+            : confirm?.action === 'regenerate'
+            ? 'Regenerate API key'
             : 'Suspend developer'
         }
         message={
@@ -233,16 +250,24 @@ export default function PendingDevelopers() {
             ? confirm.dev.status === 'suspended'
               ? `Reactivate ${confirm.dev.name}? A new dev-level key will be emailed to them. Their previous clients' stock keys stay revoked — recreate those separately if needed.`
               : `Approve ${confirm.dev.name}? They will be emailed a dev-level API key immediately.`
+            : confirm?.action === 'regenerate'
+            ? `Regenerate the dev-level key for ${confirm.dev.name}? Their current key stops working immediately — the new one will be emailed to them.`
             : `Suspend ${confirm?.dev.name}? This revokes their dev-level key and every client-level key created under them.`
         }
-        confirmText={confirm?.action === 'approve' ? (confirm.dev.status === 'suspended' ? 'Reactivate' : 'Approve') : 'Suspend'}
+        confirmText={
+          confirm?.action === 'approve'
+            ? (confirm.dev.status === 'suspended' ? 'Reactivate' : 'Approve')
+            : confirm?.action === 'regenerate'
+            ? 'Regenerate'
+            : 'Suspend'
+        }
         variant={confirm?.action === 'suspend' ? 'danger' : 'warning'}
       />
 
       {issuedKey && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4">
           <Card className="max-w-lg w-full space-y-3">
-            <h3 className="text-base font-semibold text-slate-900 dark:text-white">Developer approved</h3>
+            <h3 className="text-base font-semibold text-slate-900 dark:text-white">{issuedKey.title}</h3>
             <p className="text-sm text-slate-600 dark:text-slate-400">{issuedKey.email}</p>
             <button
               type="button"

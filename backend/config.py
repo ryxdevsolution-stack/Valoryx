@@ -86,10 +86,12 @@ class OptimizedConfig:
 
         if mode == 'online':
             # PostgreSQL connection pool settings
-            # Supabase Session Mode pooler (port 5432) caps concurrent clients per project.
-            # Keep per-process pool small so multiple Gunicorn workers fit inside the quota.
-            # If traffic grows, move DB_URL to port 6543 (Transaction Mode) and set
-            # prepared_statement_cache_size=0 below.
+            # DB_URL points at Supabase's Transaction Mode pooler (port 6543), which
+            # multiplexes many app-side connections over a shared backend pool — needed
+            # since Gunicorn runs multiple workers (see gunicorn_config.py), each with its
+            # own pool_size + max_overflow below. Session Mode (port 5432) only allows a
+            # handful of concurrent clients per project and was hit ("max clients reached")
+            # once worker count grew.
             return {
                 "pool_pre_ping": True,
                 "pool_recycle": 1800,
@@ -280,6 +282,8 @@ class OptimizedConfig:
     SMTP_PASSWORD = os.getenv('SMTP_PASSWORD', '')
     SMTP_FROM_EMAIL = os.getenv('SMTP_FROM_EMAIL', '')
     SMTP_FROM_NAME = os.getenv('SMTP_FROM_NAME', 'Valoryx')
+    # Who gets notified when a new developer partner registers for external API access
+    DEV_SIGNUP_NOTIFY_EMAIL = os.getenv('DEV_SIGNUP_NOTIFY_EMAIL', 'ryxtechie@gmail.com')
     FRONTEND_URL = os.getenv('FRONTEND_URL', 'https://valoryx.ryxtech.in')
 
     @classmethod

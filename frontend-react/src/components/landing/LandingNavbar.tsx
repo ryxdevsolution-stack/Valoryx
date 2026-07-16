@@ -69,6 +69,12 @@ export default function LandingNavbar() {
               {link.label}
             </a>
           ))}
+          <Link
+            to="/developers"
+            className="rounded-full px-4 py-2 text-sm font-medium text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
+          >
+            Developers
+          </Link>
         </div>
 
         {/* Desktop CTAs */}
@@ -128,6 +134,13 @@ export default function LandingNavbar() {
                   {link.label}
                 </a>
               ))}
+              <Link
+                to="/developers"
+                onClick={() => setMenuOpen(false)}
+                className="rounded-2xl px-4 py-3 text-base font-medium text-ink-soft transition-colors hover:bg-ink/5 hover:text-ink"
+              >
+                Developers
+              </Link>
               <div className="mt-2 flex flex-col gap-2 border-t border-ink/10 pt-3">
                 <DownloadButton className="inline-flex items-center justify-center gap-2 rounded-full border border-ink/15 px-5 py-3 text-base font-medium text-ink-soft">
                   <Download className="h-4 w-4" />
