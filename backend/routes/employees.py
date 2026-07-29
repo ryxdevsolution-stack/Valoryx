@@ -12,9 +12,14 @@ Endpoints:
   Attendance:
     POST   /api/employees/<employee_id>/attendance/checkin        - record check_in
     POST   /api/employees/<employee_id>/attendance/checkout       - find open punch and close it
+    POST   /api/employees/attendance/bulk-checkin                  - check in many employees, one shared time
+    POST   /api/employees/attendance/bulk-checkout                 - check out many employees, one shared time
+    POST   /api/employees/<employee_id>/attendance/manual          - directly set hours worked for a date (or range via to_date)
+    POST   /api/employees/attendance/bulk-manual                   - directly set hours for many employees over a date range
     GET    /api/employees/<employee_id>/attendance                 - daily grouped log (from/to)
     PUT    /api/employees/attendance/<attendance_id>               - edit punch times
     DELETE /api/employees/attendance/<attendance_id>               - delete punch
+    POST   /api/employees/attendance/<attendance_id>/adjust-hours  - deduct forgotten unpaid break time
     GET    /api/employees/attendance/daily-summary                 - all employees for ?date=
 
   Salary Cycles:
@@ -23,14 +28,16 @@ Endpoints:
     GET    /api/employees/<employee_id>/cycles/<cycle_id>         - full detail + breakdown
     POST   /api/employees/<employee_id>/cycles/<cycle_id>/calculate    - recalculate
     POST   /api/employees/<employee_id>/cycles/<cycle_id>/mark-paid    - seal cycle
+    GET    /api/employees/<employee_id>/cycles/<cycle_id>/payslip      - generate payslip PDF
     GET    /api/employees/cycles/open                             - all open cycles for client
 
-  Advances:
-    POST   /api/employees/<employee_id>/advances                  - record advance
-    DELETE /api/employees/advances/<advance_id>                   - delete advance
+  Advances / Deductions:
+    POST   /api/employees/<employee_id>/advances                  - record advance/deduction (cash_advance/accommodation/food/transport/other)
+    DELETE /api/employees/advances/<advance_id>                   - delete advance/deduction
 """
 
 import uuid
+import re
 import logging
 from datetime import datetime, date
 
@@ -95,15 +102,27 @@ def _row_to_dict(row):
     comparisons that expect ISO format. Converting at the serialization
     boundary keeps every downstream consumer (cycle coverage, calendar
     rendering, attendance status) working with a predictable format.
+
+    Every datetime stored in this app is naive UTC — every write path uses
+    `_now_iso()` (`datetime.utcnow()`) or a `_parse_datetime()` result that has
+    already had its offset/`Z` stripped. Sending that back as a bare
+    "2026-07-28T05:30:00" is dangerously ambiguous: JavaScript's `new Date()`
+    treats an offset-less datetime string as the BROWSER's local time, not
+    UTC — so an IST browser silently misreads a UTC instant as if it were
+    already IST, shifting every parsed timestamp by 5:30 (e.g. overstating a
+    live "clocked in" elapsed timer by 5.5 hours). Appending 'Z' makes the
+    UTC-ness explicit so `new Date()` parses it correctly everywhere at once;
+    the frontend then renders it in Asia/Kolkata via explicit `timeZone`
+    options, which is the only display timezone this app supports today.
     """
     from datetime import date, datetime as _dt
     d = dict(row._mapping)
     for k, v in list(d.items()):
         # Handle both date and datetime — keep date as 'YYYY-MM-DD',
-        # datetime as 'YYYY-MM-DDTHH:MM:SS'. UUID and other types pass through
-        # unchanged (Flask's encoder handles them fine).
+        # datetime as 'YYYY-MM-DDTHH:MM:SSZ' (explicit UTC). UUID and other
+        # types pass through unchanged (Flask's encoder handles them fine).
         if isinstance(v, _dt):
-            d[k] = v.isoformat()
+            d[k] = v.isoformat() + 'Z'
         elif isinstance(v, date):
             d[k] = v.isoformat()
     return d
@@ -167,6 +186,86 @@ def _get_cycle(cycle_id: str, employee_id: str, client_id: str):
     return _row_to_dict(row) if row else None
 
 
+_EMAIL_RE = re.compile(r'^[^@\s]+@[^@\s]+\.[^@\s]+$')
+
+
+def _validate_email(value: str | None) -> str | None:
+    """Return the trimmed email, or None if blank. Raises ValueError on an
+    obviously malformed address (basic shape check, not full RFC 5322)."""
+    email = (value or '').strip()
+    if not email:
+        return None
+    if not _EMAIL_RE.match(email):
+        raise ValueError('Invalid email address')
+    return email
+
+
+def _fmt_display_date(value) -> str:
+    """Format an ISO date ('2026-07-01') or Z-suffixed UTC datetime
+    ('2026-07-28T09:12:49Z') as '01 Jul 2026' for payslip display."""
+    if not value:
+        return '—'
+    s = str(value).rstrip('Z')
+    try:
+        dt = datetime.fromisoformat(s) if 'T' in s else datetime.strptime(s, '%Y-%m-%d')
+        return dt.strftime('%d %b %Y')
+    except (ValueError, TypeError):
+        return str(value)
+
+
+_ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
+         'Ten', 'Eleven', 'Twelve', 'Thirteen', 'Fourteen', 'Fifteen', 'Sixteen',
+         'Seventeen', 'Eighteen', 'Nineteen']
+_TENS = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety']
+
+
+def _fmt_amount_in_words(amount) -> str:
+    """Whole-rupee amount spelled out using the Indian numbering system
+    (Thousand / Lakh / Crore), e.g. 950000 -> 'Nine Lakh Fifty Thousand'.
+    Paise are dropped — payslips round to the nearest rupee for this line."""
+    n = int(round(float(amount or 0)))
+    if n == 0:
+        return 'Zero'
+
+    def _two_digit(x):
+        if x < 20:
+            return _ONES[x]
+        return (_TENS[x // 10] + (f' {_ONES[x % 10]}' if x % 10 else '')).strip()
+
+    def _three_digit(x):
+        if x >= 100:
+            rest = _two_digit(x % 100)
+            return f'{_ONES[x // 100]} Hundred' + (f' {rest}' if rest else '')
+        return _two_digit(x)
+
+    parts = []
+    crore, n = divmod(n, 1_00_00_000)
+    lakh, n = divmod(n, 1_00_000)
+    thousand, n = divmod(n, 1_000)
+    hundred = n
+
+    if crore:
+        parts.append(f'{_two_digit(crore) if crore < 100 else _three_digit(crore)} Crore')
+    if lakh:
+        parts.append(f'{_two_digit(lakh)} Lakh')
+    if thousand:
+        parts.append(f'{_two_digit(thousand)} Thousand')
+    if hundred:
+        parts.append(_three_digit(hundred))
+
+    return ' '.join(parts)
+
+
+def _fmt_display_minutes(mins) -> str:
+    """Format a minute count as 'Xh Ym' for payslip display, e.g. 90 -> '1h 30m'."""
+    h, m = divmod(int(mins or 0), 60)
+    if h == 0:
+        return f'{m}m'
+    if m == 0:
+        return f'{h}h'
+    return f'{h}h {m}m'
+
+
 def _compute_total_minutes(check_in_dt: datetime, check_out_dt: datetime) -> int:
     """Return total elapsed minutes between two datetime objects (non-negative)."""
     delta = check_out_dt - check_in_dt
@@ -178,6 +277,29 @@ def _compute_total_minutes(check_in_dt: datetime, check_out_dt: datetime) -> int
 _DAY_OFF_PAID_STATUSES = {'paid_leave', 'holiday', 'weekly_off'}
 _DAY_OFF_UNPAID_STATUSES = {'absent', 'unpaid_leave'}
 _DAY_OFF_STATUSES = _DAY_OFF_PAID_STATUSES | _DAY_OFF_UNPAID_STATUSES
+
+# Fixed deduction categories — covers cash advances plus the common in-kind
+# deductions a shop makes for workers it houses/feeds/transports.
+_DEDUCTION_CATEGORIES = {'cash_advance', 'accommodation', 'food', 'transport', 'other'}
+CATEGORY_LABEL_MAP = {
+    'cash_advance': 'Cash Advance',
+    'accommodation': 'Accommodation',
+    'food': 'Food',
+    'transport': 'Transport',
+    'other': 'Other',
+}
+
+
+def _advance_category_breakdown(advances: list) -> dict:
+    """Sum a list of advance/deduction dicts by category, defaulting unset
+    categories (pre-migration rows) to 'cash_advance'."""
+    breakdown = {cat: 0.0 for cat in _DEDUCTION_CATEGORIES}
+    for a in advances:
+        cat = (a.get('category') or 'cash_advance')
+        if cat not in breakdown:
+            cat = 'other'
+        breakdown[cat] += float(a.get('amount') or 0)
+    return {k: round(v, 2) for k, v in breakdown.items()}
 
 
 def _calculate_cycle_amounts(cycle: dict):
@@ -210,6 +332,10 @@ def _calculate_cycle_amounts(cycle: dict):
     except (TypeError, ValueError):
         ot_multiplier = 1.5
 
+    # Per-row clamp so a punch's own deduction_minutes never drives it negative
+    # (e.g. a forgotten 1h lunch break subtracted from a 9h punch → 8h; an
+    # over-entered deduction floors at 0 rather than crediting other rows).
+    greatest = 'GREATEST' if db.engine.dialect.name == 'postgresql' else 'MAX'
     rows = db.session.execute(
         text(
             # MAX(status) picks any non-'present' label when both exist (shouldn't
@@ -219,7 +345,7 @@ def _calculate_cycle_amounts(cycle: dict):
             # SUM(approved_ot_minutes) — NULL values are excluded by SUM; a day
             # with no approved OT rows contributes 0 via COALESCE.
             "SELECT work_date, "
-            "       SUM(COALESCE(total_minutes, 0)) AS day_minutes, "
+            f"       SUM({greatest}(COALESCE(total_minutes, 0) - COALESCE(deduction_minutes, 0), 0)) AS day_minutes, "
             "       MAX(status) AS day_status, "
             "       COALESCE(SUM(CASE WHEN approved_ot_minutes IS NOT NULL "
             "                         THEN approved_ot_minutes ELSE 0 END), 0) AS day_ot_minutes "
@@ -372,15 +498,20 @@ def create_employee():
     else:
         ot_multiplier = 1.5  # sensible default
 
+    try:
+        email = _validate_email(body.get('email'))
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid email address'}), 400
+
     employee_id = str(uuid.uuid4())
     now = _now_iso()
 
     db.session.execute(
         text(
             "INSERT INTO employees "
-            "(employee_id, client_id, branch_id, name, phone, pay_type, rate, "
+            "(employee_id, client_id, branch_id, name, phone, email, pay_type, rate, "
             " ot_multiplier, is_active, created_by, created_at, updated_at) "
-            "VALUES (:eid, :cid, :bid, :name, :phone, :pay_type, :rate, "
+            "VALUES (:eid, :cid, :bid, :name, :phone, :email, :pay_type, :rate, "
             "        :ot_multiplier, TRUE, :created_by, :now, :now)"
         ),
         {
@@ -389,6 +520,7 @@ def create_employee():
             'bid': body.get('branch_id') or None,
             'name': name,
             'phone': (body.get('phone') or '').strip() or None,
+            'email': email,
             'pay_type': pay_type,
             'rate': rate,
             'ot_multiplier': ot_multiplier,
@@ -434,6 +566,12 @@ def update_employee(employee_id):
     if 'phone' in body:
         updates['phone'] = (body['phone'] or '').strip() or None
 
+    if 'email' in body:
+        try:
+            updates['email'] = _validate_email(body['email'])
+        except ValueError:
+            return jsonify({'success': False, 'error': 'Invalid email address'}), 400
+
     if 'branch_id' in body:
         updates['branch_id'] = body['branch_id'] or None
 
@@ -464,7 +602,7 @@ def update_employee(employee_id):
     if not updates:
         return jsonify({'success': True, 'data': emp, 'message': 'Nothing to update'}), 200
 
-    _ALLOWED_EMPLOYEE_FIELDS = {'name', 'phone', 'branch_id', 'pay_type', 'rate', 'ot_multiplier'}
+    _ALLOWED_EMPLOYEE_FIELDS = {'name', 'phone', 'email', 'branch_id', 'pay_type', 'rate', 'ot_multiplier'}
     set_clause = ', '.join(f"{k} = :{k}" for k in updates if k in _ALLOWED_EMPLOYEE_FIELDS)
     updates['updated_at'] = _now_iso()
     updates['eid'] = employee_id
@@ -700,6 +838,380 @@ def checkout(employee_id):
         {'aid': open_punch['attendance_id']}
     ).fetchone()
     return jsonify({'success': True, 'data': _row_to_dict(row), 'message': 'Check-out recorded'}), 200
+
+
+def _bulk_checkin_one(employee_id: str, client_id: str, check_in_dt: datetime, notes: str | None) -> dict:
+    """Check in a single employee as part of a bulk batch. Returns
+    {employee_id, success, error?, data?} — never raises, so one bad
+    employee doesn't abort the rest of the batch."""
+    emp = _get_employee(employee_id, client_id)
+    if not emp:
+        return {'employee_id': employee_id, 'success': False, 'error': 'Employee not found'}
+
+    work_date = check_in_dt.date()
+    cycle = _find_covering_cycle(employee_id, client_id, work_date)
+    if not cycle:
+        return {'employee_id': employee_id, 'success': False, 'error': f'No salary cycle covers {work_date}'}
+    if cycle.get('status') != 'open':
+        return {'employee_id': employee_id, 'success': False, 'error': f'Salary cycle for {work_date} is sealed'}
+
+    open_punch = db.session.execute(
+        text(
+            "SELECT attendance_id FROM employee_attendance "
+            "WHERE employee_id = :eid AND client_id = :cid AND check_out IS NULL "
+            "  AND is_active = TRUE LIMIT 1"
+        ),
+        {'eid': employee_id, 'cid': client_id}
+    ).fetchone()
+    if open_punch:
+        return {'employee_id': employee_id, 'success': False, 'error': 'Already checked in'}
+
+    attendance_id = str(uuid.uuid4())
+    now = _now_iso()
+    db.session.execute(
+        text(
+            "INSERT INTO employee_attendance "
+            "(attendance_id, employee_id, client_id, work_date, check_in, "
+            " check_out, total_minutes, marked_by, notes, created_at, updated_at) "
+            "VALUES (:aid, :eid, :cid, :wd, :ci, NULL, NULL, :marked_by, :notes, :now, :now)"
+        ),
+        {
+            'aid': attendance_id, 'eid': employee_id, 'cid': client_id,
+            'wd': str(work_date), 'ci': check_in_dt.strftime('%Y-%m-%d %H:%M:%S'),
+            'marked_by': g.user['user_id'], 'notes': notes, 'now': now,
+        }
+    )
+    return {'employee_id': employee_id, 'success': True, 'name': emp['name']}
+
+
+@employees_bp.route('/attendance/bulk-checkin', methods=['POST'])
+@authenticate
+@require_permission('mark_attendance')
+def bulk_checkin():
+    """Check in many employees at once with one shared timestamp — for a
+    supervisor marking a whole shift on one shared device, rather than each
+    of 100+ employees using their own phone.
+
+    Body: { employee_ids: [str, ...], check_in?: ISO datetime (default now), notes?: str }
+    Response: { results: [{employee_id, success, error?, name?}], summary: {succeeded, failed} }
+    One employee's failure (already checked in, no open cycle, etc.) never
+    blocks the rest of the batch.
+    """
+    client_id = g.user['client_id']
+    body = request.get_json(silent=True) or {}
+
+    employee_ids = body.get('employee_ids')
+    if not isinstance(employee_ids, list) or not employee_ids:
+        return jsonify({'success': False, 'error': 'employee_ids must be a non-empty array'}), 400
+
+    check_in_str = body.get('check_in')
+    check_in_dt = _parse_datetime(check_in_str) if check_in_str else datetime.utcnow()
+    if not check_in_dt:
+        return jsonify({'success': False, 'error': 'Invalid check_in datetime format'}), 400
+
+    notes = (body.get('notes') or '').strip() or None
+
+    results = [_bulk_checkin_one(eid, client_id, check_in_dt, notes) for eid in employee_ids]
+    db.session.commit()
+
+    succeeded = sum(1 for r in results if r['success'])
+    return jsonify({
+        'success': True,
+        'data': {'results': results, 'summary': {'succeeded': succeeded, 'failed': len(results) - succeeded}},
+        'message': f'Checked in {succeeded} of {len(results)} employees',
+    }), 200
+
+
+def _bulk_checkout_one(employee_id: str, client_id: str, check_out_dt: datetime) -> dict:
+    """Check out a single employee as part of a bulk batch. Never raises."""
+    open_punch_row = db.session.execute(
+        text(
+            "SELECT * FROM employee_attendance "
+            "WHERE employee_id = :eid AND client_id = :cid AND check_out IS NULL "
+            "  AND is_active = TRUE ORDER BY check_in DESC LIMIT 1"
+        ),
+        {'eid': employee_id, 'cid': client_id}
+    ).fetchone()
+    if not open_punch_row:
+        return {'employee_id': employee_id, 'success': False, 'error': 'No open check-in found'}
+
+    open_punch = _row_to_dict(open_punch_row)
+    check_in_dt = _parse_datetime(str(open_punch['check_in']))
+    if check_in_dt and check_out_dt <= check_in_dt:
+        return {'employee_id': employee_id, 'success': False, 'error': 'check_out must be after check_in'}
+
+    total_minutes = _compute_total_minutes(check_in_dt, check_out_dt) if check_in_dt else None
+
+    work_date_for_calc = open_punch.get('work_date')
+    if work_date_for_calc and not hasattr(work_date_for_calc, 'strftime'):
+        work_date_for_calc = _parse_date(str(work_date_for_calc))
+    full_day_mins_for_calc = 480
+    _ot_cycle = _find_covering_cycle(employee_id, client_id, work_date_for_calc) if work_date_for_calc else None
+    if _ot_cycle and _ot_cycle.get('full_day_mins'):
+        try:
+            full_day_mins_for_calc = int(_ot_cycle['full_day_mins'])
+        except (TypeError, ValueError):
+            pass
+    auto_ot = max(0, int(total_minutes or 0) - full_day_mins_for_calc)
+
+    db.session.execute(
+        text(
+            "UPDATE employee_attendance "
+            "SET check_out = :co, total_minutes = :tm, auto_ot_minutes = :ot, "
+            "    updated_at = :now, synced_at = NULL "
+            "WHERE attendance_id = :aid AND client_id = :cid"
+        ),
+        {
+            'co': check_out_dt.strftime('%Y-%m-%d %H:%M:%S'), 'tm': total_minutes,
+            'ot': auto_ot, 'now': _now_iso(), 'aid': open_punch['attendance_id'], 'cid': client_id,
+        }
+    )
+    return {'employee_id': employee_id, 'success': True}
+
+
+@employees_bp.route('/attendance/bulk-checkout', methods=['POST'])
+@authenticate
+@require_permission('mark_attendance')
+def bulk_checkout():
+    """Check out many employees at once with one shared timestamp.
+
+    Body: { employee_ids: [str, ...], check_out?: ISO datetime (default now) }
+    Response: { results: [{employee_id, success, error?}], summary: {succeeded, failed} }
+    """
+    client_id = g.user['client_id']
+    body = request.get_json(silent=True) or {}
+
+    employee_ids = body.get('employee_ids')
+    if not isinstance(employee_ids, list) or not employee_ids:
+        return jsonify({'success': False, 'error': 'employee_ids must be a non-empty array'}), 400
+
+    check_out_str = body.get('check_out')
+    check_out_dt = _parse_datetime(check_out_str) if check_out_str else datetime.utcnow()
+    if not check_out_dt:
+        return jsonify({'success': False, 'error': 'Invalid check_out datetime format'}), 400
+
+    results = [_bulk_checkout_one(eid, client_id, check_out_dt) for eid in employee_ids]
+    db.session.commit()
+
+    succeeded = sum(1 for r in results if r['success'])
+    return jsonify({
+        'success': True,
+        'data': {'results': results, 'summary': {'succeeded': succeeded, 'failed': len(results) - succeeded}},
+        'message': f'Checked out {succeeded} of {len(results)} employees',
+    }), 200
+
+
+def _upsert_manual_hours(employee_id: str, client_id: str, work_date, total_minutes: int, notes: str | None) -> dict:
+    """Upsert one manual-hours entry for one employee/date. Never raises —
+    returns {employee_id, work_date, success, error?, code?, cycle_id?,
+    attendance_id?} so callers (single or bulk) can report per-date results.
+    """
+    if work_date > date.today():
+        return {'employee_id': employee_id, 'work_date': str(work_date), 'success': False,
+                'error': 'Cannot enter hours for a future date'}
+
+    cycle = _find_covering_cycle(employee_id, client_id, work_date)
+    if not cycle:
+        return {'employee_id': employee_id, 'work_date': str(work_date), 'success': False,
+                'error': f'No salary cycle covers {work_date}', 'code': 'NO_CYCLE'}
+    if cycle.get('status') != 'open':
+        return {'employee_id': employee_id, 'work_date': str(work_date), 'success': False,
+                'error': f'Salary cycle for {work_date} is sealed', 'code': 'CYCLE_SEALED',
+                'cycle_id': cycle.get('cycle_id')}
+
+    now_iso = _now_iso()
+    existing = db.session.execute(
+        text(
+            "SELECT attendance_id FROM employee_attendance "
+            "WHERE employee_id = :eid AND client_id = :cid AND work_date = :wd "
+            "  AND is_active = TRUE LIMIT 1"
+        ),
+        {'eid': employee_id, 'cid': client_id, 'wd': str(work_date)}
+    ).fetchone()
+
+    if existing:
+        attendance_id = existing[0]
+        db.session.execute(
+            text(
+                "UPDATE employee_attendance "
+                "SET total_minutes = :tm, status = 'present', reason = NULL, "
+                "    is_manual_entry = TRUE, notes = :notes, "
+                "    updated_at = :now, synced_at = NULL "
+                "WHERE attendance_id = :aid"
+            ),
+            {'tm': total_minutes, 'notes': notes, 'now': now_iso, 'aid': attendance_id}
+        )
+    else:
+        attendance_id = str(uuid.uuid4())
+        dialect = db.engine.dialect.name
+        check_in_val = None if dialect == 'postgresql' else f"{work_date} 00:00:00"
+        db.session.execute(
+            text(
+                "INSERT INTO employee_attendance "
+                "(attendance_id, employee_id, client_id, work_date, check_in, "
+                " check_out, total_minutes, marked_by, notes, status, is_manual_entry, "
+                " created_at, updated_at) "
+                "VALUES (:aid, :eid, :cid, :wd, :ci, NULL, :tm, :marked_by, :notes, "
+                "        'present', TRUE, :now, :now)"
+            ),
+            {
+                'aid': attendance_id, 'eid': employee_id, 'cid': client_id, 'wd': str(work_date),
+                'ci': check_in_val, 'tm': total_minutes, 'marked_by': g.user['user_id'],
+                'notes': notes, 'now': now_iso,
+            }
+        )
+    return {'employee_id': employee_id, 'work_date': str(work_date), 'success': True, 'attendance_id': attendance_id}
+
+
+# Upper bound on a single manual-hours date range — generous (a full quarter)
+# while still guarding against an accidental year-long range fat-fingered in.
+_MAX_MANUAL_HOURS_RANGE_DAYS = 92
+
+
+def _expand_date_range(from_d, to_d):
+    """Inclusive list of dates from from_d to to_d. Caller has already
+    validated from_d <= to_d and the range is within _MAX_MANUAL_HOURS_RANGE_DAYS."""
+    from datetime import timedelta
+    days = (to_d - from_d).days
+    return [from_d + timedelta(days=i) for i in range(days + 1)]
+
+
+@employees_bp.route('/<employee_id>/attendance/manual', methods=['POST'])
+@authenticate
+@require_permission('mark_attendance')
+def manual_attendance(employee_id):
+    """Directly set hours worked for one date (or a date range), for admins
+    who don't know the employee's exact clock times — common on a
+    100+-person shop floor, and handy for backfilling several missed days
+    at once with the same hours. Upserts each employee_attendance row: creates
+    it if none exists, otherwise overwrites its hours. No check_in/check_out
+    pair is recorded — `is_manual_entry` flags the row so the UI can tell
+    manual backfills apart from real punches.
+
+    Body: { work_date: "YYYY-MM-DD", to_date?: "YYYY-MM-DD", hours: number, notes?: str }
+    `to_date` is optional — omit it for a single day, or set it to apply the
+    same `hours` to every day from work_date through to_date inclusive.
+    """
+    client_id = g.user['client_id']
+    emp = _get_employee(employee_id, client_id)
+    if not emp:
+        return jsonify({'success': False, 'error': 'Employee not found'}), 404
+
+    body = request.get_json(silent=True) or {}
+
+    from_d = _parse_date(body.get('work_date'))
+    if not from_d:
+        return jsonify({'success': False, 'error': 'work_date is required (YYYY-MM-DD)'}), 400
+    to_d = _parse_date(body.get('to_date')) if body.get('to_date') else from_d
+    if not to_d:
+        return jsonify({'success': False, 'error': 'Invalid to_date format'}), 400
+    if to_d < from_d:
+        return jsonify({'success': False, 'error': 'to_date must be on or after work_date'}), 400
+    if (to_d - from_d).days + 1 > _MAX_MANUAL_HOURS_RANGE_DAYS:
+        return jsonify({'success': False, 'error': f'Date range cannot exceed {_MAX_MANUAL_HOURS_RANGE_DAYS} days'}), 400
+
+    hours = body.get('hours')
+    try:
+        hours = float(hours)
+        if hours < 0 or hours > 24:
+            raise ValueError()
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'hours must be a number between 0 and 24'}), 400
+
+    total_minutes = int(round(hours * 60))
+    notes = (body.get('notes') or '').strip() or None
+
+    dates = _expand_date_range(from_d, to_d)
+    results = [_upsert_manual_hours(employee_id, client_id, d, total_minutes, notes) for d in dates]
+    db.session.commit()
+
+    # Single-day calls (the common case) keep their original response shape —
+    # a single record, with the original NO_CYCLE/CYCLE_SEALED status codes —
+    # so the existing frontend flow (and its cycle-creation prompt) keeps working.
+    if len(results) == 1:
+        r = results[0]
+        if not r['success']:
+            status = 409 if r.get('code') else 400
+            error_body = {'success': False, 'error': r['error'], 'work_date': r['work_date']}
+            if r.get('code'):
+                error_body['code'] = r['code']
+            if r.get('cycle_id'):
+                error_body['cycle_id'] = r['cycle_id']
+            return jsonify(error_body), status
+        row = db.session.execute(
+            text("SELECT * FROM employee_attendance WHERE attendance_id = :aid"),
+            {'aid': r['attendance_id']}
+        ).fetchone()
+        return jsonify({'success': True, 'data': _row_to_dict(row), 'message': f'{hours}h recorded for {from_d}'}), 200
+
+    succeeded = sum(1 for r in results if r['success'])
+    return jsonify({
+        'success': True,
+        'data': {'results': results, 'summary': {'succeeded': succeeded, 'failed': len(results) - succeeded}},
+        'message': f'{hours}h recorded for {succeeded} of {len(results)} days',
+    }), 200
+
+
+@employees_bp.route('/attendance/bulk-manual', methods=['POST'])
+@authenticate
+@require_permission('mark_attendance')
+def bulk_manual_attendance():
+    """Directly set hours worked for many employees over a date range at
+    once — e.g. backfill 10 missed days for one employee, or the same day
+    for a whole shift of employees, in a single call.
+
+    Body: { employee_ids: [str, ...], work_date: "YYYY-MM-DD", to_date?: "YYYY-MM-DD",
+            hours: number, notes?: str }
+    Response: { results: [{employee_id, work_date, success, error?}], summary }
+    """
+    client_id = g.user['client_id']
+    body = request.get_json(silent=True) or {}
+
+    employee_ids = body.get('employee_ids')
+    if not isinstance(employee_ids, list) or not employee_ids:
+        return jsonify({'success': False, 'error': 'employee_ids must be a non-empty array'}), 400
+
+    from_d = _parse_date(body.get('work_date'))
+    if not from_d:
+        return jsonify({'success': False, 'error': 'work_date is required (YYYY-MM-DD)'}), 400
+    to_d = _parse_date(body.get('to_date')) if body.get('to_date') else from_d
+    if not to_d:
+        return jsonify({'success': False, 'error': 'Invalid to_date format'}), 400
+    if to_d < from_d:
+        return jsonify({'success': False, 'error': 'to_date must be on or after work_date'}), 400
+    if (to_d - from_d).days + 1 > _MAX_MANUAL_HOURS_RANGE_DAYS:
+        return jsonify({'success': False, 'error': f'Date range cannot exceed {_MAX_MANUAL_HOURS_RANGE_DAYS} days'}), 400
+
+    hours = body.get('hours')
+    try:
+        hours = float(hours)
+        if hours < 0 or hours > 24:
+            raise ValueError()
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'hours must be a number between 0 and 24'}), 400
+
+    total_minutes = int(round(hours * 60))
+    notes = (body.get('notes') or '').strip() or None
+    dates = _expand_date_range(from_d, to_d)
+
+    results = []
+    for employee_id in employee_ids:
+        emp = _get_employee(employee_id, client_id)
+        if not emp:
+            for d in dates:
+                results.append({'employee_id': employee_id, 'work_date': str(d), 'success': False, 'error': 'Employee not found'})
+            continue
+        for d in dates:
+            results.append(_upsert_manual_hours(employee_id, client_id, d, total_minutes, notes))
+
+    db.session.commit()
+
+    succeeded = sum(1 for r in results if r['success'])
+    return jsonify({
+        'success': True,
+        'data': {'results': results, 'summary': {'succeeded': succeeded, 'failed': len(results) - succeeded}},
+        'message': f'{hours}h recorded for {succeeded} of {len(results)} employee-days',
+    }), 200
 
 
 @employees_bp.route('/<employee_id>/day-off', methods=['POST'])
@@ -995,6 +1507,68 @@ def delete_attendance(attendance_id):
     return jsonify({'success': True, 'message': 'Attendance record deleted'}), 200
 
 
+@employees_bp.route('/attendance/<attendance_id>/adjust-hours', methods=['POST'])
+@authenticate
+@require_permission('mark_attendance')
+def adjust_hours(attendance_id):
+    """Deduct unpaid break time an employee forgot to clock out for, without
+    destroying the original clocked total_minutes. E.g. a punch shows 9h
+    worked but 1h was actually an unpaid lunch break — deduct 60 minutes with
+    a note explaining why, and payroll pays 8h instead of 9h for that punch.
+
+    Body: { deduction_minutes: int (0 to the punch's own total_minutes), notes: str (required) }
+    Set deduction_minutes to 0 to clear a previously-entered deduction.
+    """
+    client_id = g.user['client_id']
+    row = db.session.execute(
+        text(
+            "SELECT * FROM employee_attendance "
+            "WHERE attendance_id = :aid AND client_id = :cid AND is_active = TRUE"
+        ),
+        {'aid': attendance_id, 'cid': client_id}
+    ).fetchone()
+    if not row:
+        return jsonify({'success': False, 'error': 'Attendance record not found'}), 404
+
+    attendance = _row_to_dict(row)
+    if attendance.get('total_minutes') is None:
+        return jsonify({'success': False, 'error': 'Cannot deduct hours from a punch with no recorded duration yet (check out first)'}), 400
+
+    body = request.get_json(silent=True) or {}
+
+    deduction_minutes = body.get('deduction_minutes')
+    try:
+        deduction_minutes = int(deduction_minutes)
+    except (TypeError, ValueError):
+        return jsonify({'success': False, 'error': 'deduction_minutes must be an integer'}), 400
+    if deduction_minutes < 0 or deduction_minutes > int(attendance['total_minutes']):
+        return jsonify({
+            'success': False,
+            'error': f'deduction_minutes must be between 0 and {attendance["total_minutes"]} (this punch\'s recorded duration)'
+        }), 400
+
+    notes = (body.get('notes') or '').strip()
+    if deduction_minutes > 0 and not notes:
+        return jsonify({'success': False, 'error': 'notes is required when deducting hours'}), 400
+
+    db.session.execute(
+        text(
+            "UPDATE employee_attendance "
+            "SET deduction_minutes = :dm, deduction_notes = :notes, "
+            "    updated_at = :now, synced_at = NULL "
+            "WHERE attendance_id = :aid AND client_id = :cid"
+        ),
+        {'dm': deduction_minutes, 'notes': notes or None, 'now': _now_iso(), 'aid': attendance_id, 'cid': client_id}
+    )
+    db.session.commit()
+
+    updated = db.session.execute(
+        text("SELECT * FROM employee_attendance WHERE attendance_id = :aid"),
+        {'aid': attendance_id}
+    ).fetchone()
+    return jsonify({'success': True, 'data': _row_to_dict(updated), 'message': 'Hours adjusted'}), 200
+
+
 # ── Salary Cycles ─────────────────────────────────────────────────────────────
 
 @employees_bp.route('/<employee_id>/cycles', methods=['GET'])
@@ -1111,10 +1685,13 @@ def get_cycle_detail(employee_id, cycle_id):
         {'cid': cycle_id}
     ).fetchall()
 
+    advances_out = [_row_to_dict(a) for a in advances]
+
     data = dict(cycle)
     data['daily_breakdown'] = daily_breakdown
-    data['advances'] = [_row_to_dict(a) for a in advances]
+    data['advances'] = advances_out
     data['ot_summary'] = ot_summary
+    data['deductions_by_category'] = _advance_category_breakdown(advances_out)
     return jsonify({'success': True, 'data': data}), 200
 
 
@@ -1289,6 +1866,198 @@ def mark_cycle_paid(employee_id, cycle_id):
         'next_cycle_start_date': next_start,
         'message': 'Salary cycle marked as paid',
     }), 200
+
+
+@employees_bp.route('/<employee_id>/cycles/<cycle_id>/payslip', methods=['GET'])
+@authenticate
+@require_permission('view_salary')
+def cycle_payslip(employee_id, cycle_id):
+    """Generate a one-page payslip PDF for a salary cycle — its pay period,
+    days worked, overtime, deductions by category, and net pay. Available for
+    both open and paid cycles (an open one is a preview of what's owed so
+    far); the payment date/note only appear once the cycle is actually paid.
+    """
+    from io import BytesIO
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4
+    from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
+    from reportlab.lib.units import cm
+    from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
+    from models.client_model import ClientEntry
+
+    client_id = g.user['client_id']
+    emp = _get_employee_any(employee_id, client_id)
+    if not emp:
+        return jsonify({'success': False, 'error': 'Employee not found'}), 404
+
+    cycle = _get_cycle(cycle_id, employee_id, client_id)
+    if not cycle:
+        return jsonify({'success': False, 'error': 'Salary cycle not found'}), 404
+
+    gross, total_advances, net, daily_breakdown, ot_summary = _calculate_cycle_amounts(cycle)
+
+    advances = db.session.execute(
+        text("SELECT * FROM salary_advances WHERE cycle_id = :cid ORDER BY advance_date"),
+        {'cid': cycle_id}
+    ).fetchall()
+    advances_out = [_row_to_dict(a) for a in advances]
+    deductions_by_category = _advance_category_breakdown(advances_out)
+
+    client = ClientEntry.query.filter_by(client_id=client_id).first()
+    currency = (client.currency_symbol if client and client.currency_symbol else '₹')
+    # ReportLab's built-in fonts (Helvetica/Times) don't include the ₹ glyph —
+    # it renders as a missing-character box. Same constraint the GST report
+    # PDF already works around by spelling out "Rs." instead of the symbol.
+    if currency == '₹':
+        currency = 'Rs. '
+    days_present = sum(1 for d in daily_breakdown if d['status'] == 'present' and d['days_counted'] > 0)
+    paid_off_days = sum(1 for d in daily_breakdown if d['status'] in _DAY_OFF_PAID_STATUSES)
+
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer, pagesize=A4,
+        rightMargin=1.5 * cm, leftMargin=1.5 * cm, topMargin=1.2 * cm, bottomMargin=1.5 * cm,
+    )
+    elements = []
+    styles = getSampleStyleSheet()
+
+    # Explicit `leading` on every header style — without it, ReportLab falls back
+    # to the parent Normal style's leading (12, sized for 10pt text), which reads
+    # as an oversized gap between the two <br/>-joined address lines compared to
+    # the tight spaceAfter/spaceBefore between the title/name paragraphs above it.
+    # Setting leading ≈ 1.2× each style's own fontSize keeps the whole block even.
+    payslip_title_style = ParagraphStyle('PayslipTitle', parent=styles['Normal'], fontSize=16, leading=19,
+                                          alignment=TA_CENTER, spaceBefore=0, spaceAfter=4,
+                                          textColor=colors.HexColor('#1e293b'), fontName='Helvetica-Bold')
+    co_name_style = ParagraphStyle('CoName', parent=styles['Normal'], fontSize=12.5, leading=15,
+                                    alignment=TA_CENTER, spaceBefore=0, spaceAfter=3,
+                                    textColor=colors.HexColor('#1e293b'), fontName='Helvetica-Bold')
+    co_detail_style = ParagraphStyle('CoDetail', parent=styles['Normal'], fontSize=8.5, leading=11,
+                                      alignment=TA_CENTER, spaceBefore=0, spaceAfter=0,
+                                      textColor=colors.HexColor('#475569'), fontName='Helvetica')
+
+    elements.append(Paragraph('Payslip', payslip_title_style))
+    elements.append(Paragraph((client.client_name if client else 'Business') or 'Business', co_name_style))
+    if client and client.address:
+        # Address may contain a comma-separated line — render each segment on its own line.
+        address_lines = [seg.strip() for seg in client.address.replace('\n', ',').split(',') if seg.strip()]
+        elements.append(Paragraph('<br/>'.join(address_lines), co_detail_style))
+    elements.append(Spacer(1, 14))
+
+    # Employee/period details — two label:value columns, no borders (plain text
+    # block like the reference), left column period info, right column employee info.
+    detail_label_style = ParagraphStyle('DetailLabel', parent=styles['Normal'], fontSize=9.5,
+                                         textColor=colors.HexColor('#1e293b'), fontName='Helvetica')
+    detail_value_style = ParagraphStyle('DetailValue', parent=styles['Normal'], fontSize=9.5,
+                                         textColor=colors.HexColor('#1e293b'), fontName='Helvetica')
+    rate_label = 'Rate / hr' if emp.get('pay_type') == 'hourly' else 'Rate / day'
+    left_rows = [
+        ('Pay Period', f"{_fmt_display_date(cycle['start_date'])} - {_fmt_display_date(cycle['end_date'])}"),
+        ('Worked Days', str(days_present + paid_off_days)),
+        (rate_label, f"{currency}{float(cycle.get('rate_snapshot') or 0):,.2f}"),
+    ]
+    right_rows = [
+        ('Employee name', emp['name']),
+        ('Phone', emp.get('phone') or '—'),
+        ('Email', emp.get('email') or '—'),
+    ]
+    detail_rows = []
+    for (ll, lv), (rl, rv) in zip(left_rows, right_rows):
+        detail_rows.append([
+            Paragraph(ll, detail_label_style), Paragraph(f': {lv}', detail_value_style),
+            Paragraph(rl, detail_label_style), Paragraph(f': {rv}', detail_value_style),
+        ])
+    detail_table = Table(detail_rows, colWidths=[3.2 * cm, 5.3 * cm, 3.2 * cm, 5.3 * cm])
+    detail_table.setStyle(TableStyle([
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 0),
+    ]))
+    elements.append(detail_table)
+    elements.append(Spacer(1, 16))
+
+    # Earnings vs. deductions — mapped from what the app actually tracks:
+    # earnings = regular pay + overtime; deductions = one row per non-zero category.
+    earning_lines = [(f'Regular Pay ({days_present} present, {paid_off_days} paid off)', gross - ot_summary['total_ot_pay'])]
+    if ot_summary['total_ot_minutes'] > 0:
+        earning_lines.append((f"Overtime ({_fmt_display_minutes(ot_summary['total_ot_minutes'])})", ot_summary['total_ot_pay']))
+
+    deduction_lines = [
+        (CATEGORY_LABEL_MAP[cat], deductions_by_category.get(cat, 0))
+        for cat in CATEGORY_LABEL_MAP
+        if deductions_by_category.get(cat, 0) > 0
+    ]
+    if not deduction_lines:
+        deduction_lines = [('—', 0)]
+
+    header_style = ParagraphStyle('TblHeader', parent=styles['Normal'], fontSize=10, alignment=TA_CENTER,
+                                   textColor=colors.HexColor('#1e293b'), fontName='Helvetica-Bold')
+    cell_style = ParagraphStyle('TblCell', parent=styles['Normal'], fontSize=9.5, textColor=colors.HexColor('#1e293b'), fontName='Helvetica')
+    cell_right_style = ParagraphStyle('TblCellRight', parent=cell_style, alignment=TA_RIGHT)
+    bold_style = ParagraphStyle('TblBold', parent=cell_style, fontName='Helvetica-Bold')
+    bold_right_style = ParagraphStyle('TblBoldRight', parent=bold_style, alignment=TA_RIGHT)
+
+    row_count = max(len(earning_lines), len(deduction_lines)) + 1  # +1 blank spacer row before totals
+    table_rows = [[Paragraph('Earnings', header_style), Paragraph('Amount', header_style),
+                   Paragraph('Deductions', header_style), Paragraph('Amount', header_style)]]
+    for i in range(row_count):
+        e_label, e_amt = earning_lines[i] if i < len(earning_lines) else ('', None)
+        d_label, d_amt = deduction_lines[i] if i < len(deduction_lines) else ('', None)
+        table_rows.append([
+            Paragraph(e_label, cell_style),
+            Paragraph(f'{e_amt:,.2f}' if e_amt is not None else '', cell_right_style),
+            Paragraph(d_label, cell_style),
+            Paragraph(f'{d_amt:,.2f}' if d_amt is not None else '', cell_right_style),
+        ])
+    table_rows.append([
+        Paragraph('Total Earnings', bold_style), Paragraph(f'{gross:,.2f}', bold_right_style),
+        Paragraph('Total Deductions', bold_style), Paragraph(f'{total_advances:,.2f}', bold_right_style),
+    ])
+    table_rows.append([
+        Paragraph('', cell_style), Paragraph('', cell_style),
+        Paragraph('Net Pay', bold_style), Paragraph(f'{net:,.2f}', bold_right_style),
+    ])
+
+    pay_table = Table(table_rows, colWidths=[5.5 * cm, 3 * cm, 5.5 * cm, 3 * cm])
+    pay_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#d1d5db')),
+        ('BOX', (0, 0), (-1, -1), 0.8, colors.black),
+        ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.black),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+    ]))
+    elements.append(pay_table)
+    elements.append(Spacer(1, 20))
+
+    # Net pay numeral + amount in words, centered — matches the reference footer.
+    net_numeral_style = ParagraphStyle('NetNumeral', parent=styles['Normal'], fontSize=11, alignment=TA_CENTER,
+                                        textColor=colors.HexColor('#1e293b'), fontName='Helvetica-Bold')
+    net_words_style = ParagraphStyle('NetWords', parent=styles['Normal'], fontSize=10, alignment=TA_CENTER,
+                                      textColor=colors.HexColor('#1e293b'), fontName='Helvetica')
+    elements.append(Paragraph(f'{net:,.2f}', net_numeral_style))
+    elements.append(Paragraph(_fmt_amount_in_words(net), net_words_style))
+
+    if cycle['status'] == 'paid':
+        elements.append(Spacer(1, 14))
+        paid_style = ParagraphStyle('Paid', parent=styles['Normal'], fontSize=9, alignment=TA_LEFT,
+                                     textColor=colors.HexColor('#475569'), fontName='Helvetica')
+        paid_line = f"Paid on {_fmt_display_date(cycle['paid_at'])}" if cycle.get('paid_at') else 'Paid'
+        if cycle.get('payment_note'):
+            paid_line += f" — {cycle['payment_note']}"
+        elements.append(Paragraph(paid_line, paid_style))
+
+    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=7, alignment=TA_CENTER,
+                                   textColor=colors.HexColor('#94a3b8'), spaceBefore=20)
+    elements.append(Paragraph('Computer-generated payslip · Valoryx', footer_style))
+
+    doc.build(elements)
+    buffer.seek(0)
+
+    filename = f"Payslip_{emp['name'].replace(' ', '_')}_{cycle['start_date']}_to_{cycle['end_date']}.pdf"
+    from flask import send_file
+    return send_file(buffer, mimetype='application/pdf', as_attachment=True, download_name=filename)
 
 
 @employees_bp.route('/payroll-timeseries', methods=['GET'])
@@ -1568,6 +2337,13 @@ def record_advance(employee_id):
     except (TypeError, ValueError):
         return jsonify({'success': False, 'error': 'amount must be a positive number'}), 400
 
+    category = (body.get('category') or 'cash_advance').strip().lower()
+    if category not in _DEDUCTION_CATEGORIES:
+        return jsonify({
+            'success': False,
+            'error': f'category must be one of: {", ".join(sorted(_DEDUCTION_CATEGORIES))}'
+        }), 400
+
     advance_date = _parse_date(body.get('advance_date'))
     if not advance_date:
         advance_date = date.today()
@@ -1578,9 +2354,9 @@ def record_advance(employee_id):
     db.session.execute(
         text(
             "INSERT INTO salary_advances "
-            "(advance_id, employee_id, client_id, cycle_id, amount, "
+            "(advance_id, employee_id, client_id, cycle_id, amount, category, "
             " advance_date, notes, recorded_by, created_at, updated_at) "
-            "VALUES (:aid, :eid, :cid, :cycle, :amount, "
+            "VALUES (:aid, :eid, :cid, :cycle, :amount, :category, "
             "        :adv_date, :notes, :recorded_by, :now, :now)"
         ),
         {
@@ -1589,6 +2365,7 @@ def record_advance(employee_id):
             'cid': client_id,
             'cycle': cycle_id,
             'amount': amount,
+            'category': category,
             'adv_date': str(advance_date),
             'notes': (body.get('notes') or '').strip() or None,
             'recorded_by': g.user['user_id'],
@@ -1615,6 +2392,46 @@ def record_advance(employee_id):
         {'aid': advance_id}
     ).fetchone()
     return jsonify({'success': True, 'data': _row_to_dict(row), 'message': 'Advance recorded'}), 201
+
+
+@employees_bp.route('/advances/<advance_id>', methods=['DELETE'])
+@authenticate
+@require_permission('record_advance')
+def delete_advance(advance_id):
+    """Remove a mis-entered advance/deduction and recalculate its cycle."""
+    client_id = g.user['client_id']
+    row = db.session.execute(
+        text("SELECT * FROM salary_advances WHERE advance_id = :aid AND client_id = :cid"),
+        {'aid': advance_id, 'cid': client_id}
+    ).fetchone()
+    if not row:
+        return jsonify({'success': False, 'error': 'Advance not found'}), 404
+
+    advance = _row_to_dict(row)
+    cycle_id = advance.get('cycle_id')
+    cycle = _get_cycle(cycle_id, advance['employee_id'], client_id) if cycle_id else None
+    if cycle and cycle.get('status') == 'paid':
+        return jsonify({'success': False, 'error': 'Cannot delete a deduction from a paid cycle'}), 409
+
+    db.session.execute(
+        text("DELETE FROM salary_advances WHERE advance_id = :aid AND client_id = :cid"),
+        {'aid': advance_id, 'cid': client_id}
+    )
+
+    if cycle:
+        gross, total_advances, net, _, _ot = _calculate_cycle_amounts(cycle)
+        db.session.execute(
+            text(
+                "UPDATE salary_cycles "
+                "SET gross_salary = :gross, total_advances = :adv, net_salary = :net, "
+                "    updated_at = :now, synced_at = NULL "
+                "WHERE cycle_id = :cid"
+            ),
+            {'gross': gross, 'adv': total_advances, 'net': net, 'now': _now_iso(), 'cid': cycle_id}
+        )
+
+    db.session.commit()
+    return jsonify({'success': True, 'message': 'Deduction removed'}), 200
 
 
 # ── Employee History ───────────────────────────────────────────────────────────
@@ -1657,7 +2474,7 @@ def employee_history(employee_id):
         # Advances for this cycle
         adv_rows = db.session.execute(
             text(
-                "SELECT advance_id, amount, advance_date, notes "
+                "SELECT advance_id, amount, category, advance_date, notes "
                 "FROM salary_advances WHERE cycle_id = :cid ORDER BY advance_date"
             ),
             {'cid': cycle['cycle_id']}
@@ -1671,6 +2488,7 @@ def employee_history(employee_id):
             'net_salary': net,
             'daily_breakdown': breakdown,
             'advances': advances,
+            'deductions_by_category': _advance_category_breakdown(advances),
         })
 
         if cycle['status'] == 'paid':

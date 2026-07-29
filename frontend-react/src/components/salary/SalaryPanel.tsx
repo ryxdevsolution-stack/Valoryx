@@ -1,9 +1,14 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, Calculator, CheckCircle, ChevronDown, ChevronUp, RefreshCw, Pencil } from 'lucide-react'
+import { Plus, Calculator, CheckCircle, ChevronDown, ChevronUp, RefreshCw, Pencil, Trash2, FileText } from 'lucide-react'
 import api from '@/lib/api'
 import { useCurrency } from '@/lib/useCurrency'
 import type { Employee, SalaryCycle, SalaryAdvance } from '@/pages/Salary'
+import { DEDUCTION_CATEGORIES } from '@/components/salary/SalaryModals'
 import { formatMinutes as formatMins, formatSalaryDate as fmtDate, isDateCovered, currentMonthRange } from '@/utils/salary'
+
+const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
+  DEDUCTION_CATEGORIES.map(c => [c.value, c.label])
+)
 
 interface SalaryPanelProps {
   employee: Employee
@@ -105,8 +110,49 @@ export default function SalaryPanel({
       setPayNoteInput(null)
       setPayNote('')
       fetchCycles()
+      downloadPayslip(cycleId) // auto-generate the payslip now that it's sealed
     } finally {
       setMarkingPaid(null)
+    }
+  }
+
+  const [downloadingPayslip, setDownloadingPayslip] = useState<string | null>(null)
+
+  async function downloadPayslip(cycleId: string) {
+    setDownloadingPayslip(cycleId)
+    try {
+      const cycle = cycles.find(c => c.cycle_id === cycleId)
+      const response = await api.get(
+        `/employees/${employee.employee_id}/cycles/${cycleId}/payslip`,
+        { responseType: 'blob' }
+      )
+      const blob = new Blob([response.data], { type: 'application/pdf' })
+      const url = window.URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      const period = cycle ? `${fmtDate(cycle.start_date)}_to_${fmtDate(cycle.end_date)}`.replace(/\s+/g, '_') : cycleId
+      a.download = `Payslip_${employee.name.replace(/\s+/g, '_')}_${period}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      document.body.removeChild(a)
+      window.URL.revokeObjectURL(url)
+    } catch {
+      // Silent — payslip generation failing shouldn't block the pay-cycle flow;
+      // the "Download Payslip" button lets the admin retry manually anytime.
+    } finally {
+      setDownloadingPayslip(null)
+    }
+  }
+
+  const [deletingAdvance, setDeletingAdvance] = useState<string | null>(null)
+
+  async function handleDeleteAdvance(advanceId: string) {
+    setDeletingAdvance(advanceId)
+    try {
+      await api.delete(`/employees/advances/${advanceId}`)
+      fetchCycles()
+    } finally {
+      setDeletingAdvance(null)
     }
   }
 
@@ -125,7 +171,7 @@ export default function SalaryPanel({
             onClick={() => onAddAdvance(cycles)}
             className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
           >
-            + Advance
+            + Deduction
           </button>
           <button
             type="button"
@@ -349,10 +395,10 @@ export default function SalaryPanel({
                       </div>
                     )}
 
-                    {/* Advances */}
+                    {/* Advances / deductions */}
                     {cycle.advances && cycle.advances.length > 0 && (
                       <div>
-                        <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Advances</p>
+                        <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Deductions</p>
                         <ul className="space-y-1.5">
                           {cycle.advances.map((adv: SalaryAdvance) => (
                             <li
@@ -360,21 +406,48 @@ export default function SalaryPanel({
                               className="flex items-center justify-between bg-orange-50 dark:bg-orange-900/20 rounded-lg px-3 py-2"
                             >
                               <div>
+                                <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded-full bg-orange-200 dark:bg-orange-800 text-orange-800 dark:text-orange-200 mr-2">
+                                  {CATEGORY_LABEL[adv.category ?? 'cash_advance'] ?? 'Cash Advance'}
+                                </span>
                                 <span className="text-xs font-semibold text-orange-700 dark:text-orange-300">{cur}{Number(adv.amount).toFixed(2)}</span>
                                 <span className="text-xs text-gray-500 dark:text-gray-400 ml-2">{fmtDate(adv.advance_date)}</span>
                                 {adv.notes && <span className="text-xs text-gray-400 ml-2">— {adv.notes}</span>}
                               </div>
+                              {cycle.status === 'open' && (
+                                <button
+                                  type="button"
+                                  onClick={() => handleDeleteAdvance(adv.advance_id)}
+                                  disabled={deletingAdvance === adv.advance_id}
+                                  className="p-1 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 transition-colors flex-shrink-0"
+                                  title="Remove this deduction"
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              )}
                             </li>
                           ))}
                         </ul>
                       </div>
                     )}
 
-                    {/* Paid at info */}
-                    {cycle.status === 'paid' && cycle.paid_at && (
-                      <p className="text-xs text-green-600 dark:text-green-400">
-                        Paid on {new Date(cycle.paid_at).toLocaleDateString()}
-                      </p>
+                    {/* Paid at info + payslip re-download */}
+                    {cycle.status === 'paid' && (
+                      <div className="flex items-center justify-between">
+                        {cycle.paid_at && (
+                          <p className="text-xs text-green-600 dark:text-green-400">
+                            Paid on {new Date(cycle.paid_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}
+                          </p>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => downloadPayslip(cycle.cycle_id)}
+                          disabled={downloadingPayslip === cycle.cycle_id}
+                          className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors"
+                        >
+                          <FileText className="w-3.5 h-3.5" />
+                          {downloadingPayslip === cycle.cycle_id ? 'Generating...' : 'Download Payslip'}
+                        </button>
+                      </div>
                     )}
                   </div>
                 )}

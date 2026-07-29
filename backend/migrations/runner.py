@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 37
+CURRENT_SCHEMA_VERSION = 40
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -2031,6 +2031,107 @@ def _m037_subscription_plan_currency(db):
     logging.info("[Migration] v37: subscription plan currency done")
 
 
+def _m038_salary_deductions_and_manual_hours(db):
+    """v38: Support bulk 100+-employee payroll workflows.
+
+      - `salary_advances.category` VARCHAR(30) NOT NULL DEFAULT 'cash_advance' —
+        distinguishes cash advances from accommodation/food/transport/other
+        deductions. Existing rows backfill to 'cash_advance' (they were all
+        undifferentiated cash advances before this column existed).
+      - `employee_attendance.is_manual_entry` BOOLEAN NOT NULL DEFAULT 0 —
+        marks rows created via direct hours entry (no real check_in/check_out
+        punch), so the UI can tell manual backfills apart from real punches.
+
+    Idempotent and engine-agnostic, exactly like _m030/_m031.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return  # table doesn't exist yet — skip
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    _add_col('salary_advances', 'category', "VARCHAR(30) NOT NULL DEFAULT 'cash_advance'")
+    _add_col('employee_attendance', 'is_manual_entry', 'BOOLEAN NOT NULL DEFAULT 0')
+
+    db.session.execute(text(
+        "UPDATE salary_advances SET category = 'cash_advance' WHERE category IS NULL OR category = ''"
+    ))
+
+    db.session.commit()
+    logging.info("[Migration] v38: salary deduction categories + manual hours columns added")
+
+
+def _m039_attendance_hour_deduction(db):
+    """v39: Let a manager deduct forgotten unpaid break time from a completed
+    punch (e.g. employee worked 9h but forgot to clock out for a 1h lunch
+    break) without destroying the original clocked total_minutes.
+
+      - `deduction_minutes` INTEGER NOT NULL DEFAULT 0 — subtracted from
+        total_minutes when computing pay (see _calculate_cycle_amounts).
+      - `deduction_notes` TEXT NULL — required reason, shown alongside the
+        adjusted hours so the audit trail explains why the day's pay is less
+        than the raw clocked duration.
+
+    Idempotent and engine-agnostic, exactly like _m030/_m031/_m038.
+    """
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    _add_col('employee_attendance', 'deduction_minutes', 'INTEGER NOT NULL DEFAULT 0')
+    _add_col('employee_attendance', 'deduction_notes', 'TEXT NULL')
+
+    db.session.commit()
+    logging.info("[Migration] v39: employee_attendance hour-deduction columns added")
+
+
+def _m040_employee_email(db):
+    """v40: employees.email — captured alongside phone when adding/editing an
+    employee, and shown on generated payslips."""
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    _add_col('employees', 'email', 'VARCHAR(255) NULL')
+
+    db.session.commit()
+    logging.info("[Migration] v40: employees.email added")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -2070,6 +2171,9 @@ MIGRATIONS = [
     (35, _m035_schema_drift_reconcile),
     (36, _m036_supplier_delivery_payments),
     (37, _m037_subscription_plan_currency),
+    (38, _m038_salary_deductions_and_manual_hours),
+    (39, _m039_attendance_hour_deduction),
+    (40, _m040_employee_email),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

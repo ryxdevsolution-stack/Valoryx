@@ -17,6 +17,13 @@ import {
   EditCycleModal,
   AddAdvanceModal,
   MarkDayOffModal,
+  BulkCheckInOutModal,
+  ManualHoursModal,
+  BulkManualHoursModal,
+  AdjustHoursModal,
+  EditEmployeeModal,
+  type DeductionCategory,
+  type BulkResult,
 } from '@/components/salary/SalaryModals'
 import EmployeeHistory from '@/components/salary/EmployeeHistory'
 
@@ -26,6 +33,7 @@ export interface Employee {
   employee_id: string
   name: string
   phone: string | null
+  email: string | null
   pay_type: 'hourly' | 'daily'
   rate: number
   ot_multiplier: number | null
@@ -52,6 +60,9 @@ export interface AttendancePunch {
   status?: AttendanceStatus
   reason?: string | null
   marked_by_name?: string
+  deduction_minutes?: number
+  deduction_notes?: string | null
+  is_manual_entry?: boolean
 }
 
 export interface AttendanceDay {
@@ -82,6 +93,7 @@ export interface OTSummary {
 export interface SalaryAdvance {
   advance_id: string
   amount: number
+  category?: DeductionCategory
   advance_date: string
   notes: string | null
 }
@@ -108,12 +120,18 @@ export interface SalaryCycle {
 
 type ActiveModal =
   | { type: 'add-employee' }
+  | { type: 'edit-employee'; employee: Employee }
   | { type: 'mark-attendance'; prefillDate?: string }
   | { type: 'mark-day-off'; workDate: string }
+  | { type: 'manual-hours'; workDate?: string }
+  | { type: 'adjust-hours'; punch: AttendancePunch }
   | { type: 'new-cycle' }
   | { type: 'edit-cycle'; cycle: SalaryCycle }
   | { type: 'add-advance'; cycles: SalaryCycle[] }
   | { type: 'history'; employee: Employee }
+  | { type: 'bulk-checkin' }
+  | { type: 'bulk-checkout' }
+  | { type: 'bulk-manual-hours' }
   | null
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
@@ -135,6 +153,7 @@ export default function SalaryPage() {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [empLoading, setEmpLoading] = useState(false)
   const [selected, setSelected] = useState<Employee | null>(null)
+  const [selectedIds, setSelectedIds] = useState<string[]>([])
   const [modal, setModal] = useState<ActiveModal>(null)
   const [toast, setToast] = useState<Toast | null>(null)
   const [cycleRefresh, setCycleRefresh] = useState(0)
@@ -187,6 +206,18 @@ export default function SalaryPage() {
     fetchEmployees()
   }
 
+  async function handleEditEmployee(
+    employeeId: string,
+    data: Partial<Omit<Employee, 'employee_id' | 'branch_id' | 'is_active'>>
+  ) {
+    await api.put(`/employees/${employeeId}`, data)
+    showToast('Employee updated')
+    fetchEmployees()
+    // If the edited employee is currently selected, refresh its cached copy
+    // so the attendance/salary panels show the new rate/pay_type immediately.
+    setSelected(sel => (sel && sel.employee_id === employeeId ? { ...sel, ...data } as Employee : sel))
+  }
+
   async function handleMarkAttendance(
     employeeId: string,
     checkIn: string,
@@ -221,12 +252,77 @@ export default function SalaryPage() {
 
   async function handleAddAdvance(
     employeeId: string,
-    data: { amount: number; advance_date: string; notes: string; cycle_id?: string }
+    data: { amount: number; category: DeductionCategory; advance_date: string; notes: string; cycle_id?: string }
   ) {
     await api.post(`/employees/${employeeId}/advances`, data)
-    showToast('Advance recorded')
+    showToast('Deduction recorded')
     setCycleRefresh(n => n + 1)
   }
+
+  async function handleManualHours(
+    employeeId: string,
+    data: { work_date: string; to_date?: string; hours: number; notes: string }
+  ) {
+    await api.post(`/employees/${employeeId}/attendance/manual`, data)
+    showToast(data.to_date && data.to_date !== data.work_date
+      ? `${data.hours}h recorded from ${data.work_date} to ${data.to_date}`
+      : `${data.hours}h recorded for ${data.work_date}`)
+    setAttendanceRefresh(n => n + 1)
+    setCycleRefresh(n => n + 1)
+  }
+
+  async function handleBulkManualHours(
+    data: { work_date: string; to_date?: string; hours: number; notes: string }
+  ): Promise<BulkResult[]> {
+    const res = await api.post('/employees/attendance/bulk-manual', { employee_ids: selectedIds, ...data })
+    const results: BulkResult[] = res.data.data?.results ?? []
+    const succeeded = results.filter(r => r.success).length
+    showToast(`${data.hours}h recorded for ${succeeded} of ${results.length} employee-days`)
+    setAttendanceRefresh(n => n + 1)
+    setCycleRefresh(n => n + 1)
+    return results
+  }
+
+  async function handleAdjustHours(
+    attendanceId: string,
+    data: { deduction_minutes: number; notes: string }
+  ) {
+    await api.post(`/employees/attendance/${attendanceId}/adjust-hours`, data)
+    showToast(data.deduction_minutes > 0 ? `Deducted ${data.deduction_minutes} min` : 'Adjustment cleared')
+    setAttendanceRefresh(n => n + 1)
+    setCycleRefresh(n => n + 1)
+  }
+
+  function handleToggleSelect(employeeId: string) {
+    setSelectedIds(ids => ids.includes(employeeId) ? ids.filter(id => id !== employeeId) : [...ids, employeeId])
+  }
+
+  function handleSelectAllToggle(visibleIds: string[]) {
+    setSelectedIds(ids => {
+      const allSelected = visibleIds.length > 0 && visibleIds.every(id => ids.includes(id))
+      return allSelected ? ids.filter(id => !visibleIds.includes(id)) : Array.from(new Set([...ids, ...visibleIds]))
+    })
+  }
+
+  async function handleBulkCheckIn(checkIn: string): Promise<BulkResult[]> {
+    const res = await api.post('/employees/attendance/bulk-checkin', { employee_ids: selectedIds, check_in: checkIn })
+    const results: BulkResult[] = res.data.data?.results ?? []
+    const succeeded = results.filter(r => r.success).length
+    showToast(`Checked in ${succeeded} of ${results.length} employees`)
+    setAttendanceRefresh(n => n + 1)
+    return results
+  }
+
+  async function handleBulkCheckOut(checkOut: string): Promise<BulkResult[]> {
+    const res = await api.post('/employees/attendance/bulk-checkout', { employee_ids: selectedIds, check_out: checkOut })
+    const results: BulkResult[] = res.data.data?.results ?? []
+    const succeeded = results.filter(r => r.success).length
+    showToast(`Checked out ${succeeded} of ${results.length} employees`)
+    setAttendanceRefresh(n => n + 1)
+    return results
+  }
+
+  const employeeNameMap = Object.fromEntries(employees.map(e => [e.employee_id, e.name]))
 
   async function handleMarkDayOff(
     employeeId: string,
@@ -277,6 +373,13 @@ export default function SalaryPage() {
           onSelect={setSelected}
           onAdd={() => setModal({ type: 'add-employee' })}
           onHistory={(emp) => setModal({ type: 'history', employee: emp })}
+          onEdit={(emp) => setModal({ type: 'edit-employee', employee: emp })}
+          selectedIds={selectedIds}
+          onToggleSelect={handleToggleSelect}
+          onSelectAllToggle={handleSelectAllToggle}
+          onBulkCheckIn={() => setModal({ type: 'bulk-checkin' })}
+          onBulkCheckOut={() => setModal({ type: 'bulk-checkout' })}
+          onBulkManualHours={() => setModal({ type: 'bulk-manual-hours' })}
         />
 
         {/* Center: Attendance */}
@@ -285,6 +388,8 @@ export default function SalaryPage() {
             employee={selected}
             onMarkAttendance={(prefillDate) => setModal({ type: 'mark-attendance', prefillDate })}
             onMarkDayOff={(workDate) => setModal({ type: 'mark-day-off', workDate })}
+            onManualHours={(workDate) => setModal({ type: 'manual-hours', workDate })}
+            onAdjustHours={(punch) => setModal({ type: 'adjust-hours', punch })}
             onCreateCycle={() => setModal({ type: 'new-cycle' })}
             hasManagerAccess={hasManagerAccess}
             refreshSignal={attendanceRefresh}
@@ -324,6 +429,13 @@ export default function SalaryPage() {
         <AddEmployeeModal
           onClose={() => setModal(null)}
           onSave={handleAddEmployee}
+        />
+      )}
+      {modal?.type === 'edit-employee' && (
+        <EditEmployeeModal
+          employee={modal.employee}
+          onClose={() => setModal(null)}
+          onSave={handleEditEmployee}
         />
       )}
       {modal?.type === 'mark-attendance' && selected && (
@@ -369,6 +481,39 @@ export default function SalaryPage() {
         <EmployeeHistory
           employee={modal.employee}
           onClose={() => setModal(null)}
+        />
+      )}
+      {modal?.type === 'manual-hours' && selected && (
+        <ManualHoursModal
+          employee={selected}
+          workDate={modal.workDate}
+          onClose={() => setModal(null)}
+          onSave={handleManualHours}
+        />
+      )}
+      {(modal?.type === 'bulk-checkin' || modal?.type === 'bulk-checkout') && (
+        <BulkCheckInOutModal
+          mode={modal.type === 'bulk-checkin' ? 'checkin' : 'checkout'}
+          employeeNames={employeeNameMap}
+          selectedIds={selectedIds}
+          onClose={() => { setModal(null); setSelectedIds([]) }}
+          onSave={modal.type === 'bulk-checkin' ? handleBulkCheckIn : handleBulkCheckOut}
+        />
+      )}
+      {modal?.type === 'bulk-manual-hours' && (
+        <BulkManualHoursModal
+          employeeNames={employeeNameMap}
+          selectedIds={selectedIds}
+          onClose={() => { setModal(null); setSelectedIds([]) }}
+          onSave={handleBulkManualHours}
+        />
+      )}
+      {modal?.type === 'adjust-hours' && selected && (
+        <AdjustHoursModal
+          employeeName={selected.name}
+          punch={modal.punch}
+          onClose={() => setModal(null)}
+          onSave={handleAdjustHours}
         />
       )}
     </DashboardLayout>

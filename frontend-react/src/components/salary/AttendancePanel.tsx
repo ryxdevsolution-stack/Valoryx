@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback } from 'react'
-import { ChevronLeft, ChevronRight, LogIn, LogOut, Clock, RefreshCw } from 'lucide-react'
+import { ChevronLeft, ChevronRight, LogIn, LogOut, Clock, RefreshCw, PenLine } from 'lucide-react'
 import api from '@/lib/api'
 import { toast } from '@/utils/toast'
 import type { Employee, AttendanceDay, AttendancePunch, SalaryCycle } from '@/pages/Salary'
@@ -13,12 +13,18 @@ interface AttendancePanelProps {
   // Open the Mark Day Off modal for a specific date — for marking leave / absent
   // / holiday on a day without actual check-in punches.
   onMarkDayOff: (workDate: string) => void
+  // Open the "Enter hours manually" modal — direct hours entry for admins who
+  // don't know an employee's exact clock times (backfilling a past day).
+  onManualHours: (workDate?: string) => void
   hasManagerAccess: boolean
   // Bumps when an external action (check-in/out, day-off save) should force
   // the panel to re-fetch its attendance data. Acts like a useEffect trigger.
   refreshSignal?: number
   // Callback to open the create-cycle modal when no cycle covers the date.
   onCreateCycle?: () => void
+  // Open the Adjust Hours modal for a completed punch — deducts forgotten
+  // unpaid break time (e.g. a punch shows 9h but 1h was an unclocked lunch break).
+  onAdjustHours: (punch: AttendancePunch) => void
 }
 
 function monthLabel(year: number, month: number): string {
@@ -70,7 +76,7 @@ function MiniCalendar({
   ]
 
   return (
-    <div className="border-t border-gray-100 dark:border-gray-800 px-3 py-3 bg-gray-50/60 dark:bg-gray-800/20">
+    <div className="border-t border-gray-100 dark:border-gray-800 px-3 py-3 bg-gray-50/60 dark:bg-gray-800/20 md:flex-shrink-0 md:max-h-[280px] md:overflow-y-auto">
       <div className="flex items-center justify-between mb-2">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
           Monthly overview
@@ -186,9 +192,11 @@ export default function AttendancePanel({
   employee,
   onMarkAttendance,
   onMarkDayOff,
+  onManualHours,
   hasManagerAccess,
   refreshSignal = 0,
   onCreateCycle,
+  onAdjustHours,
 }: AttendancePanelProps) {
   const now = new Date()
   const [year, setYear] = useState(now.getFullYear())
@@ -209,10 +217,13 @@ export default function AttendancePanel({
     return () => clearInterval(id)
   }, [])
 
-  // Compute live minutes for a still-open punch (check_out IS NULL).
-  // Returns null for completed punches so callers can tell the difference.
+  // Compute live minutes for a still-open real punch. A punch counts as
+  // "still open" only when it has no check_out AND no total_minutes yet —
+  // manual hours entries (bulk or single) always have check_out === null
+  // (there was never a real clock-out event) but DO have total_minutes set,
+  // so they must never be treated as open/clocked-in.
   function liveMinutesFor(punch: AttendancePunch): number | null {
-    if (punch.check_out || !punch.check_in) return null
+    if (punch.check_out || punch.total_minutes !== null || !punch.check_in || punch.is_manual_entry) return null
     const checkInMs = new Date(punch.check_in).getTime()
     if (isNaN(checkInMs)) return null
     const elapsed = Math.max(0, Math.floor((Date.now() - checkInMs) / 60000))
@@ -273,7 +284,12 @@ export default function AttendancePanel({
     }
   }
 
-  const totalHours = days.reduce((acc, d) => acc + d.day_total_minutes, 0)
+  // Deductions (forgotten unpaid breaks) reduce the effective total shown here,
+  // matching what payroll actually pays — the raw day_total_minutes from the
+  // backend doesn't subtract them since that field mirrors the clocked duration.
+  const deductionMinutesFor = (day: AttendanceDay) =>
+    day.punches.reduce((sum, p) => sum + (p.deduction_minutes ?? 0), 0)
+  const totalHours = days.reduce((acc, d) => acc + d.day_total_minutes - deductionMinutesFor(d), 0)
   // A live "clocked in" punch = an ACTUAL work punch that hasn't been checked
   // out. Day-off rows (paid/unpaid leave, holiday, weekly off) also have
   // check_out === null (and a sentinel check_in on offline SQLite), so marking
@@ -281,6 +297,8 @@ export default function AttendancePanel({
   // today. Exclude day-off statuses and require a real check_in.
   const openPunch = days.flatMap(d => d.punches).find(
     p => p.check_out === null
+      && p.total_minutes === null
+      && !p.is_manual_entry
       && !!p.check_in
       && !PAID_OFF_STATUSES.has(p.status ?? '')
       && !UNPAID_OFF_STATUSES.has(p.status ?? '')
@@ -297,10 +315,28 @@ export default function AttendancePanel({
           <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Attendance</p>
         </div>
         <div className="flex items-center gap-2">
-          {openPunch && (
-            <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 animate-pulse">
-              Clocked In
-            </span>
+          {openPunch && (() => {
+            const liveMins = liveMinutesFor(openPunch)
+            return (
+              <span className="text-[10px] font-semibold px-2 py-1 rounded-full bg-green-100 dark:bg-green-900/30 text-green-700 dark:text-green-300 flex items-center gap-1.5">
+                <span className="relative flex w-1.5 h-1.5">
+                  <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-500 opacity-75" />
+                  <span className="relative inline-flex rounded-full h-1.5 w-1.5 bg-green-600" />
+                </span>
+                Clocked In{liveMins !== null ? ` — ${formatMinutes(liveMins)}` : ''}
+              </span>
+            )
+          })()}
+          {hasManagerAccess && (
+            <button
+              type="button"
+              onClick={() => onManualHours(selectedDate ?? undefined)}
+              className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-600 dark:text-gray-300 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+              title="Directly type hours worked for a date — no clock times needed"
+            >
+              <PenLine className="w-3.5 h-3.5" />
+              Hours
+            </button>
           )}
           {hasManagerAccess && (
             openPunch ? (
@@ -398,7 +434,7 @@ export default function AttendancePanel({
           mini calendar below. Empty state = prompt to click a date.
           On mobile: bounded at ~180px so it doesn't push the calendar off-screen.
           On desktop: flex-1 to fill remaining vertical space in the panel. */}
-      <div className="md:flex-1 overflow-y-auto min-h-[120px] max-h-[180px] md:max-h-none">
+      <div className="md:flex-1 overflow-y-auto min-h-[120px] max-h-[180px] md:max-h-none md:min-h-0">
         {loading ? (
           <div className="flex items-center justify-center h-32">
             <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 dark:border-gray-600 dark:border-t-gray-200 rounded-full animate-spin" />
@@ -427,7 +463,7 @@ export default function AttendancePanel({
                 const live = liveMinutesFor(p)
                 return sum + (live ?? 0)
               }, 0)
-              const liveDayTotal = day.day_total_minutes + liveExtra
+              const liveDayTotal = Math.max(0, day.day_total_minutes + liveExtra - deductionMinutesFor(day))
               const hasOpenPunch = day.punches.some(p => liveMinutesFor(p) !== null)
               return (
               <li key={day.work_date}>
@@ -484,40 +520,73 @@ export default function AttendancePanel({
                         className="flex items-center justify-between bg-gray-50 dark:bg-gray-800 rounded-lg px-3 py-2"
                       >
                         <div className="text-xs space-y-0.5">
-                          <div className="flex items-center gap-1.5">
-                            <LogIn className="w-3 h-3 text-green-500" />
-                            <span className="text-gray-700 dark:text-gray-300">
-                              {punch.check_in
-                                ? new Date(punch.check_in).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })
-                                : '—'}
-                            </span>
-                          </div>
-                          {punch.check_out ? (
+                          {punch.is_manual_entry ? (
                             <div className="flex items-center gap-1.5">
-                              <LogOut className="w-3 h-3 text-red-400" />
-                              <span className="text-gray-700 dark:text-gray-300">
-                                {new Date(punch.check_out).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}
-                              </span>
+                              <PenLine className="w-3 h-3 text-gray-400" />
+                              <span className="text-gray-500 dark:text-gray-400">Manually entered — no clock times</span>
                             </div>
-                          ) : hasManagerAccess ? (
-                            <button
-                              type="button"
-                              onClick={() => handleCheckout(punch.attendance_id)}
-                              disabled={checkingOut === punch.attendance_id}
-                              className="flex items-center gap-1 text-orange-600 dark:text-orange-400 hover:underline disabled:opacity-50"
-                            >
-                              <LogOut className="w-3 h-3" />
-                              {checkingOut === punch.attendance_id ? 'Saving...' : 'Check out now'}
-                            </button>
                           ) : (
-                            <span className="text-orange-500 text-xs">Still clocked in</span>
+                            <>
+                              <div className="flex items-center gap-1.5">
+                                <LogIn className="w-3 h-3 text-green-500" />
+                                <span className="text-gray-700 dark:text-gray-300">
+                                  {punch.check_in
+                                    ? new Date(punch.check_in).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })
+                                    : '—'}
+                                </span>
+                              </div>
+                              {punch.check_out ? (
+                                <div className="flex items-center gap-1.5">
+                                  <LogOut className="w-3 h-3 text-red-400" />
+                                  <span className="text-gray-700 dark:text-gray-300">
+                                    {new Date(punch.check_out).toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Kolkata' })}
+                                  </span>
+                                </div>
+                              ) : punch.total_minutes !== null ? (
+                                <span className="text-gray-400 text-xs">No check-out recorded</span>
+                              ) : hasManagerAccess ? (
+                                <button
+                                  type="button"
+                                  onClick={() => handleCheckout(punch.attendance_id)}
+                                  disabled={checkingOut === punch.attendance_id}
+                                  className="flex items-center gap-1 text-orange-600 dark:text-orange-400 hover:underline disabled:opacity-50"
+                                >
+                                  <LogOut className="w-3 h-3" />
+                                  {checkingOut === punch.attendance_id ? 'Saving...' : 'Check out now'}
+                                </button>
+                              ) : (
+                                <span className="text-orange-500 text-xs">Still clocked in</span>
+                              )}
+                            </>
                           )}
                         </div>
                         {/* Duration: finalized on completed punches, live-ticking on open ones */}
                         {punch.total_minutes !== null ? (
-                          <span className="text-xs font-semibold text-gray-500 dark:text-gray-400">
-                            {formatMinutes(punch.total_minutes)}
-                          </span>
+                          <div className="flex items-center gap-2">
+                            <div className="text-right">
+                              <span className="text-xs font-semibold text-gray-500 dark:text-gray-400 block">
+                                {formatMinutes(Math.max(0, punch.total_minutes - (punch.deduction_minutes ?? 0)))}
+                              </span>
+                              {!!punch.deduction_minutes && (
+                                <span
+                                  className="text-[10px] text-orange-600 dark:text-orange-400"
+                                  title={punch.deduction_notes ?? undefined}
+                                >
+                                  −{formatMinutes(punch.deduction_minutes)} ({punch.deduction_notes})
+                                </span>
+                              )}
+                            </div>
+                            {hasManagerAccess && (
+                              <button
+                                type="button"
+                                onClick={() => onAdjustHours(punch)}
+                                className="p-1 rounded-md text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 transition-colors flex-shrink-0"
+                                title="Adjust hours — deduct forgotten unpaid break time"
+                              >
+                                <PenLine className="w-3 h-3" />
+                              </button>
+                            )}
+                          </div>
                         ) : (() => {
                           const live = liveMinutesFor(punch)
                           if (live === null) return null

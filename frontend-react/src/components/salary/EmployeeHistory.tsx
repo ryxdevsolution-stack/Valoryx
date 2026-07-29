@@ -3,11 +3,17 @@ import { X, Clock, TrendingUp, Banknote, Calendar, ChevronDown, ChevronUp, Check
 import api from '@/lib/api'
 import { useCurrency } from '@/lib/useCurrency'
 import type { Employee } from '@/pages/Salary'
+import { DEDUCTION_CATEGORIES } from '@/components/salary/SalaryModals'
 import { formatMinutes as fmtMins, formatSalaryDate as fmtDate } from '@/utils/salary'
+
+const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
+  DEDUCTION_CATEGORIES.map(c => [c.value, c.label])
+)
 
 interface HistoryAdvance {
   advance_id: string
   amount: number
+  category?: string
   advance_date: string
   notes: string | null
 }
@@ -286,16 +292,19 @@ function CycleCard({
             </div>
           )}
 
-          {/* Advances list */}
+          {/* Deductions list */}
           {cycle.advances.length > 0 && (
             <div className="px-4 pb-3 border-t border-gray-100 dark:border-gray-700 pt-3">
-              <p className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Advances</p>
+              <p className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-2">Deductions</p>
               <div className="space-y-1">
                 {cycle.advances.map(a => (
-                  <div key={a.advance_id} className="flex items-center justify-between text-xs">
+                  <div key={a.advance_id} className="flex items-center justify-between text-xs gap-2">
+                    <span className="text-[9px] font-semibold px-1.5 py-0.5 rounded-full bg-orange-100 dark:bg-orange-900/30 text-orange-700 dark:text-orange-300 flex-shrink-0">
+                      {CATEGORY_LABEL[a.category ?? 'cash_advance'] ?? 'Cash Advance'}
+                    </span>
                     <span className="text-gray-600 dark:text-gray-400">{fmtDate(a.advance_date)}</span>
                     {a.notes && <span className="text-gray-400 truncate max-w-[120px]">{a.notes}</span>}
-                    <span className="font-medium text-orange-600 dark:text-orange-400">−{fmt(a.amount)}</span>
+                    <span className="font-medium text-orange-600 dark:text-orange-400 ml-auto">−{fmt(a.amount)}</span>
                   </div>
                 ))}
               </div>
