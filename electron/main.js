@@ -12,7 +12,11 @@ const { autoUpdater } = require('electron-updater');
 // Configuration
 const isDev = process.argv.includes('--dev');
 const BACKEND_PORT = 5017;   // was 5000
-const FRONTEND_PORT = 3002;  // was 3000 — Vite dev server port
+// Dev-only: the Vite dev server port. MUST match `server.port` in
+// frontend-react/vite.config.ts (3000) or `--dev` loads a dead URL and the
+// window comes up blank. Override with ELECTRON_FRONTEND_PORT when running
+// Vite on another port. Unused in the packaged app, which loads from file://.
+const FRONTEND_PORT = Number(process.env.ELECTRON_FRONTEND_PORT) || 3000;
 const MAX_RESTART_ATTEMPTS = 3;
 const RESTART_BACKOFF_MS = [1000, 2000, 4000];
 const HEALTH_POLL_INTERVAL_MS = 300;
@@ -74,6 +78,19 @@ if (!gotSingleInstanceLock) {
   app.quit();
 }
 
+// Bring the main window back to the user. Closing the window HIDES it (see the
+// 'close' handler) rather than destroying it, and a hidden window is NOT
+// minimized — so `isMinimized()` is false and `focus()` alone is a no-op on
+// Windows. Without the explicit show(), relaunching the app or completing a
+// Google sign-in appeared to do nothing at all.
+function revealMainWindow() {
+  if (!mainWindow || mainWindow.isDestroyed()) return false;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+  return true;
+}
+
 function handleOAuthDeepLink(url) {
   try {
     const parsed = new URL(url);
@@ -85,8 +102,7 @@ function handleOAuthDeepLink(url) {
     pendingVerifier = null;
     if (mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents) {
       mainWindow.webContents.send('desktop-oauth', handoff);
-      if (mainWindow.isMinimized()) mainWindow.restore();
-      mainWindow.focus();
+      revealMainWindow();
     } else {
       // Renderer not ready yet — stash for the IPC pull on mount.
       pendingOAuth = handoff;
@@ -101,10 +117,10 @@ function handleOAuthDeepLink(url) {
 app.on('second-instance', (_event, argv) => {
   const url = argv.find((a) => typeof a === 'string' && a.startsWith(`${OAUTH_PROTOCOL}://`));
   if (url) handleOAuthDeepLink(url);
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    if (mainWindow.isMinimized()) mainWindow.restore();
-    mainWindow.focus();
-  }
+  // Relaunching from the desktop icon/taskbar lands here because the running
+  // instance holds the single-instance lock. Show the window — otherwise the
+  // second process just quits and the user sees nothing happen.
+  if (!revealMainWindow()) createWindow();
 });
 
 // macOS: protocol invocations arrive via open-url.
@@ -169,7 +185,9 @@ function generateDeviceCode() {
 function spawnFlask() {
   let pythonPath, backendPath;
   if (isDev) {
-    pythonPath = 'python';
+    // Windows ships `python`; Linux/macOS generally only have `python3`, so a
+    // bare 'python' makes the dev backend spawn fail with ENOENT there.
+    pythonPath = process.platform === 'win32' ? 'python' : 'python3';
     backendPath = path.join(__dirname, '..', 'backend');
   } else {
     // Use bundled embedded Python in production — no system Python required
@@ -370,7 +388,12 @@ function createWindow() {
 // =======================
 
 function createTray() {
-  const iconPath = path.join(__dirname, 'resources', 'icon.ico');
+  // Linux/macOS can't decode .ico — Tray() throws there and, since this runs
+  // inside the async 'ready' handler, that throw aborted startup entirely
+  // (no frontend, no backend). Use the PNG on those platforms.
+  const iconPath = process.platform === 'win32'
+    ? path.join(__dirname, 'resources', 'icon.ico')
+    : path.join(__dirname, 'resources', 'icons', '256x256.png');
   tray = new Tray(iconPath);
 
   const contextMenu = Menu.buildFromTemplate([
@@ -707,9 +730,30 @@ ipcMain.handle('quit-app', () => {
 ipcMain.handle('oauth-google-open', () => {
   pendingVerifier = makePkceVerifier();
   const challenge = pkceChallenge(pendingVerifier);
-  const url = `${WEB_APP_URL}/auth/login?desktop=${OAUTH_PROTOCOL}&challenge=${encodeURIComponent(challenge)}`;
+  // Point at the API's authorize endpoint with redirect=1 so the browser 302s
+  // straight to Google's account chooser. Opening the SPA login page instead
+  // meant downloading the whole bundle, rendering the Valoryx login form, and
+  // only then redirecting — the user saw a login page they had no reason to see.
+  const url = `${WEB_APP_URL}/api/oauth/google/authorize`
+    + `?desktop=${OAUTH_PROTOCOL}`
+    + `&challenge=${encodeURIComponent(challenge)}`
+    + `&redirect=1`;
   shell.openExternal(url);
   return { success: true };
+});
+
+// IPC: manual fallback for when the valoryx:// deep link never reaches us —
+// no scheme handler registered (Linux without a .desktop entry, or Windows
+// before the installer has run once), or the browser's "open this app?" prompt
+// was dismissed. The user copies the code from the browser and pastes it here;
+// we pair it with the verifier this process still holds, so PKCE still binds
+// the assertion to us and the security property is unchanged.
+ipcMain.handle('oauth-redeem-code', (_event, code) => {
+  const assertion = typeof code === 'string' ? code.trim() : '';
+  if (!assertion) return null;
+  const handoff = { assertion, verifier: pendingVerifier };
+  pendingVerifier = null;
+  return handoff;
 });
 
 // IPC: renderer pulls any handoff captured before it mounted (cold start).
@@ -742,9 +786,14 @@ app.on('ready', async () => {
   // Clear HTTP cache on every startup so API responses are always fresh
   session.defaultSession.clearCache();
 
-  // Step 1: Create window and tray immediately
+  // Step 1: Create window and tray immediately. The tray is a convenience, not
+  // a requirement — never let it take the whole startup sequence down with it.
   createWindow();
-  createTray();
+  try {
+    createTray();
+  } catch (err) {
+    console.warn('[App] Tray unavailable, continuing without it:', err.message);
+  }
 
   // Step 2: Load the React bundle from disk NOW — ElectronSplash renders immediately
   //         This is the key fix: frontend loads BEFORE Flask, not after.

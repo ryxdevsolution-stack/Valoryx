@@ -18,7 +18,7 @@ import secrets
 import logging
 
 from datetime import datetime, timedelta
-from flask import Blueprint, jsonify, request
+from flask import Blueprint, jsonify, request, redirect
 from extensions import db
 from models.user_model import User
 from models.client_model import ClientEntry, DEFAULT_GST_CONFIG
@@ -42,7 +42,13 @@ OAUTH_STATE_TTL = 600  # 10 minutes
 
 # Desktop handoff assertion: very short-lived because it travels through a
 # deep link (valoryx://) that other local processes could observe.
-DESKTOP_ASSERTION_TTL = 120  # 2 minutes
+# The assertion has to survive: the OAuth callback render, the OS "Open
+# Valoryx?" confirmation the user must click, the app being focused (or cold
+# started, which also boots Flask), and the renderer mounting. 2 minutes was not
+# enough for a cold start and produced spurious "expired" failures.
+DESKTOP_ASSERTION_TTL = 300  # 5 minutes
+# Tolerance for desktop clocks that are not NTP-synced with the cloud.
+DESKTOP_CLOCK_SKEW_LEEWAY = 90  # seconds
 # In-memory single-use nonce cache for desktop assertions {nonce: expiry_ts}.
 # The desktop (offline) backend is a single process, so an in-memory set is
 # sufficient; entries are pruned lazily and assertions also expire on their own.
@@ -127,26 +133,42 @@ def _issue_desktop_assertion(email: str, google_id: str, name: str = '', avatar:
 
 
 def _verify_desktop_assertion(token: str):
-    """Verify a desktop handoff assertion. Returns the payload for a valid,
-    unexpired, single-use token, or None. Enforces single-use via an in-memory
-    nonce cache."""
-    if not token or not Config.DESKTOP_OAUTH_SECRET:
-        return None
+    """Verify a desktop handoff assertion.
+
+    Returns `(payload, None)` when valid, or `(None, reason)` where reason is a
+    short machine-readable cause. The reason exists because every failure here
+    used to collapse into one opaque "Invalid or expired sign-in" message, which
+    made a signature mismatch (secret misconfigured), a genuine timeout, and a
+    replay indistinguishable in the field.
+    """
+    if not token:
+        return None, 'missing'
+    if not Config.DESKTOP_OAUTH_SECRET:
+        return None, 'not_configured'
     try:
         payload = jwt.decode(
             token,
             Config.DESKTOP_OAUTH_SECRET,
             algorithms=[Config.JWT_ALGORITHM],
             options={'require': ['exp', 'purpose', 'nonce']},
+            # Desktop clocks drift; the cloud runs NTP. Without leeway a few
+            # seconds of skew rejects an assertion that was just minted.
+            leeway=DESKTOP_CLOCK_SKEW_LEEWAY,
         )
     except jwt.ExpiredSignatureError:
         logger.info('Desktop assertion expired')
-        return None
+        return None, 'expired'
+    except jwt.InvalidSignatureError:
+        # Almost always DESKTOP_OAUTH_SECRET differing between the cloud that
+        # minted this and the installer's env.local that is verifying it.
+        logger.warning('Desktop assertion signature mismatch — check that '
+                       'DESKTOP_OAUTH_SECRET is identical on cloud and installer')
+        return None, 'bad_signature'
     except jwt.InvalidTokenError as e:
         logger.warning('Desktop assertion invalid: %s', e)
-        return None
+        return None, 'invalid'
     if payload.get('purpose') != 'desktop_oauth':
-        return None
+        return None, 'invalid'
     # Single-use: reject a replayed nonce. Prune expired entries opportunistically.
     import time as _time
     now_ts = _time.time()
@@ -156,9 +178,9 @@ def _verify_desktop_assertion(token: str):
     nonce = payload.get('nonce')
     if not nonce or nonce in _desktop_nonce_cache:
         logger.warning('Desktop assertion replayed or missing nonce')
-        return None
+        return None, 'replayed'
     _desktop_nonce_cache[nonce] = payload.get('exp', now_ts + DESKTOP_ASSERTION_TTL)
-    return payload
+    return payload, None
 
 
 def _finalize_login(user, client, client_ip: str, platform: str = 'web'):
@@ -250,11 +272,17 @@ def _finalize_login(user, client, client_ip: str, platform: str = 'web'):
 # Helpers
 # ---------------------------------------------------------------------------
 
-def _get_redirect_uri() -> str | None:
+def _get_redirect_uri(allow_self_origin: bool = False) -> str | None:
     """
     Derive the OAuth redirect URI from the incoming request's Origin or Referer header.
     Validated against CORS_ORIGINS so only known frontends are accepted.
     Works on any port — no hardcoded URLs.
+
+    `allow_self_origin` covers top-level browser navigation straight to this
+    endpoint (the desktop app opens it directly to reach Google without loading
+    the SPA first). Such a navigation carries neither Origin nor Referer, so we
+    fall back to this server's own host — which is still checked against
+    CORS_ORIGINS below, so an unknown Host header is rejected exactly as before.
     """
     origin = (request.headers.get('Origin') or '').rstrip('/')
     # Browsers don't send Origin on same-origin GET requests — fall back to Referer
@@ -264,6 +292,8 @@ def _get_redirect_uri() -> str | None:
             from urllib.parse import urlparse
             parsed = urlparse(referer)
             origin = f"{parsed.scheme}://{parsed.netloc}".rstrip('/')
+    if not origin and allow_self_origin:
+        origin = (request.host_url or '').rstrip('/')
     if not origin:
         return None
     allowed = [o.strip().rstrip('/') for o in os.getenv('CORS_ORIGINS', '').split(',') if o.strip()]
@@ -326,7 +356,12 @@ def google_authorize():
     challenge = (request.args.get('challenge') or '').strip() if desktop else ''
     state = _issue_state_token(desktop=desktop, challenge=challenge)
 
-    redirect_uri = _get_redirect_uri()
+    # redirect=1 → 302 straight to Google instead of returning JSON. The desktop
+    # app opens this URL in the system browser so the user lands on Google's
+    # account chooser directly, with no Valoryx login page in between.
+    wants_redirect = request.args.get('redirect') in ('1', 'true')
+
+    redirect_uri = _get_redirect_uri(allow_self_origin=wants_redirect)
     if not redirect_uri:
         return jsonify({'success': False, 'error': 'Unknown request origin'}), 400
     from urllib.parse import urlencode
@@ -340,6 +375,9 @@ def google_authorize():
         'prompt': 'select_account',
     }
     auth_url = f"{GOOGLE_AUTH_URL}?{urlencode(params)}"
+    if wants_redirect:
+        # Only ever a Google URL we just built — not an open redirect.
+        return redirect(auth_url, code=302)
     return jsonify({'success': True, 'auth_url': auth_url}), 200
 
 
@@ -552,17 +590,47 @@ def desktop_login():
     assertion = (data.get('assertion') or '').strip()
     verifier = (data.get('verifier') or '').strip()
 
-    payload = _verify_desktop_assertion(assertion)
+    payload, reason = _verify_desktop_assertion(assertion)
     if not payload:
-        return jsonify({'success': False, 'error': 'Invalid or expired sign-in. Please try again.'}), 401
+        # Distinct, actionable messages. These are returned by the LOCAL
+        # loopback backend to the app's own renderer, so naming the cause leaks
+        # nothing to a remote attacker but saves a support round-trip.
+        messages = {
+            'expired': 'This sign-in took too long and expired. Please try again.',
+            'bad_signature': 'Sign-in could not be verified on this device. '
+                             'The desktop sign-in key does not match the server — '
+                             'please reinstall the latest version or contact support.',
+            'replayed': 'This sign-in link was already used. Please sign in again.',
+            'not_configured': 'Desktop sign-in is not configured on this device.',
+        }
+        return jsonify({
+            'success': False,
+            'error': messages.get(reason, 'Sign-in could not be completed. Please try again.'),
+            'reason': reason,
+        }), 401
 
     # PKCE: the assertion is only honored alongside the verifier whose SHA-256
     # matches the embedded challenge. The verifier never travels in the deep
     # link, so an app that intercepts the deep link cannot redeem the assertion.
     challenge = (payload.get('challenge') or '').strip()
-    if not challenge or not verifier or _pkce_challenge(verifier) != challenge:
+    if not verifier:
+        # The app was not running when the deep link arrived, so it cold started
+        # and the in-memory verifier from the previous process is gone. Retrying
+        # works because the app is running now — say exactly that.
+        logger.info('Desktop login missing verifier (app cold started from deep link)')
+        return jsonify({
+            'success': False,
+            'error': 'The app was not running when sign-in completed. '
+                     'Now that it is open, please click "Continue with Google" again.',
+            'reason': 'no_verifier',
+        }), 401
+    if not challenge or _pkce_challenge(verifier) != challenge:
         logger.warning('Desktop login PKCE verification failed')
-        return jsonify({'success': False, 'error': 'Invalid or expired sign-in. Please try again.'}), 401
+        return jsonify({
+            'success': False,
+            'error': 'Sign-in could not be verified. Please try again.',
+            'reason': 'pkce_mismatch',
+        }), 401
 
     email = (payload.get('email') or '').lower().strip()
     google_id = (payload.get('google_id') or '').strip()

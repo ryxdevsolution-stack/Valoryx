@@ -1,6 +1,7 @@
 import { useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
 import LogoAnimation from '@/components/LogoAnimation'
+import LoadingScreen from '@/components/LoadingScreen'
 import { useClient } from '@/contexts/ClientContext'
 
 export default function Home() {
@@ -26,9 +27,11 @@ export default function Home() {
     }
   }
 
-  // Show dark background while auth is resolving (no flash of light background)
+  // Shared loading view while auth resolves — no flash of light background, and
+  // no bare #271E37 div, which was pixel-identical to a crashed app with an
+  // empty #root and made "blank purple screen" reports impossible to diagnose.
   if (isLoading) {
-    return <div className="min-h-screen bg-[#271E37]" />
+    return <LoadingScreen />
   }
 
   return (

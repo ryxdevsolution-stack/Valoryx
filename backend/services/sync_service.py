@@ -50,6 +50,34 @@ WATERMARK_SAFETY_SECONDS = 300
 # fully pulled instead of silently truncated at the old fixed LIMIT.
 DOWNLOAD_PAGE_SIZE = 5000
 
+# client_entry billing columns whose SOURCE OF TRUTH IS THE CLOUD, not this
+# device. Razorpay autopay renewals arrive as webhooks to the cloud server, the
+# subscription reconciler runs there, and web checkouts complete there — a
+# desktop till can observe none of those events.
+#
+# Two rules follow, and both matter:
+#   1. They are pulled DOWN by download_subscription_status(), which is the only
+#      way a till can learn that a payment happened somewhere it cannot see.
+#   2. They are EXCLUDED from the upload's ON CONFLICT DO UPDATE (see
+#      _sync_client_entry). Otherwise a till that stamped itself 'expired'
+#      locally would push that over the cloud's 'active' and erase a payment
+#      the customer actually made.
+CLOUD_OWNED_BILLING_COLUMNS = (
+    'subscription_status',
+    'subscription_end_date',
+    'trial_end_date',
+    'plan_id',
+    'razorpay_subscription_id',
+)
+
+
+def _iso(value):
+    """JSON-safe date rendering: Postgres hands back datetime/date objects,
+    SQLite hands back strings. Return either as a plain string."""
+    if value is None:
+        return None
+    return value.isoformat() if hasattr(value, 'isoformat') else str(value)
+
 
 # Group-A owner tables synced GENERICALLY (schema-introspected) from v32 on.
 # Each: table name, primary key (str, or list for composite), and how to scope
@@ -611,10 +639,23 @@ class SyncService:
             return 0
         cols_sql = ', '.join(insert_cols)
         binds_sql = ', '.join(f':{c}' for c in insert_cols)
-        updates = ', '.join(f'{c} = EXCLUDED.{c}' for c in insert_cols if c != 'client_id')
+        # Billing columns stay in the INSERT (a brand-new offline account must
+        # carry its trial state up) but are NEVER part of the conflict UPDATE.
+        # The cloud owns them: Razorpay webhooks and the reconciler write them
+        # there, and this till has no way to see those events. Without this
+        # exclusion, a till that stamped itself 'expired' locally would overwrite
+        # the cloud's 'active' and undo a payment the customer actually made.
+        updates = ', '.join(
+            f'{c} = EXCLUDED.{c}'
+            for c in insert_cols
+            if c != 'client_id' and c not in CLOUD_OWNED_BILLING_COLUMNS
+        )
+        # If billing were somehow the only shared columns, an empty SET would be
+        # a syntax error — fall back to DO NOTHING rather than emitting bad SQL.
+        conflict_sql = f"DO UPDATE SET {updates}" if updates else "DO NOTHING"
         insert_sql = (
             f"INSERT INTO client_entry ({cols_sql}) VALUES ({binds_sql}) "
-            f"ON CONFLICT (client_id) DO UPDATE SET {updates}"
+            f"ON CONFLICT (client_id) {conflict_sql}"
         )
 
         # client_entry has no cloud FK, but plan_id points at the subscription_plan
@@ -637,6 +678,91 @@ class SyncService:
             payload.append(row)
             ids.append(rec['client_id'])
         return len(self._push_batch('client_entry', insert_sql, payload, ids))
+
+    def download_subscription_status(self, client_id):
+        """Pull the cloud's billing state for ONE client down into local SQLite.
+
+        This is the ONLY path by which a desktop till can learn that a payment
+        happened somewhere it cannot observe — a Razorpay autopay renewal
+        (webhook → cloud server), a checkout completed on the web app, or an
+        admin/reconciler change. The login gate in auth_middleware reads the
+        LOCAL client_entry row, so without this an expired client stays locked
+        out of the desktop forever even after paying.
+
+        Only CLOUD_OWNED_BILLING_COLUMNS are touched. Everything else on the row
+        (shop name, address, GSTIN, regional settings) is edited on the device
+        and must not be reverted to whatever the cloud last saw.
+
+        Returns a dict describing the outcome, including the status before and
+        after, so the caller can tell "you're now active" from "still nothing".
+        """
+        if not self.postgres_engine:
+            return {"status": "offline", "reason": "not_initialized"}
+        if not client_id:
+            return {"status": "failed", "error": "client_id is required"}
+
+        try:
+            select_cols = ', '.join(CLOUD_OWNED_BILLING_COLUMNS)
+            with self.postgres_engine.connect() as pg:
+                found = pg.execute(
+                    text(f"SELECT {select_cols} FROM client_entry WHERE client_id = :cid"),
+                    {"cid": str(client_id)},
+                ).fetchone()
+
+            if found is None:
+                # Account exists locally but not in the cloud yet (created
+                # offline and never uploaded). Nothing to pull.
+                return {"status": "not_found", "client_id": str(client_id)}
+
+            cloud = dict(found._mapping)
+
+            # subscription_plan UUIDs differ between local and cloud catalogs —
+            # translate by plan name or the local FK would dangle.
+            if cloud.get('plan_id') is not None:
+                cloud_to_local = self._plan_id_maps()[1]
+                cloud['plan_id'] = cloud_to_local.get(str(cloud['plan_id']), None)
+
+            with self.sqlite_engine.connect() as lite:
+                local_cols = {r[1] for r in lite.execute(text("PRAGMA table_info(client_entry)"))}
+                before = lite.execute(
+                    text("SELECT subscription_status FROM client_entry WHERE client_id = :cid"),
+                    {"cid": str(client_id)},
+                ).fetchone()
+
+            # An older local schema may predate some of these columns; only
+            # write the ones this device actually has.
+            writable = [c for c in CLOUD_OWNED_BILLING_COLUMNS if c in local_cols]
+            if not writable:
+                return {"status": "failed", "error": "local client_entry has no billing columns"}
+
+            set_sql = ', '.join(f"{c} = :{c}" for c in writable)
+            params = {c: cloud.get(c) for c in writable}
+            params['cid'] = str(client_id)
+
+            with self.sqlite_engine.begin() as lite:
+                result = lite.execute(
+                    text(f"UPDATE client_entry SET {set_sql} WHERE client_id = :cid"), params)
+
+            if result.rowcount == 0:
+                return {"status": "not_found", "reason": "no local client_entry row"}
+
+            previous = before[0] if before else None
+            current = cloud.get('subscription_status')
+            logger.info(
+                f"[SyncService] Subscription pulled for {client_id}: {previous} -> {current}")
+
+            return {
+                "status": "success",
+                "client_id": str(client_id),
+                "previous_status": previous,
+                "subscription_status": current,
+                "subscription_end_date": _iso(cloud.get('subscription_end_date')),
+                "changed": previous != current,
+                "is_active": current == 'active',
+            }
+        except Exception as e:
+            logger.error(f"[SyncService] Subscription download failed: {e}")
+            return {"status": "failed", "error": str(e)}
 
     def _sync_gst_bills(self, client_id=None):
         """Owner-scoped, batched GST-bill upload."""

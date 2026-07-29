@@ -15,6 +15,19 @@
     <meta name="keywords" content="GST billing software, Indian billing app, inventory management, retail POS, invoice software India, GST compliant, barcode billing, multi-branch billing" />
     <meta name="author" content="Valoryx" />
 
+    <!-- The RYX backdrop mark is set in "Lavishly Yours", declared with
+         font-display:swap. Without this preload the first paint falls back to
+         generic `cursive` and the mark renders as blocky block letters before
+         swapping — very visible on loading screens, which paint earliest.
+         Preloading fetches it alongside the bundle so the mark is correct immediately. -->
+    <link
+      rel="preload"
+      href="/fonts/lavishly-yours-400.woff2"
+      as="font"
+      type="font/woff2"
+      crossorigin
+    />
+
     <!-- Fonts: Manrope (headings) + Inter (body) for the marketing/landing pages -->
     <link rel="preconnect" href="https://fonts.googleapis.com" />
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
@@ -186,11 +199,12 @@
       }
     }
     </script>
-    <script type="module" crossorigin src="/assets/index-DFo7S6Fl.js"></script>
+    <script type="module" crossorigin src="/assets/index-b7RLav05.js"></script>
     <link rel="modulepreload" crossorigin href="/assets/vendor-B1q2mvm2.js">
-    <link rel="stylesheet" crossorigin href="/assets/index-1-gRZE2X.css">
+    <link rel="stylesheet" crossorigin href="/assets/index-e9YWGeUk.css">
   <link rel="manifest" href="/manifest.webmanifest"></head>
   <body style="background-color: #271E37; margin: 0;">
     <div id="root"></div>
+
   </body>
 </html>

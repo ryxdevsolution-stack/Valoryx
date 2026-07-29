@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react'
+import React, { useState, useRef, useEffect, useCallback } from 'react'
 import { useNavigate, Link } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
@@ -17,6 +17,10 @@ export default function LoginPage() {
   const [showPassword, setShowPassword] = useState(false)
   // Desktop Google sign-in: true while the system browser is handling consent.
   const [googleWaiting, setGoogleWaiting] = useState(false)
+  // Manual sign-in-code fallback, shown while waiting on the browser.
+  const [showCodeEntry, setShowCodeEntry] = useState(false)
+  const [pastedCode, setPastedCode] = useState('')
+  const [redeeming, setRedeeming] = useState(false)
 
   // Single-session enforcement state
   const [sessionConflict, setSessionConflict] = useState<null | {
@@ -324,14 +328,11 @@ export default function LoginPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
-  // Desktop only: receive the handoff assertion from the valoryx:// deep link,
-  // exchange it with the LOCAL backend for a local session, then sign in.
-  useEffect(() => {
-    if (!isElectron) return
-    const electronAPI = (window as any).electronAPI
-    if (!electronAPI?.onDesktopOAuth) return
-
-    const processAssertion = async (handoff: { assertion: string; verifier: string | null } | null) => {
+  // Exchange a desktop handoff for a LOCAL session. Shared by the valoryx://
+  // deep link and the manual paste-the-code fallback, so both paths behave
+  // identically — same PKCE check, same navigation, same error surface.
+  const processAssertion = useCallback(
+    async (handoff: { assertion: string; verifier: string | null } | null) => {
       if (!handoff?.assertion) return
       try {
         const res = await api.post('/oauth/desktop-login', {
@@ -353,14 +354,44 @@ export default function LoginPage() {
         setGoogleWaiting(false)
         setError(err?.response?.data?.error || 'Google sign-in failed. Please try again.')
       }
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [],
+  )
+
+  // Manual fallback: hand the pasted code to the main process, which pairs it
+  // with the PKCE verifier it still holds, then run the normal exchange.
+  async function submitPastedCode() {
+    const code = pastedCode.trim()
+    if (!code) return
+    setRedeeming(true)
+    setError('')
+    try {
+      const electronAPI = (window as any).electronAPI
+      const handoff = await electronAPI?.redeemOAuthCode?.(code)
+      if (!handoff?.assertion) {
+        setError('That code could not be read. Copy it again from the browser.')
+        return
+      }
+      await processAssertion(handoff)
+    } finally {
+      setRedeeming(false)
     }
+  }
+
+  // Desktop only: receive the handoff assertion from the valoryx:// deep link,
+  // exchange it with the LOCAL backend for a local session, then sign in.
+  useEffect(() => {
+    if (!isElectron) return
+    const electronAPI = (window as any).electronAPI
+    if (!electronAPI?.onDesktopOAuth) return
 
     electronAPI.onDesktopOAuth(processAssertion)
     // Cold start: a handoff may have arrived before this listener attached.
     electronAPI.getPendingOAuth?.().then((h: DesktopOAuthHandoff | null) => { if (h) processAssertion(h) })
 
     return () => { electronAPI.removeDesktopOAuth?.() }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [processAssertion]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-[#271E37] relative overflow-hidden">
@@ -599,9 +630,46 @@ export default function LoginPage() {
                 {googleWaiting ? 'Waiting for browser…' : 'Continue with Google'}
               </button>
               {googleWaiting && (
-                <p className="text-center mt-3 text-xs text-slate-400">
-                  Complete sign-in in your browser, then return to this window.
-                </p>
+                <div className="mt-3 space-y-2">
+                  <p className="text-center text-xs text-slate-400">
+                    Complete sign-in in your browser, then return to this window.
+                  </p>
+                  {/* Manual fallback: the browser hands the app its assertion over
+                      the valoryx:// scheme, which silently fails when the OS has
+                      no handler registered for it. Pasting the code does the same
+                      exchange — the PKCE verifier still never leaves this app. */}
+                  {!showCodeEntry ? (
+                    <button
+                      type="button"
+                      onClick={() => setShowCodeEntry(true)}
+                      className="w-full text-center text-xs text-slate-400 hover:text-white underline underline-offset-2 transition-colors"
+                    >
+                      App didn't open? Paste the sign-in code instead
+                    </button>
+                  ) : (
+                    <div className="space-y-2">
+                      <label htmlFor="oauth-code" className="block text-xs font-medium text-slate-300">
+                        Sign-in code from the browser
+                      </label>
+                      <textarea
+                        id="oauth-code"
+                        value={pastedCode}
+                        onChange={e => setPastedCode(e.target.value)}
+                        rows={3}
+                        placeholder="Paste the code shown in your browser…"
+                        className="w-full px-3 py-2 bg-white/5 border border-white/15 rounded-lg text-[11px] font-mono text-white placeholder-slate-600 resize-none outline-none focus:ring-2 focus:ring-[#5227FF]"
+                      />
+                      <button
+                        type="button"
+                        onClick={submitPastedCode}
+                        disabled={!pastedCode.trim() || redeeming}
+                        className="w-full py-2.5 rounded-lg bg-[#5227FF] hover:bg-[#4520d8] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors"
+                      >
+                        {redeeming ? 'Signing in…' : 'Sign in with this code'}
+                      </button>
+                    </div>
+                  )}
+                </div>
               )}
 
               {/* Desktop app is login-only: the account is already created on

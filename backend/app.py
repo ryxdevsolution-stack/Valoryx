@@ -1032,6 +1032,32 @@ def create_app():
         result = scheduler.trigger_sync_now('download')
         return result, 200
 
+    @app.route('/api/sync/subscription', methods=['POST'])
+    def trigger_subscription_refresh():
+        """Pull this client's billing state down from the cloud.
+
+        Powers the "I've already paid" button on the trial-expired screen. A
+        Razorpay autopay renewal or a checkout completed on the web only ever
+        reaches the CLOUD; the desktop login gate reads the LOCAL client_entry
+        row, so without this an expired client can pay and still be locked out.
+
+        Deliberately reachable while expired: it is served by the loopback-only
+        desktop backend (BIND_HOST=127.0.0.1), same as the other /api/sync/*
+        endpoints, and refusing it to expired clients would defeat its purpose.
+        """
+        from flask import request
+        scheduler = _get_or_init_scheduler()
+        if not scheduler:
+            return {'error': 'Sync not available', 'message': _sync_init_error[0] or 'Unknown error'}, 400
+
+        data = request.get_json() or {}
+        client_id = data.get('client_id')
+        if not client_id:
+            return {'error': 'client_id is required'}, 400
+
+        result = scheduler.sync_service.download_subscription_status(client_id)
+        return result, 200
+
     @app.route('/api/sync/initial', methods=['POST'])
     def trigger_initial_load():
         """Trigger initial data load from Supabase to SQLite."""

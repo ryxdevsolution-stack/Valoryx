@@ -6,6 +6,7 @@ import { LoadingProvider } from '@/contexts/LoadingContext'
 import { ClientProvider } from '@/contexts/ClientContext'
 import { DataProvider } from '@/contexts/DataContext'
 import { LoadingInitializer } from '@/components/LoadingInitializer'
+import ErrorBoundary from '@/components/ErrorBoundary'
 import { AppRoutes } from '@/router'
 import ImpersonationBanner from '@/components/ImpersonationBanner'
 import ElectronSplash from '@/components/ElectronSplash'
@@ -90,23 +91,29 @@ export default function App() {
   if (isElectron && needsSetup) return <ElectronSetup onComplete={() => setNeedsSetup(false)} />
 
   return (
-    <ThemeProvider>
-      <LoadingProvider>
-        <LoadingInitializer>
-          <ClientProvider>
-            <ImpersonationBanner />
-            {isElectron && <UpdateNotification />}
-            {!isElectron && <InstallBanner />}
-            <DataProvider>
-              <Suspense fallback={<LoadingFallback />}>
-                <AppRoutes />
-              </Suspense>
-              <ApiPerformanceBar />
-              <ToastContainer />
-            </DataProvider>
-          </ClientProvider>
-        </LoadingInitializer>
-      </LoadingProvider>
-    </ThemeProvider>
+    // Outermost on purpose: a throw inside ClientProvider/DataProvider render
+    // would escape a boundary nested below them and blank the app again.
+    // showDetails is forced on — this is a POS running unattended, and the
+    // error text is the only thing an operator can screenshot for support.
+    <ErrorBoundary showDetails>
+      <ThemeProvider>
+        <LoadingProvider>
+          <LoadingInitializer>
+            <ClientProvider>
+              <ImpersonationBanner />
+              {isElectron && <UpdateNotification />}
+              {!isElectron && <InstallBanner />}
+              <DataProvider>
+                <Suspense fallback={<LoadingFallback />}>
+                  <AppRoutes />
+                </Suspense>
+                <ApiPerformanceBar />
+                <ToastContainer />
+              </DataProvider>
+            </ClientProvider>
+          </LoadingInitializer>
+        </LoadingProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   )
 }

@@ -2,6 +2,7 @@ import React, { Suspense } from 'react'
 import { Routes, Route, Navigate } from 'react-router-dom'
 import AdminLayout from '@/components/AdminLayout'
 import ProtectedRoute from '@/components/ProtectedRoute'
+import LoadingScreen from '@/components/LoadingScreen'
 
 // Lazy load all pages for automatic code splitting
 const Home = React.lazy(() => import('@/pages/Home'))
@@ -101,14 +102,7 @@ function PageFallback() {
 }
 
 function AuthFallback() {
-  return (
-    <div className="min-h-screen flex items-center justify-center bg-[#271E37]">
-      <div className="flex flex-col items-center gap-4">
-        <div className="w-10 h-10 border-2 border-[#5227FF] border-t-transparent rounded-full animate-spin" />
-        <span className="text-slate-500 text-sm tracking-wide">Loading…</span>
-      </div>
-    </div>
-  )
+  return <LoadingScreen />
 }
 
 export function AppRoutes() {

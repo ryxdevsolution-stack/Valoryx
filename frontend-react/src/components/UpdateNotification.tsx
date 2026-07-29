@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import api from '@/lib/api'
 
 interface UpdateInfo {
   status: UpdateEventStatus
@@ -6,6 +7,17 @@ interface UpdateInfo {
   percent: number
   errorMessage: string | null
 }
+
+/**
+ * Upper bound on the pre-install upload sync. Installing calls `stopBackend()`,
+ * which force-kills Flask (`taskkill /F` on Windows) — so the upload has to
+ * finish first or it dies mid-flight. Kept under the 30s axios default so a
+ * slow or unreachable cloud can't leave the user stuck on "Syncing…".
+ * Timing out is safe: unsynced rows keep `synced_at IS NULL` in the local
+ * SQLite (which lives in ~/.valoryx and survives the update), so they upload
+ * on the next sync instead of being lost.
+ */
+const UPDATE_SYNC_TIMEOUT_MS = 20000
 
 /** Per-state accent colour + copy. Keeps the render body declarative. */
 const STATE_CONFIG: Record<
@@ -71,10 +83,13 @@ export default function UpdateNotification() {
   })
   const [dismissed, setDismissed] = useState(false)
   const [visible, setVisible] = useState(false)
+  // True from the moment "Restart & Update" is clicked until the app quits —
+  // covers the pre-install upload sync so the button can't be double-fired.
+  const [installing, setInstalling] = useState(false)
 
   useEffect(() => {
-    const api = (window as any).electronAPI
-    if (!api?.onUpdateStatus) return
+    const electronAPI = (window as any).electronAPI
+    if (!electronAPI?.onUpdateStatus) return
 
     const applyStatus = (status: UpdateEventStatus, data: UpdateStatusEvent['data']) => {
       setUpdate((prev) => {
@@ -100,14 +115,14 @@ export default function UpdateNotification() {
     }
 
     // Replay any event that fired before this listener attached.
-    api.getUpdateStatus?.().then((last: UpdateStatusEvent | null) => {
+    electronAPI.getUpdateStatus?.().then((last: UpdateStatusEvent | null) => {
       if (last?.status) applyStatus(last.status, last.data)
     })
 
-    api.onUpdateStatus((event: UpdateStatusEvent) => applyStatus(event.status, event.data))
+    electronAPI.onUpdateStatus((event: UpdateStatusEvent) => applyStatus(event.status, event.data))
 
     return () => {
-      api.removeUpdateStatus?.()
+      electronAPI.removeUpdateStatus?.()
     }
   }, [])
 
@@ -119,15 +134,31 @@ export default function UpdateNotification() {
   const { accent, title } = config
 
   const handleDownload = () => {
-    const api = (window as any).electronAPI
+    const electronAPI = (window as any).electronAPI
     // Optimistically flip to downloading so the buttons swap to the progress
     // bar instantly; real percentages then arrive via IPC events.
     setUpdate((prev) => ({ ...prev, status: 'downloading', percent: 0 }))
-    api?.downloadUpdate?.()
+    electronAPI?.downloadUpdate?.()
   }
-  const handleInstall = () => {
-    const api = (window as any).electronAPI
-    api?.installUpdate?.()
+  /**
+   * Push local changes to the cloud, then install. Installing tears the backend
+   * down with a force-kill, so this is the last chance to upload before the
+   * process dies. Best-effort by design: a failed or timed-out sync still
+   * proceeds to install, because the data isn't lost — it stays flagged
+   * unsynced locally and goes up on the next sync.
+   */
+  const handleInstall = async () => {
+    if (installing) return  // guard against a double click during the sync
+    setInstalling(true)
+
+    try {
+      await api.post('/sync/trigger?type=upload', null, { timeout: UPDATE_SYNC_TIMEOUT_MS })
+    } catch {
+      // Offline, cloud down, or slower than the timeout — install anyway.
+    }
+
+    const electronAPI = (window as any).electronAPI
+    electronAPI?.installUpdate?.()
   }
   const handleDismiss = () => setDismissed(true)
 
@@ -140,7 +171,10 @@ export default function UpdateNotification() {
   const subtitle =
     update.status === 'available' ? (update.version ? `Version ${update.version} is ready to download` : 'A new version is ready to download') :
     update.status === 'downloading' ? 'Getting the latest version…' :
-    update.status === 'downloaded' ? (update.version ? `Version ${update.version} is ready to install` : 'The new version is ready to install') :
+    update.status === 'downloaded'
+      ? installing
+        ? 'Uploading your latest changes before restarting…'
+        : (update.version ? `Version ${update.version} is ready to install` : 'The new version is ready to install') :
     null
 
   return (
@@ -185,8 +219,18 @@ export default function UpdateNotification() {
 
       {update.status === 'downloaded' && (
         <div className="vx-upd-actions">
-          <button className="vx-upd-btn vx-upd-btn--primary" onClick={handleInstall} type="button">Restart &amp; Update</button>
-          <button className="vx-upd-btn vx-upd-btn--ghost" onClick={handleDismiss} type="button">Later</button>
+          <button
+            className="vx-upd-btn vx-upd-btn--primary"
+            onClick={handleInstall}
+            type="button"
+            disabled={installing}
+          >
+            {installing ? 'Saving your data…' : 'Restart & Update'}
+          </button>
+          {/* Hidden mid-sync: dismissing wouldn't cancel the pending install. */}
+          {!installing && (
+            <button className="vx-upd-btn vx-upd-btn--ghost" onClick={handleDismiss} type="button">Later</button>
+          )}
         </div>
       )}
 
@@ -269,6 +313,9 @@ const CSS = `
 }
 .vx-upd-btn:active { transform: scale(.97); }
 .vx-upd-btn:focus-visible { outline: 2px solid var(--vx-accent); outline-offset: 2px; }
+.vx-upd-btn:disabled { cursor: default; opacity: .72; }
+.vx-upd-btn:disabled:active { transform: none; }
+.vx-upd-btn--primary:disabled:hover { filter: none; }
 .vx-upd-btn--primary {
   flex: 1 1 auto; border: none; color: #fff;
   background: linear-gradient(135deg, var(--vx-accent), #6366f1);

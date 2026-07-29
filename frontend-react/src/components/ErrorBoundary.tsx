@@ -232,8 +232,10 @@ export function PageErrorBoundary({ children }: { children: ReactNode }) {
               >
                 Refresh Page
               </button>
+              {/* Hash form under Electron: the app is served from file://, so a
+                  bare /dashboard resolves to a nonexistent path and blanks the window. */}
               <a
-                href="/dashboard"
+                href={(window as any).electronAPI?.isElectron ? '#/dashboard' : '/dashboard'}
                 className="px-6 py-3 bg-gray-200 dark:bg-gray-700 text-gray-800 dark:text-white rounded-lg hover:bg-gray-300 dark:hover:bg-gray-600 transition-colors font-medium"
               >
                 Go to Dashboard

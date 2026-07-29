@@ -1,12 +1,90 @@
-import { Clock, LogOut, MessageCircle, Mail, ArrowLeft, ShieldAlert } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { Clock, LogOut, MessageCircle, Mail, ArrowLeft, ShieldAlert, CloudOff, Check, Loader2, RefreshCw } from 'lucide-react'
 import { useNavigate } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
 import PricingCards from '@/components/PricingCards'
+import api from '@/lib/api'
 import { APP_CONFIG } from '@/config'
+
+/** Bound on the expiry backup so a dead cloud can't leave a spinner forever. */
+const EXPIRY_SYNC_TIMEOUT_MS = 20000
+
+type BackupState = 'idle' | 'syncing' | 'done' | 'failed'
 
 export default function TrialExpiredPage() {
   const { logout, client, user } = useClient()
   const navigate = useNavigate()
+  const [backup, setBackup] = useState<BackupState>('idle')
+  const [refreshing, setRefreshing] = useState(false)
+  const [refreshMsg, setRefreshMsg] = useState<{ kind: 'ok' | 'warn'; text: string } | null>(null)
+
+  /**
+   * Expiry locks the shop out of the app, so this is the moment their offline
+   * bills are most at risk of sitting unsynced indefinitely. Push them up once
+   * on arrival — the desktop sync endpoint is loopback-only and unauthenticated,
+   * so it still works after the API starts returning 403 for expired clients.
+   *
+   * Electron only: on web there is no local SQLite to upload, and the endpoint
+   * would just answer "sync not available".
+   */
+  useEffect(() => {
+    const isElectron = !!(window as any).electronAPI?.isElectron
+    if (!isElectron) return
+
+    let cancelled = false
+    setBackup('syncing')
+    api.post('/sync/trigger?type=upload', null, { timeout: EXPIRY_SYNC_TIMEOUT_MS })
+      .then((res) => {
+        if (cancelled) return
+        const status = res.data?.status
+        setBackup(status === 'success' || status === 'completed' ? 'done' : 'failed')
+      })
+      .catch(() => { if (!cancelled) setBackup('failed') })
+
+    return () => { cancelled = true }
+  }, [])
+
+  /**
+   * "Already paid" — pull the cloud's billing state down to this device.
+   *
+   * Needed because a Razorpay autopay renewal arrives as a webhook to the CLOUD
+   * server, and a checkout completed on the web app also lands there. The login
+   * gate reads the LOCAL client_entry row, so neither event reaches this till on
+   * its own. This is the only way such a customer gets back in.
+   */
+  const handleAlreadyPaid = async () => {
+    const clientId = client?.client_id
+    if (!clientId || refreshing) return
+
+    setRefreshing(true)
+    setRefreshMsg(null)
+    try {
+      const res = await api.post('/sync/subscription', { client_id: clientId },
+        { timeout: EXPIRY_SYNC_TIMEOUT_MS })
+
+      if (res.data?.is_active) {
+        setRefreshMsg({ kind: 'ok', text: 'Payment found — taking you back in…' })
+        // Full reload, not a router navigate: the cached client in localStorage
+        // and React state both still say "expired", and remounting from scratch
+        // is what re-reads the now-updated row.
+        const isElectron = !!(window as any).electronAPI?.isElectron
+        window.location.href = isElectron ? '#/dashboard' : '/dashboard'
+        window.location.reload()
+        return
+      }
+
+      setRefreshMsg({
+        kind: 'warn',
+        text: res.data?.status === 'offline'
+          ? "Can't reach the cloud right now. Check your internet and try again."
+          : 'No active payment found yet. If you just paid, wait a moment and try again.',
+      })
+    } catch {
+      setRefreshMsg({ kind: 'warn', text: "Couldn't check your payment status. Please try again." })
+    } finally {
+      setRefreshing(false)
+    }
+  }
 
   const canPay = user?.role === 'owner' || user?.role === 'manager'
   const expiredKind: 'trial' | 'subscription' =
@@ -64,6 +142,56 @@ export default function TrialExpiredPage() {
           {subtitle}{' '}
           {canPay ? 'Choose a plan below to continue using all features.' : 'Please contact your owner or manager to renew.'}
         </p>
+
+        {/* Backup status — reassures the shop that nothing they billed is stranded. */}
+        {backup !== 'idle' && (
+          <div
+            className="mt-5 inline-flex items-center gap-2 rounded-full border px-3.5 py-1.5 text-xs font-medium border-gray-200 dark:border-gray-700 bg-white dark:bg-gray-800 text-gray-600 dark:text-gray-300"
+            role="status"
+            aria-live="polite"
+          >
+            {backup === 'syncing' && (
+              <><Loader2 className="w-3.5 h-3.5 animate-spin text-blue-600 dark:text-blue-400" aria-hidden="true" />Backing up your data…</>
+            )}
+            {backup === 'done' && (
+              <><Check className="w-3.5 h-3.5 text-emerald-600 dark:text-emerald-400" aria-hidden="true" />Your data is backed up to the cloud</>
+            )}
+            {backup === 'failed' && (
+              <><CloudOff className="w-3.5 h-3.5 text-amber-600 dark:text-amber-400" aria-hidden="true" />Backup pending — your data is saved on this device</>
+            )}
+          </div>
+        )}
+
+        {/* "Already paid" — the recovery path for anyone whose payment happened
+            somewhere this device cannot see (autopay renewal, or the web app).
+            Shown to staff too: they can't pay, but the owner may already have,
+            and this is what lets them back in without waiting for a sync. */}
+        <div className="mt-6 flex flex-col items-center gap-2">
+          <button
+            type="button"
+            onClick={handleAlreadyPaid}
+            disabled={refreshing}
+            className="inline-flex items-center justify-center gap-2 rounded-xl border border-gray-300 dark:border-gray-600 bg-white dark:bg-gray-800 px-5 py-2.5 text-sm font-semibold text-gray-700 dark:text-gray-200 transition-colors hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-60 disabled:cursor-not-allowed cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 dark:focus-visible:ring-offset-gray-900"
+          >
+            {refreshing
+              ? <><Loader2 className="w-4 h-4 animate-spin motion-reduce:animate-none" aria-hidden="true" />Checking your payment…</>
+              : <><RefreshCw className="w-4 h-4" aria-hidden="true" />Already paid? Refresh my status</>}
+          </button>
+
+          {refreshMsg && (
+            <p
+              className={`max-w-sm text-xs leading-relaxed ${
+                refreshMsg.kind === 'ok'
+                  ? 'text-emerald-600 dark:text-emerald-400'
+                  : 'text-amber-600 dark:text-amber-400'
+              }`}
+              role="status"
+              aria-live="polite"
+            >
+              {refreshMsg.text}
+            </p>
+          )}
+        </div>
       </div>
 
       {/* OWNER / MANAGER: real pricing + checkout */}

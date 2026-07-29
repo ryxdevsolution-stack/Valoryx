@@ -39,6 +39,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   removeDesktopOAuth: () =>
     ipcRenderer.removeAllListeners('desktop-oauth'),
   getPendingOAuth: () => ipcRenderer.invoke('oauth-get-pending'),
+  // Manual fallback when the deep link never arrives: exchange a code the user
+  // pasted from the browser for the same {assertion, verifier} handoff.
+  redeemOAuthCode: (code) => ipcRenderer.invoke('oauth-redeem-code', code),
 });
 
 console.log('[Preload] Context bridge initialized');

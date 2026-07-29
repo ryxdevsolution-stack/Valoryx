@@ -57,6 +57,9 @@ export const API_BASE_URL = `${API_URL}/api`;
 
 export const APP_CONFIG = {
   name: 'Valoryx',
+  // Shown on loading/splash screens under the app name. Env-overridable so
+  // white-labelled builds can change it without touching components.
+  tagline: import.meta.env.VITE_APP_TAGLINE || 'GST Billing & Inventory for Indian Businesses',
   version: import.meta.env.VITE_APP_VERSION || '1.0.0',
   supportEmail: 'support@ryxbilling.com',
   // Support WhatsApp (digits only, incl. country code). Overridable via env so

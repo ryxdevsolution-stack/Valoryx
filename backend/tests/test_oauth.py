@@ -269,3 +269,65 @@ def test_unverified_google_email_rejected(http, monkeypatch):
     resp = _callback(http)
     assert resp.status_code == 400
     assert resp.get_json()["success"] is False
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Regression: desktop sign-in failures must be distinguishable, and the
+# desktop app must be able to reach Google without loading the SPA first.
+# All three of these previously collapsed into one opaque
+# "Invalid or expired sign-in" message, so a misconfigured shared secret was
+# indistinguishable from a slow user.
+# ═══════════════════════════════════════════════════════════════════════════
+
+# 13. Cold start (app not running) sends no verifier — say so, don't cry "expired".
+def test_desktop_login_missing_verifier_reports_cold_start(http, monkeypatch, sample_user):
+    resp = _desktop_login(http, _assertion(sample_user.email, "google-uid-1"), verifier=None)
+    assert resp.status_code == 401
+    body = resp.get_json()
+    assert body["reason"] == "no_verifier"
+    assert "not running" in body["error"].lower()
+
+
+# 14. A genuinely expired assertion is reported as expired, not as a bad key.
+def test_desktop_login_expired_reports_expired(http, monkeypatch, sample_user):
+    monkeypatch.setattr(oauth_mod, "DESKTOP_ASSERTION_TTL", -1)
+    monkeypatch.setattr(oauth_mod, "DESKTOP_CLOCK_SKEW_LEEWAY", 0)
+    resp = _desktop_login(http, _assertion(sample_user.email, "google-uid-1"))
+    assert resp.status_code == 401
+    assert resp.get_json()["reason"] == "expired"
+
+
+# 15. A secret mismatch between cloud and installer is named as such — this is
+#     the failure that used to burn a support cycle guessing.
+def test_desktop_login_secret_mismatch_reports_bad_signature(http, monkeypatch, sample_user):
+    good = _assertion(sample_user.email, "google-uid-1")
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "a-completely-different-secret-value")
+    resp = _desktop_login(http, good)
+    assert resp.status_code == 401
+    assert resp.get_json()["reason"] == "bad_signature"
+
+
+# 16. Modest clock skew must NOT reject an assertion that was just minted.
+def test_desktop_login_tolerates_clock_skew(http, monkeypatch, sample_user):
+    # Assertion already 30s past its own exp; leeway must absorb it.
+    monkeypatch.setattr(oauth_mod, "DESKTOP_ASSERTION_TTL", -30)
+    resp = _desktop_login(http, _assertion(sample_user.email, "google-uid-1"))
+    assert resp.status_code == 200, resp.get_json()
+
+
+# 17. redirect=1 sends the browser straight to Google, with no Origin/Referer
+#     (a top-level navigation opened by the desktop app).
+def test_authorize_redirect_goes_straight_to_google(http, monkeypatch):
+    monkeypatch.setenv("CORS_ORIGINS", "http://localhost")
+    resp = http.get("/api/oauth/google/authorize?desktop=valoryx&challenge=abc&redirect=1")
+    assert resp.status_code == 302
+    assert resp.headers["Location"].startswith("https://accounts.google.com/")
+    assert "prompt=select_account" in resp.headers["Location"]
+
+
+# 18. Without redirect=1 the endpoint still returns JSON for the web SPA.
+def test_authorize_without_redirect_still_returns_json(http, monkeypatch):
+    monkeypatch.setenv("CORS_ORIGINS", _TEST_ORIGIN)
+    resp = http.get("/api/oauth/google/authorize", headers={"Origin": _TEST_ORIGIN})
+    assert resp.status_code == 200
+    assert resp.get_json()["auth_url"].startswith("https://accounts.google.com/")

@@ -3,10 +3,16 @@ import { Check, Star, Zap, Crown, Loader2, Clock } from 'lucide-react'
 import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
 
+/**
+ * Every field is optional because the backend emits `self.limits or {}` — a
+ * plan with a NULL limits column yields `{}`, not the full shape. Declaring
+ * these required let `plan.limits.users` type-check while being undefined at
+ * runtime, which is exactly how the blank-screen crash got shipped.
+ */
 interface PlanLimits {
-  users: number
-  bills_per_month: number
-  storage_gb: number
+  users?: number
+  bills_per_month?: number
+  storage_gb?: number
 }
 
 interface Plan {
@@ -16,8 +22,8 @@ interface Plan {
   monthly_price: number
   yearly_price: number
   currency?: string
-  features: string[]
-  limits: PlanLimits
+  features?: string[]
+  limits?: PlanLimits
   is_popular: boolean
 }
 
@@ -98,8 +104,17 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
     return Math.round(((monthlyTotal - yearlyTotal) / monthlyTotal) * 100)
   }
 
-  function formatLimit(value: number) {
-    return value === -1 ? 'Unlimited' : value.toString()
+  /**
+   * The backend serialises `'limits': self.limits or {}`, so a plan row with a
+   * NULL limits column arrives as `{}` and every field reads back `undefined`.
+   * Calling .toString() on that threw mid-render and — with no ErrorBoundary
+   * wired in at the time — unmounted the whole app to a blank screen.
+   * Treat missing as unknown rather than crashing the page over a label.
+   */
+  function formatLimit(value: number | undefined | null) {
+    if (value === -1) return 'Unlimited'
+    if (value == null || Number.isNaN(value)) return '—'
+    return String(value)
   }
 
   function redirectToDashboard() {
@@ -372,16 +387,16 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
               {/* Limits */}
               <div className="flex flex-wrap gap-2 mb-5">
                 <span className="inline-flex items-center gap-1 bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-xs font-medium px-2.5 py-1 rounded-lg tabular-nums">
-                  {formatLimit(plan.limits.users)} users
+                  {formatLimit(plan.limits?.users)} users
                 </span>
                 <span className="inline-flex items-center gap-1 bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-xs font-medium px-2.5 py-1 rounded-lg tabular-nums">
-                  {formatLimit(plan.limits.bills_per_month)} bills/mo
+                  {formatLimit(plan.limits?.bills_per_month)} bills/mo
                 </span>
               </div>
 
               {/* Features */}
               <ul className="space-y-2.5 mb-6 flex-1">
-                {plan.features.map((feature) => (
+                {(plan.features ?? []).map((feature) => (
                   <li key={feature} className="flex items-start gap-2.5 text-sm text-gray-600 dark:text-gray-300">
                     <span className="mt-0.5 inline-flex items-center justify-center w-4 h-4 rounded-full bg-emerald-100 dark:bg-emerald-900/40 flex-shrink-0">
                       <Check className="w-3 h-3 text-emerald-600 dark:text-emerald-400" strokeWidth={3} />
