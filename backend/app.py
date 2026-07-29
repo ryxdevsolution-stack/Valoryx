@@ -993,7 +993,10 @@ def create_app():
             sync_service.postgres_engine = pg_engine
 
             scheduler = SyncScheduler(sync_service)
-            scheduler.running = True
+            # Actually spawn the background thread. Previously this set
+            # running = True by hand, which made /api/sync/status report a
+            # healthy scheduler that had never executed a single cycle.
+            scheduler.start()
             app.config['SYNC_SCHEDULER'] = scheduler
             _sync_init_error[0] = None
             logging.info("[Sync] Ready")
@@ -1003,6 +1006,23 @@ def create_app():
             logging.error(f"[Sync] Init failed: {e}")
             return None
 
+    def _require_entitlement(scheduler, client_id=None):
+        """Returns an error response tuple when the client may not sync, else None.
+
+        402 Payment Required (not 403) so the frontend can tell "renew to enable"
+        apart from the auth middleware's 403 expiry lockout. Without this the
+        Sync button would be a free bypass around the background loop's gate.
+        """
+        gate = scheduler.is_entitled(client_id)
+        if gate['entitled']:
+            return None
+        return {
+            'error': 'Subscription required',
+            'code': 'SYNC_NOT_ENTITLED',
+            'message': 'Sync is included with an active subscription. Renew to turn it back on.',
+            'entitlement': gate,
+        }, 402
+
     @app.route('/api/sync/trigger', methods=['POST'])
     def trigger_sync():
         """Manually trigger a sync. Query param: type=upload|download|full"""
@@ -1010,6 +1030,10 @@ def create_app():
         scheduler = _get_or_init_scheduler()
         if not scheduler:
             return {'error': 'Sync not available', 'message': _sync_init_error[0] or 'Unknown error'}, 400
+
+        denied = _require_entitlement(scheduler, None)
+        if denied:
+            return denied
 
         sync_type = request.args.get('type', 'upload')
         result = scheduler.trigger_sync_now(sync_type)
@@ -1027,6 +1051,10 @@ def create_app():
         client_id = data.get('client_id')
         if not client_id:
             return {'error': 'client_id is required'}, 400
+
+        denied = _require_entitlement(scheduler, client_id)
+        if denied:
+            return denied
 
         scheduler.set_client_id(client_id)
         result = scheduler.trigger_sync_now('download')
@@ -1058,6 +1086,36 @@ def create_app():
         result = scheduler.sync_service.download_subscription_status(client_id)
         return result, 200
 
+    @app.route('/api/sync/expiry-backup', methods=['POST'])
+    def trigger_expiry_backup():
+        """One-time post-expiry upload so bills earned while paid are not
+        stranded on the device.
+
+        Deliberately NOT entitlement-gated — but it runs at most once per
+        expiry, so it cannot be used as a free sync channel. Without the
+        one-time guard an expired customer could simply re-open the expired
+        screen repeatedly and sync forever, defeating the paid gate entirely.
+        """
+        from flask import request
+        scheduler = _get_or_init_scheduler()
+        if not scheduler:
+            return {'error': 'Sync not available',
+                    'message': _sync_init_error[0] or 'Unknown error'}, 400
+
+        data = request.get_json() or {}
+        client_id = data.get('client_id')
+        if not client_id:
+            return {'error': 'client_id is required'}, 400
+
+        if scheduler.expiry_backup_taken(client_id):
+            return {'status': 'already_taken'}, 200
+
+        result = scheduler.sync_service.sync_all(client_id)
+        if result.get('status') in ('success', 'completed'):
+            scheduler.mark_expiry_backup(client_id)
+            return {'status': 'success', 'result': result}, 200
+        return {'status': 'failed', 'result': result}, 200
+
     @app.route('/api/sync/initial', methods=['POST'])
     def trigger_initial_load():
         """Trigger initial data load from Supabase to SQLite."""
@@ -1086,6 +1144,10 @@ def create_app():
         client_id = data.get('client_id')
         if not client_id:
             return {'error': 'client_id is required'}, 400
+
+        denied = _require_entitlement(scheduler, client_id)
+        if denied:
+            return denied
 
         scheduler.set_client_id(client_id)
         result = scheduler.trigger_sync_now('full')

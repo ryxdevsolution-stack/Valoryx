@@ -29,20 +29,28 @@ export default function TrialExpiredPage() {
    */
   useEffect(() => {
     const isElectron = !!(window as any).electronAPI?.isElectron
-    if (!isElectron) return
+    const clientId = client?.client_id
+    if (!isElectron || !clientId) return
 
     let cancelled = false
     setBackup('syncing')
-    api.post('/sync/trigger?type=upload', null, { timeout: EXPIRY_SYNC_TIMEOUT_MS })
+    // The dedicated one-time endpoint, NOT /sync/trigger: this page can be
+    // re-opened any number of times, and an unlimited upload from it would be a
+    // free sync channel around the paid gate.
+    api.post('/sync/expiry-backup', { client_id: clientId },
+      { timeout: EXPIRY_SYNC_TIMEOUT_MS })
       .then((res) => {
         if (cancelled) return
         const status = res.data?.status
-        setBackup(status === 'success' || status === 'completed' ? 'done' : 'failed')
+        // 'already_taken' means their data is safely up — that is success, not failure.
+        setBackup(
+          status === 'success' || status === 'completed' || status === 'already_taken'
+            ? 'done' : 'failed')
       })
       .catch(() => { if (!cancelled) setBackup('failed') })
 
     return () => { cancelled = true }
-  }, [])
+  }, [client?.client_id])
 
   /**
    * "Already paid" — pull the cloud's billing state down to this device.

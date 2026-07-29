@@ -77,18 +77,31 @@ describe('TrialExpired', () => {
     expect(screen.queryByText(/something went wrong/i)).toBeNull()
   })
 
-  it('uploads local data to the cloud on arrival and confirms the backup', async () => {
+  it('requests the one-time expiry backup rather than a raw upload', async () => {
     mockedGet.mockResolvedValue({ data: { plans: [] } } as any)
 
     renderPage()
 
     await waitFor(() =>
       expect(mockedPost).toHaveBeenCalledWith(
-        '/sync/trigger?type=upload',
-        null,
+        '/sync/expiry-backup',
+        { client_id: 'c-1' },
         expect.objectContaining({ timeout: expect.any(Number) }),
       ),
     )
+    // The ungated upload endpoint must NOT be used here — reopening this page
+    // would otherwise be an unlimited free sync channel around the paid gate.
+    expect(mockedPost).not.toHaveBeenCalledWith(
+      '/sync/trigger?type=upload', expect.anything(), expect.anything())
+    expect(await screen.findByText(/your data is backed up to the cloud/i)).toBeInTheDocument()
+  })
+
+  it('reports an already-taken backup as done, not failed', async () => {
+    mockedGet.mockResolvedValue({ data: { plans: [] } } as any)
+    mockedPost.mockResolvedValue({ data: { status: 'already_taken' } } as any)
+
+    renderPage()
+
     expect(await screen.findByText(/your data is backed up to the cloud/i)).toBeInTheDocument()
   })
 

@@ -6,6 +6,10 @@ import { useClient } from '@/contexts/ClientContext';
 
 interface SyncStatus {
   running: boolean;
+  /** Absent on a backend older than the paid-sync release — see `entitled` below. */
+  entitled?: boolean;
+  paid_until?: string | null;
+  entitlement_reason?: string;
   last_upload?: string;
   last_download?: string;
   next_sync?: string;
@@ -103,6 +107,13 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
       if (!err.response) {
         setSyncResult('offline');
         setError("You're offline — changes are saved locally and will sync when you're back online.");
+      } else if (err.response.status === 402) {
+        // Paid gate, not a fault. Refresh status so the button reflects the
+        // lapse immediately rather than staying enabled until the next poll.
+        setSyncResult('error');
+        setError(err.response.data?.message
+          || 'Sync is included with an active subscription. Renew to turn it back on.');
+        fetchStatus();
       } else {
         setSyncResult('error');
         setError(err.response?.data?.message || err.response?.data?.error || 'Failed to sync');
@@ -111,7 +122,7 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
       setSyncing(false);
       syncingRef.current = false;
     }
-  }, [client]);
+  }, [client, fetchStatus]);
 
   // Auto-retry when connectivity returns: while offline, retry the moment the
   // browser reports it's back online, plus a periodic fallback (a NAT64/pooler
@@ -140,14 +151,29 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
     return date.toLocaleDateString();
   };
 
+  // `entitled` defaults to true when the field is absent, so a desktop app that
+  // updates ahead of its backend is not locked out of sync by a missing key.
+  const entitled = status?.entitled !== false;
+  const paidUntil = status?.paid_until
+    ? new Date(status.paid_until).toLocaleDateString('en-IN',
+        { day: 'numeric', month: 'short', year: 'numeric' })
+    : null;
+
+  const entitlementLabel = !entitled
+    ? 'Sync paused — renew to turn it back on'
+    : status?.entitlement_reason === 'trial'
+      ? `Auto-sync on — trial ends ${paidUntil ?? 'soon'}`
+      : `Auto-sync on — active until ${paidUntil ?? 'renewal'}`;
+
   // Compact version for header
   if (compact) {
     return (
       <button
         onClick={triggerSync}
-        disabled={syncing}
+        disabled={syncing || !entitled}
         className={`
           relative p-2 rounded-lg transition-all
+          disabled:opacity-60 disabled:cursor-not-allowed
           ${syncing ? 'bg-blue-100 dark:bg-blue-900/30' : 'hover:bg-gray-100 dark:hover:bg-gray-800'}
           ${syncResult === 'success' ? 'bg-green-100 dark:bg-green-900/30' : ''}
           ${syncResult === 'partial' ? 'bg-amber-100 dark:bg-amber-900/30' : ''}
@@ -183,9 +209,20 @@ export default function SyncButton({ compact = false, showStatus = true }: SyncB
         </span>
       )}
 
+      {showStatus && (
+        <span
+          className={`text-[10px] hidden sm:inline ${
+            entitled ? 'text-gray-500 dark:text-gray-400' : 'text-amber-600 dark:text-amber-400'
+          }`}
+        >
+          {entitlementLabel}
+        </span>
+      )}
+
       <button
         onClick={triggerSync}
-        disabled={syncing}
+        disabled={syncing || !entitled}
+        title={entitlementLabel}
         className={`
           inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all
           ${syncing
