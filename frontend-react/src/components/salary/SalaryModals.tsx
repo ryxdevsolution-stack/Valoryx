@@ -20,27 +20,32 @@ function ModalShell({ title, onClose, children }: ModalShellProps) {
   }, [onClose])
 
   return (
+    // dvh (not vh) so mobile browser chrome doesn't push the dialog off-screen.
+    // The shell is a flex column with a capped height: header stays pinned and
+    // the body scrolls, so a tall form (e.g. Mark Day Off) can never bury its
+    // own action buttons below the fold on a short screen.
     <div
-      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4"
+      className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-3 sm:p-4 overflow-y-auto"
       onClick={onClose}
       role="dialog"
       aria-modal="true"
     >
       <div
-        className="w-full max-w-md bg-white dark:bg-gray-900 rounded-2xl shadow-2xl overflow-hidden"
+        className="w-full max-w-md max-h-[92dvh] flex flex-col bg-white dark:bg-gray-900 rounded-2xl shadow-2xl overflow-hidden my-auto"
         onClick={e => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-5 py-4 border-b border-gray-100 dark:border-gray-800">
-          <h3 className="text-base font-semibold text-gray-900 dark:text-white">{title}</h3>
+        <div className="flex items-center justify-between gap-3 px-4 sm:px-5 py-3.5 sm:py-4 border-b border-gray-100 dark:border-gray-800 flex-none">
+          <h3 className="text-base font-semibold text-gray-900 dark:text-white truncate">{title}</h3>
           <button
             type="button"
             onClick={onClose}
-            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
+            aria-label="Close dialog"
+            className="p-1.5 rounded-lg text-gray-400 hover:text-gray-600 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors flex-none"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
-        <div className="px-5 py-4 space-y-4">{children}</div>
+        <div className="px-4 sm:px-5 py-4 space-y-4 overflow-y-auto flex-1 min-h-0">{children}</div>
       </div>
     </div>
   )
@@ -391,6 +396,8 @@ export function MarkAttendanceModal({ employee, onClose, onSave, prefillDate }: 
   }).formatToParts(new Date()).reduce<Record<string, string>>((acc, p) => { acc[p.type] = p.value; return acc }, {})
   const defaultDate = `${istParts.year}-${istParts.month}-${istParts.day}`
   const defaultTime = `${istParts.hour}:${istParts.minute}`
+  // Actual IST "now" — the ceiling for any check-in, independent of prefillDate.
+  const maxIso = `${defaultDate}T${defaultTime}`
   // If a prefillDate was supplied (e.g. "2026-04-15") use that day with current IST time
   const nowIso = `${prefillDate ?? defaultDate}T${defaultTime}`
   const [checkIn, setCheckIn] = useState(nowIso)
@@ -401,6 +408,10 @@ export function MarkAttendanceModal({ employee, onClose, onSave, prefillDate }: 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
     if (!checkIn) { setError('Check-in time is required'); return }
+    // Guard as well as `max` on the input: the max attribute is bypassed when a
+    // date is typed rather than picked, and attendance can only be recorded for
+    // time that has already happened.
+    if (checkIn > maxIso) { setError('Check-in time cannot be in the future'); return }
     setSaving(true)
     try {
       await onSave(employee.employee_id, new Date(checkIn).toISOString(), notes.trim())
@@ -429,6 +440,7 @@ export function MarkAttendanceModal({ employee, onClose, onSave, prefillDate }: 
             type="datetime-local"
             value={checkIn}
             onChange={e => setCheckIn(e.target.value)}
+            max={maxIso}
             className={inputClass}
             autoFocus
           />
@@ -860,6 +872,7 @@ export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAd
             type="date"
             value={date}
             onChange={e => setDate(e.target.value)}
+            max={todayIso}
             className={inputClass}
           />
         </InputField>

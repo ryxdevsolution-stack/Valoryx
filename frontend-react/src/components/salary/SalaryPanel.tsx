@@ -157,8 +157,9 @@ export default function SalaryPanel({
   }
 
   return (
-    // Mobile: auto-height; desktop: fills the parent's viewport height.
-    <div className="flex flex-col md:h-full bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+    // Mobile/tablet: auto-height; desktop (lg, where the 3 columns sit side by
+    // side): fills the parent's viewport height.
+    <div className="flex flex-col lg:h-full bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
       {/* Header */}
       <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-800">
         <div>
@@ -214,8 +215,8 @@ export default function SalaryPanel({
         )
       })()}
 
-      {/* Cycle list — bounded on mobile; flex-grown on desktop */}
-      <div className="md:flex-1 overflow-y-auto max-h-[400px] md:max-h-none divide-y divide-gray-100 dark:divide-gray-800">
+      {/* Cycle list — bounded on mobile/tablet; flex-grown on desktop */}
+      <div className="lg:flex-1 overflow-y-auto max-h-[400px] lg:max-h-none divide-y divide-gray-100 dark:divide-gray-800">
         {loading ? (
           <div className="flex items-center justify-center h-32">
             <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 dark:border-gray-600 dark:border-t-gray-200 rounded-full animate-spin" />

@@ -76,8 +76,11 @@ function MiniCalendar({
   ]
 
   return (
-    <div className="border-t border-gray-100 dark:border-gray-800 px-3 py-3 bg-gray-50/60 dark:bg-gray-800/20 md:flex-shrink-0 md:max-h-[280px] md:overflow-y-auto">
-      <div className="flex items-center justify-between mb-2">
+    // lg:flex-1 + min-h-0 — the calendar claims all height the day list doesn't
+    // use, so the tiles grow into what used to be dead space instead of the grid
+    // scrolling inside a 280px box.
+    <div className="flex flex-col border-t border-gray-100 dark:border-gray-800 px-3 py-3 bg-gray-50/60 dark:bg-gray-800/20 lg:flex-1 lg:min-h-0">
+      <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
           Monthly overview
         </p>
@@ -88,10 +91,16 @@ function MiniCalendar({
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm border border-red-300 dark:border-red-700 bg-white dark:bg-gray-900" />No cycle</span>
         </div>
       </div>
-      <div className="grid grid-cols-7 gap-1 text-center">
+      {/* Weekday header lives in its own grid — inside the cell grid the
+          auto-rows-fr below would stretch these labels to full tile height.
+          max-w below lg: when the panel is full-width (stacked layout) the
+          square tiles would otherwise blow up to ~95px each. */}
+      <div className="grid grid-cols-7 gap-1 lg:gap-1.5 text-center flex-none mb-1 w-full max-w-[420px] lg:max-w-none mx-auto">
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
-          <div key={i} className="text-[9px] font-medium text-gray-400">{d}</div>
+          <div key={i} className="text-[9px] lg:text-[10px] font-medium text-gray-400">{d}</div>
         ))}
+      </div>
+      <div className="grid grid-cols-7 gap-1 lg:gap-1.5 text-center w-full max-w-[420px] lg:max-w-none mx-auto lg:flex-1 lg:auto-rows-fr lg:min-h-0">
         {cells.map((cell, i) => {
           if (!cell) return <div key={`pad-${i}`} />
           const status = dayStatusMap.get(cell.date)
@@ -153,7 +162,10 @@ function MiniCalendar({
               disabled={!canClick && !noCycle && !cycleSealed}
               title={tooltip}
               className={[
-                'aspect-square rounded-md text-[10px] font-semibold transition-colors relative',
+                // Square tiles on small screens (keeps a ≥44px touch target in a
+                // 7-column grid); at lg they stretch to fill the taller grid rows.
+                'aspect-square lg:aspect-auto lg:h-full w-full min-h-[30px] flex items-center justify-center',
+                'rounded-md text-[10px] lg:text-xs font-semibold transition-colors relative',
                 isPresent
                   ? 'bg-green-500 text-white hover:bg-green-600 cursor-pointer'
                   : isPaidOff
@@ -307,14 +319,17 @@ export default function AttendancePanel({
   return (
     // Mobile: auto-height (no outer constraint), so the page scrolls naturally.
     // Desktop: fill the parent's fixed viewport height.
-    <div className="flex flex-col md:h-full bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
+    // aria-label carries the employee name for screen readers — the visible title
+    // is just "Attendance" since the name is already shown in the employee list
+    // and the salary panel.
+    <section
+      aria-label={`Attendance for ${employee.name}`}
+      className="flex flex-col lg:h-full bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden"
+    >
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-800">
-        <div>
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-white">{employee.name}</h2>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">Attendance</p>
-        </div>
-        <div className="flex items-center gap-2">
+      <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-100 dark:border-gray-800">
+        <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Attendance</h2>
+        <div className="flex items-center gap-2 flex-wrap justify-end">
           {openPunch && (() => {
             const liveMins = liveMinutesFor(openPunch)
             return (
@@ -431,10 +446,10 @@ export default function AttendancePanel({
       </div>
 
       {/* Day list — drill-down: shows ONLY the date the user clicked in the
-          mini calendar below. Empty state = prompt to click a date.
-          On mobile: bounded at ~180px so it doesn't push the calendar off-screen.
-          On desktop: flex-1 to fill remaining vertical space in the panel. */}
-      <div className="md:flex-1 overflow-y-auto min-h-[120px] max-h-[180px] md:max-h-none md:min-h-0">
+          mini calendar below, so it never needs much room.
+          It is deliberately NOT flex-1: capped at 40% of the panel so the
+          leftover height goes to the calendar instead of sitting empty. */}
+      <div className="overflow-y-auto min-h-[120px] max-h-[180px] lg:max-h-[40%] lg:flex-none">
         {loading ? (
           <div className="flex items-center justify-center h-32">
             <div className="w-5 h-5 border-2 border-gray-300 border-t-gray-900 dark:border-gray-600 dark:border-t-gray-200 rounded-full animate-spin" />
@@ -633,6 +648,6 @@ export default function AttendancePanel({
         }}
         onMarkDayOff={(workDate) => onMarkDayOff(workDate)}
       />
-    </div>
+    </section>
   )
 }

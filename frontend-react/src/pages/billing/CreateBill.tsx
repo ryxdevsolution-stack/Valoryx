@@ -14,7 +14,6 @@ import MembershipBillingPanel from '@/components/billing/MembershipBillingPanel'
 import type { CardLookupResult } from '@/types/membership'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
 import BarcodeScannerModal from '@/components/billing/BarcodeScannerModal'
-import UpiQrCode from '@/components/billing/UpiQrCode'
 import bluetoothPrinterService from '@/services/bluetoothPrinterService'
 import { getShopSettings } from '@/services/shopSettingsService'
 import type { ShopSettings } from '@/services/shopSettingsService'
@@ -2751,19 +2750,8 @@ export default function UnifiedBillingPage() {
                 </div>
               )}
 
-              {/* UPI QR Code - shown when a UPI payment type is selected and shop has UPI ID */}
-              {shopSettings?.upi_id && activeTab.payment_splits.some(p =>
-                p.payment_type?.toLowerCase().includes('upi')
-              ) && (
-                <div className="mt-3 flex justify-center">
-                  <UpiQrCode
-                    upiId={shopSettings.upi_id}
-                    shopName={shopSettings.shop_name || client?.client_name || ''}
-                    amount={billTotals.grandTotal}
-                    size={120}
-                  />
-                </div>
-              )}
+              {/* UPI QR is intentionally not rendered on screen — it is printed on
+                  the receipt instead (see webPrintService "Scan to Pay" block). */}
             </div>
           </div>
 

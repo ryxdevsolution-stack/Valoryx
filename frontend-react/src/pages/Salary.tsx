@@ -361,10 +361,17 @@ export default function SalaryPage() {
         </div>
       </div>
 
-      {/* 3-panel layout.
-          Mobile: auto-height, panels stack and page scrolls naturally.
-          Desktop (≥md): fixed viewport height so the 3 panels share the screen nicely. */}
-      <div className="grid grid-cols-1 md:grid-cols-[260px_1fr_1fr] gap-4 md:h-[calc(100vh-200px)] md:min-h-[500px]">
+      {/* Responsive panel layout.
+          Mobile (<md):  single column, panels stack and the page scrolls naturally.
+          Tablet (md):   employees + attendance side by side, salary spans the full
+                         width underneath — attendance keeps a usable calendar width
+                         instead of being squeezed into a third of a narrow screen.
+          Desktop (≥lg): 3 columns. Salary is capped rather than 1fr because its
+                         content (cycle list + stats) is sparse; the freed width goes
+                         to the attendance calendar, which is the data-dense panel.
+          Fixed viewport height only kicks in at lg, where all 3 panels are side by
+          side; below that the grid is auto-height so nothing gets squashed. */}
+      <div className="grid grid-cols-1 gap-4 md:grid-cols-[240px_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)_minmax(300px,340px)] lg:h-[calc(100vh-200px)] lg:min-h-[520px]">
         {/* Left: Employees */}
         <EmployeePanel
           employees={employees}
@@ -398,20 +405,22 @@ export default function SalaryPage() {
           <EmptySlate message="Select an employee to view attendance" />
         )}
 
-        {/* Right: Salary */}
-        {selected ? (
-          <SalaryPanel
-            employee={selected}
-            onNewCycle={() => setModal({ type: 'new-cycle' })}
-            onEditCycle={(cycle) => setModal({ type: 'edit-cycle', cycle })}
-            onAddAdvance={(cycles) => setModal({ type: 'add-advance', cycles })}
-            refreshSignal={cycleRefresh}
-            canManage={hasManagerAccess}
-            onCyclesChanged={() => setAttendanceRefresh(n => n + 1)}
-          />
-        ) : (
-          <EmptySlate message="Select an employee to view salary" />
-        )}
+        {/* Right: Salary — full width under the other two at md, own column at lg */}
+        <div className="md:col-span-2 lg:col-span-1 min-w-0 min-h-0">
+          {selected ? (
+            <SalaryPanel
+              employee={selected}
+              onNewCycle={() => setModal({ type: 'new-cycle' })}
+              onEditCycle={(cycle) => setModal({ type: 'edit-cycle', cycle })}
+              onAddAdvance={(cycles) => setModal({ type: 'add-advance', cycles })}
+              refreshSignal={cycleRefresh}
+              canManage={hasManagerAccess}
+              onCyclesChanged={() => setAttendanceRefresh(n => n + 1)}
+            />
+          ) : (
+            <EmptySlate message="Select an employee to view salary" />
+          )}
+        </div>
       </div>
 
       {/* Pending OT approvals — shown below the main panels when manager is viewing an employee */}
