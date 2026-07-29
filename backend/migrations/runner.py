@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 40
+CURRENT_SCHEMA_VERSION = 41
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -2132,6 +2132,36 @@ def _m040_employee_email(db):
     logging.info("[Migration] v40: employees.email added")
 
 
+def _m041_client_entry_dev_id(db):
+    """v41: client_entry.dev_id — links a tenant to the external API developer
+    (see models/client_model.py). The `developers`/`api_keys` tables are created
+    by create_all() because they are new tables, but an existing client_entry
+    never gains the column that way, so offline installs 500 on every login
+    (the login query selects all client_entry model columns)."""
+    inspector = sa_inspect(db.engine)
+    dialect = db.engine.dialect.name
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, dialect)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    # No FK in the ALTER: SQLite cannot add a column with a REFERENCES clause to
+    # an existing table, and the relationship is already declared on the model.
+    _add_col('client_entry', 'dev_id', 'VARCHAR(36) NULL')
+
+    db.session.commit()
+    logging.info("[Migration] v41: client_entry.dev_id added")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -2174,6 +2204,7 @@ MIGRATIONS = [
     (38, _m038_salary_deductions_and_manual_hours),
     (39, _m039_attendance_hour_deduction),
     (40, _m040_employee_email),
+    (41, _m041_client_entry_dev_id),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────
