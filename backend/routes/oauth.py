@@ -293,7 +293,13 @@ def _get_redirect_uri(allow_self_origin: bool = False) -> str | None:
             parsed = urlparse(referer)
             origin = f"{parsed.scheme}://{parsed.netloc}".rstrip('/')
     if not origin and allow_self_origin:
-        origin = (request.host_url or '').rstrip('/')
+        # Prefer the configured public URL over request.host_url: ProxyFix runs
+        # with x_host=0, so behind nginx host_url reflects whatever Host the
+        # proxy forwards — often the upstream 127.0.0.1:PORT, which would never
+        # match CORS_ORIGINS and would 400 in production while passing locally.
+        origin = (Config.FRONTEND_URL or '').rstrip('/')
+        if not origin:
+            origin = (request.host_url or '').rstrip('/')
     if not origin:
         return None
     allowed = [o.strip().rstrip('/') for o in os.getenv('CORS_ORIGINS', '').split(',') if o.strip()]

@@ -265,7 +265,10 @@
       "Bash(awk '{print \" Built web bundle: \" $1}')",
       "Bash(awk '{print \" Python app code: \" $1}')",
       "Bash(awk '{print \"  Local SQLite DB:       \" $1}')",
-      "Bash(python3 -m pytest tests/test_sync_subscription_ownership.py -q)"
+      "Bash(python3 -m pytest tests/test_sync_subscription_ownership.py -q)",
+      "Bash(node -p \"JSON.stringify\\(require\\('./package.json'\\).build.win || {}, null, 2\\)\")",
+      "Bash(git ls-remote *)",
+      "Bash(echo \"=== exit: $? ===\")"
     ],
     "deny": [],
     "ask": [],

@@ -281,6 +281,7 @@ def test_unverified_google_email_rejected(http, monkeypatch):
 
 # 13. Cold start (app not running) sends no verifier — say so, don't cry "expired".
 def test_desktop_login_missing_verifier_reports_cold_start(http, monkeypatch, sample_user):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
     resp = _desktop_login(http, _assertion(sample_user.email, "google-uid-1"), verifier=None)
     assert resp.status_code == 401
     body = resp.get_json()
@@ -290,6 +291,7 @@ def test_desktop_login_missing_verifier_reports_cold_start(http, monkeypatch, sa
 
 # 14. A genuinely expired assertion is reported as expired, not as a bad key.
 def test_desktop_login_expired_reports_expired(http, monkeypatch, sample_user):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
     monkeypatch.setattr(oauth_mod, "DESKTOP_ASSERTION_TTL", -1)
     monkeypatch.setattr(oauth_mod, "DESKTOP_CLOCK_SKEW_LEEWAY", 0)
     resp = _desktop_login(http, _assertion(sample_user.email, "google-uid-1"))
@@ -309,6 +311,7 @@ def test_desktop_login_secret_mismatch_reports_bad_signature(http, monkeypatch, 
 
 # 16. Modest clock skew must NOT reject an assertion that was just minted.
 def test_desktop_login_tolerates_clock_skew(http, monkeypatch, sample_user):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
     # Assertion already 30s past its own exp; leeway must absorb it.
     monkeypatch.setattr(oauth_mod, "DESKTOP_ASSERTION_TTL", -30)
     resp = _desktop_login(http, _assertion(sample_user.email, "google-uid-1"))
@@ -318,7 +321,11 @@ def test_desktop_login_tolerates_clock_skew(http, monkeypatch, sample_user):
 # 17. redirect=1 sends the browser straight to Google, with no Origin/Referer
 #     (a top-level navigation opened by the desktop app).
 def test_authorize_redirect_goes_straight_to_google(http, monkeypatch):
-    monkeypatch.setenv("CORS_ORIGINS", "http://localhost")
+    monkeypatch.setattr(oauth_mod.Config, "GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
+    # A top-level navigation carries no Origin/Referer, so the endpoint falls back
+    # to the configured public URL — which must itself be an allowed origin.
+    monkeypatch.setattr(oauth_mod.Config, "FRONTEND_URL", _TEST_ORIGIN)
+    monkeypatch.setenv("CORS_ORIGINS", _TEST_ORIGIN)
     resp = http.get("/api/oauth/google/authorize?desktop=valoryx&challenge=abc&redirect=1")
     assert resp.status_code == 302
     assert resp.headers["Location"].startswith("https://accounts.google.com/")
@@ -327,6 +334,7 @@ def test_authorize_redirect_goes_straight_to_google(http, monkeypatch):
 
 # 18. Without redirect=1 the endpoint still returns JSON for the web SPA.
 def test_authorize_without_redirect_still_returns_json(http, monkeypatch):
+    monkeypatch.setattr(oauth_mod.Config, "GOOGLE_CLIENT_ID", "test-client-id.apps.googleusercontent.com")
     monkeypatch.setenv("CORS_ORIGINS", _TEST_ORIGIN)
     resp = http.get("/api/oauth/google/authorize", headers={"Origin": _TEST_ORIGIN})
     assert resp.status_code == 200
