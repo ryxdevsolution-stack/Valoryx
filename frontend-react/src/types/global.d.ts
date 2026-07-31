@@ -59,6 +59,9 @@ interface ElectronAPI {
   onDesktopOAuth?: (callback: (handoff: DesktopOAuthHandoff) => void) => void;
   removeDesktopOAuth?: () => void;
   getPendingOAuth?: () => Promise<DesktopOAuthHandoff | null>;
+  // Manual fallback when the valoryx:// deep link never arrives: the main
+  // process pairs the pasted code with the PKCE verifier it still holds.
+  redeemOAuthCode?: (code: string) => Promise<DesktopOAuthHandoff | null>;
   installUpdate?: () => Promise<void>;
   checkForUpdates?: () => Promise<{ success: boolean; version?: string; error?: string }>;
   getAppVersion?: () => Promise<string>;

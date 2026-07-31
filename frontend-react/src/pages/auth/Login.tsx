@@ -3,6 +3,7 @@ import { useNavigate, Link } from 'react-router-dom'
 import { useClient } from '@/contexts/ClientContext'
 import api from '@/lib/api'
 import { mapOAuthLoginResponse } from '@/lib/oauthSession'
+import { useDesktopGoogleHandoff } from '@/hooks/useDesktopGoogleHandoff'
 
 const isElectron = typeof window !== 'undefined' && !!(window as any).electronAPI
 
@@ -15,12 +16,6 @@ export default function LoginPage() {
   const [error, setError] = useState('')
   const [loading, setLoading] = useState(false)
   const [showPassword, setShowPassword] = useState(false)
-  // Desktop Google sign-in: true while the system browser is handling consent.
-  const [googleWaiting, setGoogleWaiting] = useState(false)
-  // Manual sign-in-code fallback, shown while waiting on the browser.
-  const [showCodeEntry, setShowCodeEntry] = useState(false)
-  const [pastedCode, setPastedCode] = useState('')
-  const [redeeming, setRedeeming] = useState(false)
 
   // Single-session enforcement state
   const [sessionConflict, setSessionConflict] = useState<null | {
@@ -278,15 +273,9 @@ export default function LoginPage() {
     setError('')
     // Desktop: Google blocks OAuth inside the Electron window, so open the
     // system browser to the web login. It bounces a signed assertion back via
-    // the valoryx:// deep link, received by the effect below.
+    // the valoryx:// deep link, received by useDesktopGoogleHandoff.
     if (isElectron) {
-      const electronAPI = (window as any).electronAPI
-      if (electronAPI?.loginWithGoogle) {
-        setGoogleWaiting(true)
-        electronAPI.loginWithGoogle()
-        return
-      }
-      setError('Google sign-in is not available right now.')
+      if (!google.start()) setError('Google sign-in is not available right now.')
       return
     }
     try {
@@ -341,7 +330,6 @@ export default function LoginPage() {
         })
         const { token, user, client, userData, clientData } = mapOAuthLoginResponse(res.data)
         setClientData(userData, clientData, token)
-        setGoogleWaiting(false)
         if (user.must_change_password) {
           localStorage.setItem('must_change_password', 'true')
           navigate('/change-password', { replace: true })
@@ -351,7 +339,6 @@ export default function LoginPage() {
           navigate('/billing/create', { replace: true })
         }
       } catch (err: any) {
-        setGoogleWaiting(false)
         setError(err?.response?.data?.error || 'Google sign-in failed. Please try again.')
       }
     },
@@ -359,39 +346,17 @@ export default function LoginPage() {
     [],
   )
 
+  // Desktop only: the hook opens the browser, receives the valoryx:// handoff
+  // (or a pasted code) and calls processAssertion with it.
+  const google = useDesktopGoogleHandoff(processAssertion)
+
   // Manual fallback: hand the pasted code to the main process, which pairs it
   // with the PKCE verifier it still holds, then run the normal exchange.
   async function submitPastedCode() {
-    const code = pastedCode.trim()
-    if (!code) return
-    setRedeeming(true)
     setError('')
-    try {
-      const electronAPI = (window as any).electronAPI
-      const handoff = await electronAPI?.redeemOAuthCode?.(code)
-      if (!handoff?.assertion) {
-        setError('That code could not be read. Copy it again from the browser.')
-        return
-      }
-      await processAssertion(handoff)
-    } finally {
-      setRedeeming(false)
-    }
+    const message = await google.submitCode()
+    if (message) setError(message)
   }
-
-  // Desktop only: receive the handoff assertion from the valoryx:// deep link,
-  // exchange it with the LOCAL backend for a local session, then sign in.
-  useEffect(() => {
-    if (!isElectron) return
-    const electronAPI = (window as any).electronAPI
-    if (!electronAPI?.onDesktopOAuth) return
-
-    electronAPI.onDesktopOAuth(processAssertion)
-    // Cold start: a handoff may have arrived before this listener attached.
-    electronAPI.getPendingOAuth?.().then((h: DesktopOAuthHandoff | null) => { if (h) processAssertion(h) })
-
-    return () => { electronAPI.removeDesktopOAuth?.() }
-  }, [processAssertion]) // eslint-disable-line react-hooks/exhaustive-deps
 
   return (
     <div className="min-h-screen flex items-center justify-center p-4 bg-[#271E37] relative overflow-hidden">
@@ -618,7 +583,7 @@ export default function LoginPage() {
               <button
                 type="button"
                 onClick={handleGoogleLogin}
-                disabled={googleWaiting}
+                disabled={google.waiting}
                 className="w-full flex items-center justify-center gap-3 py-3 bg-white/5 border border-white/15 rounded-lg text-white hover:bg-white/10 transition-colors text-sm font-medium disabled:opacity-60 disabled:cursor-not-allowed"
               >
                 <svg viewBox="0 0 24 24" className="w-5 h-5 flex-shrink-0" xmlns="http://www.w3.org/2000/svg">
@@ -627,9 +592,9 @@ export default function LoginPage() {
                   <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l2.85-2.22.81-.62z" fill="#FBBC05"/>
                   <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" fill="#EA4335"/>
                 </svg>
-                {googleWaiting ? 'Waiting for browser…' : 'Continue with Google'}
+                {google.waiting ? 'Waiting for browser…' : 'Continue with Google'}
               </button>
-              {googleWaiting && (
+              {google.waiting && (
                 <div className="mt-3 space-y-2">
                   <p className="text-center text-xs text-slate-400">
                     Complete sign-in in your browser, then return to this window.
@@ -638,10 +603,10 @@ export default function LoginPage() {
                       the valoryx:// scheme, which silently fails when the OS has
                       no handler registered for it. Pasting the code does the same
                       exchange — the PKCE verifier still never leaves this app. */}
-                  {!showCodeEntry ? (
+                  {!google.showCodeEntry ? (
                     <button
                       type="button"
-                      onClick={() => setShowCodeEntry(true)}
+                      onClick={() => google.setShowCodeEntry(true)}
                       className="w-full text-center text-xs text-slate-400 hover:text-white underline underline-offset-2 transition-colors"
                     >
                       App didn't open? Paste the sign-in code instead
@@ -653,8 +618,8 @@ export default function LoginPage() {
                       </label>
                       <textarea
                         id="oauth-code"
-                        value={pastedCode}
-                        onChange={e => setPastedCode(e.target.value)}
+                        value={google.pastedCode}
+                        onChange={e => google.setPastedCode(e.target.value)}
                         rows={3}
                         placeholder="Paste the code shown in your browser…"
                         className="w-full px-3 py-2 bg-white/5 border border-white/15 rounded-lg text-[11px] font-mono text-white placeholder-slate-600 resize-none outline-none focus:ring-2 focus:ring-[#5227FF]"
@@ -662,10 +627,10 @@ export default function LoginPage() {
                       <button
                         type="button"
                         onClick={submitPastedCode}
-                        disabled={!pastedCode.trim() || redeeming}
+                        disabled={!google.pastedCode.trim() || google.redeeming}
                         className="w-full py-2.5 rounded-lg bg-[#5227FF] hover:bg-[#4520d8] disabled:opacity-50 disabled:cursor-not-allowed text-white text-sm font-semibold transition-colors"
                       >
-                        {redeeming ? 'Signing in…' : 'Sign in with this code'}
+                        {google.redeeming ? 'Signing in…' : 'Sign in with this code'}
                       </button>
                     </div>
                   )}

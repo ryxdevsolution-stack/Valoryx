@@ -183,6 +183,72 @@ def _verify_desktop_assertion(token: str):
     return payload, None
 
 
+# Distinct, actionable messages. These are returned by the LOCAL loopback backend
+# to the app's own renderer, so naming the cause leaks nothing to a remote
+# attacker but saves a support round-trip.
+_HANDOFF_ERRORS = {
+    'expired': 'This sign-in took too long and expired. Please try again.',
+    'bad_signature': 'Sign-in could not be verified on this device. '
+                     'The desktop sign-in key does not match the server — '
+                     'please reinstall the latest version or contact support.',
+    'replayed': 'This sign-in link was already used. Please sign in again.',
+    'not_configured': 'Desktop sign-in is not configured on this device.',
+}
+
+
+def verify_desktop_handoff(assertion: str, verifier: str):
+    """Verify a desktop {assertion, verifier} handoff pair.
+
+    Returns `(payload, None, 200)` when the pair is good, or
+    `(None, error_body, status)` where error_body is ready to `jsonify`.
+
+    Shared by `/oauth/desktop-login` (exchange for a local session) and
+    `/electron/setup` (first-run data sync), so both get identical verification.
+    Routing both through here also means they share `_desktop_nonce_cache`: an
+    assertion spent on one endpoint cannot be replayed against the other.
+    """
+    if not Config.DESKTOP_OAUTH_SECRET:
+        return None, {'success': False, 'error': 'Desktop sign-in is not configured',
+                      'reason': 'not_configured'}, 501
+
+    payload, reason = _verify_desktop_assertion(assertion)
+    if not payload:
+        return None, {
+            'success': False,
+            'error': _HANDOFF_ERRORS.get(reason, 'Sign-in could not be completed. Please try again.'),
+            'reason': reason,
+        }, 401
+
+    # PKCE: the assertion is only honored alongside the verifier whose SHA-256
+    # matches the embedded challenge. The verifier never travels in the deep
+    # link, so an app that intercepts the deep link cannot redeem the assertion.
+    challenge = (payload.get('challenge') or '').strip()
+    if not verifier:
+        # The app was not running when the deep link arrived, so it cold started
+        # and the in-memory verifier from the previous process is gone. Retrying
+        # works because the app is running now — say exactly that.
+        logger.info('Desktop handoff missing verifier (app cold started from deep link)')
+        return None, {
+            'success': False,
+            'error': 'The app was not running when sign-in completed. '
+                     'Now that it is open, please click "Continue with Google" again.',
+            'reason': 'no_verifier',
+        }, 401
+    if not challenge or _pkce_challenge(verifier) != challenge:
+        logger.warning('Desktop handoff PKCE verification failed')
+        return None, {
+            'success': False,
+            'error': 'Sign-in could not be verified. Please try again.',
+            'reason': 'pkce_mismatch',
+        }, 401
+
+    if not (payload.get('email') or '').strip():
+        return None, {'success': False, 'error': 'Invalid sign-in assertion',
+                      'reason': 'no_email'}, 401
+
+    return payload, None, 200
+
+
 def _finalize_login(user, client, client_ip: str, platform: str = 'web'):
     """Create a session, mint the local JWT, and build the {token,user,client}
     response. Shared by the web Google callback and the desktop-login endpoint
@@ -586,62 +652,20 @@ def desktop_login():
     backend. The Google identity is only trusted via the shared-secret HMAC
     signature — this endpoint never talks to Google.
     POST /api/oauth/desktop-login
-    Body: { "assertion": "<jwt>" }
+    Body: { "assertion": "<jwt>", "verifier": "<pkce verifier>" }
     """
-    if not Config.DESKTOP_OAUTH_SECRET:
-        return jsonify({'success': False, 'error': 'Desktop sign-in is not configured'}), 501
-
     client_ip = get_client_ip()
     data = request.get_json() or {}
-    assertion = (data.get('assertion') or '').strip()
-    verifier = (data.get('verifier') or '').strip()
 
-    payload, reason = _verify_desktop_assertion(assertion)
+    payload, error_body, status = verify_desktop_handoff(
+        (data.get('assertion') or '').strip(),
+        (data.get('verifier') or '').strip(),
+    )
     if not payload:
-        # Distinct, actionable messages. These are returned by the LOCAL
-        # loopback backend to the app's own renderer, so naming the cause leaks
-        # nothing to a remote attacker but saves a support round-trip.
-        messages = {
-            'expired': 'This sign-in took too long and expired. Please try again.',
-            'bad_signature': 'Sign-in could not be verified on this device. '
-                             'The desktop sign-in key does not match the server — '
-                             'please reinstall the latest version or contact support.',
-            'replayed': 'This sign-in link was already used. Please sign in again.',
-            'not_configured': 'Desktop sign-in is not configured on this device.',
-        }
-        return jsonify({
-            'success': False,
-            'error': messages.get(reason, 'Sign-in could not be completed. Please try again.'),
-            'reason': reason,
-        }), 401
-
-    # PKCE: the assertion is only honored alongside the verifier whose SHA-256
-    # matches the embedded challenge. The verifier never travels in the deep
-    # link, so an app that intercepts the deep link cannot redeem the assertion.
-    challenge = (payload.get('challenge') or '').strip()
-    if not verifier:
-        # The app was not running when the deep link arrived, so it cold started
-        # and the in-memory verifier from the previous process is gone. Retrying
-        # works because the app is running now — say exactly that.
-        logger.info('Desktop login missing verifier (app cold started from deep link)')
-        return jsonify({
-            'success': False,
-            'error': 'The app was not running when sign-in completed. '
-                     'Now that it is open, please click "Continue with Google" again.',
-            'reason': 'no_verifier',
-        }), 401
-    if not challenge or _pkce_challenge(verifier) != challenge:
-        logger.warning('Desktop login PKCE verification failed')
-        return jsonify({
-            'success': False,
-            'error': 'Sign-in could not be verified. Please try again.',
-            'reason': 'pkce_mismatch',
-        }), 401
+        return jsonify(error_body), status
 
     email = (payload.get('email') or '').lower().strip()
     google_id = (payload.get('google_id') or '').strip()
-    if not email:
-        return jsonify({'success': False, 'error': 'Invalid sign-in assertion'}), 401
 
     # The user must already exist on this device (synced from the cloud).
     user = User.query.filter_by(email=email, is_active=True).first()

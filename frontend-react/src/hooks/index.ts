@@ -17,3 +17,6 @@ export {
 
 // Device detection hooks
 export { useMobileDetect } from './useMobileDetect';
+
+// Desktop (Electron) Google sign-in handoff
+export { useDesktopGoogleHandoff } from './useDesktopGoogleHandoff';

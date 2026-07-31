@@ -4,6 +4,12 @@ Electron desktop app endpoints.
 All endpoints run on the local Flask server (SQLite mode).
 Setup connects directly to Supabase using DB_URL from .env —
 no live server dependency needed.
+
+Setup accepts two proofs that the caller controls the account's email:
+email + password, or a cloud-signed, PKCE-bound Google assertion. The second
+exists because users who signed up with Google have no password they know —
+`google_callback` stores a random hash for them — which otherwise locked them
+out of the app entirely on first install.
 """
 
 import os
@@ -13,6 +19,7 @@ from datetime import datetime
 from flask import Blueprint, request, jsonify
 from extensions import db
 from sqlalchemy import create_engine, text as sa_text
+from config import Config
 from utils.rate_limiter import rate_limit
 
 electron_bp = Blueprint('electron', __name__)
@@ -21,19 +28,38 @@ electron_bp = Blueprint('electron', __name__)
 _GENERIC_AUTH_ERROR = 'Invalid email or password'
 
 
+class _SetupAuthError(Exception):
+    """Identity failure during setup, carrying the status to report.
+
+    The password path always reports 401 + a generic message (an unauthenticated
+    caller must not be able to enumerate accounts). The Google path has already
+    proven control of the address, so it can name the cause.
+    """
+
+    def __init__(self, message: str, status: int = 401):
+        super().__init__(message)
+        self.status = status
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # GET /api/electron/needs-setup
 # ─────────────────────────────────────────────────────────────────────────────
 
 @electron_bp.route('/api/electron/needs-setup', methods=['GET'])
 def needs_setup():
-    """Returns true if local SQLite has no users (first launch)."""
+    """Returns true if local SQLite has no users (first launch).
+
+    `google_enabled` tells the setup screen whether to offer "Continue with
+    Google". The assertion path is inert without the shared secret, and a button
+    that can only ever return 501 is worse than no button at all.
+    """
+    google_enabled = bool(Config.DESKTOP_OAUTH_SECRET)
     try:
         from models.user_model import User
         count = db.session.query(User.user_id).count()
-        return jsonify({'needs_setup': count == 0}), 200
+        return jsonify({'needs_setup': count == 0, 'google_enabled': google_enabled}), 200
     except Exception:
-        return jsonify({'needs_setup': True}), 200
+        return jsonify({'needs_setup': True, 'google_enabled': google_enabled}), 200
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -46,36 +72,66 @@ def needs_setup():
 def setup():
     """
     First-time setup for Electron app.
-    1. Connects directly to Supabase using DB_URL.
-    2. Verifies email + password against Supabase users table.
+    1. Establishes who the caller is — Google assertion or email + password.
+    2. Connects directly to Supabase using DB_URL and resolves that identity.
     3. Fetches all client data from Supabase.
     4. Inserts everything into local SQLite.
+
+    Body: {"assertion": "<jwt>", "verifier": "<pkce>"} or {"email", "password"}
+
+    This only syncs data; it never mints a session. The user signs in on the
+    normal login screen afterwards, which now works because the local user
+    exists.
     """
     body = request.get_json() or {}
-    email = body.get('email', '').strip()
-    password = body.get('password', '').strip()
+    assertion = (body.get('assertion') or '').strip()
 
-    if not email or not password:
-        return jsonify({'error': 'Email and password are required'}), 400
+    if assertion:
+        # Google path: the cloud has already verified this Google account and
+        # signed a short-lived assertion bound to the PKCE verifier that never
+        # left the Electron main process.
+        from routes.oauth import verify_desktop_handoff
+        payload, error_body, status = verify_desktop_handoff(
+            assertion, (body.get('verifier') or '').strip()
+        )
+        if not payload:
+            return jsonify(error_body), status
+        email = (payload.get('email') or '').lower().strip()
+        google_id = (payload.get('google_id') or '').strip()
+        password = None
+    else:
+        email = body.get('email', '').strip()
+        password = body.get('password', '').strip()
+        google_id = ''
+        if not email or not password:
+            return jsonify({'error': 'Email and password are required'}), 400
 
     db_url = os.environ.get('DB_URL')
     if not db_url:
         return jsonify({'error': 'DB_URL not configured in .env'}), 500
 
-    # Step 1 — connect to Supabase and authenticate
+    # Step 1 — connect to Supabase and resolve the identity
+    engine = None
     try:
         engine = create_engine(
             db_url,
             pool_pre_ping=True,
             connect_args={'connect_timeout': 30}
         )
-        client_id, user_row = _authenticate_supabase(engine, email, password)
-    except ValueError:
-        # All credential failures use the same generic message — never echo
-        # exception text (e.g. bcrypt's 'Invalid salt') to the caller
-        return jsonify({'error': _GENERIC_AUTH_ERROR}), 401
+        if password is None:
+            client_id = _authenticate_supabase_google(engine, email, google_id)
+        else:
+            client_id = _authenticate_supabase(engine, email, password)
+    except _SetupAuthError as e:
+        # Never echo raw exception text (e.g. bcrypt's 'Invalid salt') — the
+        # message and status are chosen deliberately by the authenticator.
+        if engine is not None:
+            engine.dispose()
+        return jsonify({'error': str(e)}), e.status
     except Exception as e:
         logging.error(f'[Electron] Supabase auth failed: {e}')
+        if engine is not None:
+            engine.dispose()
         return jsonify({'error': 'Cannot connect to the server. Please try again later.'}), 503
 
     # Step 2 — fetch all client data from Supabase
@@ -106,15 +162,16 @@ def setup():
 # Helpers
 # ─────────────────────────────────────────────────────────────────────────────
 
-def _authenticate_supabase(engine, email: str, password: str):
-    """
-    Verify credentials directly against Supabase users table.
-    Returns (client_id, user_row) or raises ValueError on bad credentials.
+def _fetch_supabase_user(engine, email: str):
+    """Look up a usable (active, not soft-deleted) Supabase user by email.
+
+    Returns the row or None. Deliberately says nothing about *why* a row is
+    unusable — each caller decides how much to reveal.
     """
     with engine.connect() as conn:
         row = conn.execute(
             sa_text("""
-                SELECT user_id, client_id, password_hash, is_active, deleted_at
+                SELECT user_id, client_id, password_hash, is_active, deleted_at, google_id
                 FROM users
                 WHERE email = :email
                 LIMIT 1
@@ -122,21 +179,59 @@ def _authenticate_supabase(engine, email: str, password: str):
             {'email': email}
         ).mappings().first()
 
-    if not row:
-        raise ValueError(_GENERIC_AUTH_ERROR)
+    if not row or row['deleted_at'] is not None or not row['is_active']:
+        return None
+    return row
 
-    if row['deleted_at'] is not None or not row['is_active']:
-        raise ValueError(_GENERIC_AUTH_ERROR)
+
+def _authenticate_supabase(engine, email: str, password: str) -> str:
+    """
+    Verify credentials directly against Supabase users table.
+    Returns client_id, or raises _SetupAuthError on bad credentials.
+    """
+    row = _fetch_supabase_user(engine, email)
+    if not row:
+        raise _SetupAuthError(_GENERIC_AUTH_ERROR)
 
     # Empty/NULL hash (invite-pending account) would make bcrypt raise
     # 'Invalid salt' — treat as a normal credential failure
     if not row['password_hash']:
-        raise ValueError(_GENERIC_AUTH_ERROR)
+        raise _SetupAuthError(_GENERIC_AUTH_ERROR)
 
     if not bcrypt.checkpw(password.encode('utf-8'), row['password_hash'].encode('utf-8')):
-        raise ValueError(_GENERIC_AUTH_ERROR)
+        raise _SetupAuthError(_GENERIC_AUTH_ERROR)
 
-    return str(row['client_id']), dict(row)
+    return str(row['client_id'])
+
+
+def _authenticate_supabase_google(engine, email: str, google_id: str) -> str:
+    """
+    Resolve a Supabase user from a Google identity already verified by the cloud.
+    Returns client_id, or raises _SetupAuthError.
+
+    No password is involved: users who signed up with Google hold a random hash
+    they can never type. The cloud only mints assertions for Google-*verified*
+    addresses, so trusting the email here is the same trust boundary the web
+    auto-link already relies on.
+
+    This reads Supabase but never writes to it — linking google_id onto the
+    local record happens later, in desktop_login.
+    """
+    row = _fetch_supabase_user(engine, email)
+    if not row:
+        # Naming this is safe: the caller has already proven control of the
+        # address, so there is nothing left to enumerate.
+        raise _SetupAuthError(f'No Valoryx account found for {email}.', 404)
+
+    linked = (row['google_id'] or '').strip()
+    if linked and google_id and linked != google_id:
+        logging.warning('[Electron] setup google_id mismatch for %s', email)
+        raise _SetupAuthError(
+            'This Google account does not match the account on file. '
+            'Please contact your administrator.', 401
+        )
+
+    return str(row['client_id'])
 
 
 def _serialize_row(row: dict) -> dict:

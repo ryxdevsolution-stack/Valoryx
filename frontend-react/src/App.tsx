@@ -42,6 +42,10 @@ export default function App() {
   // Non-Electron (web): always ready. Electron: wait for backend.
   const [backendReady, setBackendReady] = useState(!isElectron)
   const [needsSetup, setNeedsSetup] = useState(false)
+  // Whether this build's local backend can verify Google sign-in assertions.
+  // Reported by the same needs-setup call, so the setup screen never renders a
+  // Google button that could only fail.
+  const [googleEnabled, setGoogleEnabled] = useState(false)
 
   useEffect(() => {
     if (!isElectron) return
@@ -71,7 +75,10 @@ export default function App() {
   useEffect(() => {
     if (!isElectron || !backendReady) return
     api.get('/electron/needs-setup')
-      .then(r => { if (r.data.needs_setup) setNeedsSetup(true) })
+      .then(r => {
+        if (r.data.needs_setup) setNeedsSetup(true)
+        setGoogleEnabled(!!r.data.google_enabled)
+      })
       .catch(() => {})
   }, [isElectron, backendReady])
 
@@ -88,7 +95,9 @@ export default function App() {
   }, [])
 
   if (!backendReady) return <ElectronSplash status={startupStatus} />
-  if (isElectron && needsSetup) return <ElectronSetup onComplete={() => setNeedsSetup(false)} />
+  if (isElectron && needsSetup) {
+    return <ElectronSetup googleEnabled={googleEnabled} onComplete={() => setNeedsSetup(false)} />
+  }
 
   return (
     // Outermost on purpose: a throw inside ClientProvider/DataProvider render
