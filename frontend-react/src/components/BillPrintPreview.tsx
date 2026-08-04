@@ -260,6 +260,26 @@ export default function BillPrintPreview({ bill, clientInfo, onClose, autoPrint 
                     </div>
                   ) : null;
                 })()}
+
+                {/* v42 partial payment — mirrors the thermal receipt so the
+                    on-screen preview matches what actually prints. */}
+                {(() => {
+                  const total = Math.round(Number(bill.final_amount ?? bill.total_amount ?? 0));
+                  const paid = bill.paid_amount != null ? Number(bill.paid_amount)
+                    : (bill.payment_status === 'pending' ? 0 : total);
+                  const balance = bill.balance_due != null ? Number(bill.balance_due)
+                    : Math.max(total - paid, 0);
+                  return balance > 0 ? (
+                    <>
+                      <div style={{ marginBottom: '0.5mm' }}>
+                        <span style={{ fontSize: '11pt', fontWeight: '700' }}>Paid Amount : {paid.toFixed(2)}</span>
+                      </div>
+                      <div style={{ marginBottom: '0.5mm' }}>
+                        <span style={{ fontSize: '11pt', fontWeight: '700' }}>Balance Due : {balance.toFixed(2)}</span>
+                      </div>
+                    </>
+                  ) : null;
+                })()}
               </div>
 
               <div style={{ borderBottom: '1px dashed #000', margin: '1.5mm 0' }}></div>

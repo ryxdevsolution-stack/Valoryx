@@ -201,16 +201,24 @@ def _validate_email(value: str | None) -> str | None:
 
 
 def _fmt_display_date(value) -> str:
-    """Format an ISO date ('2026-07-01') or Z-suffixed UTC datetime
-    ('2026-07-28T09:12:49Z') as '01 Jul 2026' for payslip display."""
+    """Format an ISO date ('2026-07-01') or datetime ('2026-07-28T09:12:49Z',
+    '2026-08-03 18:08:36') as '01 Jul 2026' for payslip display.
+
+    SQLite hands back paid_at space-separated rather than T-separated, which the
+    previous 'T' in s test missed — it fell through to strptime('%Y-%m-%d'),
+    raised, and printed the raw timestamp on the payslip.
+    """
     if not value:
         return '—'
     s = str(value).rstrip('Z')
     try:
-        dt = datetime.fromisoformat(s) if 'T' in s else datetime.strptime(s, '%Y-%m-%d')
-        return dt.strftime('%d %b %Y')
+        dt = datetime.fromisoformat(s)
     except (ValueError, TypeError):
-        return str(value)
+        try:
+            dt = datetime.strptime(s[:10], '%Y-%m-%d')
+        except (ValueError, TypeError):
+            return str(value)
+    return dt.strftime('%d %b %Y')
 
 
 _ONES = ['', 'One', 'Two', 'Three', 'Four', 'Five', 'Six', 'Seven', 'Eight', 'Nine',
@@ -226,6 +234,11 @@ def _fmt_amount_in_words(amount) -> str:
     n = int(round(float(amount or 0)))
     if n == 0:
         return 'Zero'
+    # Net pay goes negative when advances exceed earnings. divmod on a negative
+    # int wraps (−138 → "Nineteen Crore Ninety Nine Lakh..."), so strip the sign
+    # first and say it in words instead.
+    if n < 0:
+        return f'Minus {_fmt_amount_in_words(-n)}'
 
     def _two_digit(x):
         if x < 20:
@@ -276,6 +289,20 @@ def _compute_total_minutes(check_in_dt: datetime, check_out_dt: datetime) -> int
 # salary calculator. Paid statuses count as one full day of pay; unpaid count as 0.
 _DAY_OFF_PAID_STATUSES = {'paid_leave', 'holiday', 'weekly_off'}
 _DAY_OFF_UNPAID_STATUSES = {'absent', 'unpaid_leave'}
+
+# Statuses a manual/bulk hours entry must never overwrite. Each one is an
+# explicit decision someone recorded about that day; silently turning it into a
+# worked day corrupts both the attendance record and the salary calculation.
+_PROTECTED_ATTENDANCE_STATUSES = _DAY_OFF_PAID_STATUSES | _DAY_OFF_UNPAID_STATUSES
+
+# Human-readable labels for those statuses, used when reporting skipped days.
+_STATUS_LABELS = {
+    'paid_leave': 'paid leave',
+    'unpaid_leave': 'unpaid leave',
+    'holiday': 'a holiday',
+    'weekly_off': 'a weekly off',
+    'absent': 'absent',
+}
 _DAY_OFF_STATUSES = _DAY_OFF_PAID_STATUSES | _DAY_OFF_UNPAID_STATUSES
 
 # Fixed deduction categories — covers cash advances plus the common in-kind
@@ -1022,12 +1049,23 @@ def _upsert_manual_hours(employee_id: str, client_id: str, work_date, total_minu
     now_iso = _now_iso()
     existing = db.session.execute(
         text(
-            "SELECT attendance_id FROM employee_attendance "
+            "SELECT attendance_id, status FROM employee_attendance "
             "WHERE employee_id = :eid AND client_id = :cid AND work_date = :wd "
             "  AND is_active = TRUE LIMIT 1"
         ),
         {'eid': employee_id, 'cid': client_id, 'wd': str(work_date)}
     ).fetchone()
+
+    # A day already marked as leave, holiday, weekly-off or absent is a
+    # DELIBERATE record — never silently convert it to a worked day. The UPDATE
+    # below forces status='present', so without this guard a bulk range over
+    # "01/07 → 31/07" would wipe out every leave marked in that month and pay
+    # the employee for days they did not work.
+    if existing and (existing[1] or '').lower() in _PROTECTED_ATTENDANCE_STATUSES:
+        return {'employee_id': employee_id, 'work_date': str(work_date), 'success': False,
+                'skipped': True, 'code': 'DAY_OFF',
+                'status': existing[1],
+                'error': f'{work_date} is marked {_STATUS_LABELS.get(existing[1].lower(), existing[1])} — left unchanged'}
 
     if existing:
         attendance_id = existing[0]
@@ -1145,10 +1183,18 @@ def manual_attendance(employee_id):
         return jsonify({'success': True, 'data': _row_to_dict(row), 'message': f'{hours}h recorded for {from_d}'}), 200
 
     succeeded = sum(1 for r in results if r['success'])
+    # Days deliberately left alone (leave/holiday/absent) are reported apart
+    # from real failures — they are the expected outcome, not an error.
+    skipped = sum(1 for r in results if r.get('skipped'))
+    failed = len(results) - succeeded - skipped
+    message = f'{hours}h recorded for {succeeded} of {len(results)} days'
+    if skipped:
+        message += f' — {skipped} skipped (leave/absent)'
     return jsonify({
         'success': True,
-        'data': {'results': results, 'summary': {'succeeded': succeeded, 'failed': len(results) - succeeded}},
-        'message': f'{hours}h recorded for {succeeded} of {len(results)} days',
+        'data': {'results': results,
+                 'summary': {'succeeded': succeeded, 'skipped': skipped, 'failed': failed}},
+        'message': message,
     }), 200
 
 
@@ -1207,10 +1253,16 @@ def bulk_manual_attendance():
     db.session.commit()
 
     succeeded = sum(1 for r in results if r['success'])
+    skipped = sum(1 for r in results if r.get('skipped'))
+    failed = len(results) - succeeded - skipped
+    message = f'{hours}h recorded for {succeeded} of {len(results)} employee-days'
+    if skipped:
+        message += f' — {skipped} skipped (leave/absent)'
     return jsonify({
         'success': True,
-        'data': {'results': results, 'summary': {'succeeded': succeeded, 'failed': len(results) - succeeded}},
-        'message': f'{hours}h recorded for {succeeded} of {len(results)} employee-days',
+        'data': {'results': results,
+                 'summary': {'succeeded': succeeded, 'skipped': skipped, 'failed': failed}},
+        'message': message,
     }), 200
 
 
@@ -1917,67 +1969,99 @@ def cycle_payslip(employee_id, cycle_id):
     buffer = BytesIO()
     doc = SimpleDocTemplate(
         buffer, pagesize=A4,
-        rightMargin=1.5 * cm, leftMargin=1.5 * cm, topMargin=1.2 * cm, bottomMargin=1.5 * cm,
+        rightMargin=1.5 * cm, leftMargin=1.5 * cm, topMargin=1.4 * cm, bottomMargin=1.5 * cm,
     )
     elements = []
     styles = getSampleStyleSheet()
 
-    # Explicit `leading` on every header style — without it, ReportLab falls back
-    # to the parent Normal style's leading (12, sized for 10pt text), which reads
-    # as an oversized gap between the two <br/>-joined address lines compared to
-    # the tight spaceAfter/spaceBefore between the title/name paragraphs above it.
-    # Setting leading ≈ 1.2× each style's own fontSize keeps the whole block even.
-    payslip_title_style = ParagraphStyle('PayslipTitle', parent=styles['Normal'], fontSize=16, leading=19,
-                                          alignment=TA_CENTER, spaceBefore=0, spaceAfter=4,
-                                          textColor=colors.HexColor('#1e293b'), fontName='Helvetica-Bold')
-    co_name_style = ParagraphStyle('CoName', parent=styles['Normal'], fontSize=12.5, leading=15,
-                                    alignment=TA_CENTER, spaceBefore=0, spaceAfter=3,
-                                    textColor=colors.HexColor('#1e293b'), fontName='Helvetica-Bold')
-    co_detail_style = ParagraphStyle('CoDetail', parent=styles['Normal'], fontSize=8.5, leading=11,
-                                      alignment=TA_CENTER, spaceBefore=0, spaceAfter=0,
-                                      textColor=colors.HexColor('#475569'), fontName='Helvetica')
+    # ── Palette ──────────────────────────────────────────────────────────────
+    # One ink colour, one muted, one accent, two greys. Every rule and fill on
+    # the page comes from here; the old version drew pure-black 0.5pt grid lines
+    # around every cell, which is what made it read like a spreadsheet dump.
+    INK = colors.HexColor('#0f172a')       # headings, amounts
+    MUTED = colors.HexColor('#64748b')     # labels, secondary text
+    ACCENT = colors.HexColor('#1d4ed8')    # net pay band, rules
+    LINE = colors.HexColor('#e2e8f0')      # hairline row separators
+    BAND = colors.HexColor('#f1f5f9')      # meta block / totals fill
+    CONTENT_W = 18 * cm
 
-    elements.append(Paragraph('Payslip', payslip_title_style))
-    elements.append(Paragraph((client.client_name if client else 'Business') or 'Business', co_name_style))
+    # Explicit `leading` on every style — without it ReportLab inherits Normal's
+    # leading (12, sized for 10pt), which opens an uneven gap between stacked
+    # lines. leading ≈ 1.25× fontSize keeps each block evenly set.
+    title_style = ParagraphStyle('PayslipTitle', parent=styles['Normal'], fontSize=22, leading=25,
+                                 alignment=TA_RIGHT, textColor=INK, fontName='Helvetica-Bold')
+    title_sub_style = ParagraphStyle('PayslipTitleSub', parent=styles['Normal'], fontSize=8.5, leading=11,
+                                     alignment=TA_RIGHT, textColor=MUTED, fontName='Helvetica')
+    co_name_style = ParagraphStyle('CoName', parent=styles['Normal'], fontSize=13, leading=16,
+                                   alignment=TA_LEFT, textColor=INK, fontName='Helvetica-Bold')
+    co_detail_style = ParagraphStyle('CoDetail', parent=styles['Normal'], fontSize=8.5, leading=11.5,
+                                     alignment=TA_LEFT, textColor=MUTED, fontName='Helvetica')
+
+    # ── Masthead: company on the left, document type on the right ────────────
+    # Centre-stacking everything (the old layout) wasted the top third of the
+    # page and gave the eye no entry point.
+    address_html = ''
     if client and client.address:
-        # Address may contain a comma-separated line — render each segment on its own line.
         address_lines = [seg.strip() for seg in client.address.replace('\n', ',').split(',') if seg.strip()]
-        elements.append(Paragraph('<br/>'.join(address_lines), co_detail_style))
-    elements.append(Spacer(1, 14))
+        address_html = '<br/>'.join(address_lines)
 
-    # Employee/period details — two label:value columns, no borders (plain text
-    # block like the reference), left column period info, right column employee info.
-    detail_label_style = ParagraphStyle('DetailLabel', parent=styles['Normal'], fontSize=9.5,
-                                         textColor=colors.HexColor('#1e293b'), fontName='Helvetica')
-    detail_value_style = ParagraphStyle('DetailValue', parent=styles['Normal'], fontSize=9.5,
-                                         textColor=colors.HexColor('#1e293b'), fontName='Helvetica')
-    rate_label = 'Rate / hr' if emp.get('pay_type') == 'hourly' else 'Rate / day'
-    left_rows = [
-        ('Pay Period', f"{_fmt_display_date(cycle['start_date'])} - {_fmt_display_date(cycle['end_date'])}"),
-        ('Worked Days', str(days_present + paid_off_days)),
-        (rate_label, f"{currency}{float(cycle.get('rate_snapshot') or 0):,.2f}"),
-    ]
-    right_rows = [
-        ('Employee name', emp['name']),
-        ('Phone', emp.get('phone') or '—'),
-        ('Email', emp.get('email') or '—'),
-    ]
-    detail_rows = []
-    for (ll, lv), (rl, rv) in zip(left_rows, right_rows):
-        detail_rows.append([
-            Paragraph(ll, detail_label_style), Paragraph(f': {lv}', detail_value_style),
-            Paragraph(rl, detail_label_style), Paragraph(f': {rv}', detail_value_style),
-        ])
-    detail_table = Table(detail_rows, colWidths=[3.2 * cm, 5.3 * cm, 3.2 * cm, 5.3 * cm])
-    detail_table.setStyle(TableStyle([
+    co_block = [Paragraph((client.client_name if client else 'Business') or 'Business', co_name_style)]
+    if address_html:
+        co_block.append(Paragraph(address_html, co_detail_style))
+
+    period_label = f"{_fmt_display_date(cycle['start_date'])} &#8211; {_fmt_display_date(cycle['end_date'])}"
+    masthead = Table(
+        [[co_block, [Paragraph('PAYSLIP', title_style), Paragraph(period_label, title_sub_style)]]],
+        colWidths=[11 * cm, 7 * cm],
+    )
+    masthead.setStyle(TableStyle([
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
         ('LEFTPADDING', (0, 0), (-1, -1), 0),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+        ('TOPPADDING', (0, 0), (-1, -1), 0),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
-    elements.append(detail_table)
+    elements.append(masthead)
+    elements.append(Spacer(1, 10))
+    elements.append(HRFlowable(width='100%', thickness=2, color=ACCENT, spaceBefore=0, spaceAfter=0))
     elements.append(Spacer(1, 16))
 
-    # Earnings vs. deductions — mapped from what the app actually tracks:
+    # ── Employee / period meta, set in a tinted block ────────────────────────
+    meta_label_style = ParagraphStyle('MetaLabel', parent=styles['Normal'], fontSize=7.5, leading=10,
+                                      textColor=MUTED, fontName='Helvetica-Bold')
+    meta_value_style = ParagraphStyle('MetaValue', parent=styles['Normal'], fontSize=10, leading=13,
+                                      textColor=INK, fontName='Helvetica-Bold')
+
+    rate_label = 'RATE / HOUR' if emp.get('pay_type') == 'hourly' else 'RATE / DAY'
+    meta_cells = [
+        ('EMPLOYEE', emp['name']),
+        ('WORKED DAYS', str(days_present + paid_off_days)),
+        (rate_label, f"{currency}{float(cycle.get('rate_snapshot') or 0):,.2f}"),
+        ('PHONE', emp.get('phone') or '—'),
+        ('EMAIL', emp.get('email') or '—'),
+        ('STATUS', 'PAID' if cycle['status'] == 'paid' else 'OPEN — PREVIEW'),
+    ]
+    meta_rows = []
+    for i in range(0, len(meta_cells), 3):
+        chunk = meta_cells[i:i + 3]
+        meta_rows.append([
+            [Paragraph(label, meta_label_style), Paragraph(value, meta_value_style)]
+            for label, value in chunk
+        ])
+    meta_table = Table(meta_rows, colWidths=[6 * cm, 6 * cm, 6 * cm])
+    meta_table.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), BAND),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 12),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+        ('TOPPADDING', (0, 0), (-1, -1), 10),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
+        ('LINEBELOW', (0, 0), (-1, -2), 0.5, colors.white),
+    ]))
+    elements.append(meta_table)
+    elements.append(Spacer(1, 18))
+
+    # ── Earnings vs. deductions ──────────────────────────────────────────────
     # earnings = regular pay + overtime; deductions = one row per non-zero category.
     earning_lines = [(f'Regular Pay ({days_present} present, {paid_off_days} paid off)', gross - ot_summary['total_ot_pay'])]
     if ot_summary['total_ot_minutes'] > 0:
@@ -1988,69 +2072,106 @@ def cycle_payslip(employee_id, cycle_id):
         for cat in CATEGORY_LABEL_MAP
         if deductions_by_category.get(cat, 0) > 0
     ]
-    if not deduction_lines:
-        deduction_lines = [('—', 0)]
+    no_deductions = not deduction_lines
+    if no_deductions:
+        deduction_lines = [('No deductions', 0)]
 
-    header_style = ParagraphStyle('TblHeader', parent=styles['Normal'], fontSize=10, alignment=TA_CENTER,
-                                   textColor=colors.HexColor('#1e293b'), fontName='Helvetica-Bold')
-    cell_style = ParagraphStyle('TblCell', parent=styles['Normal'], fontSize=9.5, textColor=colors.HexColor('#1e293b'), fontName='Helvetica')
+    header_style = ParagraphStyle('TblHeader', parent=styles['Normal'], fontSize=8, leading=10,
+                                  textColor=colors.white, fontName='Helvetica-Bold')
+    header_right_style = ParagraphStyle('TblHeaderRight', parent=header_style, alignment=TA_RIGHT)
+    cell_style = ParagraphStyle('TblCell', parent=styles['Normal'], fontSize=9.5, leading=13,
+                                textColor=INK, fontName='Helvetica')
+    muted_cell_style = ParagraphStyle('TblCellMuted', parent=cell_style, textColor=MUTED)
     cell_right_style = ParagraphStyle('TblCellRight', parent=cell_style, alignment=TA_RIGHT)
     bold_style = ParagraphStyle('TblBold', parent=cell_style, fontName='Helvetica-Bold')
     bold_right_style = ParagraphStyle('TblBoldRight', parent=bold_style, alignment=TA_RIGHT)
 
-    row_count = max(len(earning_lines), len(deduction_lines)) + 1  # +1 blank spacer row before totals
-    table_rows = [[Paragraph('Earnings', header_style), Paragraph('Amount', header_style),
-                   Paragraph('Deductions', header_style), Paragraph('Amount', header_style)]]
+    # No trailing blank row: the old +1 left an empty bordered strip above the
+    # totals that looked like a rendering fault.
+    row_count = max(len(earning_lines), len(deduction_lines))
+    table_rows = [[
+        Paragraph('EARNINGS', header_style), Paragraph('AMOUNT', header_right_style),
+        Paragraph('DEDUCTIONS', header_style), Paragraph('AMOUNT', header_right_style),
+    ]]
     for i in range(row_count):
         e_label, e_amt = earning_lines[i] if i < len(earning_lines) else ('', None)
         d_label, d_amt = deduction_lines[i] if i < len(deduction_lines) else ('', None)
+        d_style = muted_cell_style if (no_deductions and i == 0) else cell_style
         table_rows.append([
             Paragraph(e_label, cell_style),
             Paragraph(f'{e_amt:,.2f}' if e_amt is not None else '', cell_right_style),
-            Paragraph(d_label, cell_style),
-            Paragraph(f'{d_amt:,.2f}' if d_amt is not None else '', cell_right_style),
+            Paragraph(d_label, d_style),
+            Paragraph(f'{d_amt:,.2f}' if d_amt is not None and not no_deductions else '', cell_right_style),
         ])
     table_rows.append([
         Paragraph('Total Earnings', bold_style), Paragraph(f'{gross:,.2f}', bold_right_style),
         Paragraph('Total Deductions', bold_style), Paragraph(f'{total_advances:,.2f}', bold_right_style),
     ])
-    table_rows.append([
-        Paragraph('', cell_style), Paragraph('', cell_style),
-        Paragraph('Net Pay', bold_style), Paragraph(f'{net:,.2f}', bold_right_style),
-    ])
 
-    pay_table = Table(table_rows, colWidths=[5.5 * cm, 3 * cm, 5.5 * cm, 3 * cm])
+    last = len(table_rows) - 1
+    pay_table = Table(table_rows, colWidths=[5.6 * cm, 3.4 * cm, 5.6 * cm, 3.4 * cm], repeatRows=1)
     pay_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), colors.HexColor('#d1d5db')),
-        ('BOX', (0, 0), (-1, -1), 0.8, colors.black),
-        ('INNERGRID', (0, 0), (-1, -1), 0.5, colors.black),
-        ('TOPPADDING', (0, 0), (-1, -1), 5),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
-        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('BACKGROUND', (0, 0), (-1, 0), INK),
+        ('BACKGROUND', (0, last), (-1, last), BAND),
+        # Hairline separators only — no boxed cells, no vertical grid except the
+        # single divider that splits earnings from deductions.
+        ('LINEBELOW', (0, 1), (-1, last - 1), 0.4, LINE),
+        ('LINEAFTER', (1, 0), (1, last), 0.4, LINE),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('TOPPADDING', (0, 0), (-1, 0), 7),
+        ('BOTTOMPADDING', (0, 0), (-1, 0), 7),
+        ('TOPPADDING', (0, 1), (-1, -1), 8),
+        ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
+        ('LEFTPADDING', (0, 0), (-1, -1), 10),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
     ]))
     elements.append(pay_table)
-    elements.append(Spacer(1, 20))
+    elements.append(Spacer(1, 16))
 
-    # Net pay numeral + amount in words, centered — matches the reference footer.
-    net_numeral_style = ParagraphStyle('NetNumeral', parent=styles['Normal'], fontSize=11, alignment=TA_CENTER,
-                                        textColor=colors.HexColor('#1e293b'), fontName='Helvetica-Bold')
-    net_words_style = ParagraphStyle('NetWords', parent=styles['Normal'], fontSize=10, alignment=TA_CENTER,
-                                      textColor=colors.HexColor('#1e293b'), fontName='Helvetica')
-    elements.append(Paragraph(f'{net:,.2f}', net_numeral_style))
-    elements.append(Paragraph(_fmt_amount_in_words(net), net_words_style))
+    # ── Net pay: the one number anyone opening this actually wants ───────────
+    net_label_style = ParagraphStyle('NetLabel', parent=styles['Normal'], fontSize=8.5, leading=11,
+                                     textColor=colors.HexColor('#bfdbfe'), fontName='Helvetica-Bold')
+    net_words_style = ParagraphStyle('NetWords', parent=styles['Normal'], fontSize=8.5, leading=11,
+                                     textColor=colors.HexColor('#dbeafe'), fontName='Helvetica')
+    net_amount_style = ParagraphStyle('NetAmount', parent=styles['Normal'], fontSize=20, leading=24,
+                                      alignment=TA_RIGHT, textColor=colors.white, fontName='Helvetica-Bold')
 
+    net_band = Table(
+        [[
+            [Paragraph('NET PAY', net_label_style),
+             Paragraph(f'{_fmt_amount_in_words(net)} Only', net_words_style)],
+            Paragraph(f'{currency}{net:,.2f}', net_amount_style),
+        ]],
+        colWidths=[11 * cm, 7 * cm],
+    )
+    net_band.setStyle(TableStyle([
+        ('BACKGROUND', (0, 0), (-1, -1), ACCENT),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('LEFTPADDING', (0, 0), (-1, -1), 12),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 12),
+        ('TOPPADDING', (0, 0), (-1, -1), 12),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
+    ]))
+    elements.append(net_band)
+
+    note_style = ParagraphStyle('Note', parent=styles['Normal'], fontSize=8.5, leading=11.5,
+                                alignment=TA_LEFT, textColor=MUTED, fontName='Helvetica', spaceBefore=10)
     if cycle['status'] == 'paid':
-        elements.append(Spacer(1, 14))
-        paid_style = ParagraphStyle('Paid', parent=styles['Normal'], fontSize=9, alignment=TA_LEFT,
-                                     textColor=colors.HexColor('#475569'), fontName='Helvetica')
         paid_line = f"Paid on {_fmt_display_date(cycle['paid_at'])}" if cycle.get('paid_at') else 'Paid'
         if cycle.get('payment_note'):
-            paid_line += f" — {cycle['payment_note']}"
-        elements.append(Paragraph(paid_line, paid_style))
+            paid_line += f" &#8226; {cycle['payment_note']}"
+        elements.append(Paragraph(paid_line, note_style))
+    else:
+        # Say so plainly — an open cycle is a running preview, not a final figure.
+        elements.append(Paragraph(
+            'This cycle is still open. Figures are a running total and may change before payment.',
+            note_style))
 
-    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=7, alignment=TA_CENTER,
-                                   textColor=colors.HexColor('#94a3b8'), spaceBefore=20)
-    elements.append(Paragraph('Computer-generated payslip · Valoryx', footer_style))
+    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=7, leading=9, alignment=TA_CENTER,
+                                  textColor=colors.HexColor('#94a3b8'), fontName='Helvetica')
+    elements.append(Spacer(1, 22))
+    elements.append(HRFlowable(width=CONTENT_W, thickness=0.5, color=LINE, spaceAfter=8))
+    elements.append(Paragraph('Computer-generated payslip &#8226; no signature required &#8226; Valoryx', footer_style))
 
     doc.build(elements)
     buffer.seek(0)

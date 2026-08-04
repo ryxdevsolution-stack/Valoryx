@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 41
+CURRENT_SCHEMA_VERSION = 44
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -2162,6 +2162,360 @@ def _m041_client_entry_dev_id(db):
     logging.info("[Migration] v41: client_entry.dev_id added")
 
 
+def _m042_partial_bill_payments(db):
+    """v42: Partial payment on customer bills.
+
+    1. paid_amount on gst_billing / non_gst_billing — how much the customer has
+       actually paid so far. Balance is COMPUTED (final/total − paid), never
+       stored — same rule as the supplier ledger (suppliers.py balance_due).
+       Backfill: bills marked 'paid' have paid_amount = their full amount;
+       'pending' bills have 0. Idempotent: the backfill only touches NULLs.
+
+    2. bill_payments — one row per payment received toward a bill ("₹3000 cash
+       on Monday, ₹2000 UPI on Friday"), mirroring supplier_delivery_payments
+       (v36). client_id is carried directly so the generic owner-sync registry
+       can sync it with no custom code; bill_kind says which billing table the
+       bill_id lives in (no FK — two possible parents, and SQLite can't ALTER
+       one in anyway). Includes updated_at + synced_at from day one (v30's
+       lesson).
+    """
+    inspector = sa_inspect(db.engine)
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    _add_col('gst_billing', 'paid_amount', 'NUMERIC(10,2) NULL')
+    _add_col('non_gst_billing', 'paid_amount', 'NUMERIC(10,2) NULL')
+
+    # Backfill existing rows. Only NULLs, so re-running never clobbers data.
+    db.session.execute(text(
+        "UPDATE gst_billing SET paid_amount = CASE WHEN payment_status = 'pending' "
+        "THEN 0 ELSE final_amount END WHERE paid_amount IS NULL"))
+    db.session.execute(text(
+        "UPDATE non_gst_billing SET paid_amount = CASE WHEN payment_status = 'pending' "
+        "THEN 0 ELSE total_amount END WHERE paid_amount IS NULL"))
+    # Commit the backfill BEFORE the CREATE TABLE below: pysqlite discards an
+    # open transaction when DDL runs mid-transaction, silently losing the
+    # UPDATEs (observed: rowcount=2 yet NULLs after commit).
+    db.session.commit()
+
+    if 'bill_payments' not in inspector.get_table_names():
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS bill_payments (
+                payment_id     VARCHAR(36) PRIMARY KEY,
+                client_id      VARCHAR(36) NOT NULL,
+                bill_id        VARCHAR(36) NOT NULL,
+                bill_kind      VARCHAR(10) NOT NULL,
+                amount         NUMERIC(10,2) NOT NULL,
+                payment_method VARCHAR(50)  NULL,
+                payment_date   TIMESTAMP    NULL,
+                notes          TEXT         NULL,
+                recorded_by    VARCHAR(36)  NULL,
+                created_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at      TIMESTAMP    NULL
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_billpay_client_bill "
+            "ON bill_payments (client_id, bill_id)"))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_billpay_client_date "
+            "ON bill_payments (client_id, payment_date)"))
+        logging.info("[Migration] v42: bill_payments table created")
+
+    db.session.commit()
+    logging.info("[Migration] v42: partial bill payments done")
+
+
+def _m043_supplier_delivery_missing_columns(db):
+    """v43: Backfill columns missing from supplier_deliveries on older installs.
+
+    v8 creates this table inside `if 'supplier_deliveries' not in tables`. Any
+    column added to that CREATE block afterwards never reached a database where
+    the table already existed, and no ALTER migration was written for them — so
+    those installs are permanently short a column and every supplier-delivery
+    query dies with "no such column" (surfacing confusingly as a 401
+    "Authentication failed", because the auth middleware wraps route handlers in
+    a bare try/except).
+
+    Observed in the wild: a v42 database with products_confirmed, confirmed_at
+    and added_by_label present but confirmed_by absent.
+
+    Fixes the whole class rather than the one column: every nullable column the
+    model declares is checked and added if absent. Idempotent — runs at boot.
+    """
+    inspector = sa_inspect(db.engine)
+
+    if 'supplier_deliveries' not in inspector.get_table_names():
+        return  # v8 will create it complete; nothing to heal
+
+    existing = {c['name'] for c in inspector.get_columns('supplier_deliveries')}
+
+    # (column, definition) — must match models/supplier_model.py. All nullable
+    # or defaulted, so adding them to a populated table is safe.
+    expected = [
+        ('branch_id',              'VARCHAR(36) NULL'),
+        ('invoice_number',         'VARCHAR(100) NULL'),
+        ('delivery_date',          'DATE NULL'),
+        ('transport_fee',          'NUMERIC DEFAULT 0'),
+        ('notes',                  'TEXT NULL'),
+        ('products_confirmed',     'BOOLEAN NOT NULL DEFAULT 0'),
+        ('confirmed_by',           'VARCHAR(36) NULL'),
+        ('confirmed_at',           'TIMESTAMP NULL'),
+        ('delivery_note_filename', 'VARCHAR(255) NULL'),
+        ('delivery_note_path',     'VARCHAR(500) NULL'),
+        ('delivery_note_type',     'VARCHAR(10) NULL'),
+        ('completed_by',           'VARCHAR(36) NULL'),
+        ('completed_at',           'TIMESTAMP NULL'),
+        ('added_by_label',         'VARCHAR(120) NULL'),
+        ('updated_at',             'TIMESTAMP NULL'),
+    ]
+
+    added = []
+    for col, definition in expected:
+        if col in existing:
+            continue
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: {col!r}")
+        norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+        db.session.execute(text(
+            f"ALTER TABLE supplier_deliveries ADD COLUMN {col} {norm_def}"))
+        added.append(col)
+
+    db.session.commit()
+    if added:
+        logging.info(f"[Migration] v43: supplier_deliveries columns added: {', '.join(added)}")
+    else:
+        logging.info("[Migration] v43: supplier_deliveries already complete")
+
+
+def _m044_payroll_invoicing(db):
+    """v44: Payroll invoices — bill a principal company for supplied labour.
+
+    A labour contractor pays 30-40 workers, then invoices the company those
+    workers were supplied to. The payslip (per worker) already exists; this is
+    the other side: one GST invoice covering everybody for a pay period.
+
+    1. work_groups — the invoice's line items. Employees are assigned to a
+       group ("Bay 1", "Blasting & Painting"); each group becomes one invoice
+       line carrying its own HSN/SAC and service-charge %, because the margin
+       differs by the kind of work supplied.
+
+    2. employees.work_group_id — nullable on purpose. Ungrouped employees are
+       still payable; they simply collect under an "Ungrouped" line rather than
+       being silently dropped from the invoice.
+
+    3. client_entry gets the fields a GST invoice footer legally/practically
+       needs and the app never stored: bank details, state code (required to
+       decide CGST+SGST vs IGST), signature image, terms, website.
+
+    4. payroll_invoices / payroll_invoice_lines / payroll_invoice_payments.
+       Amounts are stored per line rather than recomputed at render time: a
+       sent invoice is a legal document and must keep showing the numbers it
+       was sent with, even after somebody edits a salary or a service %.
+       Balance is COMPUTED (total − received), never stored — same rule as
+       bill_payments (v42) and the supplier ledger (v36).
+    """
+    inspector = sa_inspect(db.engine)
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    # ── 3. Business identity + footer fields ────────────────────────────────
+    for col, definition in [
+        ('state_code',           'VARCHAR(10) NULL'),
+        ('website',              'VARCHAR(255) NULL'),
+        ('bank_name',            'VARCHAR(120) NULL'),
+        ('bank_account_no',      'VARCHAR(40) NULL'),
+        ('bank_ifsc',            'VARCHAR(20) NULL'),
+        ('bank_account_holder',  'VARCHAR(120) NULL'),
+        ('signature_url',        'VARCHAR(500) NULL'),
+        ('invoice_terms',        'TEXT NULL'),
+        ('service_charge_percent', 'NUMERIC(5,2) NULL'),
+    ]:
+        _add_col('client_entry', col, definition)
+
+    # ── 2. Employee → group link ────────────────────────────────────────────
+    _add_col('employees', 'work_group_id', 'VARCHAR(36) NULL')
+
+    db.session.commit()
+
+    # ── 1. Work groups ──────────────────────────────────────────────────────
+    tables = inspector.get_table_names()
+
+    if 'work_groups' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS work_groups (
+                group_id               VARCHAR(36) PRIMARY KEY,
+                client_id              VARCHAR(36)  NOT NULL,
+                name                   VARCHAR(150) NOT NULL,
+                description            VARCHAR(255) NULL,
+                hsn_code               VARCHAR(20)  NULL,
+                service_charge_percent NUMERIC(5,2) NULL,
+                display_order          INTEGER      DEFAULT 0,
+                is_active              BOOLEAN      DEFAULT 1,
+                created_by             VARCHAR(36)  NULL,
+                created_at             TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at             TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at              TIMESTAMP    NULL
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_workgroup_client "
+            "ON work_groups (client_id, is_active)"))
+        logging.info("[Migration] v44: work_groups table created")
+
+    # ── 4a. Invoice header ──────────────────────────────────────────────────
+    if 'payroll_invoices' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS payroll_invoices (
+                invoice_id       VARCHAR(36) PRIMARY KEY,
+                client_id        VARCHAR(36)  NOT NULL,
+                invoice_number   VARCHAR(50)  NOT NULL,
+                invoice_date     DATE         NOT NULL,
+                period_start     DATE         NOT NULL,
+                period_end       DATE         NOT NULL,
+                customer_id      VARCHAR(36)  NULL,
+                customer_name    VARCHAR(200) NOT NULL,
+                customer_address TEXT         NULL,
+                customer_gstin   VARCHAR(20)  NULL,
+                customer_state   VARCHAR(100) NULL,
+                customer_phone   VARCHAR(30)  NULL,
+                ship_to          TEXT         NULL,
+                place_of_supply  VARCHAR(100) NULL,
+                tax_mode         VARCHAR(10)  NULL,
+                gst_rate         NUMERIC(5,2) NULL,
+                salary_total     NUMERIC(12,2) DEFAULT 0,
+                service_total    NUMERIC(12,2) DEFAULT 0,
+                taxable_total    NUMERIC(12,2) DEFAULT 0,
+                cgst_total       NUMERIC(12,2) DEFAULT 0,
+                sgst_total       NUMERIC(12,2) DEFAULT 0,
+                igst_total       NUMERIC(12,2) DEFAULT 0,
+                tax_total        NUMERIC(12,2) DEFAULT 0,
+                grand_total      NUMERIC(12,2) DEFAULT 0,
+                received_amount  NUMERIC(12,2) DEFAULT 0,
+                status           VARCHAR(20)  DEFAULT 'draft',
+                notes            TEXT         NULL,
+                terms            TEXT         NULL,
+                created_by       VARCHAR(36)  NULL,
+                created_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at        TIMESTAMP    NULL
+            )
+        """))
+        db.session.execute(text(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_payinv_client_number "
+            "ON payroll_invoices (client_id, invoice_number)"))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_payinv_client_period "
+            "ON payroll_invoices (client_id, period_start, period_end)"))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_payinv_client_status "
+            "ON payroll_invoices (client_id, status)"))
+        logging.info("[Migration] v44: payroll_invoices table created")
+
+    # ── 4b. Invoice lines (one per work group) ──────────────────────────────
+    if 'payroll_invoice_lines' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS payroll_invoice_lines (
+                line_id                VARCHAR(36) PRIMARY KEY,
+                client_id              VARCHAR(36)  NOT NULL,
+                invoice_id             VARCHAR(36)  NOT NULL,
+                group_id               VARCHAR(36)  NULL,
+                description            VARCHAR(255) NOT NULL,
+                hsn_code               VARCHAR(20)  NULL,
+                headcount              INTEGER      DEFAULT 0,
+                salary_amount          NUMERIC(12,2) DEFAULT 0,
+                service_charge_percent NUMERIC(5,2)  DEFAULT 0,
+                service_charge_amount  NUMERIC(12,2) DEFAULT 0,
+                taxable_amount         NUMERIC(12,2) DEFAULT 0,
+                gst_rate               NUMERIC(5,2)  DEFAULT 0,
+                cgst_amount            NUMERIC(12,2) DEFAULT 0,
+                sgst_amount            NUMERIC(12,2) DEFAULT 0,
+                igst_amount            NUMERIC(12,2) DEFAULT 0,
+                line_total             NUMERIC(12,2) DEFAULT 0,
+                sort_order             INTEGER      DEFAULT 0,
+                created_at             TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at             TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at              TIMESTAMP    NULL
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_payinvline_invoice "
+            "ON payroll_invoice_lines (client_id, invoice_id)"))
+        logging.info("[Migration] v44: payroll_invoice_lines table created")
+
+    # ── 4c. Which employees each line covered ───────────────────────────────
+    # Kept so an invoice can be re-opened months later and still show exactly
+    # whose salary made up a line, after employees leave or change groups.
+    if 'payroll_invoice_employees' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS payroll_invoice_employees (
+                id            VARCHAR(36) PRIMARY KEY,
+                client_id     VARCHAR(36)  NOT NULL,
+                invoice_id    VARCHAR(36)  NOT NULL,
+                line_id       VARCHAR(36)  NULL,
+                employee_id   VARCHAR(36)  NOT NULL,
+                employee_name VARCHAR(150) NULL,
+                cycle_id      VARCHAR(36)  NULL,
+                gross_salary  NUMERIC(12,2) DEFAULT 0,
+                created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at     TIMESTAMP    NULL
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_payinvemp_invoice "
+            "ON payroll_invoice_employees (client_id, invoice_id)"))
+        logging.info("[Migration] v44: payroll_invoice_employees table created")
+
+    # ── 4d. Payments received against an invoice ────────────────────────────
+    if 'payroll_invoice_payments' not in tables:
+        db.session.execute(text("""
+            CREATE TABLE IF NOT EXISTS payroll_invoice_payments (
+                payment_id     VARCHAR(36) PRIMARY KEY,
+                client_id      VARCHAR(36)  NOT NULL,
+                invoice_id     VARCHAR(36)  NOT NULL,
+                amount         NUMERIC(12,2) NOT NULL,
+                payment_method VARCHAR(50)  NULL,
+                reference_no   VARCHAR(100) NULL,
+                payment_date   TIMESTAMP    NULL,
+                notes          TEXT         NULL,
+                recorded_by    VARCHAR(36)  NULL,
+                created_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at      TIMESTAMP    NULL
+            )
+        """))
+        db.session.execute(text(
+            "CREATE INDEX IF NOT EXISTS idx_payinvpay_invoice "
+            "ON payroll_invoice_payments (client_id, invoice_id)"))
+        logging.info("[Migration] v44: payroll_invoice_payments table created")
+
+    db.session.commit()
+    logging.info("[Migration] v44: payroll invoicing schema ready")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -2205,6 +2559,9 @@ MIGRATIONS = [
     (39, _m039_attendance_hour_deduction),
     (40, _m040_employee_email),
     (41, _m041_client_entry_dev_id),
+    (42, _m042_partial_bill_payments),
+    (43, _m043_supplier_delivery_missing_columns),
+    (44, _m044_payroll_invoicing),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

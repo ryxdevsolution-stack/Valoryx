@@ -67,25 +67,32 @@ def get_dashboard_analytics():
         # Previously: 12 separate .scalar() calls × ~300ms Supabase latency = 3.6s wasted.
         # Now: 2 queries return all 6 aggregates each via CASE WHEN — 1 scan, 1 round-trip.
 
-        from sqlalchemy import case, or_
+        from sqlalchemy import case
 
-        # Revenue counts only PAID bills. "paid" = anything NOT explicitly
-        # 'pending' (so legacy/NULL payment_status rows still count as revenue).
-        # Pending (unpaid) bills are summed separately as "outstanding".
-        _gst_paid = or_(GSTBilling.payment_status != 'pending', GSTBilling.payment_status.is_(None))
-        _gst_pend = GSTBilling.payment_status == 'pending'
-        _non_paid = or_(NonGSTBilling.payment_status != 'pending', NonGSTBilling.payment_status.is_(None))
-        _non_pend = NonGSTBilling.payment_status == 'pending'
+        # Revenue counts MONEY ACTUALLY RECEIVED, not whole bills (v42 partial
+        # payment). A ₹5000 bill with ₹3000 paid contributes ₹3000 to revenue
+        # and ₹2000 to outstanding — before v42 the whole ₹5000 counted as
+        # revenue the moment the bill was not 'pending', which would overstate
+        # takings by the balance on every partial bill.
+        # paid_amount is NULL on pre-v42 rows: fall back to the old binary rule.
+        _gst_rev = func.coalesce(
+            GSTBilling.paid_amount,
+            case((GSTBilling.payment_status == 'pending', 0), else_=GSTBilling.final_amount))
+        _gst_out = GSTBilling.final_amount - _gst_rev
+        _non_rev = func.coalesce(
+            NonGSTBilling.paid_amount,
+            case((NonGSTBilling.payment_status == 'pending', 0), else_=NonGSTBilling.total_amount))
+        _non_out = NonGSTBilling.total_amount - _non_rev
 
         def _gst_aggs(extra_filter=None):
             q = db.session.query(
-                func.coalesce(func.sum(case(((GSTBilling.created_at >= today_start) & _gst_paid, GSTBilling.final_amount))), 0).label('today_rev'),
-                func.coalesce(func.sum(case(((GSTBilling.created_at >= week_start) & _gst_paid, GSTBilling.final_amount))), 0).label('week_rev'),
-                func.coalesce(func.sum(case(((GSTBilling.created_at >= month_start) & _gst_paid, GSTBilling.final_amount))), 0).label('month_rev'),
-                func.coalesce(func.sum(case((((GSTBilling.created_at >= prev_month_start) & (GSTBilling.created_at < month_start)) & _gst_paid, GSTBilling.final_amount))), 0).label('prev_rev'),
-                func.coalesce(func.sum(case(((GSTBilling.created_at >= today_start) & _gst_pend, GSTBilling.final_amount))), 0).label('today_pend'),
-                func.coalesce(func.sum(case(((GSTBilling.created_at >= week_start) & _gst_pend, GSTBilling.final_amount))), 0).label('week_pend'),
-                func.coalesce(func.sum(case(((GSTBilling.created_at >= month_start) & _gst_pend, GSTBilling.final_amount))), 0).label('month_pend'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= today_start), _gst_rev))), 0).label('today_rev'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= week_start), _gst_rev))), 0).label('week_rev'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= month_start), _gst_rev))), 0).label('month_rev'),
+                func.coalesce(func.sum(case((((GSTBilling.created_at >= prev_month_start) & (GSTBilling.created_at < month_start)), _gst_rev))), 0).label('prev_rev'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= today_start), _gst_out))), 0).label('today_pend'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= week_start), _gst_out))), 0).label('week_pend'),
+                func.coalesce(func.sum(case(((GSTBilling.created_at >= month_start), _gst_out))), 0).label('month_pend'),
                 func.count(GSTBilling.bill_id).label('total_count'),
                 func.count(case((GSTBilling.created_at >= today_start, GSTBilling.bill_id))).label('today_count'),
             ).filter(GSTBilling.client_id == client_id, GSTBilling.status == 'final')
@@ -95,13 +102,13 @@ def get_dashboard_analytics():
 
         def _non_gst_aggs(extra_filter=None):
             q = db.session.query(
-                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= today_start) & _non_paid, NonGSTBilling.total_amount))), 0).label('today_rev'),
-                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= week_start) & _non_paid, NonGSTBilling.total_amount))), 0).label('week_rev'),
-                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= month_start) & _non_paid, NonGSTBilling.total_amount))), 0).label('month_rev'),
-                func.coalesce(func.sum(case((((NonGSTBilling.created_at >= prev_month_start) & (NonGSTBilling.created_at < month_start)) & _non_paid, NonGSTBilling.total_amount))), 0).label('prev_rev'),
-                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= today_start) & _non_pend, NonGSTBilling.total_amount))), 0).label('today_pend'),
-                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= week_start) & _non_pend, NonGSTBilling.total_amount))), 0).label('week_pend'),
-                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= month_start) & _non_pend, NonGSTBilling.total_amount))), 0).label('month_pend'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= today_start), _non_rev))), 0).label('today_rev'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= week_start), _non_rev))), 0).label('week_rev'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= month_start), _non_rev))), 0).label('month_rev'),
+                func.coalesce(func.sum(case((((NonGSTBilling.created_at >= prev_month_start) & (NonGSTBilling.created_at < month_start)), _non_rev))), 0).label('prev_rev'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= today_start), _non_out))), 0).label('today_pend'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= week_start), _non_out))), 0).label('week_pend'),
+                func.coalesce(func.sum(case(((NonGSTBilling.created_at >= month_start), _non_out))), 0).label('month_pend'),
                 func.count(NonGSTBilling.bill_id).label('total_count'),
                 func.count(case((NonGSTBilling.created_at >= today_start, NonGSTBilling.bill_id))).label('today_count'),
             ).filter(NonGSTBilling.client_id == client_id, NonGSTBilling.status == 'final')

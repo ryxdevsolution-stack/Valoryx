@@ -27,10 +27,9 @@ def compute_summary_range(client_id: str, start_date: date, end_date: date) -> d
 
     Must be called inside an active Flask application context.
 
-    Revenue counts *paid* bills only (payment_status != 'pending'), matching
-    the fix already applied in routes/analytics.py — pending/credit bills are
-    reported separately as `pending_amount` instead of being folded into
-    revenue.
+    Revenue counts MONEY RECEIVED, not whole bills (v42 partial payment):
+    a ₹5000 bill with ₹3000 paid adds ₹3000 to revenue and ₹2000 to
+    `pending_amount`. Matches routes/analytics.py and routes/report.py.
 
     Returns a dict:
         {
@@ -84,20 +83,29 @@ def compute_summary_range(client_id: str, start_date: date, end_date: date) -> d
     def _is_pending(bill) -> bool:
         return bill.payment_status == 'pending'
 
+    def _received(bill, total: float) -> float:
+        """Money actually received on this bill (v42 partial payment).
+        paid_amount is NULL on pre-v42 rows — fall back to the old binary rule."""
+        if bill.paid_amount is not None:
+            return min(float(bill.paid_amount), total)
+        return 0.0 if _is_pending(bill) else total
+
     paid_gst = [b for b in gst_bills if not _is_pending(b)]
     paid_non_gst = [b for b in non_gst_bills if not _is_pending(b)]
     pending_gst = [b for b in gst_bills if _is_pending(b)]
     pending_non_gst = [b for b in non_gst_bills if _is_pending(b)]
 
-    gst_revenue = sum(float(b.final_amount or 0) for b in paid_gst)
-    non_gst_revenue = sum(float(b.total_amount or 0) for b in paid_non_gst)
+    # Revenue is what came IN; a part-paid bill contributes only its paid share
+    # and the rest lands in pending_amount, so the two always sum to what was billed.
+    gst_revenue = sum(_received(b, float(b.final_amount or 0)) for b in gst_bills)
+    non_gst_revenue = sum(_received(b, float(b.total_amount or 0)) for b in non_gst_bills)
     total_revenue = gst_revenue + non_gst_revenue
     total_invoices = len(paid_gst) + len(paid_non_gst)
     avg_bill = total_revenue / total_invoices if total_invoices > 0 else 0.0
 
     pending_amount = (
-        sum(float(b.final_amount or 0) for b in pending_gst)
-        + sum(float(b.total_amount or 0) for b in pending_non_gst)
+        sum(float(b.final_amount or 0) - _received(b, float(b.final_amount or 0)) for b in gst_bills)
+        + sum(float(b.total_amount or 0) - _received(b, float(b.total_amount or 0)) for b in non_gst_bills)
     )
 
     # Top-selling item by quantity — across paid bills only, same as revenue.

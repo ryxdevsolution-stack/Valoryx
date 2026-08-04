@@ -1097,6 +1097,95 @@ def seed_razorpay_plans():
         return jsonify({'error': 'Failed to seed plans', 'message': str(e)}), 500
 
 
+@subscription_bp.route('/admin/plans', methods=['GET'])
+@authenticate()
+def admin_list_plans():
+    """
+    Super-admin only: every plan, including hidden (is_active=False) ones.
+
+    The public GET /plans filters to is_active=True, so once a plan is hidden it
+    disappears from that response — and from the admin panel with it, leaving no
+    way to unhide it. This endpoint is the admin's view of the full catalogue.
+    Never cached: the admin needs to see the effect of a toggle immediately.
+    """
+    try:
+        if not g.user.get('is_super_admin'):
+            return jsonify({'error': 'Super admin access required'}), 403
+
+        plans = SubscriptionPlan.query.order_by(
+            SubscriptionPlan.currency, SubscriptionPlan.display_order
+        ).all()
+        return jsonify({'success': True, 'plans': [p.to_dict() for p in plans]}), 200
+    except Exception as e:
+        logger.error(f'[Admin Plans] List failed: {e}')
+        return jsonify({'error': 'Failed to fetch plans', 'message': str(e)}), 500
+
+
+@subscription_bp.route('/admin/plans/<plan_id>', methods=['PATCH'])
+@authenticate()
+def admin_update_plan_visibility(plan_id):
+    """
+    Super-admin only: show or hide a plan on the customer-facing pricing pages.
+
+    Body: { is_active: bool }
+
+    Hiding sets is_active=False — the row, its Razorpay plan IDs and every
+    payment_transaction FK pointing at it stay intact, so clients already
+    subscribed to a hidden plan keep billing normally and the plan can be
+    brought back at any time. This is deliberately NOT a delete.
+    """
+    try:
+        if not g.user.get('is_super_admin'):
+            return jsonify({'error': 'Super admin access required'}), 403
+
+        data = request.get_json() or {}
+        if 'is_active' not in data:
+            return jsonify({'error': 'is_active is required'}), 400
+        if not isinstance(data['is_active'], bool):
+            return jsonify({'error': 'is_active must be a boolean'}), 400
+
+        is_active = data['is_active']
+        plan = SubscriptionPlan.query.filter_by(plan_id=plan_id).first()
+        if not plan:
+            return jsonify({'error': 'Plan not found'}), 404
+
+        if plan.is_active == is_active:
+            return jsonify({'success': True, 'plan': plan.to_dict()}), 200
+
+        # Hiding the last visible plan for a currency would leave the upgrade
+        # page showing "No plans available" — trial users could not pay at all.
+        if not is_active:
+            remaining = SubscriptionPlan.query.filter(
+                SubscriptionPlan.is_active.is_(True),
+                SubscriptionPlan.currency == plan.currency,
+                SubscriptionPlan.plan_id != plan.plan_id,
+            ).count()
+            if remaining == 0:
+                return jsonify({
+                    'error': 'Cannot hide the last plan',
+                    'message': (
+                        f'This is the only visible {plan.currency} plan. Hiding it would leave '
+                        f'customers with nothing to subscribe to. Make another plan visible first.'
+                    ),
+                }), 409
+
+        before = plan.to_dict()
+        plan.is_active = is_active
+        db.session.commit()
+
+        get_cache_manager().delete_pattern('subscription:plans:*')
+        log_action('UPDATE', 'subscription_plan', str(plan.plan_id), before, plan.to_dict())
+        logger.info(f'[Admin Plans] {g.user["user_id"]} set {plan.name}/{plan.currency} '
+                    f'is_active={is_active}')
+
+        return jsonify({'success': True, 'plan': plan.to_dict()}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        logger.error(f'[Admin Plans] Visibility update failed for {plan_id}: {e}')
+        return jsonify({'error': 'Failed to update plan', 'message': str(e)}), 500
+
+
 @subscription_bp.route('/admin/plans', methods=['POST'])
 @authenticate()
 def admin_create_plan():

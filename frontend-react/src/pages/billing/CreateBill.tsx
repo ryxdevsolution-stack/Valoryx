@@ -1,6 +1,7 @@
 
 
 import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
+import { AlertCircle } from 'lucide-react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { useNavigate } from 'react-router-dom'
@@ -166,6 +167,12 @@ export default function UnifiedBillingPage() {
 
   const [products, setProducts] = useState<Product[]>([])
   const [loading, setLoading] = useState(false)
+  // Partial-payment confirmation. Electron has no window.confirm(), so the
+  // "balance will be due" check is an in-app modal; holding the submit args
+  // here lets the Continue button re-enter handleSubmit unchanged.
+  const [partialConfirm, setPartialConfirm] = useState<{
+    paying: number; balance: number; total: number; isPending: boolean; skipPrint: boolean
+  } | null>(null)
 
   // Multi-tab billing state - initialized from localStorage or default
   const [billTabs, setBillTabs] = useState<BillTab[]>(() => {
@@ -1220,6 +1227,13 @@ export default function UnifiedBillingPage() {
 
     const rounded = Math.round(grandTotal)
 
+    // Change is computed against what the customer is paying NOW (the splits
+    // total), not the grand total — for a partial payment (₹3000 of ₹5000),
+    // tendering ₹3000 means zero change, not "-₹2000". When splits equal the
+    // total (the normal case) this is identical to the old behaviour.
+    const splitsTotal = activeTab.payment_splits.reduce((s, p) => s + (p.amount || 0), 0)
+    const payingNow = splitsTotal > 0 && splitsTotal < rounded ? splitsTotal : rounded
+
     return {
       subtotal,
       totalGST,
@@ -1228,10 +1242,10 @@ export default function UnifiedBillingPage() {
       discountAmount: (subtotalWithGST * effectiveBillDiscountPct) / 100,
       membershipRedeemValue: redeemValue,
       hasLineDiscount,
-      balance: activeTab.amountReceived - rounded,
+      balance: activeTab.amountReceived - payingNow,
     }
   }, [activeTab.items, activeTab.discountPercentage, activeTab.negotiableAmount,
-      activeTab.useNegotiablePrice, activeTab.amountReceived,
+      activeTab.useNegotiablePrice, activeTab.amountReceived, activeTab.payment_splits,
       activeTab.membershipRedeemPoints, activeTab.membershipRedemptionRate])
 
   // Determine if GST columns should be shown in the table
@@ -1277,7 +1291,7 @@ export default function UnifiedBillingPage() {
     setShowCustomerDropdown(false)
   }
 
-  const handleSubmit = async (e: React.FormEvent, isPending = false, skipPrint = false) => {
+  const handleSubmit = async (e: React.FormEvent, isPending = false, skipPrint = false, confirmedPartial = false) => {
     e.preventDefault()
 
     if (activeTab.items.length === 0) {
@@ -1291,6 +1305,10 @@ export default function UnifiedBillingPage() {
       return
     }
 
+    // Partial payment: splits may be LESS than the total (customer pays some
+    // now, owes the rest) — only overpayment is blocked. The confirm() makes
+    // an accidental under-entry impossible to save silently.
+    let isPartial = false
     if (!isPending) {
       if (activeTab.payment_splits.length === 0) {
         toast.warning('Please add at least one payment method')
@@ -1300,9 +1318,29 @@ export default function UnifiedBillingPage() {
       const totalSplits = getTotalPaymentSplits()
       const grandTotal = billTotals.grandTotal
 
-      if (Math.abs(totalSplits - grandTotal) > 0.01) {
-        toast.error(`Payment splits total (${cur}${totalSplits.toFixed(2)}) must equal bill total (${cur}${grandTotal.toFixed(2)})`)
+      if (totalSplits - grandTotal > 0.01) {
+        toast.error(`Payment splits total (${cur}${totalSplits.toFixed(2)}) cannot exceed bill total (${cur}${grandTotal.toFixed(2)})`)
         return
+      }
+      if (grandTotal - totalSplits > 0.01) {
+        if (totalSplits <= 0) {
+          toast.warning('Payment amount is 0 — use the Pending button to save without payment')
+          return
+        }
+        isPartial = true
+        // Electron's renderer has no native confirm() — it throws. Gate on an
+        // in-app modal instead, re-entering handleSubmit with confirmedPartial
+        // once the cashier accepts.
+        if (!confirmedPartial) {
+          setPartialConfirm({
+            paying: totalSplits,
+            balance: grandTotal - totalSplits,
+            total: grandTotal,
+            isPending,
+            skipPrint,
+          })
+          return
+        }
       }
     }
 
@@ -1357,7 +1395,12 @@ export default function UnifiedBillingPage() {
         membership_negotiate_amount: activeTab.membershipCardId && activeTab.useNegotiablePrice
           ? activeTab.negotiableAmount : null,
         bill_date: billDate.toISOString(),
-        payment_status: isPending ? 'pending' : 'paid',
+        // The backend derives the real status from paid_amount vs total — this
+        // field only matters for old-server compatibility.
+        payment_status: isPending ? 'pending' : (isPartial ? 'partial' : 'paid'),
+        // How much money actually changed hands now. Splits are the source of
+        // truth (amountReceived is cash-tendered incl. change).
+        paid_amount: isPending ? 0 : getTotalPaymentSplits(),
       })
       console.log('[BILLING] Bill created successfully:', response.data.bill?.bill_number)
 
@@ -3018,6 +3061,81 @@ export default function UnifiedBillingPage() {
             </div>
           </div>
         </form>
+
+        {/* Partial payment confirmation — replaces window.confirm(), which
+            throws in the Electron renderer. Escape and the backdrop both
+            cancel, so the cashier is never trapped mid-sale. */}
+        {partialConfirm && (
+          <div
+            className="fixed inset-0 z-[70] flex items-center justify-center"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="partial-pay-title"
+            onClick={() => setPartialConfirm(null)}
+            onKeyDown={(e) => { if (e.key === 'Escape') setPartialConfirm(null) }}
+          >
+            <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+            <div
+              className="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4 border border-gray-200 dark:border-gray-700"
+              onClick={e => e.stopPropagation()}
+            >
+              <div className="flex items-center gap-3 mb-4">
+                <div className="w-10 h-10 rounded-full bg-blue-100 dark:bg-blue-900/30 flex items-center justify-center flex-shrink-0">
+                  <AlertCircle className="w-5 h-5 text-blue-600 dark:text-blue-400" aria-hidden="true" />
+                </div>
+                <h3 id="partial-pay-title" className="text-base font-semibold text-gray-900 dark:text-white">
+                  Confirm partial payment
+                </h3>
+              </div>
+
+              {/* Numbers, not prose — the cashier is checking figures, and
+                  tabular-nums keeps them aligned. */}
+              <div className="rounded-lg bg-gray-50 dark:bg-gray-900/40 border border-gray-200 dark:border-gray-700 p-3 mb-4 tabular-nums">
+                <div className="flex justify-between text-sm text-gray-600 dark:text-gray-300 py-0.5">
+                  <span>Bill total</span>
+                  <span>{cur}{partialConfirm.total.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm text-green-700 dark:text-green-400 py-0.5">
+                  <span>Receiving now</span>
+                  <span>{cur}{partialConfirm.paying.toFixed(2)}</span>
+                </div>
+                <div className="flex justify-between text-sm font-bold text-red-600 dark:text-red-400 pt-1.5 mt-1 border-t border-gray-200 dark:border-gray-700">
+                  <span>Balance due</span>
+                  <span>{cur}{partialConfirm.balance.toFixed(2)}</span>
+                </div>
+              </div>
+
+              <p className="text-xs text-gray-500 dark:text-gray-400 mb-4">
+                The bill will be saved as partially paid. You can collect the balance later from the Bills list.
+              </p>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setPartialConfirm(null)}
+                  className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition cursor-pointer"
+                >
+                  Go back
+                </button>
+                <button
+                  type="button"
+                  autoFocus
+                  onClick={() => {
+                    const args = partialConfirm
+                    setPartialConfirm(null)
+                    handleSubmit(
+                      { preventDefault: () => {} } as React.FormEvent,
+                      args.isPending, args.skipPrint, true,
+                    )
+                  }}
+                  className="flex-1 px-4 py-2.5 text-sm font-bold text-white bg-blue-600 rounded-lg hover:bg-blue-700 transition cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500"
+                >
+                  Confirm &amp; Save
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
 
         {/* Barcode Scanner Modal (mobile camera) */}
         <BarcodeScannerModal

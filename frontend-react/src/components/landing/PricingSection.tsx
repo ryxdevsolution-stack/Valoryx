@@ -6,14 +6,20 @@ import { siteConfig } from '@/config/landing.config'
 import { fadeInUp, staggerContainer, viewportWithMargin } from '@/lib/landing/animations'
 import api from '@/lib/api'
 
+/**
+ * `features` and `limits` are optional because the backend serialises
+ * `self.limits or {}` — a plan created without user/bill caps arrives as `{}`,
+ * so every field reads back undefined. Declaring them required type-checked
+ * fine and then threw on `.toString()` at runtime, taking the page down.
+ */
 interface Plan {
   plan_id: string
   name: string
   description: string
   monthly_price: number
   yearly_price: number
-  features: string[]
-  limits: { users: number; bills_per_month: number; storage_gb: number }
+  features?: string[]
+  limits?: { users?: number; bills_per_month?: number; storage_gb?: number }
   is_popular: boolean
 }
 
@@ -23,42 +29,24 @@ const planIcons: Record<string, LucideIcon> = {
   Enterprise: Crown,
 }
 
-// Static fallback so pricing is always visible even when the API is unreachable
-const fallbackPlans: Plan[] = [
-  {
-    plan_id: 'starter',
-    name: 'Starter',
-    description: 'Perfect for small businesses just getting started',
-    monthly_price: 99900,
-    yearly_price: 999900,
-    features: ['Basic invoicing', 'Customer management', 'Email support', 'Basic reports'],
-    limits: { users: 3, bills_per_month: 100, storage_gb: 5 },
-    is_popular: false,
-  },
-  {
-    plan_id: 'professional',
-    name: 'Professional',
-    description: 'For growing businesses with advanced needs',
-    monthly_price: 249900,
-    yearly_price: 2499900,
-    features: ['Everything in Starter', 'GST billing', 'Inventory management', 'Priority support', 'Advanced reports', 'Multi-user access'],
-    limits: { users: 10, bills_per_month: 500, storage_gb: 25 },
-    is_popular: true,
-  },
-  {
-    plan_id: 'enterprise',
-    name: 'Enterprise',
-    description: 'For large organizations with custom requirements',
-    monthly_price: 799900,
-    yearly_price: 7999900,
-    features: ['Everything in Professional', 'Unlimited users', 'Custom integrations', '24/7 phone support', 'Dedicated account manager', 'SLA guarantee', 'White-label options'],
-    limits: { users: -1, bills_per_month: -1, storage_gb: 100 },
-    is_popular: false,
-  },
-]
+// Grid track count keyed by plan count — one plan is a single centred card, not
+// a third of an empty row. Which plans exist is an admin decision, not a layout
+// assumption baked into the markup.
+const GRID_BY_PLAN_COUNT: Record<number, string> = {
+  1: 'grid-cols-1 max-w-sm',
+  2: 'grid-cols-1 md:grid-cols-2 max-w-3xl',
+  3: 'grid-cols-1 md:grid-cols-3',
+}
 
 export default function PricingSection() {
-  const [plans, setPlans] = useState<Plan[]>(fallbackPlans)
+  /**
+   * Deliberately no hardcoded fallback plans. This used to seed three static
+   * plans (₹999 / ₹2499 / ₹7999) so pricing "always showed" — but plan
+   * visibility is admin-controlled, so any hidden or repriced plan came back
+   * from the dead on every failed request, advertising prices checkout would
+   * not honour. Showing no pricing beats showing wrong pricing.
+   */
+  const [plans, setPlans] = useState<Plan[]>([])
   const [billingCycle, setBillingCycle] = useState<'monthly' | 'yearly'>('monthly')
 
   useEffect(() => {
@@ -66,9 +54,9 @@ export default function PricingSection() {
       .get('/subscription/plans')
       .then((res) => {
         const live = res.data.plans
-        if (Array.isArray(live) && live.length > 0) setPlans(live)
+        if (Array.isArray(live)) setPlans(live)
       })
-      .catch(() => {}) // keep fallback plans on failure
+      .catch(() => setPlans([])) // section hides itself rather than inventing plans
   }, [])
 
   function formatPrice(paise: number) {
@@ -85,8 +73,10 @@ export default function PricingSection() {
     return Math.round(((monthlyTotal - plan.yearly_price) / monthlyTotal) * 100)
   }
 
-  function formatLimit(value: number) {
-    return value === -1 ? 'Unlimited' : value.toString()
+  function formatLimit(value: number | undefined | null) {
+    if (value === -1) return 'Unlimited'
+    if (value == null || Number.isNaN(value)) return '—'
+    return String(value)
   }
 
   if (plans.length === 0) return null
@@ -155,24 +145,28 @@ export default function PricingSection() {
           initial="hidden"
           whileInView="visible"
           viewport={viewportWithMargin}
-          className="grid grid-cols-1 gap-6 md:grid-cols-3"
+          className={`mx-auto grid gap-6 ${GRID_BY_PLAN_COUNT[Math.min(plans.length, 3)] ?? GRID_BY_PLAN_COUNT[3]}`}
         >
           {plans.map((plan) => {
             const Icon = planIcons[plan.name] || Zap
             const price = billingCycle === 'yearly' ? plan.yearly_price : plan.monthly_price
             const savings = getYearlySavings(plan)
+            // "Most Popular" only means something next to other plans; a lone
+            // card keeps the solid CTA but drops the comparison badge.
+            const highlight = plan.is_popular && plans.length > 1
+            const primaryCta = highlight || plans.length === 1
 
             return (
               <motion.div
                 key={plan.plan_id}
                 variants={fadeInUp}
                 className={`relative flex flex-col rounded-[1.75rem] border bg-white p-7 transition-shadow ${
-                  plan.is_popular
+                  highlight
                     ? 'border-transparent shadow-card-hover ring-2 ring-ink'
                     : 'border-ink/8 shadow-card hover:shadow-card-hover'
                 }`}
               >
-                {plan.is_popular && (
+                {highlight && (
                   <span className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-ink px-3 py-1 font-body text-xs font-bold text-white shadow-pill">
                     Most Popular
                   </span>
@@ -181,7 +175,7 @@ export default function PricingSection() {
                 <div className="flex items-center gap-2">
                   <span
                     className={`inline-flex h-9 w-9 items-center justify-center rounded-xl ${
-                      plan.is_popular ? 'bg-gradient-to-br from-accent-blue to-accent-purple text-white' : 'bg-ink/5 text-ink-soft'
+                      primaryCta ? 'bg-gradient-to-br from-accent-blue to-accent-purple text-white' : 'bg-ink/5 text-ink-soft'
                     }`}
                   >
                     <Icon className="h-5 w-5" />
@@ -202,17 +196,23 @@ export default function PricingSection() {
                   )}
                 </div>
 
-                <div className="mt-4 flex gap-2 font-body text-xs">
-                  <span className="rounded-full bg-ink/5 px-2.5 py-1 text-ink-soft">
-                    {formatLimit(plan.limits.users)} users
-                  </span>
-                  <span className="rounded-full bg-ink/5 px-2.5 py-1 text-ink-soft">
-                    {formatLimit(plan.limits.bills_per_month)} bills/mo
-                  </span>
-                </div>
+                {(plan.limits?.users != null || plan.limits?.bills_per_month != null) && (
+                  <div className="mt-4 flex gap-2 font-body text-xs">
+                    {plan.limits?.users != null && (
+                      <span className="rounded-full bg-ink/5 px-2.5 py-1 text-ink-soft">
+                        {formatLimit(plan.limits.users)} users
+                      </span>
+                    )}
+                    {plan.limits?.bills_per_month != null && (
+                      <span className="rounded-full bg-ink/5 px-2.5 py-1 text-ink-soft">
+                        {formatLimit(plan.limits.bills_per_month)} bills/mo
+                      </span>
+                    )}
+                  </div>
+                )}
 
                 <ul className="mt-6 flex-1 space-y-2.5">
-                  {plan.features.slice(0, 5).map((feature) => (
+                  {(plan.features ?? []).slice(0, 5).map((feature) => (
                     <li key={feature} className="flex items-start gap-2 font-body text-sm text-ink-soft">
                       <Check className="mt-0.5 h-4 w-4 shrink-0 text-accent-blue" />
                       {feature}
@@ -223,7 +223,7 @@ export default function PricingSection() {
                 <Link
                   to={siteConfig.routes.register}
                   className={`mt-7 inline-flex items-center justify-center rounded-full px-5 py-3 font-body text-sm font-semibold transition-all hover:scale-[1.02] ${
-                    plan.is_popular
+                    primaryCta
                       ? 'bg-ink text-white shadow-pill hover:bg-[#3a4666]'
                       : 'border border-ink/15 text-ink hover:border-ink/30'
                   }`}

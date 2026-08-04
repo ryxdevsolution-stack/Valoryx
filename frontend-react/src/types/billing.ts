@@ -61,7 +61,10 @@ export interface GSTBill {
   payment_type: string;
   amount_received?: number;
   status: 'draft' | 'final' | 'cancelled';
-  payment_status: 'paid' | 'pending';
+  payment_status: 'paid' | 'pending' | 'partial';
+  /** How much the customer has paid so far (v42). Balance = total - paid. */
+  paid_amount?: number | string;
+  balance_due?: number | string;
   created_by: string;
   created_at: string;
   updated_at?: string;
@@ -89,7 +92,10 @@ export interface NonGSTBill {
   payment_type: string;
   amount_received?: number;
   status: 'draft' | 'final' | 'cancelled';
-  payment_status: 'paid' | 'pending';
+  payment_status: 'paid' | 'pending' | 'partial';
+  /** How much the customer has paid so far (v42). Balance = total - paid. */
+  paid_amount?: number | string;
+  balance_due?: number | string;
   created_by: string;
   created_at: string;
   updated_at?: string;
@@ -155,7 +161,19 @@ export interface PrintableBill {
   sgst: number;
   igst: number;
   user_name: string;
-  payment_status?: 'paid' | 'pending';
+  payment_status?: 'paid' | 'pending' | 'partial';
+  /** v42 partial payment — drives the Paid/Balance lines on receipts. */
+  paid_amount?: number | string;
+  balance_due?: number | string;
+  /** Instalments received against this bill, oldest first. Rendered as a
+   *  Payment History section on the A4 PDF (omitted on the thermal receipt —
+   *  58mm has no room). */
+  payments?: {
+    payment_id?: string;
+    amount: number | string;
+    payment_method?: string | null;
+    payment_date?: string | null;
+  }[];
   points_earned?: number;
   /** Per-bill regional currency, frozen at create time. */
   currency_code?: string;

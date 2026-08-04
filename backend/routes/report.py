@@ -67,23 +67,32 @@ def generate_report():
         # Aggregate totals in SQL — no full row loading.
         # `total` = PAID revenue only (paid = anything NOT explicitly 'pending',
         # so legacy/NULL rows still count). `pending` = billed-but-unpaid.
-        from sqlalchemy import case, or_
-        _gst_paid = or_(GSTBilling.payment_status != 'pending', GSTBilling.payment_status.is_(None))
-        _non_paid = or_(NonGSTBilling.payment_status != 'pending', NonGSTBilling.payment_status.is_(None))
+        # v42: `total` = money actually RECEIVED, `pending` = the balance still
+        # owed. A part-paid bill contributes to both, split at paid_amount —
+        # previously the whole bill counted as revenue unless it was 'pending',
+        # which would overstate takings by the outstanding balance.
+        # paid_amount is NULL on pre-v42 rows: fall back to the old binary rule.
+        from sqlalchemy import case
+        _gst_rev = func.coalesce(
+            GSTBilling.paid_amount,
+            case((GSTBilling.payment_status == 'pending', 0), else_=GSTBilling.final_amount))
+        _non_rev = func.coalesce(
+            NonGSTBilling.paid_amount,
+            case((NonGSTBilling.payment_status == 'pending', 0), else_=NonGSTBilling.total_amount))
 
         gst_agg = _apply_date_user_filter(
             db.session.query(
                 func.count(GSTBilling.bill_id).label('cnt'),
-                func.coalesce(func.sum(case((_gst_paid, GSTBilling.final_amount))), 0).label('total'),
-                func.coalesce(func.sum(case((GSTBilling.payment_status == 'pending', GSTBilling.final_amount))), 0).label('pending'),
+                func.coalesce(func.sum(_gst_rev), 0).label('total'),
+                func.coalesce(func.sum(GSTBilling.final_amount - _gst_rev), 0).label('pending'),
             ), GSTBilling, GSTBilling.final_amount
         ).first()
 
         nongst_agg = _apply_date_user_filter(
             db.session.query(
                 func.count(NonGSTBilling.bill_id).label('cnt'),
-                func.coalesce(func.sum(case((_non_paid, NonGSTBilling.total_amount))), 0).label('total'),
-                func.coalesce(func.sum(case((NonGSTBilling.payment_status == 'pending', NonGSTBilling.total_amount))), 0).label('pending'),
+                func.coalesce(func.sum(_non_rev), 0).label('total'),
+                func.coalesce(func.sum(NonGSTBilling.total_amount - _non_rev), 0).label('pending'),
             ), NonGSTBilling, NonGSTBilling.total_amount
         ).first()
 

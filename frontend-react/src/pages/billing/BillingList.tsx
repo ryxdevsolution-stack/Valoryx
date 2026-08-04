@@ -45,9 +45,22 @@ interface Bill {
   sgst?: number
   igst?: number
   status?: string
-  payment_status?: 'paid' | 'pending'
+  payment_status?: 'paid' | 'pending' | 'partial'
+  /** v42 partial payment — backend sends strings (Decimal serialisation). */
+  paid_amount?: number | string
+  balance_due?: number | string
   user_name?: string
   created_by?: string
+}
+
+/** One row from GET /billing/:id/payments — the bill's payment history. */
+interface BillPaymentRow {
+  payment_id: string
+  amount: string
+  payment_method: string | null
+  payment_date: string | null
+  recorded_by: string | null
+  notes: string | null
 }
 
 interface PaymentType {
@@ -76,6 +89,15 @@ export default function AllBillsPage() {
 
   // Cancel confirmation modal state
   const [cancelConfirm, setCancelConfirm] = useState<{ billId: string; billNumber: number } | null>(null)
+
+  // Receive Payment modal (partial-payment settle/instalment) state
+  const [receiveBill, setReceiveBill] = useState<Bill | null>(null)
+  const [receiveAmount, setReceiveAmount] = useState('')
+  const [receiveMethod, setReceiveMethod] = useState('Cash')
+  const [receiving, setReceiving] = useState(false)
+
+  // Payment history shown in the detail modal (fetched lazily per bill)
+  const [billPayments, setBillPayments] = useState<BillPaymentRow[]>([])
 
   // Shop settings (for logo + address in PDF)
   const [shopSettings, setShopSettings] = useState<ShopSettings | null>(null)
@@ -445,7 +467,12 @@ export default function AllBillsPage() {
         cgst: billData.cgst || 0,
         sgst: billData.sgst || 0,
         igst: billData.igst || 0,
-        user_name: billData.user_name || (billData as any).created_by_name || (billData as any).created_by || 'Admin'
+        user_name: billData.user_name || (billData as any).created_by_name || (billData as any).created_by || 'Admin',
+        // Partial payment — without these a reprint from the list showed only
+        // the total, hiding the outstanding balance the customer still owes.
+        payment_status: billData.payment_status,
+        paid_amount: billData.paid_amount,
+        balance_due: billBalance(billData),
       }
 
       const clientInfo = client ? {
@@ -512,6 +539,11 @@ export default function AllBillsPage() {
   const handleViewBill = async (bill: Bill) => {
     // Show drawer immediately with list data, then fetch fresh details
     setSelectedBill(bill)
+    // Payment history (instalments) — non-critical, loads alongside the details
+    setBillPayments([])
+    api.get(`/billing/${bill.bill_id}/payments`)
+      .then(r => setBillPayments(r.data?.payments || []))
+      .catch(() => {/* older backend without the endpoint — history just stays hidden */})
     try {
       const response = await api.get(`/billing/${bill.bill_id}`)
       const freshBill = response.data.bill
@@ -564,14 +596,55 @@ export default function AllBillsPage() {
     }
   }
 
-  const handleMarkPaid = async (billId: string, billNumber: number) => {
-    if (!window.confirm(`Mark Bill #${billNumber} as Paid?`)) return
+  /** Outstanding balance of a bill. Backend sends balance_due; fall back to
+   *  total − paid for rows fetched by an older list endpoint. */
+  const billBalance = (bill: Bill): number => {
+    if (bill.balance_due != null) return Number(bill.balance_due)
+    const total = Number(bill.final_amount ?? bill.total_amount ?? 0)
+    if (bill.paid_amount != null) return Math.max(total - Number(bill.paid_amount), 0)
+    return bill.payment_status === 'pending' ? total : 0
+  }
+
+  /** Open the Receive Payment modal prefilled with the full balance. */
+  const openReceivePayment = (bill: Bill) => {
+    setReceiveBill(bill)
+    setReceiveAmount(billBalance(bill).toFixed(2))
+    setReceiveMethod(paymentTypes[0]?.payment_name || 'Cash')
+  }
+
+  const submitReceivePayment = async () => {
+    if (!receiveBill || receiving) return
+    const amount = parseFloat(receiveAmount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.warning('Enter a valid amount')
+      return
+    }
+    setReceiving(true)
     try {
-      await api.put(`/billing/${billId}/mark-paid`)
-      setBills(prev => prev.map(b => b.bill_id === billId ? { ...b, payment_status: 'paid' } : b))
-      if (selectedBill?.bill_id === billId) setSelectedBill(prev => prev ? { ...prev, payment_status: 'paid' } : prev)
+      const res = await api.post(`/billing/${receiveBill.bill_id}/payments`, {
+        amount,
+        payment_method: receiveMethod,
+      })
+      const updated = res.data?.bill
+      const patch = updated
+        ? { payment_status: updated.payment_status, paid_amount: updated.paid_amount,
+            balance_due: updated.balance_due, payment_type: updated.payment_type }
+        : { payment_status: 'paid' as const }
+      setBills(prev => prev.map(b => b.bill_id === receiveBill.bill_id ? { ...b, ...patch } : b))
+      if (selectedBill?.bill_id === receiveBill.bill_id) {
+        setSelectedBill(prev => prev ? { ...prev, ...patch } : prev)
+        // refresh the history list if the detail modal is open behind
+        api.get(`/billing/${receiveBill.bill_id}/payments`)
+          .then(r => setBillPayments(r.data?.payments || [])).catch(() => {})
+      }
+      toast.success(updated?.payment_status === 'paid'
+        ? `Bill #${receiveBill.bill_number} fully paid`
+        : `Payment recorded — balance ${cur}${Number(updated?.balance_due ?? 0).toFixed(2)}`)
+      setReceiveBill(null)
     } catch (err: any) {
-      toast.error(err.response?.data?.error || 'Failed to mark as paid')
+      toast.error(err.response?.data?.error || 'Failed to record payment')
+    } finally {
+      setReceiving(false)
     }
   }
 
@@ -617,8 +690,18 @@ export default function AllBillsPage() {
       cgst: bill.cgst ?? 0,
       sgst: bill.sgst ?? 0,
       igst: bill.igst ?? 0,
+      // Region-aware tax components (VAT, single-rate, CGST/SGST…). Without
+      // this the PDF fell back to cgst/sgst, which the list API never returns.
+      tax_breakdown: (bill as any).tax_breakdown,
       user_name: bill.user_name || '',
-      payment_status: (bill.payment_status || 'paid') as 'paid' | 'pending',
+      payment_status: (bill.payment_status || 'paid') as 'paid' | 'pending' | 'partial',
+      paid_amount: bill.paid_amount,
+      balance_due: billBalance(bill),
+      // Instalment history for the PDF's Payment History section. Fetched here
+      // rather than carried in the list payload — it is only needed on demand.
+      payments: await api.get(`/billing/${bill.bill_id}/payments`)
+        .then(r => r.data?.payments || [])
+        .catch(() => []),
     }
     await generateBillPDF(pdfBill, clientInfo)
   }
@@ -959,6 +1042,11 @@ export default function AllBillsPage() {
                               {bill.payment_status === 'pending' && bill.status !== 'cancelled' && (
                                 <span className="px-1.5 py-0.5 text-[8px] font-bold text-amber-700 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 rounded uppercase">Pending</span>
                               )}
+                              {bill.payment_status === 'partial' && bill.status !== 'cancelled' && (
+                                <span className="px-1.5 py-0.5 text-[8px] font-bold text-blue-700 bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 rounded uppercase">
+                                  Due {cur}{billBalance(bill).toLocaleString('en-IN')}
+                                </span>
+                              )}
                             </div>
                           ) : (
                             <span className="text-xs text-gray-400 dark:text-gray-500 pl-2">↳</span>
@@ -1004,16 +1092,16 @@ export default function AllBillsPage() {
                       {showActions ? (
                         <td className="px-2 py-1.5 text-center whitespace-nowrap" rowSpan={bill.paymentCount}>
                           <div className="flex items-center justify-center gap-1 flex-wrap">
-                              {/* Mark Paid — only for pending bills */}
-                              {bill.payment_status === 'pending' && (
+                              {/* Receive Payment — pending (owes all) and partial (owes some) */}
+                              {(bill.payment_status === 'pending' || bill.payment_status === 'partial') && (
                                 <button
                                   type="button"
-                                  onClick={(e) => { e.stopPropagation(); handleMarkPaid(bill.bill_id, bill.bill_number) }}
+                                  onClick={(e) => { e.stopPropagation(); openReceivePayment(bill) }}
                                   className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-bold text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 dark:hover:bg-green-900/40 rounded transition-all border border-green-300 dark:border-green-700"
-                                  title="Mark as Paid"
+                                  title={`Receive payment (balance ${cur}${billBalance(bill).toFixed(2)})`}
                                 >
                                   <CheckCircle className="w-3 h-3" />
-                                  Mark Paid
+                                  Receive
                                 </button>
                               )}
                               <button
@@ -1085,6 +1173,9 @@ export default function AllBillsPage() {
                           {bill.payment_status === 'pending' && bill.status !== 'cancelled' && (
                             <span className="px-1.5 py-0.5 text-[9px] font-bold text-amber-700 bg-amber-100 dark:bg-amber-900/30 dark:text-amber-400 rounded uppercase">Payment Pending</span>
                           )}
+                          {bill.payment_status === 'partial' && bill.status !== 'cancelled' && (
+                            <span className="px-1.5 py-0.5 text-[9px] font-bold text-blue-700 bg-blue-100 dark:bg-blue-900/30 dark:text-blue-400 rounded uppercase">Due {cur}{billBalance(bill).toLocaleString('en-IN')}</span>
+                          )}
                         </div>
                         <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">{bill.customer_name || 'Walk-in'}</p>
                       </div>
@@ -1100,14 +1191,14 @@ export default function AllBillsPage() {
                       <span>{bill.created_at ? new Date(bill.created_at).toLocaleDateString() : ''}</span>
                       <span className="text-sm font-bold text-gray-900 dark:text-white">{cur}{bill.displayAmount?.toLocaleString()}</span>
                     </div>
-                    {bill.payment_status === 'pending' && bill.status !== 'cancelled' && (
+                    {(bill.payment_status === 'pending' || bill.payment_status === 'partial') && bill.status !== 'cancelled' && (
                       <div className="mt-2 flex gap-2">
                         <button
                           type="button"
-                          onClick={(e) => { e.stopPropagation(); handleMarkPaid(bill.bill_id, bill.bill_number) }}
+                          onClick={(e) => { e.stopPropagation(); openReceivePayment(bill) }}
                           className="flex-1 inline-flex items-center justify-center gap-1 px-2 py-1.5 text-xs font-bold text-green-700 dark:text-green-400 bg-green-50 dark:bg-green-900/20 hover:bg-green-100 rounded border border-green-300 dark:border-green-700"
                         >
-                          <CheckCircle className="w-3.5 h-3.5" /> Mark Paid
+                          <CheckCircle className="w-3.5 h-3.5" /> Receive {cur}{billBalance(bill).toFixed(0)}
                         </button>
                         <button
                           type="button"
@@ -1337,20 +1428,62 @@ export default function AllBillsPage() {
                 <span>{cur}{((selectedBill.final_amount ?? selectedBill.total_amount) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
               </div>
 
+              {/* Paid / Balance rows — only interesting when something is owed */}
+              {billBalance(selectedBill) > 0 && selectedBill.status !== 'cancelled' && (
+                <>
+                  <div className="flex justify-between text-sm text-green-700 dark:text-green-400">
+                    <span>Paid</span>
+                    <span>{cur}{Number(selectedBill.paid_amount ?? 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                  <div className="flex justify-between text-sm font-semibold text-red-600 dark:text-red-400">
+                    <span>Balance Due</span>
+                    <span>{cur}{billBalance(selectedBill).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                  </div>
+                </>
+              )}
+
+              {/* Payment history — every instalment with its date and method */}
+              {billPayments.length > 0 && (
+                <div className="mt-3 p-2.5 bg-gray-50 dark:bg-gray-900/40 rounded-lg border border-gray-200 dark:border-gray-700">
+                  <p className="text-xs font-semibold text-gray-500 dark:text-gray-400 uppercase mb-1.5">Payment History</p>
+                  {billPayments.map(p => (
+                    <div key={p.payment_id} className="flex justify-between text-xs text-gray-700 dark:text-gray-300 py-0.5">
+                      <span>
+                        {p.payment_date ? new Date(p.payment_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—'}
+                        {' · '}{p.payment_method || 'Cash'}
+                      </span>
+                      <span className="font-medium">{cur}{Number(p.amount).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+
               {/* Payment status row */}
-              {selectedBill.payment_status === 'pending' && selectedBill.status !== 'cancelled' && (
-                <div className="mt-3 flex items-center justify-between p-2.5 bg-amber-50 dark:bg-amber-900/20 rounded-lg border border-amber-200 dark:border-amber-700">
+              {(selectedBill.payment_status === 'pending' || selectedBill.payment_status === 'partial') && selectedBill.status !== 'cancelled' && (
+                <div className={`mt-3 flex items-center justify-between p-2.5 rounded-lg border ${
+                  selectedBill.payment_status === 'partial'
+                    ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700'
+                    : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700'
+                }`}>
                   <div className="flex items-center gap-2">
-                    <span className="text-amber-600 dark:text-amber-400 text-sm">⏳</span>
-                    <span className="text-sm font-semibold text-amber-700 dark:text-amber-400">Payment Pending</span>
+                    <span className="text-sm">{selectedBill.payment_status === 'partial' ? '💰' : '⏳'}</span>
+                    <span className={`text-sm font-semibold ${
+                      selectedBill.payment_status === 'partial'
+                        ? 'text-blue-700 dark:text-blue-400'
+                        : 'text-amber-700 dark:text-amber-400'
+                    }`}>
+                      {selectedBill.payment_status === 'partial'
+                        ? `Partially Paid — ${cur}${billBalance(selectedBill).toFixed(2)} due`
+                        : 'Payment Pending'}
+                    </span>
                   </div>
                   <button
                     type="button"
-                    onClick={() => handleMarkPaid(selectedBill.bill_id, selectedBill.bill_number)}
+                    onClick={() => openReceivePayment(selectedBill)}
                     className="inline-flex items-center gap-1 px-3 py-1.5 text-xs font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg transition"
                   >
                     <CheckCircle className="w-3.5 h-3.5" />
-                    Mark Paid
+                    Receive Payment
                   </button>
                 </div>
               )}
@@ -1366,6 +1499,73 @@ export default function AllBillsPage() {
                   Download PDF
                 </button>
               </div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Receive Payment Modal — settle a pending/partial bill's balance */}
+      {receiveBill && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={() => !receiving && setReceiveBill(null)}>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div
+            className="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4 border border-gray-200 dark:border-gray-700"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center flex-shrink-0">
+                <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Receive Payment — Bill #{receiveBill.bill_number}</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Balance due: {cur}{billBalance(receiveBill).toLocaleString('en-IN', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+            </div>
+
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Amount received now</label>
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              max={billBalance(receiveBill)}
+              value={receiveAmount}
+              onChange={e => setReceiveAmount(e.target.value)}
+              autoFocus
+              className="w-full px-3 py-2 mb-3 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
+            />
+            <p className="-mt-2 mb-3 text-[11px] text-gray-400 dark:text-gray-500">
+              A smaller amount records another instalment; the full balance settles the bill.
+            </p>
+
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Payment method</label>
+            <select
+              value={receiveMethod}
+              onChange={e => setReceiveMethod(e.target.value)}
+              className="w-full px-3 py-2 mb-4 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-green-500"
+            >
+              {(paymentTypes.length > 0 ? paymentTypes.map(pt => pt.payment_name) : ['Cash', 'Card', 'UPI'])
+                .map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={receiving}
+                onClick={() => setReceiveBill(null)}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={receiving}
+                onClick={submitReceivePayment}
+                className="flex-1 px-4 py-2.5 text-sm font-bold text-white bg-green-600 rounded-lg hover:bg-green-700 transition disabled:opacity-60"
+              >
+                {receiving ? 'Recording…' : 'Record Payment'}
+              </button>
             </div>
           </div>
         </div>

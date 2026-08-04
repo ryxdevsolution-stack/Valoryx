@@ -15,6 +15,8 @@ interface Client {
 interface Plan {
   plan_id: string
   name: string
+  currency?: string
+  is_active?: boolean
 }
 
 interface Props {
@@ -70,7 +72,10 @@ export default function ManageMembershipModal({ open, client, onClose, onSaved }
   // Load plans once
   useEffect(() => {
     if (!open) return
-    api.get('/subscription/plans').then(r => {
+    // Admin endpoint: includes hidden plans. Clients grandfathered onto a plan
+    // that is no longer sold must still be selectable here, and a client already
+    // on a hidden plan must not silently lose it when this modal saves.
+    api.get('/subscription/admin/plans').then(r => {
       // Be tolerant of shape — could be {plans: [...]}, an array, or {data: [...]}
       const arr = r.data?.plans || r.data?.data || (Array.isArray(r.data) ? r.data : [])
       setPlans(arr)
@@ -160,7 +165,11 @@ export default function ManageMembershipModal({ open, client, onClose, onSaved }
                 className="w-full rounded-lg border border-slate-300 dark:border-slate-600 bg-white dark:bg-slate-800 px-3 py-2 text-sm text-slate-900 dark:text-white"
               >
                 <option value="">— No plan —</option>
-                {plans.map(p => <option key={p.plan_id} value={p.plan_id}>{p.name}</option>)}
+                {plans.map(p => (
+                  <option key={p.plan_id} value={p.plan_id}>
+                    {p.name}{p.is_active === false ? ' (hidden)' : ''}
+                  </option>
+                ))}
               </select>
             </div>
           )}

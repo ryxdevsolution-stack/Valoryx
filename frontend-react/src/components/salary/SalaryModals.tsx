@@ -3,6 +3,7 @@ import { X } from 'lucide-react'
 import { useCurrency } from '@/lib/useCurrency'
 import type { AttendanceStatus, AttendancePunch, Employee, SalaryCycle } from '@/pages/Salary'
 import { formatMinutes } from '@/utils/salary'
+import { DurationPicker } from '@/components/salary/DurationPicker'
 
 // ─── Shared Modal Shell ───────────────────────────────────────────────────────
 
@@ -1084,6 +1085,14 @@ export interface BulkResult {
   success: boolean
   error?: string
   name?: string
+  /** Date this result refers to — present on manual-hours results, which are
+   *  per employee-DAY rather than per employee. */
+  work_date?: string
+  /** True when the day was deliberately left alone (paid/unpaid leave,
+   *  holiday, weekly off, absent). Not a failure — the expected outcome. */
+  skipped?: boolean
+  code?: string
+  status?: string
 }
 
 interface BulkCheckInOutModalProps {
@@ -1291,20 +1300,10 @@ export function ManualHoursModal({ employee, workDate, onClose, onSave }: Manual
         </div>
 
         <InputField label="Hours Worked (per day)" required>
-          <input
-            type="number"
-            min="0"
-            max="24"
-            step="0.5"
-            value={hours}
-            onChange={e => setHours(e.target.value)}
-            placeholder="e.g. 8.5"
-            className={inputClass}
-            autoFocus
-          />
+          <DurationPicker value={Number(hours) || 0} onChange={h => setHours(String(h))} autoFocus />
           <p className="text-[11px] text-gray-400 mt-1">
             {isRange
-              ? 'Overwrites any existing record on each day in the range with this same manual hours entry — no clock times needed.'
+              ? 'Applied to each working day in the range. Days marked paid leave, unpaid leave, holiday, weekly off or absent are left untouched.'
               : 'Overwrites any existing record for this date with a manual hours entry — no clock times needed.'}
           </p>
         </InputField>
@@ -1383,15 +1382,36 @@ export function BulkManualHoursModal({ employeeNames, selectedIds, onClose, onSa
 
   if (results) {
     const succeeded = results.filter(r => r.success)
-    const failed = results.filter(r => !r.success)
+    // Leave/holiday/absent days are protected by design — report them apart
+    // from genuine errors so a correct run doesn't look like a partial failure.
+    const skipped = results.filter(r => !r.success && r.skipped)
+    const failed = results.filter(r => !r.success && !r.skipped)
     return (
       <ModalShell title="Bulk Hours Entry" onClose={onClose}>
         <p className="text-sm text-gray-700 dark:text-gray-300">
           {succeeded.length} of {results.length} employee-days saved.
         </p>
+
+        {skipped.length > 0 && (
+          <div className="space-y-1.5 max-h-40 overflow-y-auto">
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">
+              Left unchanged ({skipped.length}) — days already marked leave, holiday or absent:
+            </p>
+            {skipped.map((r, i) => (
+              <div key={`sk-${r.employee_id}-${i}`} className="flex items-center justify-between text-xs bg-amber-50 dark:bg-amber-900/20 rounded-lg px-3 py-1.5 gap-2">
+                <span className="text-gray-700 dark:text-gray-300 flex-shrink-0">
+                  {employeeNames[r.employee_id] ?? r.employee_id}
+                  {r.work_date ? <span className="text-gray-400"> · {r.work_date}</span> : null}
+                </span>
+                <span className="text-amber-700 dark:text-amber-400 text-right">{r.status ?? 'day off'}</span>
+              </div>
+            ))}
+          </div>
+        )}
+
         {failed.length > 0 && (
-          <div className="space-y-1.5 max-h-60 overflow-y-auto">
-            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Skipped:</p>
+          <div className="space-y-1.5 max-h-40 overflow-y-auto">
+            <p className="text-xs font-medium text-gray-500 dark:text-gray-400">Failed:</p>
             {failed.map((r, i) => (
               <div key={`${r.employee_id}-${i}`} className="flex items-center justify-between text-xs bg-red-50 dark:bg-red-900/20 rounded-lg px-3 py-1.5 gap-2">
                 <span className="text-gray-700 dark:text-gray-300 flex-shrink-0">{employeeNames[r.employee_id] ?? r.employee_id}</span>
@@ -1461,17 +1481,10 @@ export function BulkManualHoursModal({ employeeNames, selectedIds, onClose, onSa
         </div>
 
         <InputField label="Hours Worked (per day, per employee)" required>
-          <input
-            type="number"
-            min="0"
-            max="24"
-            step="0.5"
-            value={hours}
-            onChange={e => setHours(e.target.value)}
-            placeholder="e.g. 8"
-            className={inputClass}
-            autoFocus
-          />
+          <DurationPicker value={Number(hours) || 0} onChange={h => setHours(String(h))} autoFocus />
+          <p className="text-[11px] text-gray-400 mt-1">
+            Days marked paid leave, unpaid leave, holiday, weekly off or absent are left untouched.
+          </p>
         </InputField>
         <InputField label="Notes">
           <input

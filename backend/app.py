@@ -528,6 +528,13 @@ def create_app():
         import_errors.append(f"employees: {str(e)}")
         logging.error(f"Failed to import employees blueprint: {e}")
 
+    payroll_invoice_bp = None
+    try:
+        from routes.payroll_invoice import payroll_invoice_bp
+    except Exception as e:
+        import_errors.append(f"payroll_invoice: {str(e)}")
+        logging.error(f"Failed to import payroll_invoice blueprint: {e}")
+
     search_bp = None
     try:
         from routes.search import search_bp
@@ -756,6 +763,13 @@ def create_app():
             blueprints_registered.append('employees')
         except Exception as e:
             print(f"Warning: Could not register employees blueprint: {e}")
+
+    if payroll_invoice_bp:
+        try:
+            app.register_blueprint(payroll_invoice_bp, url_prefix='/api/payroll')
+            blueprints_registered.append('payroll_invoice')
+        except Exception as e:
+            print(f"Warning: Could not register payroll_invoice blueprint: {e}")
 
     if search_bp:
         try:

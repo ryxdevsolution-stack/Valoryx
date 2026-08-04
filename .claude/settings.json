@@ -3,7 +3,20 @@
     "allow": [
       "Bash(/home/development1/Desktop/Valoryx/backend/migrations/020_create_branches_and_transfers.sql:*)",
       "Bash(/home/development1/Desktop/Valoryx/backend/routes/branches.py:*)",
-      "Read(//c/Users/loges/Documents/GitHub/mj-billing/$HOME/**)"
+      "Read(//c/Users/loges/Documents/GitHub/mj-billing/$HOME/**)",
+      "Bash(python3 -m pytest -q)",
+      "Bash(node -p \"require\\('./package.json'\\).version\")",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('migrations/runner.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3 -m pytest tests/test_migration_042.py -q)",
+      "Bash(python3 -m pytest tests/test_migration_042.py::test_m042_adds_columns_backfills_and_creates_table -q)",
+      "Bash(python3 -m pytest tests/test_migration_042.py::test_m042_adds_columns_backfills_and_creates_table -q -s)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('models/billing_model.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3 -m pytest tests/test_migration_042.py tests/test_billing.py -q)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('routes/billing.py'\\).read\\(\\)\\); print\\('syntax OK'\\)\")",
+      "Bash(python3 -m pytest tests/test_partial_payment.py -q)",
+      "Bash(python3 -m pytest tests/test_partial_payment.py::test_create_partial_bill_records_status_and_ledger -q)",
+      "Bash(python3 -m pytest tests/test_sync_partial_payment.py -q)",
+      "Bash(python3 -c \"import ast; ast.parse\\(open\\('routes/analytics.py'\\).read\\(\\)\\); print\\('analytics syntax OK'\\)\")"
     ]
   },
   "mcpServers": {

@@ -58,6 +58,14 @@ const planIcons: Record<string, any> = {
   Enterprise: Crown,
 }
 
+// Grid track count + container width keyed by how many plans the API returned,
+// so one plan renders as one centred card rather than a third of an empty row.
+const GRID_BY_PLAN_COUNT: Record<number, string> = {
+  1: 'grid-cols-1 max-w-sm',
+  2: 'grid-cols-1 md:grid-cols-2 max-w-3xl',
+  3: 'grid-cols-1 md:grid-cols-3 max-w-5xl',
+}
+
 export default function PricingCards({ onSubscribed, showTrialCTA = false }: PricingCardsProps) {
   const { token, client, updateSubscriptionStatus, refreshClientData } = useClient()
   const [plans, setPlans] = useState<Plan[]>([])
@@ -259,6 +267,12 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
 
   const maxSavings = plans.length ? Math.max(0, ...plans.map(getYearlySavings)) : 0
 
+  // The catalogue is admin-controlled — a shop may be offered one plan or five.
+  // Hard-coding md:grid-cols-3 strands a single plan in the left third of the
+  // row, so the track count and max width follow how many plans came back.
+  const gridClass = GRID_BY_PLAN_COUNT[Math.min(plans.length, 3)] ?? GRID_BY_PLAN_COUNT[3]
+  const isSinglePlan = plans.length === 1
+
   return (
     <div>
       {/* Monthly / Yearly segmented toggle */}
@@ -318,14 +332,19 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
       )}
 
       {/* Plan Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-3 gap-6 md:gap-5 max-w-5xl mx-auto items-stretch">
+      <div className={`grid ${gridClass} gap-6 md:gap-5 mx-auto items-stretch`}>
         {plans.map((plan) => {
           const Icon = planIcons[plan.name] || Zap
           const price = billingCycle === 'yearly' ? plan.yearly_price : plan.monthly_price
           const savings = getYearlySavings(plan)
           const isPaying = payingPlanId === plan.plan_id
           const isCurrentPlan = client?.subscription_status === 'active' && client?.plan_id === plan.plan_id
-          const highlight = plan.is_popular && !isCurrentPlan
+          // "Most Popular" is a comparison claim — meaningless when it's the only
+          // plan on the page, so the lone card gets no badge and no scale-up.
+          const highlight = plan.is_popular && !isCurrentPlan && !isSinglePlan
+          // The badge goes away for a lone plan, but its CTA is still the only
+          // way to pay — keep it a solid primary button, not a ghost outline.
+          const primaryCta = highlight || isSinglePlan
 
           return (
             <div
@@ -384,15 +403,22 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
                 </div>
               </div>
 
-              {/* Limits */}
-              <div className="flex flex-wrap gap-2 mb-5">
-                <span className="inline-flex items-center gap-1 bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-xs font-medium px-2.5 py-1 rounded-lg tabular-nums">
-                  {formatLimit(plan.limits?.users)} users
-                </span>
-                <span className="inline-flex items-center gap-1 bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-xs font-medium px-2.5 py-1 rounded-lg tabular-nums">
-                  {formatLimit(plan.limits?.bills_per_month)} bills/mo
-                </span>
-              </div>
+              {/* Limits — a plan that sets no caps shows no badges at all,
+                  rather than a row of "—" placeholders. */}
+              {(plan.limits?.users != null || plan.limits?.bills_per_month != null) && (
+                <div className="flex flex-wrap gap-2 mb-5">
+                  {plan.limits?.users != null && (
+                    <span className="inline-flex items-center gap-1 bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-xs font-medium px-2.5 py-1 rounded-lg tabular-nums">
+                      {formatLimit(plan.limits.users)} users
+                    </span>
+                  )}
+                  {plan.limits?.bills_per_month != null && (
+                    <span className="inline-flex items-center gap-1 bg-gray-50 dark:bg-gray-700/60 border border-gray-200 dark:border-gray-600 text-gray-700 dark:text-gray-300 text-xs font-medium px-2.5 py-1 rounded-lg tabular-nums">
+                      {formatLimit(plan.limits.bills_per_month)} bills/mo
+                    </span>
+                  )}
+                </div>
+              )}
 
               {/* Features */}
               <ul className="space-y-2.5 mb-6 flex-1">
@@ -411,7 +437,7 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
                 <a
                   href={(window as any).electronAPI?.isElectron ? '#/auth/register' : '/auth/register'}
                   className={`block text-center py-3 px-4 rounded-xl font-semibold transition-colors cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 dark:focus-visible:ring-offset-gray-800 ${
-                    highlight
+                    primaryCta
                       ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm shadow-blue-600/20'
                       : 'border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700'
                   }`}
@@ -432,7 +458,7 @@ export default function PricingCards({ onSubscribed, showTrialCTA = false }: Pri
                   onClick={() => handleSubscribe(plan)}
                   disabled={isPaying}
                   className={`w-full py-3 px-4 rounded-xl font-semibold transition-colors flex items-center justify-center gap-2 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-blue-500 dark:focus-visible:ring-offset-gray-800 disabled:cursor-not-allowed ${
-                    highlight
+                    primaryCta
                       ? 'bg-blue-600 hover:bg-blue-700 text-white shadow-sm shadow-blue-600/20 disabled:bg-blue-400'
                       : 'border border-gray-300 dark:border-gray-600 text-gray-700 dark:text-gray-200 hover:bg-gray-50 dark:hover:bg-gray-700 disabled:opacity-50'
                   }`}

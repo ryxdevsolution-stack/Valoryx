@@ -104,6 +104,11 @@ _OWNER_SYNC_TABLES = [
     {'table': 'bill_template_versions',  'pk': 'version_id',      'scope': ('via', 'bill_templates', 'template_id')},
     {'table': 'bill_number_counters',    'pk': 'client_id',       'scope': 'client_id'},
     {'table': 'permission_presets',      'pk': 'preset_id',       'scope': 'client_id'},
+    # v42: partial-payment ledger. Carries client_id directly (unlike the
+    # supplier ledger) precisely so it can use the simple scope here — its
+    # parent bill lives in one of TWO tables (gst/non_gst), which the
+    # ('via', parent, fk) scope cannot express.
+    {'table': 'bill_payments',           'pk': 'payment_id',      'scope': 'client_id'},
 ]
 
 
@@ -216,6 +221,31 @@ class SyncService:
         # v33: per-device bill prefix on the billing tables
         statements.append("ALTER TABLE gst_billing ADD COLUMN IF NOT EXISTS bill_prefix VARCHAR(8) NULL")
         statements.append("ALTER TABLE non_gst_billing ADD COLUMN IF NOT EXISTS bill_prefix VARCHAR(8) NULL")
+        # v42: partial payment — payment_status never existed on the CLOUD
+        # billing tables at all (pending state silently never synced), and
+        # paid_amount is new. Both must exist before the upload SQL references
+        # them, or every bill upload fails.
+        for t in ('gst_billing', 'non_gst_billing'):
+            statements.append(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS payment_status VARCHAR(20) NULL")
+            statements.append(f"ALTER TABLE {t} ADD COLUMN IF NOT EXISTS paid_amount NUMERIC(10,2) NULL")
+        # v42: the payments ledger itself (generic owner-sync table).
+        statements.append("""
+            CREATE TABLE IF NOT EXISTS bill_payments (
+                payment_id     VARCHAR(36) PRIMARY KEY,
+                client_id      VARCHAR(36) NOT NULL,
+                bill_id        VARCHAR(36) NOT NULL,
+                bill_kind      VARCHAR(10) NOT NULL,
+                amount         NUMERIC(10,2) NOT NULL,
+                payment_method VARCHAR(50)  NULL,
+                payment_date   TIMESTAMP    NULL,
+                notes          TEXT         NULL,
+                recorded_by    VARCHAR(36)  NULL,
+                created_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at      TIMESTAMP    NULL
+            )""")
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS idx_billpay_client_bill ON bill_payments (client_id, bill_id)")
         for stmt in statements:
             try:
                 with self.postgres_engine.connect() as conn:
@@ -771,12 +801,14 @@ class SyncService:
                 bill_id, client_id, bill_number, bill_prefix, customer_name, customer_phone,
                 customer_address, items, subtotal, gst_percentage, gst_amount, final_amount,
                 payment_type, amount_received, discount_percentage, discount_amount,
-                negotiable_amount, status, created_by, created_at, updated_at
+                negotiable_amount, status, payment_status, paid_amount,
+                created_by, created_at, updated_at
             ) VALUES (
                 :bill_id, :client_id, :bill_number, :bill_prefix, :customer_name, :customer_phone,
                 :customer_address, :items, :subtotal, :gst_percentage, :gst_amount, :final_amount,
                 :payment_type, :amount_received, :discount_percentage, :discount_amount,
-                :negotiable_amount, :status, :created_by, :created_at, :updated_at
+                :negotiable_amount, :status, :payment_status, :paid_amount,
+                :created_by, :created_at, :updated_at
             )
             ON CONFLICT (bill_id) DO UPDATE SET
                 items = EXCLUDED.items,
@@ -784,6 +816,9 @@ class SyncService:
                 gst_percentage = EXCLUDED.gst_percentage,
                 gst_amount = EXCLUDED.gst_amount,
                 final_amount = EXCLUDED.final_amount,
+                payment_type = EXCLUDED.payment_type,
+                payment_status = EXCLUDED.payment_status,
+                paid_amount = EXCLUDED.paid_amount,
                 updated_at = EXCLUDED.updated_at,
                 synced_at = CURRENT_TIMESTAMP
         """
@@ -804,16 +839,19 @@ class SyncService:
                 bill_id, client_id, bill_number, bill_prefix, customer_name, customer_phone,
                 customer_gstin, items, total_amount, payment_type, amount_received,
                 discount_percentage, discount_amount, negotiable_amount, status,
-                created_by, created_at, updated_at
+                payment_status, paid_amount, created_by, created_at, updated_at
             ) VALUES (
                 :bill_id, :client_id, :bill_number, :bill_prefix, :customer_name, :customer_phone,
                 :customer_gstin, :items, :total_amount, :payment_type, :amount_received,
                 :discount_percentage, :discount_amount, :negotiable_amount, :status,
-                :created_by, :created_at, :updated_at
+                :payment_status, :paid_amount, :created_by, :created_at, :updated_at
             )
             ON CONFLICT (bill_id) DO UPDATE SET
                 items = EXCLUDED.items,
                 total_amount = EXCLUDED.total_amount,
+                payment_type = EXCLUDED.payment_type,
+                payment_status = EXCLUDED.payment_status,
+                paid_amount = EXCLUDED.paid_amount,
                 updated_at = EXCLUDED.updated_at,
                 synced_at = CURRENT_TIMESTAMP
         """
@@ -1949,6 +1987,7 @@ class SyncService:
                    'customer_phone', 'customer_email', 'customer_address', 'items', 'subtotal',
                    'gst_percentage', 'gst_amount', 'final_amount', 'payment_type', 'amount_received',
                    'discount_percentage', 'discount_amount', 'negotiable_amount', 'status',
+                   'payment_status', 'paid_amount',
                    'created_by', 'created_at', 'updated_at', 'synced_at']
 
         return self._upsert_to_sqlite('gst_billing', converted_records, 'bill_id', columns)
@@ -1983,8 +2022,8 @@ class SyncService:
         columns = ['bill_id', 'client_id', 'bill_number', 'bill_prefix', 'customer_id', 'customer_name',
                    'customer_phone', 'customer_email', 'customer_address', 'customer_gstin',
                    'items', 'total_amount', 'payment_type', 'amount_received', 'discount_percentage',
-                   'discount_amount', 'negotiable_amount', 'status', 'created_by',
-                   'created_at', 'updated_at', 'synced_at']
+                   'discount_amount', 'negotiable_amount', 'status', 'payment_status', 'paid_amount',
+                   'created_by', 'created_at', 'updated_at', 'synced_at']
 
         return self._upsert_to_sqlite('non_gst_billing', converted_records, 'bill_id', columns)
 

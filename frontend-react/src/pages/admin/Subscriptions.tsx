@@ -17,7 +17,9 @@ import {
   RefreshCw,
   AlertCircle,
   Plus,
-  Loader2
+  Loader2,
+  Eye,
+  EyeOff
 } from 'lucide-react';
 
 interface PlanLimits {
@@ -105,14 +107,18 @@ export default function SubscriptionManagementPage() {
   const [planForm, setPlanForm] = useState<NewPlanForm>(EMPTY_PLAN_FORM);
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState('');
+  const [togglingPlanId, setTogglingPlanId] = useState<string | null>(null);
+  const [toggleError, setToggleError] = useState('');
 
   const fetchData = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
       const [plansRes, historyRes] = await Promise.allSettled([
-        // 'all' so the admin sees every region's plans, not just INR
-        api.get('/subscription/plans?currency=all'),
+        // Admin endpoint: every currency AND hidden plans. The public
+        // /subscription/plans filters is_active=True, which would make a plan
+        // disappear from this page the moment it was hidden — with no way back.
+        api.get('/subscription/admin/plans'),
         api.get('/subscription/history')
       ]);
 
@@ -170,6 +176,29 @@ export default function SubscriptionManagementPage() {
       setCreateError(err?.response?.data?.message || err?.response?.data?.error || 'Failed to create plan');
     } finally {
       setCreating(false);
+    }
+  }
+
+  /**
+   * Show/hide a plan on the customer-facing pricing pages. Nothing is deleted —
+   * is_active flips, so existing subscribers on a hidden plan are unaffected and
+   * the plan can be brought back with one click.
+   */
+  async function handleToggleVisibility(plan: Plan) {
+    setToggleError('');
+    setTogglingPlanId(plan.plan_id);
+    try {
+      const res = await api.patch(`/subscription/admin/plans/${plan.plan_id}`, {
+        is_active: !plan.is_active,
+      });
+      const updated: Plan = res.data.plan;
+      setPlans(prev => prev.map(p => (p.plan_id === updated.plan_id ? updated : p)));
+    } catch (err: any) {
+      setToggleError(
+        err?.response?.data?.message || err?.response?.data?.error || 'Failed to update plan visibility'
+      );
+    } finally {
+      setTogglingPlanId(null);
     }
   }
 
@@ -297,9 +326,20 @@ export default function SubscriptionManagementPage() {
             <p>No subscription plans found</p>
           </div>
         ) : (
+          <>
+          {toggleError && (
+            <div className="mb-4 flex items-start gap-2 rounded-xl border border-amber-200 dark:border-amber-800 bg-amber-50 dark:bg-amber-900/20 px-4 py-3 text-sm text-amber-800 dark:text-amber-300" role="alert">
+              <AlertTriangle className="w-4 h-4 flex-shrink-0 mt-0.5" aria-hidden="true" />
+              <span>{toggleError}</span>
+            </div>
+          )}
+          <p className="mb-4 text-sm text-slate-500 dark:text-slate-400">
+            Only <span className="font-semibold text-slate-700 dark:text-slate-200">visible</span> plans appear
+            on the customer pricing and upgrade pages. Hiding a plan never deletes it — existing subscribers keep billing normally.
+          </p>
           <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
             {plans.map((plan) => (
-              <div key={plan.plan_id} className={`relative bg-white dark:bg-slate-800 rounded-2xl shadow-sm border-2 transition-all hover:shadow-lg ${plan.is_popular ? 'border-violet-500 dark:border-violet-400' : 'border-slate-200 dark:border-slate-700'}`}>
+              <div key={plan.plan_id} className={`relative bg-white dark:bg-slate-800 rounded-2xl shadow-sm border-2 transition-all hover:shadow-lg ${plan.is_popular ? 'border-violet-500 dark:border-violet-400' : 'border-slate-200 dark:border-slate-700'} ${plan.is_active ? '' : 'opacity-60 grayscale'}`}>
                 {plan.is_popular && (
                   <div className="absolute -top-3 left-1/2 -translate-x-1/2">
                     <span className="px-4 py-1 bg-violet-600 text-white text-xs font-semibold rounded-full">Most Popular</span>
@@ -315,7 +355,7 @@ export default function SubscriptionManagementPage() {
                         {plan.currency || 'INR'}
                       </span>
                       <span className={`text-xs font-medium px-2 py-1 rounded-full ${plan.is_active ? 'bg-emerald-100 text-emerald-700' : 'bg-slate-100 text-slate-500'}`}>
-                        {plan.is_active ? 'Active' : 'Inactive'}
+                        {plan.is_active ? 'Visible' : 'Hidden'}
                       </span>
                     </div>
                   </div>
@@ -357,10 +397,31 @@ export default function SubscriptionManagementPage() {
                       </ul>
                     </div>
                   )}
+
+                  <button
+                    type="button"
+                    onClick={() => handleToggleVisibility(plan)}
+                    disabled={togglingPlanId === plan.plan_id}
+                    aria-label={`${plan.is_active ? 'Hide' : 'Show'} the ${plan.name} plan on customer pricing pages`}
+                    className={`mt-6 w-full flex items-center justify-center gap-2 px-4 py-2.5 rounded-xl text-sm font-semibold transition-colors cursor-pointer disabled:opacity-60 disabled:cursor-not-allowed focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-offset-2 focus-visible:ring-violet-500 dark:focus-visible:ring-offset-slate-800 ${
+                      plan.is_active
+                        ? 'border border-slate-300 dark:border-slate-600 text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700'
+                        : 'bg-emerald-600 hover:bg-emerald-700 text-white'
+                    }`}
+                  >
+                    {togglingPlanId === plan.plan_id ? (
+                      <><Loader2 className="w-4 h-4 animate-spin" aria-hidden="true" />Updating…</>
+                    ) : plan.is_active ? (
+                      <><EyeOff className="w-4 h-4" aria-hidden="true" />Hide from customers</>
+                    ) : (
+                      <><Eye className="w-4 h-4" aria-hidden="true" />Show to customers</>
+                    )}
+                  </button>
                 </div>
               </div>
             ))}
           </div>
+          </>
         )
       )}
 

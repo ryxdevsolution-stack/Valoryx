@@ -61,6 +61,12 @@ export interface BillData {
     points_balance: number;
   } | null;
   payment_type: string;
+  /** v42 partial payment — when a balance is outstanding the receipt shows
+   *  Paid Amount / Balance Due under it, and the total line is labelled
+   *  "Net Payable" instead of "Total" — nothing is payable on a settled bill. */
+  payment_status?: 'paid' | 'pending' | 'partial';
+  paid_amount?: number | string;
+  balance_due?: number | string;
   created_at: string;
   type: 'gst' | 'non-gst';
   user_name?: string;
@@ -255,6 +261,14 @@ export function generateReceiptHtml(
 
   const grandTotal = Math.round(finalAmount);
 
+  // v42 partial payment. Prefer the server's balance_due; fall back to
+  // total - paid so a bill fetched by an older endpoint still prints right.
+  // A fully-settled bill prints nothing extra (balanceDue === 0).
+  const paidAmount = bill.paid_amount != null ? Number(bill.paid_amount)
+    : (bill.payment_status === 'pending' ? 0 : grandTotal);
+  const balanceDue = bill.balance_due != null ? Number(bill.balance_due)
+    : Math.max(grandTotal - paidAmount, 0);
+
   // Calculate savings (MRP savings + discount)
   let totalSavings = 0;
 
@@ -421,14 +435,22 @@ export function generateReceiptHtml(
   ${itemsHtml}
   <div class="dashed"></div>
 
-  <!-- Totals Summary -->
+  <!-- Totals Summary.
+       "Total Rate" (sum of rate x qty) equals "Total Amount" (the subtotal) on
+       an ordinary bill, so printing both showed the same figure twice. It is
+       kept only when per-line discounts make them differ, where it genuinely
+       shows the pre-discount value. The final line is "Grand Total" when
+       settled and "Net Payable" only while money is still owed. -->
   <div style="font-size: ${FONT_SIZE_SMALL};">
     <div class="row-flex"><span>Total Items : ${totalItems}</span><span style="font-size: 14px; font-weight: 700;">Total Amount : ${subtotal.toFixed(2)}</span></div>
     <div class="row">Total Mrp : ${totalMrp.toFixed(2)}</div>
-    <div class="row">Total Rate : ${totalRate.toFixed(2)}</div>
+    ${Math.abs(totalRate - subtotal) > 0.01 ? `<div class="row">Total Rate : ${totalRate.toFixed(2)}</div>` : ''}
     ${actualDiscount > 0 ? `<div class="row"><span style="font-size: ${FONT_SIZE_LARGE}; font-weight: 700;">Total Discount : ${actualDiscount.toFixed(2)}</span></div>` : ''}
     ${membershipRedeemed > 0 ? `<div class="row"><span style="font-size: ${FONT_SIZE_LARGE}; font-weight: 700;">Points Redeemed${bill.membership ? ` (${bill.membership.points_redeemed} pts)` : ''} : -${membershipRedeemed.toFixed(2)}</span></div>` : ''}
-    <div class="row"><span style="font-size: 14px; font-weight: 700;">Net Payable : ${grandTotal.toFixed(2)}</span></div>
+    <div class="row"><span style="font-size: 14px; font-weight: 700;">${balanceDue > 0 ? 'Net Payable' : 'Grand Total'} : ${grandTotal.toFixed(2)}</span></div>
+    ${balanceDue > 0 ? `
+    <div class="row"><span style="font-size: 14px; font-weight: 700;">Paid Amount : ${paidAmount.toFixed(2)}</span></div>
+    <div class="row"><span style="font-size: 14px; font-weight: 700;">Balance Due : ${balanceDue.toFixed(2)}</span></div>` : ''}
   </div>
   <div class="dashed"></div>
 
@@ -599,6 +621,14 @@ export function shareWhatsApp(bill: BillData, clientInfo: ClientInfo): PrintResu
     const date = formatDate(bill.created_at);
     const currencySymbol = resolveCurrencySymbol(bill);
 
+    // Partial payment: a shared summary saying only "Total: ₹5000" would hide
+    // that the customer still owes money — state the balance explicitly.
+    const shareTotal = Math.round(Number(finalAmount));
+    const sharePaid = bill.paid_amount != null ? Number(bill.paid_amount)
+      : (bill.payment_status === 'pending' ? 0 : shareTotal);
+    const shareBalance = bill.balance_due != null ? Number(bill.balance_due)
+      : Math.max(shareTotal - sharePaid, 0);
+
     const message = encodeURIComponent(
       `*${clientInfo.client_name || 'Bill'}*\n` +
       `━━━━━━━━━━━━━━━\n` +
@@ -606,7 +636,11 @@ export function shareWhatsApp(bill: BillData, clientInfo: ClientInfo): PrintResu
       `Date: ${date}\n` +
       `━━━━━━━━━━━━━━━\n` +
       `Items: ${bill.items.length}\n` +
-      `Total: ${currencySymbol}${Math.round(Number(finalAmount))}\n` +
+      `Total: ${currencySymbol}${shareTotal}\n` +
+      (shareBalance > 0
+        ? `Paid: ${currencySymbol}${sharePaid.toFixed(2)}\n` +
+          `Balance Due: ${currencySymbol}${shareBalance.toFixed(2)}\n`
+        : '') +
       `Payment: ${bill.payment_type}\n` +
       `━━━━━━━━━━━━━━━\n` +
       `Thank you for your purchase!`

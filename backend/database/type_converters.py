@@ -196,11 +196,26 @@ BILLING_COLUMN_TYPES = {
     'discount_percentage': 'NUMERIC',
     'discount_amount': 'NUMERIC',
     'negotiable_amount': 'NUMERIC',
-    'balance_due': 'NUMERIC',
+    # v42: how much the customer has actually paid. balance_due is deliberately
+    # NOT here — it is computed (total − paid), never stored or synced.
+    'paid_amount': 'NUMERIC',
     'created_at': 'TIMESTAMP',
     'updated_at': 'TIMESTAMP',
     'synced_at': 'TIMESTAMP',
     'local_created_at': 'TIMESTAMP'
+}
+
+# bill_payments (v42) — one row per payment received toward a customer bill.
+BILL_PAYMENTS_COLUMN_TYPES = {
+    'payment_id': 'UUID',
+    'client_id': 'UUID',
+    'bill_id': 'UUID',
+    'recorded_by': 'UUID',
+    'amount': 'NUMERIC',
+    'payment_date': 'TIMESTAMP',
+    'created_at': 'TIMESTAMP',
+    'updated_at': 'TIMESTAMP',
+    'synced_at': 'TIMESTAMP',
 }
 
 STOCK_COLUMN_TYPES = {
@@ -428,6 +443,7 @@ SYNC_LOG_COLUMN_TYPES = {
 ALL_COLUMN_TYPES = {
     'gst_billing': BILLING_COLUMN_TYPES,
     'non_gst_billing': BILLING_COLUMN_TYPES,
+    'bill_payments': BILL_PAYMENTS_COLUMN_TYPES,
     'stock_entry': STOCK_COLUMN_TYPES,
     'customer': CUSTOMER_COLUMN_TYPES,
     'payment_type': PAYMENT_TYPE_COLUMN_TYPES,

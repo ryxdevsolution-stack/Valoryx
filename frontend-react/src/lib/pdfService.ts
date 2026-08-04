@@ -142,6 +142,8 @@ export async function generateBillPDF(
   const isGST = bill.type === 'gst'
   const grandTotal = isGST ? bill.final_amount : bill.total_amount
   const isPending = bill.payment_status === 'pending'
+  // v42: partially paid — some money received, a balance still owed.
+  const isPartial = bill.payment_status === 'partial'
   const paymentLabel = parsePaymentLabel(bill.payment_type)
 
   // Region-aware currency formatting (no hooks — driven by the bill / localStorage).
@@ -279,16 +281,67 @@ export async function generateBillPDF(
     // VAT line); fall back to the legacy CGST/SGST split.
     const taxComponents = bill.tax_breakdown && bill.tax_breakdown.length > 0
       ? bill.tax_breakdown
-      : [
-          { name: 'CGST', amount: bill.cgst },
-          { name: 'SGST', amount: bill.sgst },
-        ]
+      : (Number(bill.cgst) || Number(bill.sgst)
+          ? [
+              { name: 'CGST', amount: Number(bill.cgst) || 0 },
+              { name: 'SGST', amount: Number(bill.sgst) || 0 },
+            ]
+          // cgst/sgst only exist on the CREATE response — a bill loaded from
+          // the list/detail API has neither, and blindly trusting them printed
+          // CGST 0.00 / SGST 0.00 on a bill that clearly had tax. Split
+          // gst_amount instead, exactly as the thermal receipt does.
+          : [
+              { name: 'CGST', amount: (Number(bill.gst_amount) || 0) / 2 },
+              { name: 'SGST', amount: (Number(bill.gst_amount) || 0) / 2 },
+            ])
     for (const comp of taxComponents) {
       totalRows.push(
         `<tr><td class="tot-lbl">${esc(comp.name)}</td><td class="tot-val">${fmt(Number(comp.amount))}</td></tr>`
       )
     }
   }
+
+  // v42 partial payment — Paid / Balance Due appear below the tax lines so the
+  // Grand Total keeps its meaning ("the bill"), and the balance reads as what
+  // is still owed against it. Omitted entirely on a fully-settled bill.
+  const pdfPaid = bill.paid_amount != null ? Number(bill.paid_amount)
+    : (bill.payment_status === 'pending' ? 0 : grandTotal)
+  const pdfBalance = bill.balance_due != null ? Number(bill.balance_due)
+    : Math.max(grandTotal - pdfPaid, 0)
+  if (pdfBalance > 0) {
+    totalRows.push(
+      `<tr><td class="tot-lbl">Paid</td><td class="tot-val green">${fmt(pdfPaid)}</td></tr>`
+    )
+    totalRows.push(
+      `<tr><td class="tot-lbl"><strong>Balance Due</strong></td><td class="tot-val"><strong>${fmt(pdfBalance)}</strong></td></tr>`
+    )
+  }
+
+  // ── Payment history ───────────────────────────────────────────────────────
+  // A separate section below the totals rather than extra rows inside them:
+  // the totals table answers "what does this bill come to", the history
+  // answers "when did the money arrive" — mixing them makes both harder to scan.
+  // Shown only when it adds information: a balance is outstanding, or the bill
+  // was settled across more than one instalment. A plain one-payment bill is
+  // left uncluttered.
+  const payments = bill.payments || []
+  const showHistory = payments.length > 1 || (payments.length > 0 && pdfBalance > 0)
+  const historySection = showHistory ? `
+  <hr class="dash" style="margin-top:8px"/>
+  <div class="totals-section">
+    <div class="pay-hist-title">Payment History</div>
+    <table class="tot-tbl">
+      ${payments.map(p => {
+        const when = p.payment_date
+          ? new Date(p.payment_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })
+          : '—'
+        return `<tr><td class="tot-lbl">${esc(when)} · ${esc(p.payment_method || 'Cash')}</td><td class="tot-val green">${fmt(Number(p.amount))}</td></tr>`
+      }).join('')}
+      ${pdfBalance > 0
+        ? `<tr><td class="tot-lbl"><strong>Still due</strong></td><td class="tot-val"><strong>${fmt(pdfBalance)}</strong></td></tr>`
+        : ''}
+    </table>
+  </div>` : ''
 
   // ── Footer note ───────────────────────────────────────────────────────────
   const footerNote = clientInfo.receipt_footer
@@ -476,6 +529,7 @@ body{
 
 /* ── Totals ────────────────────────────────────────── */
 .totals-section{padding:12px 22px 14px}
+.pay-hist-title{font-size:11px;font-weight:700;color:#555;text-transform:uppercase;letter-spacing:.04em;margin-bottom:2px}
 .tot-tbl{border-collapse:collapse;width:100%}
 .tot-lbl{font-size:12px;color:#777;padding:5px 0}
 .tot-val{font-size:12px;color:#333;text-align:right;padding:5px 0;font-weight:500}
@@ -592,7 +646,7 @@ body{
       <div>
         <div class="amount-main">
           ${fmt(grandTotal)}
-          <span class="${isPending ? 'status-chip chip-pending' : 'status-chip chip-paid'}">${isPending ? 'Pending' : 'Paid'}</span>
+          <span class="${isPartial ? 'status-chip chip-pending' : (isPending ? 'status-chip chip-pending' : 'status-chip chip-paid')}">${isPartial ? 'Partial' : (isPending ? 'Pending' : 'Paid')}</span>
         </div>
         <div class="amount-payment">${esc(paymentLabel)}</div>
       </div>
@@ -641,6 +695,9 @@ body{
       </tr>
     </table>
   </div>
+
+  <!-- Payment history (partial / multi-instalment bills only) -->
+  ${historySection}
 
   <!-- Footer note -->
   ${footerNote ? `<div class="card-footer">${footerNote}</div>` : ''}

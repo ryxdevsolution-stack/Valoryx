@@ -263,10 +263,15 @@ export default function SalaryPage() {
     employeeId: string,
     data: { work_date: string; to_date?: string; hours: number; notes: string }
   ) {
-    await api.post(`/employees/${employeeId}/attendance/manual`, data)
-    showToast(data.to_date && data.to_date !== data.work_date
+    const res = await api.post(`/employees/${employeeId}/attendance/manual`, data)
+    // A range can legitimately skip days (leave/holiday/absent). Say so, or the
+    // user assumes every day in the range got hours.
+    const skipped = res.data?.data?.summary?.skipped ?? 0
+    const isRange = data.to_date && data.to_date !== data.work_date
+    const base = isRange
       ? `${data.hours}h recorded from ${data.work_date} to ${data.to_date}`
-      : `${data.hours}h recorded for ${data.work_date}`)
+      : `${data.hours}h recorded for ${data.work_date}`
+    showToast(skipped > 0 ? `${base} — ${skipped} day(s) skipped (leave/absent)` : base)
     setAttendanceRefresh(n => n + 1)
     setCycleRefresh(n => n + 1)
   }
@@ -277,7 +282,10 @@ export default function SalaryPage() {
     const res = await api.post('/employees/attendance/bulk-manual', { employee_ids: selectedIds, ...data })
     const results: BulkResult[] = res.data.data?.results ?? []
     const succeeded = results.filter(r => r.success).length
-    showToast(`${data.hours}h recorded for ${succeeded} of ${results.length} employee-days`)
+    const skipped = results.filter(r => r.skipped).length
+    showToast(
+      `${data.hours}h recorded for ${succeeded} of ${results.length} employee-days`
+      + (skipped > 0 ? ` — ${skipped} skipped (leave/absent)` : ''))
     setAttendanceRefresh(n => n + 1)
     setCycleRefresh(n => n + 1)
     return results

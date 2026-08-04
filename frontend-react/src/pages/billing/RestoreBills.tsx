@@ -37,7 +37,7 @@ interface Bill {
   sgst?: number
   igst?: number
   status?: string
-  payment_status?: 'paid' | 'pending'
+  payment_status?: 'paid' | 'pending' | 'partial'
   user_name?: string
   created_by?: string
 }

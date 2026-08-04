@@ -1,13 +1,14 @@
 import uuid
 import re
 import math
+import json
 from datetime import datetime
 import pytz
 from dateutil import parser as date_parser
 from flask import Blueprint, request, jsonify, g, Response
 from sqlalchemy import func
 from extensions import db
-from models.billing_model import GSTBilling, NonGSTBilling
+from models.billing_model import GSTBilling, NonGSTBilling, BillPayment
 from models.stock_model import StockEntry
 from models.customer_model import Customer
 from models.client_model import ClientEntry
@@ -34,6 +35,77 @@ def _round_rupee(value):
     rounding and would diverge from the UI on .5 cases).
     """
     return float(math.floor(float(value) + 0.5))
+
+
+def _derive_payment_state(data, final_amount):
+    """Server-side truth for how much was paid and what status that implies.
+
+    The client's payment_status is NEVER trusted directly — a stale or buggy
+    client could mark a half-paid bill 'paid'. Only the amounts decide:
+        paid <= 0            -> pending
+        0 < paid < total     -> partial
+        paid >= total        -> paid
+    Backward compatible: old clients don't send paid_amount, so we fall back to
+    their binary payment_status (pending -> 0 paid, anything else -> fully paid).
+    Returns (paid_amount: float, payment_status: str).
+    """
+    total = float(final_amount)
+    raw = data.get('paid_amount')
+    if raw is None:
+        paid = 0.0 if data.get('payment_status') == 'pending' else total
+    else:
+        try:
+            paid = float(raw)
+        except (TypeError, ValueError):
+            paid = 0.0
+    paid = min(max(paid, 0.0), total)  # clamp: no negatives, no over-payment at creation
+    if paid <= 0:
+        status = 'pending'
+    elif paid < total - 0.009:  # paise tolerance
+        status = 'partial'
+    else:
+        paid, status = total, 'paid'
+    return round(paid, 2), status
+
+
+def _record_bill_payments(client_id, bill_id, bill_kind, paid_amount, payment_type_json, bill_date, user_id):
+    """Write the initial bill_payments ledger rows for a new bill.
+
+    One row per payment split so day-wise collections and method breakdowns
+    stay accurate. Splits whose sum differs from paid_amount (or unparseable
+    JSON) collapse into a single row for paid_amount — the ledger's invariant
+    is SUM(rows) == bill.paid_amount, never trust the splits blindly.
+    Caller commits.
+    """
+    if paid_amount <= 0:
+        return
+    rows = []
+    try:
+        splits = json.loads(payment_type_json) if isinstance(payment_type_json, str) else (payment_type_json or [])
+        cleaned = []
+        for s in splits:
+            amt = float(s.get('amount', s.get('AMOUNT', 0)) or 0)
+            method = s.get('payment_type') or s.get('PAYMENT_TYPE') or s.get('payment_name')
+            if amt > 0:
+                cleaned.append((method, round(amt, 2)))
+        if cleaned and abs(sum(a for _, a in cleaned) - paid_amount) <= 0.01:
+            rows = cleaned
+    except (ValueError, TypeError, AttributeError):
+        pass
+    if not rows:
+        rows = [(None, paid_amount)]
+
+    for method, amt in rows:
+        db.session.add(BillPayment(
+            payment_id=str(uuid.uuid4()),
+            client_id=client_id,
+            bill_id=bill_id,
+            bill_kind=bill_kind,
+            amount=amt,
+            payment_method=method,
+            payment_date=bill_date,
+            recorded_by=user_id,
+        ))
 
 
 # Helper function to get current time in Asia/Kolkata timezone
@@ -1075,6 +1147,9 @@ def create_unified_bill():
             # the rounded Grand Total shown on the create screen (and amount_received).
             final_amount = _round_rupee(final_amount)
 
+            # Partial payment: amounts decide the status, never the client's word.
+            paid_amount, derived_payment_status = _derive_payment_state(data, final_amount)
+
             new_bill = GSTBilling(
                 bill_id=str(uuid.uuid4()),
                 client_id=client_id,
@@ -1094,7 +1169,8 @@ def create_unified_bill():
                 discount_amount=round(discount_amount, 2) if discount_amount > 0 else None,
                 negotiable_amount=round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                 status='final',
-                payment_status=data.get('payment_status', 'paid'),
+                payment_status=derived_payment_status,
+                paid_amount=paid_amount,
                 currency_code=bill_currency_code,
                 tax_breakdown=build_tax_breakdown(total_gst_amount, bill_tax_config),
                 created_by=g.user['user_id'],
@@ -1103,6 +1179,9 @@ def create_unified_bill():
 
             db.session.add(new_bill)
             db.session.flush()  # ensure bill_id is available for the membership ledger
+            # Ledger rows for the initial payment(s) — same transaction, atomic.
+            _record_bill_payments(client_id, new_bill.bill_id, 'gst', paid_amount,
+                                  data['payment_type'], bill_date, g.user['user_id'])
             # Log action BEFORE commit so it's part of the same transaction (performance optimization)
             log_action('CREATE', 'gst_billing', new_bill.bill_id, None, new_bill.to_dict())
 
@@ -1173,7 +1252,9 @@ def create_unified_bill():
                     'tax_breakdown': tax_breakdown,
                     'currency_code': bill_currency_code,
                     'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0],
-                    'payment_status': data.get('payment_status', 'paid'),
+                    'payment_status': derived_payment_status,
+                    'paid_amount': paid_amount,
+                    'balance_due': round(max(final_amount - paid_amount, 0), 2),
                     'points_earned': points_earned
                 }
             }), 201
@@ -1209,6 +1290,9 @@ def create_unified_bill():
             # rounded Grand Total shown on the create screen (and amount_received).
             total_amount = _round_rupee(total_amount)
 
+            # Partial payment: amounts decide the status, never the client's word.
+            paid_amount, derived_payment_status = _derive_payment_state(data, total_amount)
+
             new_bill = NonGSTBilling(
                 bill_id=str(uuid.uuid4()),
                 client_id=client_id,
@@ -1225,7 +1309,8 @@ def create_unified_bill():
                 discount_amount=round(discount_amount, 2) if discount_amount > 0 else None,
                 negotiable_amount=round(negotiable_amount, 2) if negotiable_amount and negotiable_amount > 0 else None,
                 status='final',
-                payment_status=data.get('payment_status', 'paid'),
+                payment_status=derived_payment_status,
+                paid_amount=paid_amount,
                 currency_code=bill_currency_code,
                 created_by=g.user['user_id'],
                 created_at=bill_date
@@ -1233,6 +1318,9 @@ def create_unified_bill():
 
             db.session.add(new_bill)
             db.session.flush()  # ensure bill_id is available for the membership ledger
+            # Ledger rows for the initial payment(s) — same transaction, atomic.
+            _record_bill_payments(client_id, new_bill.bill_id, 'non_gst', paid_amount,
+                                  data['payment_type'], bill_date, g.user['user_id'])
             # Log action BEFORE commit so it's part of the same transaction (performance optimization)
             log_action('CREATE', 'non_gst_billing', new_bill.bill_id, None, new_bill.to_dict())
 
@@ -1290,7 +1378,9 @@ def create_unified_bill():
                     'igst': 0,
                     'currency_code': bill_currency_code,
                     'user_name': g.user.get('full_name') or g.user.get('email', 'Admin').split('@')[0],
-                    'payment_status': data.get('payment_status', 'paid'),
+                    'payment_status': derived_payment_status,
+                    'paid_amount': paid_amount,
+                    'balance_due': round(max(total_amount - paid_amount, 0), 2),
                     'points_earned': points_earned
                 }
             }), 201
@@ -1300,16 +1390,140 @@ def create_unified_bill():
         return jsonify({'error': 'Failed to create bill', 'message': str(e)}), 500
 
 
+def _apply_bill_payment(bill, is_gst, client_id, amount, payment_method, notes, user_id):
+    """Shared core of receive-payment and mark-paid.
+
+    Adds a bill_payments ledger row, bumps paid_amount, re-derives
+    payment_status from the AMOUNTS (never from the caller's word), appends the
+    split to the payment_type JSON so every existing display parser keeps
+    working, and re-queues the bill for sync (synced_at = NULL — the project
+    invariant mark-paid used to violate, which is why a settled bill never
+    reached the cloud). Caller commits.
+    """
+    total = float(bill.final_amount if is_gst else bill.total_amount)
+    already = float(bill.paid_amount) if bill.paid_amount is not None else (
+        0.0 if (bill.payment_status or 'paid') == 'pending' else total)
+
+    new_paid = round(already + amount, 2)
+    bill.paid_amount = min(new_paid, total)
+    bill.payment_status = 'paid' if new_paid >= total - 0.009 else 'partial'
+
+    # Append to the splits JSON so BillingList/print parsers show this payment.
+    try:
+        splits = json.loads(bill.payment_type) if bill.payment_type else []
+        if not isinstance(splits, list):
+            splits = []
+    except (ValueError, TypeError):
+        splits = []
+    splits.append({'payment_type': payment_method or 'Cash', 'amount': round(amount, 2)})
+    bill.payment_type = json.dumps(splits)
+
+    bill.synced_at = None  # INVARIANT: edited synced row must re-upload
+
+    payment = BillPayment(
+        payment_id=str(uuid.uuid4()),
+        client_id=client_id,
+        bill_id=bill.bill_id,
+        bill_kind='gst' if is_gst else 'non_gst',
+        amount=round(amount, 2),
+        payment_method=payment_method or 'Cash',
+        payment_date=get_current_time(),
+        notes=notes,
+        recorded_by=user_id,
+    )
+    db.session.add(payment)
+    return payment
+
+
+@billing_bp.route('/<bill_id>/payments', methods=['POST'])
+@authenticate
+@require_permission('edit_bill_details')
+def receive_bill_payment(bill_id):
+    """Record a payment toward a bill's outstanding balance.
+
+    The counter half of partial billing: the customer who paid ₹3000 of ₹5000
+    at the till comes back with the ₹2000. Body: {amount, payment_method,
+    notes?}. Fully paying flips the bill to 'paid'; a smaller amount leaves it
+    'partial' with a reduced balance. Returns the updated bill for reprint.
+    """
+    try:
+        client_id = g.user['client_id']
+        data = request.get_json() or {}
+
+        try:
+            amount = round(float(data.get('amount', 0)), 2)
+        except (TypeError, ValueError):
+            return jsonify({'error': 'amount must be a number'}), 400
+        if amount <= 0:
+            return jsonify({'error': 'amount must be greater than zero'}), 400
+
+        gst_bill = GSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
+        non_gst_bill = None if gst_bill else NonGSTBilling.query.filter_by(
+            bill_id=bill_id, client_id=client_id).first()
+        bill = gst_bill or non_gst_bill
+        if not bill:
+            return jsonify({'error': 'Bill not found'}), 404
+        if bill.status == 'cancelled':
+            return jsonify({'error': 'Cannot record a payment on a cancelled bill'}), 400
+
+        balance = bill.balance_due
+        if balance <= 0:
+            return jsonify({'error': 'This bill is already fully paid'}), 400
+        if amount > balance + 0.009:
+            return jsonify({'error': f'Amount exceeds the balance due ({balance:.2f})',
+                            'balance_due': balance}), 400
+
+        old_data = bill.to_dict()
+        payment = _apply_bill_payment(
+            bill, gst_bill is not None, client_id, amount,
+            (data.get('payment_method') or '').strip() or None,
+            (data.get('notes') or '').strip() or None,
+            g.user['user_id'])
+        log_action('UPDATE', 'gst_billing' if gst_bill else 'non_gst_billing',
+                   bill_id, old_data, bill.to_dict())
+        db.session.commit()
+
+        _invalidate_billing(client_id)
+        return jsonify({'success': True,
+                        'message': 'Payment recorded',
+                        'payment': payment.to_dict(),
+                        'bill': bill.to_dict()}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to record payment', 'message': str(e)}), 500
+
+
+@billing_bp.route('/<bill_id>/payments', methods=['GET'])
+@authenticate
+def list_bill_payments(bill_id):
+    """Payment history for one bill, oldest first — feeds the detail modal."""
+    try:
+        client_id = g.user['client_id']
+        payments = BillPayment.query.filter_by(
+            bill_id=bill_id, client_id=client_id
+        ).order_by(BillPayment.payment_date.asc(), BillPayment.created_at.asc()).all()
+        return jsonify({'success': True,
+                        'payments': [p.to_dict() for p in payments]}), 200
+    except Exception as e:
+        return jsonify({'error': 'Failed to load payments', 'message': str(e)}), 500
+
+
 @billing_bp.route('/<bill_id>/mark-paid', methods=['PUT'])
 @authenticate
 @require_permission('edit_bill_details')
 def mark_bill_paid(bill_id):
-    """Mark a pending bill as paid."""
+    """Mark a bill fully paid — sugar for receiving the entire balance in cash.
+
+    Kept for backward compatibility with older clients; now routes through the
+    same ledger as /payments so the settlement is recorded and synced instead
+    of being a silent status flip.
+    """
     try:
         client_id = g.user['client_id']
 
         gst_bill = GSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
-        non_gst_bill = NonGSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
+        non_gst_bill = None if gst_bill else NonGSTBilling.query.filter_by(
+            bill_id=bill_id, client_id=client_id).first()
 
         bill = gst_bill or non_gst_bill
         if not bill:
@@ -1319,7 +1533,14 @@ def mark_bill_paid(bill_id):
             return jsonify({'error': 'Cannot update a cancelled bill'}), 400
 
         old_data = bill.to_dict()
-        bill.payment_status = 'paid'
+        balance = bill.balance_due
+        if balance > 0:
+            _apply_bill_payment(bill, gst_bill is not None, client_id, balance,
+                                'Cash', None, g.user['user_id'])
+        else:
+            # Nothing owed — just normalise the flag (legacy pending rows).
+            bill.payment_status = 'paid'
+            bill.synced_at = None  # INVARIANT: edited synced row must re-upload
         log_action('UPDATE', 'gst_billing' if gst_bill else 'non_gst_billing', bill_id, old_data, bill.to_dict())
         db.session.commit()
 
