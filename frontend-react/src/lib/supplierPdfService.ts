@@ -33,6 +33,12 @@ export interface SupplierPdfSupplier {
   gst_number?: string | null
 }
 
+export interface SupplierPdfPayment {
+  amount: number
+  payment_date: string | null
+  notes?: string | null
+}
+
 export interface SupplierPdfDelivery {
   delivery_id: string
   invoice_number: string | null
@@ -42,6 +48,7 @@ export interface SupplierPdfDelivery {
   paid: number
   balance: number
   items: { length: number } | unknown[]
+  payments?: SupplierPdfPayment[]
 }
 
 export interface SupplierStatementPdfParams {
@@ -91,10 +98,6 @@ function esc(str: string | undefined | null): string {
     .replace(/'/g, '&#39;')
 }
 
-const STATUS_LABEL: Record<string, string> = {
-  draft: 'Draft', confirmed: 'Confirmed', completed: 'Completed',
-}
-
 // ─── Main export ────────────────────────────────────────────────────────────────
 
 export function generateSupplierStatementPDF(params: SupplierStatementPdfParams): void {
@@ -119,34 +122,75 @@ export function generateSupplierStatementPDF(params: SupplierStatementPdfParams)
     )
     .join('')
 
-  // ── Delivery ledger (oldest first) ───────────────────────────────────────────
-  const sorted = [...deliveries].sort(
-    (a, b) => new Date(a.delivery_date || 0).getTime() - new Date(b.delivery_date || 0).getTime()
-  )
-  const rows = sorted.length
-    ? sorted
-        .map(d => {
-          const itemCount = Array.isArray(d.items) ? d.items.length : 0
+  // ── Account ledger: one Credit line per delivery (purchase), one Debit line
+  //    per payment against it — sorted chronologically with a running balance. ──
+  type LedgerEntry = {
+    date: string | null
+    particulars: string
+    vchType: string
+    vchNo: string
+    credit: number
+    debit: number
+    sortKey: number
+  }
+
+  const entries: LedgerEntry[] = []
+  deliveries.forEach((d, di) => {
+    entries.push({
+      date: d.delivery_date,
+      particulars: 'Purchase',
+      vchType: 'Purchase',
+      vchNo: d.invoice_number ? `#${d.invoice_number}` : '—',
+      credit: d.total,
+      debit: 0,
+      sortKey: new Date(d.delivery_date || 0).getTime() * 1000 + di * 2,
+    })
+    ;(d.payments || []).forEach((p, pi) => {
+      entries.push({
+        date: p.payment_date,
+        particulars: p.notes?.trim() || 'Payment',
+        vchType: 'Payment',
+        vchNo: '—',
+        credit: 0,
+        debit: p.amount,
+        sortKey: new Date(p.payment_date || 0).getTime() * 1000 + di * 2 + 1 + pi,
+      })
+    })
+  })
+  entries.sort((a, b) => a.sortKey - b.sortKey)
+
+  let running = 0
+  const rows = entries.length
+    ? entries
+        .map(e => {
+          running += e.credit - e.debit
+          const bal = Math.abs(running)
+          const balSuffix = running === 0 ? '' : running > 0 ? ' Cr' : ' Dr'
           return `
         <tr>
-          <td>${formatDate(d.delivery_date)}</td>
-          <td>${d.invoice_number ? `#${esc(d.invoice_number)}` : '—'}</td>
-          <td>${esc(STATUS_LABEL[d.status] || d.status)}</td>
-          <td class="num muted">${itemCount}</td>
-          <td class="num">${formatCurrency(d.total)}</td>
-          <td class="num pos">${formatCurrency(d.paid)}</td>
-          <td class="num ${d.balance > 0 ? 'neg' : ''}">${formatCurrency(d.balance)}</td>
+          <td>${formatDate(e.date)}</td>
+          <td>${esc(e.particulars)}</td>
+          <td>${esc(e.vchType)}</td>
+          <td>${esc(e.vchNo)}</td>
+          <td class="num pos">${e.credit ? formatCurrency(e.credit) : ''}</td>
+          <td class="num neg">${e.debit ? formatCurrency(e.debit) : ''}</td>
+          <td class="num">${formatCurrency(bal)}${balSuffix}</td>
         </tr>`
         })
         .join('')
     : `<tr><td colspan="7" class="empty">No deliveries recorded for this supplier.</td></tr>`
 
+  const finalBalSuffix = balanceDue === 0 ? '' : ' Cr'
   const ledgerHtml = `
     <section>
-      <h2>Delivery History <span class="count">(${sorted.length})</span></h2>
+      <h2>Ledger <span class="count">(${entries.length})</span></h2>
       <table class="ledger">
+        <colgroup>
+          <col style="width:11%"/><col style="width:21%"/><col style="width:10%"/>
+          <col style="width:13%"/><col style="width:14%"/><col style="width:14%"/><col style="width:17%"/>
+        </colgroup>
         <thead>
-          <tr><th>Date</th><th>Invoice</th><th>Status</th><th class="num">Items</th><th class="num">Amount</th><th class="num">Paid</th><th class="num">Balance</th></tr>
+          <tr><th>Date</th><th>Particulars</th><th>Vch Type</th><th>Vch No</th><th class="num">Credit</th><th class="num">Debit</th><th class="num">Balance</th></tr>
         </thead>
         <tbody>${rows}</tbody>
         <tfoot>
@@ -154,7 +198,7 @@ export function generateSupplierStatementPDF(params: SupplierStatementPdfParams)
             <td colspan="4">Total</td>
             <td class="num">${formatCurrency(totalAmount)}</td>
             <td class="num">${formatCurrency(paidAmount)}</td>
-            <td class="num">${formatCurrency(balanceDue)}</td>
+            <td class="num">${formatCurrency(balanceDue)}${finalBalSuffix}</td>
           </tr>
         </tfoot>
       </table>
@@ -233,10 +277,12 @@ export function generateSupplierStatementPDF(params: SupplierStatementPdfParams)
 
   /* Tables */
   table{width:100%;border-collapse:collapse}
-  .ledger th{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-align:left;padding:7px 8px;border-bottom:2px solid var(--line);font-weight:700}
-  .ledger td{padding:7px 8px;border-bottom:1px solid #f1f1f1;font-size:11.5px;vertical-align:top}
+  .ledger{table-layout:fixed}
+  .ledger th{font-size:9.5px;text-transform:uppercase;letter-spacing:.5px;color:var(--muted);text-align:left;padding:7px 8px;border-bottom:2px solid var(--line);font-weight:700;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .ledger th.num{text-align:right}
+  .ledger td{padding:7px 8px;border-bottom:1px solid #f1f1f1;font-size:11.5px;vertical-align:top;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
   .ledger tbody tr:nth-child(even) td{background:#fafafa}
-  .ledger tfoot td{padding:9px 8px;border-top:2px solid var(--ink);font-weight:800;font-size:12px}
+  .ledger tfoot td{padding:9px 8px;border-top:2px solid var(--ink);font-weight:800;font-size:12px;overflow:visible;white-space:nowrap}
   .num{text-align:right;font-variant-numeric:tabular-nums;white-space:nowrap}
   .pos{color:var(--pos)} .neg{color:var(--neg)} .muted{color:var(--muted)}
   .empty{text-align:center;color:var(--muted);font-style:italic;padding:16px 8px}

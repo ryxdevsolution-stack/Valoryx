@@ -63,6 +63,14 @@ export default defineConfig(({ command }) => ({
       '@': path.resolve(__dirname, './src'),
     },
   },
+  optimizeDeps: {
+    // workbox-window is pulled in dynamically by vite-plugin-pwa's SW
+    // registration at runtime, so Vite's scanner misses it on cold start.
+    // Without this, it gets discovered mid-session and forces a
+    // re-optimization + reload, which can hit in-flight React hooks and
+    // throw "Invalid hook call" / duplicate React copy errors.
+    include: ['workbox-window'],
+  },
   // Use /frontend/ for web (Flask-served), './' for Electron (file:// protocol)
   base: isElectron ? './' : '/',
   // Strip all console.* and debugger statements from production builds.

@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import { Plus, Calculator, CheckCircle, ChevronDown, ChevronUp, RefreshCw, Pencil, Trash2, FileText } from 'lucide-react'
+import { Plus, Calculator, CheckCircle, ChevronDown, ChevronUp, RefreshCw, Pencil, Trash2, FileText, Mail, PanelRightClose } from 'lucide-react'
 import api from '@/lib/api'
+import { confirmDialog } from '@/components/ConfirmDialog'
 import { useCurrency } from '@/lib/useCurrency'
 import type { Employee, SalaryCycle, SalaryAdvance } from '@/pages/Salary'
 import { DEDUCTION_CATEGORIES } from '@/components/salary/SalaryModals'
@@ -20,6 +21,10 @@ interface SalaryPanelProps {
   canManage: boolean
   /** Fired after cycles change here (e.g. auto-create) so siblings re-fetch too. */
   onCyclesChanged?: () => void
+  /** Collapses this panel to a rail so the attendance calendar gets the width. */
+  onCollapse?: () => void
+  /** Surfaces outcomes of one-off actions (payslip email) in the page toast. */
+  onToast?: (msg: string, kind?: 'success' | 'error') => void
 }
 
 const STATUS_STYLES: Record<string, string> = {
@@ -35,6 +40,8 @@ export default function SalaryPanel({
   refreshSignal,
   canManage,
   onCyclesChanged,
+  onCollapse,
+  onToast,
 }: SalaryPanelProps) {
   const { symbol: cur } = useCurrency()
   const [cycles, setCycles] = useState<SalaryCycle[]>([])
@@ -144,6 +151,43 @@ export default function SalaryPanel({
     }
   }
 
+  const [emailingPayslip, setEmailingPayslip] = useState<string | null>(null)
+
+  /**
+   * Emails this cycle's payslip to the employee's own address.
+   *
+   * Confirmed first: unlike the download, this leaves the building and cannot be
+   * taken back, and the admin should see exactly which address it is going to
+   * before it goes.
+   */
+  async function emailPayslip(cycleId: string) {
+    if (!employee.email) {
+      onToast?.(`${employee.name} has no email address. Add one on the employee record first.`, 'error')
+      return
+    }
+    const ok = await confirmDialog({
+      title: 'Email this payslip?',
+      message: `The payslip PDF will be emailed to ${employee.name} at ${employee.email}.`,
+      confirmText: 'Send payslip',
+    })
+    if (!ok) return
+
+    setEmailingPayslip(cycleId)
+    try {
+      const res = await api.post(
+        `/employees/${employee.employee_id}/cycles/${cycleId}/payslip/email`
+      )
+      onToast?.(res.data?.message ?? `Payslip emailed to ${employee.email}`)
+    } catch (err: unknown) {
+      const msg = err && typeof err === 'object' && 'response' in err
+        ? (err as { response?: { data?: { error?: string } } }).response?.data?.error
+        : undefined
+      onToast?.(msg ?? 'Failed to email the payslip', 'error')
+    } finally {
+      setEmailingPayslip(null)
+    }
+  }
+
   const [deletingAdvance, setDeletingAdvance] = useState<string | null>(null)
 
   async function handleDeleteAdvance(advanceId: string) {
@@ -161,33 +205,52 @@ export default function SalaryPanel({
     // side): fills the parent's viewport height.
     <div className="flex flex-col lg:h-full bg-white dark:bg-gray-900 rounded-2xl border border-gray-200 dark:border-gray-700 overflow-hidden">
       {/* Header */}
-      <div className="flex items-center justify-between px-4 py-3 border-b border-gray-100 dark:border-gray-800">
-        <div>
-          <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Salary Cycles</h2>
-          <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5">{employee.name}</p>
+      {/* Header — title and actions each keep their own row on narrow columns
+          so button labels never wrap mid-word. */}
+      <div className="px-4 py-3 border-b border-gray-100 dark:border-gray-800">
+        <div className="flex items-start justify-between gap-2">
+          <div className="min-w-0">
+            <h2 className="text-sm font-semibold text-gray-900 dark:text-white">Salary Cycles</h2>
+            <p className="text-xs text-gray-400 dark:text-gray-500 mt-0.5 truncate">{employee.name}</p>
+          </div>
+          <div className="flex items-center gap-1 shrink-0">
+            <button
+              type="button"
+              onClick={fetchCycles}
+              title="Refresh cycles"
+              className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+            >
+              <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
+            </button>
+            {onCollapse && (
+              <button
+                type="button"
+                onClick={onCollapse}
+                title="Collapse salary panel"
+                aria-label="Collapse salary panel"
+                className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 hover:text-gray-700 dark:hover:text-gray-200 transition-colors"
+              >
+                <PanelRightClose className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
         </div>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 mt-2.5">
           <button
             type="button"
             onClick={() => onAddAdvance(cycles)}
-            className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
+            className="flex-1 flex items-center justify-center gap-1.5 whitespace-nowrap text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 transition-colors"
           >
-            + Deduction
+            <Plus className="w-3.5 h-3.5" />
+            Deduction
           </button>
           <button
             type="button"
             onClick={onNewCycle}
-            className="flex items-center gap-1.5 text-xs font-medium px-3 py-1.5 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-lg hover:opacity-90 transition-opacity"
+            className="flex-1 flex items-center justify-center gap-1.5 whitespace-nowrap text-xs font-medium px-3 py-2 bg-gray-900 dark:bg-white text-white dark:text-gray-900 rounded-lg hover:opacity-90 transition-opacity"
           >
             <Plus className="w-3.5 h-3.5" />
             New Cycle
-          </button>
-          <button
-            type="button"
-            onClick={fetchCycles}
-            className="p-1.5 rounded-lg text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 transition-colors"
-          >
-            <RefreshCw className={`w-3.5 h-3.5 ${loading ? 'animate-spin' : ''}`} />
           </button>
         </div>
       </div>
@@ -431,23 +494,48 @@ export default function SalaryPanel({
                       </div>
                     )}
 
-                    {/* Paid at info + payslip re-download */}
+                    {/* Paid-on line + payslip actions. Stacked rather than side by
+                        side: this panel is ~300px wide, so a single row made both
+                        the date and the button labels wrap mid-phrase. */}
                     {cycle.status === 'paid' && (
-                      <div className="flex items-center justify-between">
+                      <div className="pt-1 space-y-2">
                         {cycle.paid_at && (
-                          <p className="text-xs text-green-600 dark:text-green-400">
+                          <p className="flex items-center gap-1.5 text-xs text-green-600 dark:text-green-400">
+                            <CheckCircle className="w-3.5 h-3.5 flex-shrink-0" />
                             Paid on {new Date(cycle.paid_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', timeZone: 'Asia/Kolkata' })}
                           </p>
                         )}
-                        <button
-                          type="button"
-                          onClick={() => downloadPayslip(cycle.cycle_id)}
-                          disabled={downloadingPayslip === cycle.cycle_id}
-                          className="flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors"
-                        >
-                          <FileText className="w-3.5 h-3.5" />
-                          {downloadingPayslip === cycle.cycle_id ? 'Generating...' : 'Download Payslip'}
-                        </button>
+                        <div className="flex items-center gap-2">
+                          <button
+                            type="button"
+                            onClick={() => downloadPayslip(cycle.cycle_id)}
+                            disabled={downloadingPayslip === cycle.cycle_id}
+                            className="flex-1 flex items-center justify-center gap-1.5 whitespace-nowrap text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors"
+                          >
+                            <FileText className="w-3.5 h-3.5 flex-shrink-0" />
+                            {downloadingPayslip === cycle.cycle_id ? 'Generating…' : 'Payslip'}
+                          </button>
+                          {canManage && (
+                            <button
+                              type="button"
+                              onClick={() => emailPayslip(cycle.cycle_id)}
+                              disabled={emailingPayslip === cycle.cycle_id || !employee.email}
+                              title={employee.email
+                                ? `Email this payslip to ${employee.email}`
+                                : 'No email address on this employee record'}
+                              className="flex-1 flex items-center justify-center gap-1.5 whitespace-nowrap text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+                            >
+                              <Mail className="w-3.5 h-3.5 flex-shrink-0" />
+                              {emailingPayslip === cycle.cycle_id ? 'Sending…' : 'Email'}
+                            </button>
+                          )}
+                        </div>
+                        {/* Say why Email is dead rather than leaving a greyed button. */}
+                        {canManage && !employee.email && (
+                          <p className="text-[11px] text-gray-400 dark:text-gray-500">
+                            Add an email on this employee to send payslips.
+                          </p>
+                        )}
                       </div>
                     )}
                   </div>

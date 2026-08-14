@@ -12,7 +12,7 @@ Endpoints:
     GET    /api/payroll/work-groups                  - list groups
     POST   /api/payroll/work-groups                  - create group
     PUT    /api/payroll/work-groups/<group_id>       - update group
-    DELETE /api/payroll/work-groups/<group_id>       - soft delete (is_active=0)
+    DELETE /api/payroll/work-groups/<group_id>       - soft delete (is_active=FALSE)
     POST   /api/payroll/work-groups/assign           - assign employees to a group
 
   Invoices:
@@ -247,8 +247,165 @@ def _host_is_allowed(url) -> bool:
     return True
 
 
-def _signature_flowable(signature_url):
-    """Return a ReportLab Image for the authorised signature, or None.
+def _rupee_font():
+    """Register a TrueType font that actually has the rupee glyph.
+
+    ReportLab's built-in Type-1 fonts predate U+20B9, so '₹' renders as a black
+    box and the invoice has to fall back to the clumsier 'Rs.'. Any of the fonts
+    below carries the glyph; whichever is present on the host wins. Returns
+    (regular_name, bold_name) or None, in which case the caller uses 'Rs.'.
+
+    Cached on the function: font registration is global to ReportLab and
+    re-registering on every PDF is wasted work.
+    """
+    if hasattr(_rupee_font, '_cached'):
+        return _rupee_font._cached
+
+    import os
+    from reportlab.pdfbase import pdfmetrics
+    from reportlab.pdfbase.ttfonts import TTFont
+
+    candidates = [
+        ('DejaVuSans', '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf',
+         'DejaVuSans-Bold', '/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf'),
+        ('NotoSans', '/usr/share/fonts/truetype/noto/NotoSans-Regular.ttf',
+         'NotoSans-Bold', '/usr/share/fonts/truetype/noto/NotoSans-Bold.ttf'),
+        ('Nirmala', 'C:/Windows/Fonts/Nirmala.ttf',
+         'Nirmala-Bold', 'C:/Windows/Fonts/NirmalaB.ttf'),
+        ('ArialTT', 'C:/Windows/Fonts/arial.ttf',
+         'ArialTT-Bold', 'C:/Windows/Fonts/arialbd.ttf'),
+    ]
+
+    result = None
+    for reg_name, reg_path, bold_name, bold_path in candidates:
+        try:
+            if not (os.path.exists(reg_path) and os.path.exists(bold_path)):
+                continue
+            regular = TTFont(reg_name, reg_path)
+            # Confirm the glyph exists rather than trusting the filename — a
+            # font without it silently renders an empty box on every amount.
+            if not regular.face.charToGlyph.get(0x20B9):
+                continue
+            pdfmetrics.registerFont(regular)
+            pdfmetrics.registerFont(TTFont(bold_name, bold_path))
+            pdfmetrics.registerFontFamily(reg_name, normal=reg_name, bold=bold_name)
+            result = (reg_name, bold_name)
+            break
+        except Exception as e:
+            logger.debug(f'[Payroll] rupee font {reg_name} unusable: {e}')
+
+    _rupee_font._cached = result
+    return result
+
+
+def _flatten_background(img, bg):
+    """Turn a scan's uniform light background white so it blends into the page.
+
+    A photographed signature carries the paper with it — a grey or cream card
+    that prints as a visible rectangle on a white invoice. Repainting only the
+    pixels close to the sampled background colour removes the card while leaving
+    the ink untouched.
+
+    Deliberately conservative, because over-eager removal would eat a faint
+    signature:
+      - only runs on a LIGHT background (dark ink on dark paper is left alone)
+      - only when all four corners agree, i.e. the background really is flat;
+        a gradient or a photo backdrop is left as it is
+      - tolerance is narrow enough that anything resembling ink survives
+    """
+    try:
+        from PIL import Image as PILImage
+
+        if min(bg) < 150:
+            return img  # not a light background — leave it alone
+
+        rgb = img.convert('RGB')
+        w, h = rgb.size
+        corners = [rgb.getpixel(p) for p in
+                   ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))]
+        if any(sum(abs(c[i] - bg[i]) for i in range(3)) > 40 for c in corners):
+            return img  # uneven background — not safe to repaint
+
+        tolerance = 45
+        px = rgb.load()
+        white = (255, 255, 255)
+        for y in range(h):
+            for x in range(w):
+                p = px[x, y]
+                if (abs(p[0] - bg[0]) + abs(p[1] - bg[1]) + abs(p[2] - bg[2])) <= tolerance:
+                    px[x, y] = white
+        return rgb
+    except Exception as e:
+        logger.warning(f'[Payroll] background flatten skipped: {e}')
+        return img
+
+
+def _trim_borders(raw: bytes) -> bytes:
+    """Crop the blank margin around a scanned signature or logo.
+
+    A phone photo or flatbed scan of a signature is mostly paper: the ink might
+    occupy a fifth of the frame. Fitting that whole frame into the signature box
+    leaves a tiny scribble adrift in a large rectangle. Cropping to the ink first
+    means the scaling afterwards makes the signature itself fill the space.
+
+    The border colour is sampled from the image's own corners rather than
+    assumed white, so a grey scan or an off-white page trims correctly.
+
+    Returns the original bytes unchanged on any failure — a signature that
+    cannot be trimmed should still print.
+    """
+    try:
+        from io import BytesIO
+        from PIL import Image as PILImage, ImageChops
+
+        img = PILImage.open(BytesIO(raw))
+        img.load()
+        has_alpha = img.mode in ('RGBA', 'LA') or 'transparency' in img.info
+
+        if has_alpha:
+            # A transparent PNG: the alpha channel already says what is ink.
+            bbox = img.convert('RGBA').getchannel('A').getbbox()
+        else:
+            rgb = img.convert('RGB')
+            w, h = rgb.size
+            corners = [rgb.getpixel(p) for p in
+                       ((0, 0), (w - 1, 0), (0, h - 1), (w - 1, h - 1))]
+            bg = max(set(corners), key=corners.count)
+            diff = ImageChops.difference(rgb, PILImage.new('RGB', rgb.size, bg))
+            # Scale up the difference so faint ink against near-matching paper
+            # still registers, then ignore the noise floor of a scan.
+            bbox = ImageChops.add(diff, diff, 1.0, -25).convert('L').point(
+                lambda v: 255 if v > 12 else 0).getbbox()
+
+        if not bbox:
+            return raw  # uniform image — nothing to crop toward
+
+        # A few pixels of breathing room so the ink is not clipped flush.
+        pad = max(2, int(min(img.size) * 0.02))
+        left, top, right, bottom = bbox
+        bbox = (max(0, left - pad), max(0, top - pad),
+                min(img.size[0], right + pad), min(img.size[1], bottom + pad))
+
+        cropped = img.crop(bbox)
+        if cropped.size[0] < 8 or cropped.size[1] < 8:
+            return raw  # implausible crop — trust the original instead
+
+        if not has_alpha:
+            cropped = _flatten_background(cropped, bg)
+
+        out = BytesIO()
+        cropped.save(out, format='PNG')
+        return out.getvalue()
+    except Exception as e:
+        logger.warning(f'[Payroll] image trim skipped: {e}')
+        return raw
+
+
+def _signature_flowable(signature_url, max_w_cm=4.2, max_h_cm=2.0):
+    """Return a ReportLab Image for a remote/inline image, or None.
+
+    Used for both the authorised signature and the business logo — the size caps
+    are the only thing that differs, so the SSRF hardening below is written once.
 
     Only two sources are honoured: an inline data: URI, and an https URL on the
     project's own Supabase storage host. Rendering an arbitrary user-supplied
@@ -292,12 +449,16 @@ def _signature_flowable(signature_url):
         from reportlab.lib.utils import ImageReader
         from reportlab.lib.units import cm
 
+        raw = _trim_borders(raw)
+
         reader = ImageReader(BytesIO(raw))
         iw, ih = reader.getSize()
         if not iw or not ih:
             return None
-        max_w, max_h = 3.6 * cm, 1.8 * cm
-        scale = min(max_w / iw, max_h / ih)
+        max_w, max_h = max_w_cm * cm, max_h_cm * cm
+        # Fit inside the box, but never enlarge past 1:1 — stretching a small
+        # scan to fill the space only makes it blurry.
+        scale = min(max_w / iw, max_h / ih, 1.0)
         return Image(BytesIO(raw), width=iw * scale, height=ih * scale)
     except Exception as e:
         # A broken signature image must never take the whole invoice down.
@@ -317,16 +478,16 @@ def list_work_groups():
         rows = db.session.execute(text("""
             SELECT wg.*, (
                 SELECT COUNT(*) FROM employees e
-                WHERE e.work_group_id = wg.group_id AND e.is_active = 1
+                WHERE e.work_group_id = wg.group_id AND e.is_active = TRUE
             ) AS employee_count
             FROM work_groups wg
-            WHERE wg.client_id = :cid AND wg.is_active = 1
+            WHERE wg.client_id = :cid AND wg.is_active = TRUE
             ORDER BY wg.display_order, wg.name
         """), {'cid': client_id}).fetchall()
 
         ungrouped = db.session.execute(text(
             "SELECT COUNT(*) FROM employees "
-            "WHERE client_id = :cid AND is_active = 1 AND "
+            "WHERE client_id = :cid AND is_active = TRUE AND "
             "(work_group_id IS NULL OR work_group_id = '')"
         ), {'cid': client_id}).scalar() or 0
 
@@ -355,7 +516,7 @@ def create_work_group():
 
         dup = db.session.execute(text(
             "SELECT group_id FROM work_groups "
-            "WHERE client_id = :cid AND LOWER(name) = LOWER(:name) AND is_active = 1"
+            "WHERE client_id = :cid AND LOWER(name) = LOWER(:name) AND is_active = TRUE"
         ), {'cid': client_id, 'name': name}).fetchone()
         if dup:
             return jsonify({'success': False, 'error': f'A group named "{name}" already exists'}), 409
@@ -369,7 +530,7 @@ def create_work_group():
             INSERT INTO work_groups
                 (group_id, client_id, name, description, hsn_code,
                  service_charge_percent, display_order, is_active, created_by, created_at, updated_at)
-            VALUES (:gid, :cid, :name, :desc, :hsn, :svc, :ord, 1, :by, :now, :now)
+            VALUES (:gid, :cid, :name, :desc, :hsn, :svc, :ord, TRUE, :by, :now, :now)
         """), {
             'gid': group_id, 'cid': client_id, 'name': name,
             'desc': (data.get('description') or '').strip() or None,
@@ -465,7 +626,7 @@ def delete_work_group(group_id):
             "WHERE work_group_id = :gid AND client_id = :cid"),
             {'gid': group_id, 'cid': client_id, 'now': now})
         db.session.execute(text(
-            "UPDATE work_groups SET is_active = 0, updated_at = :now, synced_at = NULL "
+            "UPDATE work_groups SET is_active = FALSE, updated_at = :now, synced_at = NULL "
             "WHERE group_id = :gid AND client_id = :cid"),
             {'gid': group_id, 'cid': client_id, 'now': now})
         db.session.commit()
@@ -495,7 +656,7 @@ def assign_employees_to_group():
         if group_id:
             grp = db.session.execute(text(
                 "SELECT group_id FROM work_groups "
-                "WHERE group_id = :gid AND client_id = :cid AND is_active = 1"),
+                "WHERE group_id = :gid AND client_id = :cid AND is_active = TRUE"),
                 {'gid': group_id, 'cid': client_id}).fetchone()
             if not grp:
                 return jsonify({'success': False, 'error': 'Work group not found'}), 404
@@ -551,7 +712,7 @@ def _collect_lines(client_id, period_start, period_end, employee_ids, overrides,
 
     groups = {r['group_id']: r for r in [
         _row_to_dict(x) for x in db.session.execute(text(
-            "SELECT * FROM work_groups WHERE client_id = :cid AND is_active = 1 "
+            "SELECT * FROM work_groups WHERE client_id = :cid AND is_active = TRUE "
             "ORDER BY display_order, name"), {'cid': client_id}).fetchall()
     ]}
 
@@ -961,13 +1122,10 @@ def record_payment(invoice_id):
         if not inv:
             return jsonify({'success': False, 'error': 'Invoice not found'}), 404
 
-        outstanding = _money(_num(inv['grand_total']) - _num(inv['received_amount']))
-        if amount > outstanding + 0.01:
-            return jsonify({
-                'success': False,
-                'error': f'Amount exceeds the outstanding balance of {outstanding:,.2f}'
-            }), 400
-
+        # Overpayment is allowed: clients routinely round up (pay 31001 against a
+        # 31000.65 balance) or settle two invoices with one transfer. Blocking it
+        # forced users to record a false figure. The excess simply drives the
+        # balance negative, which the invoice view reports as an overpayment.
         now = _now_iso()
         db.session.execute(text("""
             INSERT INTO payroll_invoice_payments (
@@ -1094,15 +1252,24 @@ def invoice_pdf(invoice_id):
     client = _client_row(client_id) or {}
     copy_label = (request.args.get('copy') or 'ORIGINAL FOR RECIPIENT').strip().upper()[:40]
 
-    # ReportLab's built-in fonts have no rupee glyph — it renders as a black box.
+    # Use the real rupee sign when a font on this host can draw it; otherwise
+    # 'Rs.' — a black box on every amount would be worse than the abbreviation.
+    fonts = _rupee_font()
+    FONT, FONT_B = fonts if fonts else ('Helvetica', 'Helvetica-Bold')
     symbol = (client.get('currency_symbol') or '₹')
-    cur = 'Rs. ' if symbol == '₹' else f'{symbol} '
+    if symbol == '₹' and not fonts:
+        cur = 'Rs. '
+    else:
+        cur = f'{symbol}'
     is_inter = (inv.get('tax_mode') == 'inter')
 
-    INK = colors.HexColor('#0f172a')
-    MUTED = colors.HexColor('#64748b')
-    LINE = colors.HexColor('#cbd5e1')
-    BAND = colors.HexColor('#f1f5f9')
+    # Deliberately monochrome. A tax invoice is a legal document that gets
+    # printed, photocopied and faxed; colour fills and reversed-out header bands
+    # survive none of that well and read as decoration. Black text on white with
+    # hairline rules is the convention every Indian GST invoice follows.
+    INK = colors.black
+    MUTED = colors.black
+    LINE = colors.black
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(buffer, pagesize=A4, title=f"Invoice {inv['invoice_number']}",
@@ -1114,18 +1281,24 @@ def invoice_pdf(invoice_id):
     def st(name, size=8.5, bold=False, align=TA_LEFT, color=INK, leading=None):
         return ParagraphStyle(name, parent=styles['Normal'], fontSize=size,
                               leading=leading or size * 1.35, alignment=align, textColor=color,
-                              fontName='Helvetica-Bold' if bold else 'Helvetica')
+                              fontName=FONT_B if bold else FONT)
 
-    s_label = st('lbl', 7.5, color=MUTED)
-    s_val = st('val', 8.5)
+    s_label = st('lbl', 7.5)
+    s_val = st('val', 8)
     s_val_b = st('valb', 8.5, bold=True)
-    s_head = st('head', 7.5, bold=True, align=TA_CENTER, color=colors.white)
+    # Column headings are bold black on white — no reversed-out band.
+    s_head = st('head', 7.5, bold=True, align=TA_CENTER)
+    s_head_l = st('headl', 7.5, bold=True, align=TA_LEFT)
     s_cell = st('cell', 8)
+    s_cell_b = st('cellb', 8, bold=True)
     s_cell_r = st('cellr', 8, align=TA_RIGHT)
     s_cell_c = st('cellc', 8, align=TA_CENTER)
     s_cell_rb = st('cellrb', 8, bold=True, align=TA_RIGHT)
-    s_title = st('title', 13, bold=True, align=TA_CENTER)
-    s_copy = st('copy', 7.5, align=TA_RIGHT, color=MUTED)
+    s_title = st('title', 11, bold=True, align=TA_CENTER)
+    s_copy = st('copy', 7.5, align=TA_RIGHT)
+
+    # Hairline weights: one for the outer boxes, a lighter one inside tables.
+    BOX_W, GRID_W = 0.8, 0.5
 
     elements = [
         Table([[Paragraph('Service Invoice', s_title), Paragraph(copy_label, s_copy)]],
@@ -1145,32 +1318,56 @@ def invoice_pdf(invoice_id):
         if value:
             seller_bits.append(Paragraph(f'{label}{value}'.replace('\n', '<br/>'), s_val))
 
-    meta_rows = [
-        ['Invoice No.', inv['invoice_number'], 'Date', _fmt_date(inv.get('invoice_date'))],
-        ['Place of Supply', inv.get('place_of_supply') or '—', 'Pay Period',
-         f"{_fmt_date(inv.get('period_start'))} to {_fmt_date(inv.get('period_end'))}"],
-    ]
-    meta_tbl = Table(
-        [[Paragraph(r[0], s_label), Paragraph(str(r[1] or '—'), s_val_b),
-          Paragraph(r[2], s_label), Paragraph(str(r[3] or '—'), s_val_b)] for r in meta_rows],
-        # Sums to 10.6cm: the parent cell is 11.3cm wide minus 8pt padding each
-        # side, and a nested table that overruns its cell silently draws past
-        # the frame instead of wrapping.
-        colWidths=[2.2 * cm, 3.2 * cm, 2.0 * cm, 3.2 * cm])
+    # Logo sits to the left of the business name, as on the reference. Same
+    # SSRF-hardened loader as the signature; a missing or unreachable logo just
+    # collapses the column rather than failing the invoice.
+    logo = _signature_flowable(client.get('logo_url'), max_w_cm=1.6, max_h_cm=1.6)
+    if logo is not None:
+        seller_cell = Table([[logo, seller_bits]], colWidths=[1.8 * cm, 5.1 * cm])
+        seller_cell.setStyle(TableStyle([
+            ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (0, 0), 6),
+            ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ]))
+        seller_cell = [seller_cell]
+    else:
+        seller_cell = seller_bits
+
+    # Two-column meta grid, label above value in each cell — the reference's
+    # arrangement. Vehicle Number / Delivery Challan are meaningless for supplied
+    # labour, so those slots carry the pay period and the worker count instead.
+    def meta_cell(label, value):
+        return [Paragraph(label, s_label), Paragraph(str(value or '-'), s_val_b)]
+
+    headcount = sum(int(_num(ln.get('headcount'))) for ln in lines)
+    meta_tbl = Table([
+        [meta_cell('Invoice No.', inv['invoice_number']),
+         meta_cell('Date', _fmt_date(inv.get('invoice_date')))],
+        [meta_cell('Place of Supply', inv.get('place_of_supply')),
+         meta_cell('Pay Period', f"{_fmt_date(inv.get('period_start'))} to "
+                                 f"{_fmt_date(inv.get('period_end'))}")],
+        [meta_cell('Workers Supplied', headcount or '-'),
+         meta_cell('Supply Type', 'Inter-State (IGST)' if is_inter else 'Intra-State (CGST+SGST)')],
+    # 5.65 x 2 = 11.3cm, the full width of its parent cell (which has zero
+    # padding), so the grid meets the outer border instead of leaving a strip.
+    ], colWidths=[5.65 * cm, 5.65 * cm])
     meta_tbl.setStyle(TableStyle([
-        ('GRID', (0, 0), (-1, -1), 0.5, LINE),
+        ('GRID', (0, 0), (-1, -1), GRID_W, LINE),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
         ('LEFTPADDING', (0, 0), (-1, -1), 5), ('RIGHTPADDING', (0, 0), (-1, -1), 5),
     ]))
 
-    header_tbl = Table([[seller_bits, meta_tbl]], colWidths=[7.3 * cm, 11.3 * cm])
+    header_tbl = Table([[seller_cell, meta_tbl]], colWidths=[7.3 * cm, 11.3 * cm])
     header_tbl.setStyle(TableStyle([
-        ('BOX', (0, 0), (-1, -1), 0.7, LINE),
-        ('LINEAFTER', (0, 0), (0, 0), 0.5, LINE),
+        ('BOX', (0, 0), (-1, -1), BOX_W, LINE),
+        ('LINEAFTER', (0, 0), (0, 0), GRID_W, LINE),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('TOPPADDING', (0, 0), (-1, -1), 7), ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
         ('LEFTPADDING', (0, 0), (-1, -1), 8), ('RIGHTPADDING', (0, 0), (-1, -1), 8),
+        # The meta grid draws its own border flush to the cell edge.
+        ('TOPPADDING', (1, 0), (1, 0), 0), ('BOTTOMPADDING', (1, 0), (1, 0), 0),
+        ('LEFTPADDING', (1, 0), (1, 0), 0), ('RIGHTPADDING', (1, 0), (1, 0), 0),
     ]))
     elements.append(header_tbl)
 
@@ -1188,10 +1385,12 @@ def invoice_pdf(invoice_id):
                  Paragraph(str(inv.get('ship_to') or inv.get('customer_address') or '—')
                            .replace('\n', '<br/>'), s_val)]
 
-    parties = Table([[bill_bits, ship_bits]], colWidths=[9.3 * cm, 9.3 * cm])
+    # Same 7.3/11.3 split as the header so the vertical rule runs unbroken down
+    # the page instead of jogging sideways between blocks.
+    parties = Table([[bill_bits, ship_bits]], colWidths=[7.3 * cm, 11.3 * cm])
     parties.setStyle(TableStyle([
-        ('BOX', (0, 0), (-1, -1), 0.7, LINE),
-        ('LINEAFTER', (0, 0), (0, 0), 0.5, LINE),
+        ('BOX', (0, 0), (-1, -1), BOX_W, LINE),
+        ('LINEAFTER', (0, 0), (0, 0), GRID_W, LINE),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('TOPPADDING', (0, 0), (-1, -1), 7), ('BOTTOMPADDING', (0, 0), (-1, -1), 7),
         ('LEFTPADDING', (0, 0), (-1, -1), 8), ('RIGHTPADDING', (0, 0), (-1, -1), 8),
@@ -1199,91 +1398,98 @@ def invoice_pdf(invoice_id):
     elements.append(parties)
 
     # ── Line items ──────────────────────────────────────────────────────────
+    # Columns mirror a standard service invoice. Qty is 1 Nos per group (the
+    # supply is "labour for Bay 1", not 12 separate things) and the headcount
+    # rides in the description, exactly as on the reference document.
+    # Price/Unit is the taxable value, so Price/Unit + GST = Amount and the
+    # arithmetic on the page reads straight across.
     tax_head = 'IGST' if is_inter else 'GST'
-    item_rows = [[Paragraph('Sl.', s_head), Paragraph('Service Description', s_head),
-                  Paragraph('HSN/SAC', s_head), Paragraph('Workers', s_head),
-                  Paragraph('Salary', s_head), Paragraph('Service<br/>Charge', s_head),
-                  Paragraph('Taxable', s_head), Paragraph(tax_head, s_head),
+    item_rows = [[Paragraph('Sl.<br/>No.', s_head), Paragraph('Product Description', s_head_l),
+                  Paragraph('Item Code', s_head), Paragraph('HSN/ SAC', s_head),
+                  Paragraph('Qty', s_head), Paragraph('UOM', s_head),
+                  Paragraph('Price/ Unit', s_head), Paragraph(tax_head, s_head),
                   Paragraph('Amount', s_head)]]
 
     for i, ln in enumerate(lines, start=1):
         tax_amt = _num(ln.get('igst_amount')) if is_inter else (
             _num(ln.get('cgst_amount')) + _num(ln.get('sgst_amount')))
-        svc_pct = _num(ln.get('service_charge_percent'))
         item_rows.append([
             Paragraph(str(i), s_cell_c),
-            Paragraph(ln.get('description') or '—', s_cell),
-            Paragraph(ln.get('hsn_code') or '—', s_cell_c),
-            Paragraph(str(int(_num(ln.get('headcount')))), s_cell_c),
-            Paragraph(f"{_num(ln.get('salary_amount')):,.2f}", s_cell_r),
-            Paragraph(f"{_num(ln.get('service_charge_amount')):,.2f}<br/>"
-                      f"<font size=6 color='#64748b'>({svc_pct:g}%)</font>", s_cell_r),
-            Paragraph(f"{_num(ln.get('taxable_amount')):,.2f}", s_cell_r),
-            Paragraph(f"{tax_amt:,.2f}<br/>"
-                      f"<font size=6 color='#64748b'>({_num(ln.get('gst_rate')):g}%)</font>", s_cell_r),
-            Paragraph(f"{_num(ln.get('line_total')):,.2f}", s_cell_r),
+            Paragraph(ln.get('description') or '-', s_cell_b),
+            Paragraph('', s_cell_c),
+            Paragraph(ln.get('hsn_code') or '', s_cell_c),
+            Paragraph('1', s_cell_r),
+            Paragraph('Nos', s_cell_c),
+            Paragraph(f"{cur}{_num(ln.get('taxable_amount')):,.2f}", s_cell_r),
+            Paragraph(f"{cur}{tax_amt:,.2f}<br/>"
+                      f"({_num(ln.get('gst_rate')):g}%)", s_cell_r),
+            Paragraph(f"{cur}{_num(ln.get('line_total')):,.2f}", s_cell_r),
         ])
 
-    total_workers = sum(int(_num(ln.get('headcount'))) for ln in lines)
+    # Blank filler rows so the table keeps a consistent body height whether the
+    # invoice has two lines or eight — a short table floating above a big gap
+    # looks unfinished next to the printed forms this replaces.
+    # No blank filler rows: the table ends at the last real line. Padding it to a
+    # fixed height (as pre-printed invoice stationery does) just reads as empty
+    # rows someone forgot to fill in.
     item_rows.append([
-        Paragraph('', s_cell), Paragraph('Total', s_cell_rb), Paragraph('', s_cell),
-        Paragraph(str(total_workers), s_cell_c),
-        Paragraph(f"{_num(inv.get('salary_total')):,.2f}", s_cell_rb),
-        Paragraph(f"{_num(inv.get('service_total')):,.2f}", s_cell_rb),
-        Paragraph(f"{_num(inv.get('taxable_total')):,.2f}", s_cell_rb),
-        Paragraph(f"{_num(inv.get('tax_total')):,.2f}", s_cell_rb),
-        Paragraph(f"{_num(inv.get('grand_total')):,.2f}", s_cell_rb),
+        Paragraph('', s_cell), Paragraph('Total', s_cell_b), Paragraph('', s_cell),
+        Paragraph('', s_cell), Paragraph(str(len(lines)), s_cell_rb), Paragraph('', s_cell),
+        Paragraph('', s_cell),
+        Paragraph(f"{cur}{_num(inv.get('tax_total')):,.2f}", s_cell_rb),
+        Paragraph(f"{cur}{_num(inv.get('grand_total')):,.2f}", s_cell_rb),
     ])
 
     # Must sum to W (18.6cm) — the content width between the page margins.
     items_tbl = Table(item_rows, repeatRows=1,
-                      colWidths=[0.8 * cm, 4.2 * cm, 1.7 * cm, 1.5 * cm,
-                                 2.3 * cm, 2.0 * cm, 2.2 * cm, 1.9 * cm, 2.0 * cm])
+                      colWidths=[0.9 * cm, 5.0 * cm, 1.7 * cm, 1.7 * cm, 1.3 * cm,
+                                 1.1 * cm, 2.3 * cm, 2.3 * cm, 2.3 * cm])
     last = len(item_rows) - 1
     items_tbl.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), INK),
-        ('BACKGROUND', (0, last), (-1, last), BAND),
-        ('BOX', (0, 0), (-1, -1), 0.7, LINE),
-        ('INNERGRID', (0, 0), (-1, -1), 0.4, LINE),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('BOX', (0, 0), (-1, -1), BOX_W, LINE),
+        ('INNERGRID', (0, 0), (-1, -1), GRID_W, LINE),
+        # Heading and total rules a touch heavier so the body reads as a block.
+        ('LINEBELOW', (0, 0), (-1, 0), BOX_W, LINE),
+        ('LINEABOVE', (0, last), (-1, last), BOX_W, LINE),
+        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('VALIGN', (0, 0), (-1, 0), 'MIDDLE'),
         ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
         ('LEFTPADDING', (0, 0), (-1, -1), 4), ('RIGHTPADDING', (0, 0), (-1, -1), 4),
     ]))
     elements.append(items_tbl)
 
     # ── Amount in words + totals ────────────────────────────────────────────
+    # Each line's Amount already includes its tax, so Sub Total is the tax-
+    # inclusive sum — matching the reference, where Sub Total equals Total. The
+    # tax split is shown in full by the HSN summary directly below.
     balance = _money(_num(inv.get('grand_total')) - _num(inv.get('received_amount')))
-    amount_rows = [('Sub Total', _num(inv.get('taxable_total')), False)]
-    if is_inter:
-        amount_rows.append((f"IGST", _num(inv.get('igst_total')), False))
-    else:
-        amount_rows.append(('CGST', _num(inv.get('cgst_total')), False))
-        amount_rows.append(('SGST', _num(inv.get('sgst_total')), False))
-    amount_rows.append(('Total', _num(inv.get('grand_total')), True))
-    amount_rows.append(('Received', _num(inv.get('received_amount')), False))
-    amount_rows.append(('Balance', balance, True))
+    amount_rows = [
+        ('Sub Total', _num(inv.get('grand_total')), False),
+        ('Total', _num(inv.get('grand_total')), True),
+        ('Received', _num(inv.get('received_amount')), False),
+        ('Balance', balance, True),
+    ]
 
     amounts_tbl = Table(
-        [[Paragraph(label, s_cell_rb if bold else s_cell),
+        [[Paragraph(label, s_cell_b if bold else s_cell),
           Paragraph(f'{cur}{value:,.2f}', s_cell_rb if bold else s_cell_r)]
          for label, value, bold in amount_rows],
         colWidths=[4.3 * cm, 4.0 * cm])
     amounts_tbl.setStyle(TableStyle([
-        ('INNERGRID', (0, 0), (-1, -1), 0.4, LINE),
+        ('INNERGRID', (0, 0), (-1, -1), GRID_W, LINE),
         ('ALIGN', (1, 0), (1, -1), 'RIGHT'),
-        ('BACKGROUND', (0, len(amount_rows) - 1), (-1, len(amount_rows) - 1), BAND),
         ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
         ('LEFTPADDING', (0, 0), (-1, -1), 6), ('RIGHTPADDING', (0, 0), (-1, -1), 6),
     ]))
 
     words_cell = [
-        Paragraph('Invoice Amount In Words', s_label),
+        Paragraph('Invoice Amount In Words', s_cell),
         Paragraph(_amount_in_words(inv.get('grand_total')), s_val_b),
     ]
     words_tbl = Table([[words_cell, amounts_tbl]], colWidths=[10.3 * cm, 8.3 * cm])
     words_tbl.setStyle(TableStyle([
-        ('BOX', (0, 0), (-1, -1), 0.7, LINE),
-        ('LINEAFTER', (0, 0), (0, 0), 0.5, LINE),
+        ('BOX', (0, 0), (-1, -1), BOX_W, LINE),
+        ('LINEAFTER', (0, 0), (0, 0), GRID_W, LINE),
         ('VALIGN', (0, 0), (-1, -1), 'TOP'),
         ('TOPPADDING', (0, 0), (0, 0), 7), ('BOTTOMPADDING', (0, 0), (0, 0), 7),
         ('LEFTPADDING', (0, 0), (0, 0), 8), ('RIGHTPADDING', (0, 0), (0, 0), 8),
@@ -1302,53 +1508,73 @@ def invoice_pdf(invoice_id):
         agg['sgst'] += _num(ln.get('sgst_amount'))
         agg['igst'] += _num(ln.get('igst_amount'))
 
+    # Two-level header with the tax name spanning its Rate/Amount pair, as on the
+    # reference. extra_style carries the SPANs, which differ per tax mode.
+    blank = Paragraph('', s_cell)
     if is_inter:
-        hsn_rows = [[Paragraph('HSN/SAC', s_head), Paragraph('Taxable amount', s_head),
-                     Paragraph('IGST Rate', s_head), Paragraph('IGST Amount', s_head),
-                     Paragraph('Total Tax Amount', s_head)]]
+        hsn_rows = [
+            [Paragraph('HSN/ SAC', s_head), Paragraph('Taxable amount', s_head),
+             Paragraph('IGST', s_head), blank, Paragraph('Total Tax Amount', s_head)],
+            [blank, blank, Paragraph('Rate', s_head), Paragraph('Amount', s_head), blank],
+        ]
         for (hsn, rate), agg in by_hsn.items():
             hsn_rows.append([
-                Paragraph(hsn, s_cell), Paragraph(f"{_money(agg['taxable']):,.2f}", s_cell_r),
-                Paragraph(f'{rate:g}%', s_cell_c), Paragraph(f"{_money(agg['igst']):,.2f}", s_cell_r),
-                Paragraph(f"{_money(agg['igst']):,.2f}", s_cell_r),
+                Paragraph(hsn if hsn != '—' else '', s_cell),
+                Paragraph(f"{cur}{_money(agg['taxable']):,.2f}", s_cell_r),
+                Paragraph(f'{rate:g}%', s_cell_c),
+                Paragraph(f"{cur}{_money(agg['igst']):,.2f}", s_cell_r),
+                Paragraph(f"{cur}{_money(agg['igst']):,.2f}", s_cell_r),
             ])
         hsn_rows.append([
-            Paragraph('Total', s_cell_rb), Paragraph(f"{_num(inv.get('taxable_total')):,.2f}", s_cell_rb),
-            Paragraph('', s_cell), Paragraph(f"{_num(inv.get('igst_total')):,.2f}", s_cell_rb),
-            Paragraph(f"{_num(inv.get('tax_total')):,.2f}", s_cell_rb),
+            Paragraph('Total', s_cell_rb),
+            Paragraph(f"{cur}{_num(inv.get('taxable_total')):,.2f}", s_cell_rb), blank,
+            Paragraph(f"{cur}{_num(inv.get('igst_total')):,.2f}", s_cell_rb),
+            Paragraph(f"{cur}{_num(inv.get('tax_total')):,.2f}", s_cell_rb),
         ])
-        hsn_widths = [3.6 * cm, 4.0 * cm, 2.6 * cm, 4.0 * cm, 4.4 * cm]
+        hsn_widths = [3.4 * cm, 4.2 * cm, 2.6 * cm, 4.2 * cm, 4.2 * cm]
+        extra_style = [('SPAN', (2, 0), (3, 0)), ('SPAN', (0, 0), (0, 1)),
+                       ('SPAN', (1, 0), (1, 1)), ('SPAN', (4, 0), (4, 1))]
     else:
-        hsn_rows = [[Paragraph('HSN/SAC', s_head), Paragraph('Taxable amount', s_head),
-                     Paragraph('CGST Rate', s_head), Paragraph('CGST Amount', s_head),
-                     Paragraph('SGST Rate', s_head), Paragraph('SGST Amount', s_head),
-                     Paragraph('Total Tax Amount', s_head)]]
+        hsn_rows = [
+            [Paragraph('HSN/ SAC', s_head), Paragraph('Taxable amount', s_head),
+             Paragraph('CGST', s_head), blank, Paragraph('SGST', s_head), blank,
+             Paragraph('Total Tax Amount', s_head)],
+            [blank, blank, Paragraph('Rate', s_head), Paragraph('Amount', s_head),
+             Paragraph('Rate', s_head), Paragraph('Amount', s_head), blank],
+        ]
         for (hsn, rate), agg in by_hsn.items():
             half = rate / 2
             hsn_rows.append([
-                Paragraph(hsn, s_cell), Paragraph(f"{_money(agg['taxable']):,.2f}", s_cell_r),
-                Paragraph(f'{half:g}%', s_cell_c), Paragraph(f"{_money(agg['cgst']):,.2f}", s_cell_r),
-                Paragraph(f'{half:g}%', s_cell_c), Paragraph(f"{_money(agg['sgst']):,.2f}", s_cell_r),
-                Paragraph(f"{_money(agg['cgst'] + agg['sgst']):,.2f}", s_cell_r),
+                Paragraph(hsn if hsn != '—' else '', s_cell),
+                Paragraph(f"{cur}{_money(agg['taxable']):,.2f}", s_cell_r),
+                Paragraph(f'{half:g}%', s_cell_c),
+                Paragraph(f"{cur}{_money(agg['cgst']):,.2f}", s_cell_r),
+                Paragraph(f'{half:g}%', s_cell_c),
+                Paragraph(f"{cur}{_money(agg['sgst']):,.2f}", s_cell_r),
+                Paragraph(f"{cur}{_money(agg['cgst'] + agg['sgst']):,.2f}", s_cell_r),
             ])
         hsn_rows.append([
-            Paragraph('Total', s_cell_rb), Paragraph(f"{_num(inv.get('taxable_total')):,.2f}", s_cell_rb),
-            Paragraph('', s_cell), Paragraph(f"{_num(inv.get('cgst_total')):,.2f}", s_cell_rb),
-            Paragraph('', s_cell), Paragraph(f"{_num(inv.get('sgst_total')):,.2f}", s_cell_rb),
-            Paragraph(f"{_num(inv.get('tax_total')):,.2f}", s_cell_rb),
+            Paragraph('Total', s_cell_rb),
+            Paragraph(f"{cur}{_num(inv.get('taxable_total')):,.2f}", s_cell_rb), blank,
+            Paragraph(f"{cur}{_num(inv.get('cgst_total')):,.2f}", s_cell_rb), blank,
+            Paragraph(f"{cur}{_num(inv.get('sgst_total')):,.2f}", s_cell_rb),
+            Paragraph(f"{cur}{_num(inv.get('tax_total')):,.2f}", s_cell_rb),
         ])
-        hsn_widths = [3.0 * cm, 3.4 * cm, 2.0 * cm, 2.9 * cm, 2.0 * cm, 2.9 * cm, 2.4 * cm]
+        hsn_widths = [3.0 * cm, 3.6 * cm, 1.7 * cm, 2.9 * cm, 1.7 * cm, 2.9 * cm, 2.8 * cm]
+        extra_style = [('SPAN', (2, 0), (3, 0)), ('SPAN', (4, 0), (5, 0)),
+                       ('SPAN', (0, 0), (0, 1)), ('SPAN', (1, 0), (1, 1)),
+                       ('SPAN', (6, 0), (6, 1))]
 
-    hsn_tbl = Table(hsn_rows, colWidths=hsn_widths, repeatRows=1)
+    hsn_tbl = Table(hsn_rows, colWidths=hsn_widths, repeatRows=2)
     hsn_tbl.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), INK),
-        ('BACKGROUND', (0, len(hsn_rows) - 1), (-1, len(hsn_rows) - 1), BAND),
-        ('BOX', (0, 0), (-1, -1), 0.7, LINE),
-        ('INNERGRID', (0, 0), (-1, -1), 0.4, LINE),
+        ('BOX', (0, 0), (-1, -1), BOX_W, LINE),
+        ('INNERGRID', (0, 0), (-1, -1), GRID_W, LINE),
+        ('LINEBELOW', (0, 1), (-1, 1), BOX_W, LINE),
+        ('LINEABOVE', (0, len(hsn_rows) - 1), (-1, len(hsn_rows) - 1), BOX_W, LINE),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, -1), 5), ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('TOPPADDING', (0, 0), (-1, -1), 4), ('BOTTOMPADDING', (0, 0), (-1, -1), 4),
         ('LEFTPADDING', (0, 0), (-1, -1), 4), ('RIGHTPADDING', (0, 0), (-1, -1), 4),
-    ]))
+    ] + extra_style))
     elements.append(hsn_tbl)
 
     # ── Footer: bank details · terms · signature ────────────────────────────
@@ -1362,7 +1588,7 @@ def invoice_pdf(invoice_id):
     if client.get('upi_id'):
         bank_bits.append(Paragraph(f"UPI: {client['upi_id']}", s_val))
     if len(bank_bits) == 1:
-        bank_bits.append(Paragraph('—', st('none', 8, color=MUTED)))
+        bank_bits.append(Paragraph('-', s_val))
 
     terms_text = (inv.get('terms') or client.get('invoice_terms')
                   or 'Thanks for doing business with us!')
@@ -1373,8 +1599,22 @@ def invoice_pdf(invoice_id):
                            st('for', 8, align=TA_CENTER))]
     sign_img = _signature_flowable(client.get('signature_url'))
     if sign_img is not None:
+        # Wrapped in a full-width single-cell table rather than relying on the
+        # Image's own hAlign. hAlign centres the flowable against the frame's
+        # width, which is not the same as the footer cell it actually sits in,
+        # so the signature landed off-centre under the centred "For:" and
+        # "Authorized Signatory" lines. A table cell with ALIGN=CENTER centres
+        # against the column, which is what we want at any image size.
+        sign_img.hAlign = 'CENTER'
+        centred = Table([[sign_img]], colWidths=[6.0 * cm - 16])
+        centred.setStyle(TableStyle([
+            ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
+            ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+            ('LEFTPADDING', (0, 0), (-1, -1), 0), ('RIGHTPADDING', (0, 0), (-1, -1), 0),
+            ('TOPPADDING', (0, 0), (-1, -1), 0), ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
+        ]))
         sign_bits.append(Spacer(1, 4))
-        sign_bits.append(sign_img)
+        sign_bits.append(centred)
     else:
         sign_bits.append(Spacer(1, 34))
     sign_bits.append(Paragraph('Authorized Signatory', st('sig', 8, bold=True, align=TA_CENTER)))
@@ -1382,8 +1622,8 @@ def invoice_pdf(invoice_id):
     footer_tbl = Table([[bank_bits, terms_bits, sign_bits]],
                        colWidths=[6.4 * cm, 6.2 * cm, 6.0 * cm])
     footer_tbl.setStyle(TableStyle([
-        ('BOX', (0, 0), (-1, -1), 0.7, LINE),
-        ('LINEAFTER', (0, 0), (1, 0), 0.5, LINE),
+        ('BOX', (0, 0), (-1, -1), BOX_W, LINE),
+        ('LINEAFTER', (0, 0), (1, 0), GRID_W, LINE),
         ('VALIGN', (0, 0), (1, 0), 'TOP'),
         ('VALIGN', (2, 0), (2, 0), 'MIDDLE'),
         ('TOPPADDING', (0, 0), (-1, -1), 8), ('BOTTOMPADDING', (0, 0), (-1, -1), 8),
@@ -1391,10 +1631,8 @@ def invoice_pdf(invoice_id):
     ]))
     elements.append(footer_tbl)
 
-    elements.append(Spacer(1, 8))
-    elements.append(Paragraph(
-        'Computer-generated invoice &#8226; Valoryx', st('ftr', 6.5, align=TA_CENTER, color=MUTED)))
-
+    # No product byline. This is the customer's legal document, not a brochure —
+    # the reference invoice ends at the signatory block and so does this.
     doc.build(elements)
     buffer.seek(0)
     safe_number = str(inv['invoice_number']).replace('/', '-')

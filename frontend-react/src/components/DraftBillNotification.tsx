@@ -2,6 +2,7 @@
 
 import { useState, useEffect } from 'react'
 import { FileText, X, RotateCcw, Trash2, Clock } from 'lucide-react'
+import { confirmDialog } from '@/components/ConfirmDialog'
 
 interface DraftBillNotificationProps {
   onRestore: () => void
@@ -79,11 +80,15 @@ export default function DraftBillNotification({
               </button>
 
               <button
-                onClick={() => {
+                onClick={async () => {
                   if (
-                    confirm(
-                      'Are you sure you want to discard this draft? This action cannot be undone.'
-                    )
+                    await confirmDialog({
+                      title: 'Discard draft?',
+                      message:
+                        'Are you sure you want to discard this draft? This action cannot be undone.',
+                      confirmText: 'Discard',
+                      tone: 'danger',
+                    })
                   ) {
                     onDiscard()
                     setShow(false)

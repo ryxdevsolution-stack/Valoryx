@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { useClient } from '@/contexts/ClientContext';
 import api from '@/lib/api';
 import { PermissionHelpTooltip } from '@/components/admin/PermissionHelpTooltip';
+import { confirmDialog } from '@/components/ConfirmDialog';
 import {
   ArrowLeft,
   User,
@@ -226,7 +227,12 @@ export default function UserDetailPage() {
   };
 
   const handleToggleSuperAdmin = async () => {
-    if (confirm('Are you sure you want to change super admin status?')) {
+    if (await confirmDialog({
+      title: 'Change super admin status?',
+      message: 'Are you sure you want to change super admin status?',
+      confirmText: 'Change',
+      tone: 'danger',
+    })) {
       try {
         await api.post(`/admin/users/${userId}/promote`);
         setSuccess('Super admin status updated');

@@ -15,6 +15,7 @@ import LabelPrintDialog, { LabelFields } from '@/components/LabelPrintDialog'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
 import { focusRowById } from '@/utils/focusRow'
 import { useCurrency } from '@/lib/useCurrency'
+import { confirmDialog } from '@/components/ConfirmDialog'
 
 interface Stock {
   product_id: string
@@ -503,7 +504,12 @@ export default function StockManagementPage() {
   }
 
   const handleDelete = useCallback(async (productId: string) => {
-    if (!confirm('Are you sure you want to delete this product?')) return
+    if (!(await confirmDialog({
+      title: 'Delete product?',
+      message: 'Are you sure you want to delete this product?',
+      confirmText: 'Delete',
+      tone: 'danger',
+    }))) return
 
     try {
       await api.delete(`/stock/${productId}`)

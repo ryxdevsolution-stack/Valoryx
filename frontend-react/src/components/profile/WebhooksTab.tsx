@@ -1,5 +1,6 @@
 import { useState, useEffect, useCallback } from 'react'
 import { webhookService, type WebhookEndpoint, type WebhookDelivery } from '@/services/webhookService'
+import { confirmDialog } from '@/components/ConfirmDialog'
 import {
   Plus,
   Trash2,
@@ -228,7 +229,12 @@ export default function WebhooksTab() {
   }
 
   const handleDelete = async (id: string) => {
-    if (!confirm('Delete this webhook endpoint?')) return
+    if (!(await confirmDialog({
+      title: 'Delete endpoint?',
+      message: 'Delete this webhook endpoint?',
+      confirmText: 'Delete',
+      tone: 'danger',
+    }))) return
     try {
       await webhookService.remove(id)
       setEndpoints((prev) => prev.filter((e) => e.endpoint_id !== id))

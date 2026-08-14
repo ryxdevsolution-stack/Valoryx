@@ -29,6 +29,8 @@ Endpoints:
     POST   /api/employees/<employee_id>/cycles/<cycle_id>/calculate    - recalculate
     POST   /api/employees/<employee_id>/cycles/<cycle_id>/mark-paid    - seal cycle
     GET    /api/employees/<employee_id>/cycles/<cycle_id>/payslip      - generate payslip PDF
+    POST   /api/employees/<employee_id>/cycles/<cycle_id>/payslip/email - email that payslip to the employee
+    POST   /api/employees/cycles/payslip/email-bulk                     - email payslips for many cycles at once
     GET    /api/employees/cycles/open                             - all open cycles for client
 
   Advances / Deductions:
@@ -39,7 +41,7 @@ Endpoints:
 import uuid
 import re
 import logging
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 
 from flask import Blueprint, request, jsonify, g
 from sqlalchemy import text
@@ -317,6 +319,55 @@ CATEGORY_LABEL_MAP = {
 }
 
 
+def _weekly_off_rule(client_id: str) -> dict:
+    """The client's recurring weekly-off rule, or a disabled rule.
+
+    Returns {'enabled', 'weekday', 'saturdays'} where weekday follows Python's
+    date.weekday() (Monday=0 … Sunday=6) and saturdays is a set of month
+    ordinals ({2} = 2nd Saturday only).
+    """
+    off = {'enabled': False, 'weekday': None, 'saturdays': set()}
+    try:
+        row = db.session.execute(text(
+            "SELECT weekly_off_enabled, weekly_off_weekday, weekly_off_saturdays "
+            "FROM client_entry WHERE client_id = :cid LIMIT 1"), {'cid': client_id}).fetchone()
+    except Exception:
+        # Pre-v45 database (columns absent) — behave exactly as before.
+        return off
+    if not row:
+        return off
+
+    off['enabled'] = bool(row[0])
+    if row[1] is not None:
+        try:
+            wd = int(row[1])
+            if 0 <= wd <= 6:
+                off['weekday'] = wd
+        except (TypeError, ValueError):
+            pass
+    for part in str(row[2] or '').split(','):
+        part = part.strip()
+        if part.isdigit() and 1 <= int(part) <= 5:
+            off['saturdays'].add(int(part))
+    return off
+
+
+def _is_weekly_off(day, rule: dict) -> bool:
+    """True when `day` is covered by the recurring weekly-off rule.
+
+    Saturday ordinal is computed from the day of the month rather than by
+    counting backwards, so the "2nd Saturday" is the 2nd one in that calendar
+    month regardless of which weekday the month starts on.
+    """
+    if not rule.get('enabled'):
+        return False
+    if rule.get('weekday') is not None and day.weekday() == rule['weekday']:
+        return True
+    if rule.get('saturdays') and day.weekday() == 5:
+        return ((day.day - 1) // 7) + 1 in rule['saturdays']
+    return False
+
+
 def _advance_category_breakdown(advances: list) -> dict:
     """Sum a list of advance/deduction dicts by category, defaulting unset
     categories (pre-migration rows) to 'cash_advance'."""
@@ -405,7 +456,38 @@ def _calculate_cycle_amounts(cycle: dict):
     total_ot_minutes = 0
     total_ot_pay = 0.0
 
-    for row in [_row_to_dict(r) for r in rows]:
+    # Recurring weekly off (v45). Pay comes only from attendance rows, so a date
+    # with no row pays zero — the rule therefore SYNTHESISES a paid 'weekly_off'
+    # day for uncovered dates it applies to. A real row always wins, which is
+    # what makes "he actually worked that Sunday" just work.
+    #
+    # Never applied to a cycle that has already been paid: those figures were
+    # frozen at payment, and re-rendering an old payslip must not restate them.
+    day_rows = [_row_to_dict(r) for r in rows]
+    if (cycle.get('status') or '').lower() != 'paid':
+        rule = _weekly_off_rule(cycle['client_id'])
+        if rule['enabled']:
+            covered = {str(r['work_date']) for r in day_rows}
+            # start/end come back as date objects on Postgres and strings on
+            # SQLite, so normalise both before iterating.
+            start = cycle['start_date'] if isinstance(cycle['start_date'], date) \
+                else _parse_date(str(cycle['start_date']))
+            end = cycle['end_date'] if isinstance(cycle['end_date'], date) \
+                else _parse_date(str(cycle['end_date']))
+            if start and end and end >= start:
+                for offset in range((end - start).days + 1):
+                    day = start + timedelta(days=offset)
+                    if str(day) in covered or not _is_weekly_off(day, rule):
+                        continue
+                    day_rows.append({
+                        'work_date': str(day),
+                        'day_minutes': 0,
+                        'day_status': 'weekly_off',
+                        'day_ot_minutes': 0,
+                    })
+                day_rows.sort(key=lambda r: str(r['work_date']))
+
+    for row in day_rows:
         day_status = (row.get('day_status') or 'present').lower()
         mins = int(row['day_minutes'] or 0)
         hours = mins / 60.0
@@ -1028,10 +1110,17 @@ def bulk_checkout():
     }), 200
 
 
-def _upsert_manual_hours(employee_id: str, client_id: str, work_date, total_minutes: int, notes: str | None) -> dict:
+def _upsert_manual_hours(employee_id: str, client_id: str, work_date, total_minutes: int,
+                         notes: str | None, protect_rule_days: bool = False) -> dict:
     """Upsert one manual-hours entry for one employee/date. Never raises —
     returns {employee_id, work_date, success, error?, code?, cycle_id?,
     attendance_id?} so callers (single or bulk) can report per-date results.
+
+    `protect_rule_days` guards days that the recurring weekly-off rule covers but
+    which have no attendance row of their own. Callers set it for MULTI-DAY
+    ranges only: sweeping "01/07 → 31/07" must not quietly turn every Sunday
+    into a worked day, but picking one date is a deliberate act ("he did work
+    that Sunday") and is allowed to create the overriding row.
     """
     if work_date > date.today():
         return {'employee_id': employee_id, 'work_date': str(work_date), 'success': False,
@@ -1066,6 +1155,16 @@ def _upsert_manual_hours(employee_id: str, client_id: str, work_date, total_minu
                 'skipped': True, 'code': 'DAY_OFF',
                 'status': existing[1],
                 'error': f'{work_date} is marked {_STATUS_LABELS.get(existing[1].lower(), existing[1])} — left unchanged'}
+
+    # Same protection for a day that only the weekly-off rule makes a day off.
+    # It has NO row, so the check above cannot see it — without this a bulk range
+    # would happily insert a 'present' row over every Sunday, which is exactly
+    # the corruption the guard above exists to prevent.
+    if protect_rule_days and not existing and _is_weekly_off(work_date, _weekly_off_rule(client_id)):
+        return {'employee_id': employee_id, 'work_date': str(work_date), 'success': False,
+                'skipped': True, 'code': 'DAY_OFF',
+                'status': 'weekly_off',
+                'error': f'{work_date} is a weekly off — left unchanged'}
 
     if existing:
         attendance_id = existing[0]
@@ -1160,7 +1259,11 @@ def manual_attendance(employee_id):
     notes = (body.get('notes') or '').strip() or None
 
     dates = _expand_date_range(from_d, to_d)
-    results = [_upsert_manual_hours(employee_id, client_id, d, total_minutes, notes) for d in dates]
+    # Weekly-off days are protected only when this is a range sweep; a one-date
+    # call is an explicit "he worked that day" and may override the rule.
+    protect = len(dates) > 1
+    results = [_upsert_manual_hours(employee_id, client_id, d, total_minutes, notes, protect)
+               for d in dates]
     db.session.commit()
 
     # Single-day calls (the common case) keep their original response shape —
@@ -1248,7 +1351,8 @@ def bulk_manual_attendance():
                 results.append({'employee_id': employee_id, 'work_date': str(d), 'success': False, 'error': 'Employee not found'})
             continue
         for d in dates:
-            results.append(_upsert_manual_hours(employee_id, client_id, d, total_minutes, notes))
+            results.append(_upsert_manual_hours(employee_id, client_id, d, total_minutes,
+                                                notes, len(dates) > 1))
 
     db.session.commit()
 
@@ -1450,6 +1554,30 @@ def get_attendance_log(employee_id):
         if row_status != 'present':
             grouped[d]['day_status'] = row_status
             grouped[d]['day_reason'] = punch.get('reason')
+
+    # Recurring weekly off (v45). The rule creates no attendance rows — the
+    # salary calculation synthesises them — so without this the calendar showed
+    # nothing on a Sunday even though it was being paid as a full day. Same rule
+    # and the same precedence: a real row always wins, so only dates with no row
+    # of their own are filled in.
+    rule = _weekly_off_rule(client_id)
+    if rule['enabled']:
+        for offset in range((to_date - from_date).days + 1):
+            day = from_date + timedelta(days=offset)
+            key = str(day)
+            if key in grouped or not _is_weekly_off(day, rule):
+                continue
+            grouped[key] = {
+                'work_date': key,
+                'punches': [],
+                'day_total_minutes': 0,
+                'day_status': 'weekly_off',
+                'day_reason': 'Weekly off',
+                # Flags a day that exists only because of the rule: there is no
+                # attendance row behind it, so it cannot be edited or deleted —
+                # marking attendance on that date creates a real row instead.
+                'is_rule_generated': True,
+            }
 
     daily = sorted(grouped.values(), key=lambda x: x['work_date'], reverse=True)
     return jsonify({'success': True, 'data': daily, 'total': len(rows)}), 200
@@ -1920,14 +2048,15 @@ def mark_cycle_paid(employee_id, cycle_id):
     }), 200
 
 
-@employees_bp.route('/<employee_id>/cycles/<cycle_id>/payslip', methods=['GET'])
-@authenticate
-@require_permission('view_salary')
-def cycle_payslip(employee_id, cycle_id):
-    """Generate a one-page payslip PDF for a salary cycle — its pay period,
-    days worked, overtime, deductions by category, and net pay. Available for
-    both open and paid cycles (an open one is a preview of what's owed so
-    far); the payment date/note only appear once the cycle is actually paid.
+def _build_payslip_pdf(emp: dict, cycle: dict, client):
+    """Render a cycle's payslip and return (pdf_bytes, filename, summary).
+
+    Shared by the download route and the email routes so a payslip that is
+    mailed is byte-for-byte the one that would have been downloaded — two
+    renderers would drift apart the first time either is edited.
+
+    `summary` carries the few display strings the email body needs
+    (period label, net pay, paid/open status) so callers don't recompute them.
     """
     from io import BytesIO
     from reportlab.lib import colors
@@ -1936,17 +2065,8 @@ def cycle_payslip(employee_id, cycle_id):
     from reportlab.lib.units import cm
     from reportlab.lib.enums import TA_CENTER, TA_LEFT, TA_RIGHT
     from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, Spacer, HRFlowable
-    from models.client_model import ClientEntry
 
-    client_id = g.user['client_id']
-    emp = _get_employee_any(employee_id, client_id)
-    if not emp:
-        return jsonify({'success': False, 'error': 'Employee not found'}), 404
-
-    cycle = _get_cycle(cycle_id, employee_id, client_id)
-    if not cycle:
-        return jsonify({'success': False, 'error': 'Salary cycle not found'}), 404
-
+    cycle_id = cycle['cycle_id']
     gross, total_advances, net, daily_breakdown, ot_summary = _calculate_cycle_amounts(cycle)
 
     advances = db.session.execute(
@@ -1956,15 +2076,13 @@ def cycle_payslip(employee_id, cycle_id):
     advances_out = [_row_to_dict(a) for a in advances]
     deductions_by_category = _advance_category_breakdown(advances_out)
 
-    client = ClientEntry.query.filter_by(client_id=client_id).first()
-    currency = (client.currency_symbol if client and client.currency_symbol else '₹')
-    # ReportLab's built-in fonts (Helvetica/Times) don't include the ₹ glyph —
-    # it renders as a missing-character box. Same constraint the GST report
-    # PDF already works around by spelling out "Rs." instead of the symbol.
-    if currency == '₹':
-        currency = 'Rs. '
+    currency_code = (client.currency_code if client and client.currency_code else 'INR')
+    # Money words line: "Rupees ... only" reads naturally for INR; every other
+    # currency gets its ISO code instead of an English noun we'd have to guess.
+    currency_word = 'Rupees' if currency_code == 'INR' else currency_code
     days_present = sum(1 for d in daily_breakdown if d['status'] == 'present' and d['days_counted'] > 0)
     paid_off_days = sum(1 for d in daily_breakdown if d['status'] in _DAY_OFF_PAID_STATUSES)
+    leaves_taken = sum(1 for d in daily_breakdown if d['status'] in _DAY_OFF_UNPAID_STATUSES)
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -1975,91 +2093,102 @@ def cycle_payslip(employee_id, cycle_id):
     styles = getSampleStyleSheet()
 
     # ── Palette ──────────────────────────────────────────────────────────────
-    # One ink colour, one muted, one accent, two greys. Every rule and fill on
-    # the page comes from here; the old version drew pure-black 0.5pt grid lines
-    # around every cell, which is what made it read like a spreadsheet dump.
-    INK = colors.HexColor('#0f172a')       # headings, amounts
-    MUTED = colors.HexColor('#64748b')     # labels, secondary text
-    ACCENT = colors.HexColor('#1d4ed8')    # net pay band, rules
-    LINE = colors.HexColor('#e2e8f0')      # hairline row separators
-    BAND = colors.HexColor('#f1f5f9')      # meta block / totals fill
+    # Classic Indian payslip stationery: a plain black-ruled grid with a soft
+    # green wash on the header/total bands. Everything on the page draws from
+    # these five values so the document reads as one printed form.
+    INK = colors.HexColor('#000000')       # body text, rules
+    MUTED = colors.HexColor('#4b5563')     # footer / secondary notes
+    GREEN = colors.HexColor('#d9ead3')     # header + totals band
+    HIGHLIGHT = colors.HexColor('#ccff99')  # employee-name marker
+    GRID = colors.HexColor('#7f7f7f')      # hairline cell rules
     CONTENT_W = 18 * cm
 
     # Explicit `leading` on every style — without it ReportLab inherits Normal's
     # leading (12, sized for 10pt), which opens an uneven gap between stacked
-    # lines. leading ≈ 1.25× fontSize keeps each block evenly set.
-    title_style = ParagraphStyle('PayslipTitle', parent=styles['Normal'], fontSize=22, leading=25,
-                                 alignment=TA_RIGHT, textColor=INK, fontName='Helvetica-Bold')
-    title_sub_style = ParagraphStyle('PayslipTitleSub', parent=styles['Normal'], fontSize=8.5, leading=11,
-                                     alignment=TA_RIGHT, textColor=MUTED, fontName='Helvetica')
-    co_name_style = ParagraphStyle('CoName', parent=styles['Normal'], fontSize=13, leading=16,
-                                   alignment=TA_LEFT, textColor=INK, fontName='Helvetica-Bold')
-    co_detail_style = ParagraphStyle('CoDetail', parent=styles['Normal'], fontSize=8.5, leading=11.5,
-                                     alignment=TA_LEFT, textColor=MUTED, fontName='Helvetica')
+    # lines. leading ≈ 1.3× fontSize keeps each block evenly set.
+    co_name_style = ParagraphStyle('CoName', parent=styles['Normal'], fontSize=15, leading=19,
+                                   alignment=TA_CENTER, textColor=INK, fontName='Helvetica-Bold')
+    co_sub_style = ParagraphStyle('CoSub', parent=styles['Normal'], fontSize=8, leading=11,
+                                  alignment=TA_CENTER, textColor=INK, fontName='Times-Roman')
+    title_style = ParagraphStyle('PayslipTitle', parent=styles['Normal'], fontSize=10.5, leading=14,
+                                 alignment=TA_CENTER, textColor=INK, fontName='Helvetica-Bold')
+    meta_style = ParagraphStyle('Meta', parent=styles['Normal'], fontSize=9, leading=13.5,
+                                alignment=TA_LEFT, textColor=INK, fontName='Helvetica')
+    unit_style = ParagraphStyle('Unit', parent=styles['Normal'], fontSize=8, leading=11,
+                                alignment=TA_RIGHT, textColor=INK, fontName='Helvetica')
 
-    # ── Masthead: company on the left, document type on the right ────────────
-    # Centre-stacking everything (the old layout) wasted the top third of the
-    # page and gave the eye no entry point.
-    address_html = ''
-    if client and client.address:
-        address_lines = [seg.strip() for seg in client.address.replace('\n', ',').split(',') if seg.strip()]
-        address_html = '<br/>'.join(address_lines)
+    # ── Masthead: company centred, logo parked on the right ──────────────────
+    logo = None
+    if client is not None:
+        # Reuse the invoice PDF's hardened image loader — it refuses anything
+        # that isn't a data: URI or an https URL on our own storage host, so
+        # rendering a payslip can't be turned into server-side request forgery.
+        try:
+            from routes.payroll_invoice import _signature_flowable
+            logo = _signature_flowable(client.logo_url, max_w_cm=2.6, max_h_cm=1.7)
+        except Exception:
+            logo = None
 
-    co_block = [Paragraph((client.client_name if client else 'Business') or 'Business', co_name_style)]
-    if address_html:
-        co_block.append(Paragraph(address_html, co_detail_style))
+    co_block = [Paragraph(f"<u>{(client.client_name if client else 'Business') or 'Business'}</u>", co_name_style)]
+    if client and client.gst_number:
+        co_block.append(Paragraph(f"(GSTIN: {client.gst_number})", co_sub_style))
 
-    period_label = f"{_fmt_display_date(cycle['start_date'])} &#8211; {_fmt_display_date(cycle['end_date'])}"
     masthead = Table(
-        [[co_block, [Paragraph('PAYSLIP', title_style), Paragraph(period_label, title_sub_style)]]],
-        colWidths=[11 * cm, 7 * cm],
+        [['', co_block, logo or '']],
+        colWidths=[3 * cm, 12 * cm, 3 * cm],
     )
     masthead.setStyle(TableStyle([
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
+        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
+        ('ALIGN', (2, 0), (2, 0), 'RIGHT'),
         ('LEFTPADDING', (0, 0), (-1, -1), 0),
         ('RIGHTPADDING', (0, 0), (-1, -1), 0),
         ('TOPPADDING', (0, 0), (-1, -1), 0),
         ('BOTTOMPADDING', (0, 0), (-1, -1), 0),
     ]))
     elements.append(masthead)
-    elements.append(Spacer(1, 10))
-    elements.append(HRFlowable(width='100%', thickness=2, color=ACCENT, spaceBefore=0, spaceAfter=0))
-    elements.append(Spacer(1, 16))
+    elements.append(Spacer(1, 12))
 
-    # ── Employee / period meta, set in a tinted block ────────────────────────
-    meta_label_style = ParagraphStyle('MetaLabel', parent=styles['Normal'], fontSize=7.5, leading=10,
-                                      textColor=MUTED, fontName='Helvetica-Bold')
-    meta_value_style = ParagraphStyle('MetaValue', parent=styles['Normal'], fontSize=10, leading=13,
-                                      textColor=INK, fontName='Helvetica-Bold')
+    # ── Title: name the pay period the way a payslip does ────────────────────
+    # A cycle that sits inside one calendar month is titled by that month; one
+    # that straddles months is titled by its actual date range, because calling
+    # a 25-Jun–10-Jul cycle "the month of June" would misstate what was paid.
+    start_dt, end_dt_title = _parse_date(str(cycle['start_date'])), _parse_date(str(cycle['end_date']))
+    if start_dt and end_dt_title and (start_dt.year, start_dt.month) == (end_dt_title.year, end_dt_title.month):
+        # period_label is the same period in sentence case, for the email
+        # subject/body — title-casing the shouty PDF heading instead would
+        # produce "Month Of February, 2026".
+        period_label = f"{start_dt.strftime('%B')} {start_dt.year}"
+        period_title = f"PAYSLIP FOR THE MONTH OF {start_dt.strftime('%B').upper()}, {start_dt.year}"
+    else:
+        period_label = (f"{_fmt_display_date(cycle['start_date'])} to "
+                        f"{_fmt_display_date(cycle['end_date'])}")
+        period_title = (f"PAYSLIP FOR THE PERIOD {_fmt_display_date(cycle['start_date'])} "
+                        f"TO {_fmt_display_date(cycle['end_date'])}")
+    elements.append(Paragraph(f'<u>{period_title}</u>', title_style))
+    elements.append(Spacer(1, 14))
 
-    rate_label = 'RATE / HOUR' if emp.get('pay_type') == 'hourly' else 'RATE / DAY'
-    meta_cells = [
-        ('EMPLOYEE', emp['name']),
-        ('WORKED DAYS', str(days_present + paid_off_days)),
-        (rate_label, f"{currency}{float(cycle.get('rate_snapshot') or 0):,.2f}"),
-        ('PHONE', emp.get('phone') or '—'),
-        ('EMAIL', emp.get('email') or '—'),
-        ('STATUS', 'PAID' if cycle['status'] == 'paid' else 'OPEN — PREVIEW'),
+    # ── Employee particulars ─────────────────────────────────────────────────
+    # "Amount / Day", not "Rate" — a payslip states what the person earns per
+    # unit worked; "rate" reads like a product's unit price.
+    rate_label = 'Amount / Hour' if emp.get('pay_type') == 'hourly' else 'Amount / Day'
+    rate_value = f"{float(cycle.get('rate_snapshot') or 0):,.2f}"
+    particulars = [
+        ('Employee ID', str(emp['employee_id'])[:8].upper()),
+        ('Phone', emp.get('phone') or '—'),
+        ('Email', emp.get('email') or '—'),
+        (rate_label, rate_value),
+        ('Date of Joining', _fmt_display_date(emp.get('created_at'))),
+        ('Days Paid', f"{days_present + paid_off_days} day/s"),
+        ('Leaves Taken', f"{leaves_taken} day/s"),
+        ('Status', 'PAID' if cycle['status'] == 'paid' else 'OPEN — PREVIEW'),
     ]
-    meta_rows = []
-    for i in range(0, len(meta_cells), 3):
-        chunk = meta_cells[i:i + 3]
-        meta_rows.append([
-            [Paragraph(label, meta_label_style), Paragraph(value, meta_value_style)]
-            for label, value in chunk
-        ])
-    meta_table = Table(meta_rows, colWidths=[6 * cm, 6 * cm, 6 * cm])
-    meta_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), BAND),
-        ('VALIGN', (0, 0), (-1, -1), 'TOP'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 12),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-        ('TOPPADDING', (0, 0), (-1, -1), 10),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 10),
-        ('LINEBELOW', (0, 0), (-1, -2), 0.5, colors.white),
-    ]))
-    elements.append(meta_table)
-    elements.append(Spacer(1, 18))
+    elements.append(Paragraph(
+        f'<font backcolor="#ccff99"><b>Employee Name:</b> {emp["name"]}</font>', meta_style))
+    for label, value in particulars:
+        elements.append(Paragraph(f'<b>{label}:</b> {value}', meta_style))
+    elements.append(Spacer(1, 4))
+    elements.append(Paragraph(f'(in {currency_code})', unit_style))
+    elements.append(Spacer(1, 2))
 
     # ── Earnings vs. deductions ──────────────────────────────────────────────
     # earnings = regular pay + overtime; deductions = one row per non-zero category.
@@ -2067,95 +2196,79 @@ def cycle_payslip(employee_id, cycle_id):
     if ot_summary['total_ot_minutes'] > 0:
         earning_lines.append((f"Overtime ({_fmt_display_minutes(ot_summary['total_ot_minutes'])})", ot_summary['total_ot_pay']))
 
+    # Every category is listed, zero or not — a payslip that names each possible
+    # deduction and shows a dash is how the reader confirms nothing was taken.
     deduction_lines = [
         (CATEGORY_LABEL_MAP[cat], deductions_by_category.get(cat, 0))
         for cat in CATEGORY_LABEL_MAP
-        if deductions_by_category.get(cat, 0) > 0
     ]
-    no_deductions = not deduction_lines
-    if no_deductions:
-        deduction_lines = [('No deductions', 0)]
 
-    header_style = ParagraphStyle('TblHeader', parent=styles['Normal'], fontSize=8, leading=10,
-                                  textColor=colors.white, fontName='Helvetica-Bold')
-    header_right_style = ParagraphStyle('TblHeaderRight', parent=header_style, alignment=TA_RIGHT)
-    cell_style = ParagraphStyle('TblCell', parent=styles['Normal'], fontSize=9.5, leading=13,
+    header_style = ParagraphStyle('TblHeader', parent=styles['Normal'], fontSize=8.5, leading=11,
+                                  alignment=TA_CENTER, textColor=INK, fontName='Helvetica-Bold')
+    cell_style = ParagraphStyle('TblCell', parent=styles['Normal'], fontSize=9, leading=12,
                                 textColor=INK, fontName='Helvetica')
-    muted_cell_style = ParagraphStyle('TblCellMuted', parent=cell_style, textColor=MUTED)
     cell_right_style = ParagraphStyle('TblCellRight', parent=cell_style, alignment=TA_RIGHT)
     bold_style = ParagraphStyle('TblBold', parent=cell_style, fontName='Helvetica-Bold')
     bold_right_style = ParagraphStyle('TblBoldRight', parent=bold_style, alignment=TA_RIGHT)
+    bold_center_style = ParagraphStyle('TblBoldCenter', parent=bold_style, alignment=TA_CENTER)
 
-    # No trailing blank row: the old +1 left an empty bordered strip above the
-    # totals that looked like a rendering fault.
+    def _amt(value):
+        """Amounts print as a dash when nil — the same convention the rest of
+        the form uses for 'nothing here', and easier to scan than 0.00."""
+        return f'{value:,.2f}' if value else '&#8211;'
+
     row_count = max(len(earning_lines), len(deduction_lines))
     table_rows = [[
-        Paragraph('EARNINGS', header_style), Paragraph('AMOUNT', header_right_style),
-        Paragraph('DEDUCTIONS', header_style), Paragraph('AMOUNT', header_right_style),
+        Paragraph('EARNINGS', header_style), Paragraph('AMOUNT', header_style),
+        Paragraph('DEDUCTIONS', header_style), Paragraph('AMOUNT', header_style),
     ]]
     for i in range(row_count):
         e_label, e_amt = earning_lines[i] if i < len(earning_lines) else ('', None)
         d_label, d_amt = deduction_lines[i] if i < len(deduction_lines) else ('', None)
-        d_style = muted_cell_style if (no_deductions and i == 0) else cell_style
         table_rows.append([
             Paragraph(e_label, cell_style),
-            Paragraph(f'{e_amt:,.2f}' if e_amt is not None else '', cell_right_style),
-            Paragraph(d_label, d_style),
-            Paragraph(f'{d_amt:,.2f}' if d_amt is not None and not no_deductions else '', cell_right_style),
+            Paragraph(_amt(e_amt) if e_amt is not None else '', cell_right_style),
+            Paragraph(d_label, cell_style),
+            Paragraph(_amt(d_amt) if d_amt is not None else '', cell_right_style),
         ])
-    table_rows.append([
-        Paragraph('Total Earnings', bold_style), Paragraph(f'{gross:,.2f}', bold_right_style),
-        Paragraph('Total Deductions', bold_style), Paragraph(f'{total_advances:,.2f}', bold_right_style),
-    ])
 
-    last = len(table_rows) - 1
-    pay_table = Table(table_rows, colWidths=[5.6 * cm, 3.4 * cm, 5.6 * cm, 3.4 * cm], repeatRows=1)
+    band_row = len(table_rows)
+    table_rows.append([
+        Paragraph('Gross Earnings', bold_style), Paragraph(_amt(gross), bold_right_style),
+        Paragraph('Total Deductions', bold_style), Paragraph(_amt(total_advances), bold_right_style),
+    ])
+    gross_row = len(table_rows)
+    table_rows.append([Paragraph('Gross Earnings', cell_style), '', '', Paragraph(_amt(gross), bold_right_style)])
+    ded_row = len(table_rows)
+    table_rows.append([Paragraph('Total Deductions', cell_style), '', '', Paragraph(_amt(total_advances), bold_right_style)])
+    net_row = len(table_rows)
+    table_rows.append([Paragraph('Total Net Payable', bold_center_style), '', '', Paragraph(_amt(net), bold_right_style)])
+    words_row = len(table_rows)
+    table_rows.append([
+        Paragraph(f'{currency_word} {_fmt_amount_in_words(net)} only', bold_center_style), '', '', ''])
+
+    pay_table = Table(table_rows, colWidths=[5.4 * cm, 3.6 * cm, 5.4 * cm, 3.6 * cm], repeatRows=1)
     pay_table.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, 0), INK),
-        ('BACKGROUND', (0, last), (-1, last), BAND),
-        # Hairline separators only — no boxed cells, no vertical grid except the
-        # single divider that splits earnings from deductions.
-        ('LINEBELOW', (0, 1), (-1, last - 1), 0.4, LINE),
-        ('LINEAFTER', (1, 0), (1, last), 0.4, LINE),
+        ('GRID', (0, 0), (-1, -1), 0.5, GRID),
+        ('BACKGROUND', (0, 0), (-1, 0), GREEN),
+        ('BACKGROUND', (0, band_row), (0, band_row), GREEN),
+        ('BACKGROUND', (2, band_row), (2, band_row), GREEN),
+        # The three summary rows read as one statement, so the label runs the
+        # full width of the form and only the figure sits in its own cell.
+        ('SPAN', (0, gross_row), (2, gross_row)),
+        ('SPAN', (0, ded_row), (2, ded_row)),
+        ('SPAN', (0, net_row), (2, net_row)),
+        ('SPAN', (0, words_row), (-1, words_row)),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('TOPPADDING', (0, 0), (-1, 0), 7),
-        ('BOTTOMPADDING', (0, 0), (-1, 0), 7),
-        ('TOPPADDING', (0, 1), (-1, -1), 8),
-        ('BOTTOMPADDING', (0, 1), (-1, -1), 8),
-        ('LEFTPADDING', (0, 0), (-1, -1), 10),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 10),
+        ('TOPPADDING', (0, 0), (-1, -1), 5),
+        ('BOTTOMPADDING', (0, 0), (-1, -1), 5),
+        ('LEFTPADDING', (0, 0), (-1, -1), 6),
+        ('RIGHTPADDING', (0, 0), (-1, -1), 6),
     ]))
     elements.append(pay_table)
-    elements.append(Spacer(1, 16))
 
-    # ── Net pay: the one number anyone opening this actually wants ───────────
-    net_label_style = ParagraphStyle('NetLabel', parent=styles['Normal'], fontSize=8.5, leading=11,
-                                     textColor=colors.HexColor('#bfdbfe'), fontName='Helvetica-Bold')
-    net_words_style = ParagraphStyle('NetWords', parent=styles['Normal'], fontSize=8.5, leading=11,
-                                     textColor=colors.HexColor('#dbeafe'), fontName='Helvetica')
-    net_amount_style = ParagraphStyle('NetAmount', parent=styles['Normal'], fontSize=20, leading=24,
-                                      alignment=TA_RIGHT, textColor=colors.white, fontName='Helvetica-Bold')
-
-    net_band = Table(
-        [[
-            [Paragraph('NET PAY', net_label_style),
-             Paragraph(f'{_fmt_amount_in_words(net)} Only', net_words_style)],
-            Paragraph(f'{currency}{net:,.2f}', net_amount_style),
-        ]],
-        colWidths=[11 * cm, 7 * cm],
-    )
-    net_band.setStyle(TableStyle([
-        ('BACKGROUND', (0, 0), (-1, -1), ACCENT),
-        ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
-        ('LEFTPADDING', (0, 0), (-1, -1), 12),
-        ('RIGHTPADDING', (0, 0), (-1, -1), 12),
-        ('TOPPADDING', (0, 0), (-1, -1), 12),
-        ('BOTTOMPADDING', (0, 0), (-1, -1), 12),
-    ]))
-    elements.append(net_band)
-
-    note_style = ParagraphStyle('Note', parent=styles['Normal'], fontSize=8.5, leading=11.5,
-                                alignment=TA_LEFT, textColor=MUTED, fontName='Helvetica', spaceBefore=10)
+    note_style = ParagraphStyle('Note', parent=styles['Normal'], fontSize=8, leading=11,
+                                alignment=TA_LEFT, textColor=MUTED, fontName='Helvetica', spaceBefore=8)
     if cycle['status'] == 'paid':
         paid_line = f"Paid on {_fmt_display_date(cycle['paid_at'])}" if cycle.get('paid_at') else 'Paid'
         if cycle.get('payment_note'):
@@ -2167,18 +2280,244 @@ def cycle_payslip(employee_id, cycle_id):
             'This cycle is still open. Figures are a running total and may change before payment.',
             note_style))
 
-    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=7, leading=9, alignment=TA_CENTER,
-                                  textColor=colors.HexColor('#94a3b8'), fontName='Helvetica')
-    elements.append(Spacer(1, 22))
-    elements.append(HRFlowable(width=CONTENT_W, thickness=0.5, color=LINE, spaceAfter=8))
-    elements.append(Paragraph('Computer-generated payslip &#8226; no signature required &#8226; Valoryx', footer_style))
+    sig_style = ParagraphStyle('Sig', parent=styles['Normal'], fontSize=7, leading=10, alignment=TA_LEFT,
+                               textColor=MUTED, fontName='Helvetica-Oblique', spaceBefore=6)
+    elements.append(Paragraph('COMPUTER GENERATED DOCUMENT AND REQUIRES NO SIGNATURE', sig_style))
+
+    footer_style = ParagraphStyle('Footer', parent=styles['Normal'], fontSize=8, leading=11, alignment=TA_CENTER,
+                                  textColor=MUTED, fontName='Times-Roman')
+    footer_bits = []
+    if client and client.address:
+        footer_bits.append(' '.join(client.address.split()))
+    if client and client.phone:
+        footer_bits.append(f"Ph: {client.phone}")
+    elements.append(Spacer(1, 24))
+    elements.append(HRFlowable(width=CONTENT_W, thickness=0.5, color=GRID, spaceAfter=8))
+    elements.append(Paragraph(' &#8226; '.join(footer_bits) or 'Computer-generated payslip', footer_style))
 
     doc.build(elements)
-    buffer.seek(0)
+    pdf_bytes = buffer.getvalue()
 
-    filename = f"Payslip_{emp['name'].replace(' ', '_')}_{cycle['start_date']}_to_{cycle['end_date']}.pdf"
+    safe_name = re.sub(r'[^A-Za-z0-9_.-]', '_', emp['name'].replace(' ', '_')) or 'Employee'
+    filename = f"Payslip_{safe_name}_{cycle['start_date']}_to_{cycle['end_date']}.pdf"
+    summary = {
+        'period_label': period_label,
+        'period_range': f"{_fmt_display_date(cycle['start_date'])} to {_fmt_display_date(cycle['end_date'])}",
+        'net': net,
+        'net_display': f"{currency_word} {net:,.2f}",
+        'status': cycle['status'],
+    }
+    return pdf_bytes, filename, summary
+
+
+@employees_bp.route('/<employee_id>/cycles/<cycle_id>/payslip', methods=['GET'])
+@authenticate
+@require_permission('view_salary')
+def cycle_payslip(employee_id, cycle_id):
+    """Download a one-page payslip PDF for a salary cycle — its pay period,
+    days worked, overtime, deductions by category, and net pay. Available for
+    both open and paid cycles (an open one is a preview of what's owed so
+    far); the payment date/note only appear once the cycle is actually paid.
+    """
+    from io import BytesIO
     from flask import send_file
-    return send_file(buffer, mimetype='application/pdf', as_attachment=True, download_name=filename)
+    from models.client_model import ClientEntry
+
+    client_id = g.user['client_id']
+    emp = _get_employee_any(employee_id, client_id)
+    if not emp:
+        return jsonify({'success': False, 'error': 'Employee not found'}), 404
+
+    cycle = _get_cycle(cycle_id, employee_id, client_id)
+    if not cycle:
+        return jsonify({'success': False, 'error': 'Salary cycle not found'}), 404
+
+    client = ClientEntry.query.filter_by(client_id=client_id).first()
+    pdf_bytes, filename, _summary = _build_payslip_pdf(emp, cycle, client)
+    return send_file(BytesIO(pdf_bytes), mimetype='application/pdf',
+                     as_attachment=True, download_name=filename)
+
+
+def _payslip_email_message(emp: dict, cycle: dict, client, to_email: str) -> dict:
+    """Render the payslip and wrap it in a ready-to-send email message dict."""
+    from utils.email_service import build_payslip_email
+
+    pdf_bytes, filename, summary = _build_payslip_pdf(emp, cycle, client)
+    subject, html = build_payslip_email(
+        employee_name=emp['name'],
+        business_name=(client.client_name if client else 'Your employer') or 'Your employer',
+        period_label=summary['period_label'],
+        period_range=summary['period_range'],
+        net_display=summary['net_display'],
+        is_paid=summary['status'] == 'paid',
+    )
+    return {
+        'to_email': to_email,
+        'subject': subject,
+        'html_body': html,
+        'attachment_bytes': pdf_bytes,
+        'attachment_filename': filename,
+        'attachment_mime': 'application/pdf',
+    }
+
+
+@employees_bp.route('/<employee_id>/cycles/<cycle_id>/payslip/email', methods=['POST'])
+@authenticate
+@require_permission('manage_salary_cycles')
+def email_cycle_payslip(employee_id, cycle_id):
+    """Email one employee their payslip for a cycle, as a PDF attachment.
+
+    Goes to the employee's stored address unless the body supplies `email`,
+    which lets an admin send a one-off copy (to themselves, or to a worker
+    whose address hasn't been recorded) without editing the employee record.
+
+    Requires manage_salary_cycles rather than view_salary: this leaves the
+    building. Being allowed to look at payroll is not the same as being allowed
+    to mail it to someone.
+    """
+    from models.client_model import ClientEntry
+    from utils.email_service import send_emails_with_attachment
+
+    client_id = g.user['client_id']
+    emp = _get_employee_any(employee_id, client_id)
+    if not emp:
+        return jsonify({'success': False, 'error': 'Employee not found'}), 404
+
+    cycle = _get_cycle(cycle_id, employee_id, client_id)
+    if not cycle:
+        return jsonify({'success': False, 'error': 'Salary cycle not found'}), 404
+
+    body = request.get_json(silent=True) or {}
+    try:
+        to_email = _validate_email(body.get('email')) or _validate_email(emp.get('email'))
+    except ValueError:
+        return jsonify({'success': False, 'error': 'Invalid email address'}), 400
+    if not to_email:
+        return jsonify({
+            'success': False,
+            'error': f"{emp['name']} has no email address. Add one on the employee record first.",
+        }), 400
+
+    client = ClientEntry.query.filter_by(client_id=client_id).first()
+    try:
+        message = _payslip_email_message(emp, cycle, client, to_email)
+    except Exception as e:
+        logger.error('[Payslip email] Failed to render payslip for %s: %s', employee_id, e)
+        return jsonify({'success': False, 'error': 'Could not generate the payslip PDF'}), 500
+
+    result = send_emails_with_attachment([message])[0]
+    if not result['sent']:
+        return jsonify({'success': False, 'error': result['error'] or 'Failed to send the email'}), 502
+
+    return jsonify({
+        'success': True,
+        'sent_to': to_email,
+        'message': f"Payslip emailed to {to_email}",
+    }), 200
+
+
+# One request must not turn into an unbounded render-and-send loop; a payroll
+# run larger than this is a sign the caller means to send everything ever.
+_PAYSLIP_BULK_LIMIT = 100
+
+
+@employees_bp.route('/cycles/payslip/email-bulk', methods=['POST'])
+@authenticate
+@require_permission('manage_salary_cycles')
+def email_payslips_bulk():
+    """Email payslips for several cycles at once.
+
+    Body: {"cycle_ids": ["…", "…"]}. Each cycle carries its own employee, so
+    the caller doesn't have to pair them up.
+
+    Always 200 with a per-cycle outcome — a partial send is the normal case
+    (someone has no email on file, one address bounces), and reporting the
+    whole batch as failed because of one bad row would hide the sends that did
+    go through. Callers read `results` and the summary counts.
+    """
+    from models.client_model import ClientEntry
+    from utils.email_service import send_emails_with_attachment
+
+    client_id = g.user['client_id']
+    body = request.get_json(silent=True) or {}
+    cycle_ids = body.get('cycle_ids')
+    if not isinstance(cycle_ids, list) or not cycle_ids:
+        return jsonify({'success': False, 'error': 'cycle_ids must be a non-empty list'}), 400
+    # De-duplicate but keep the caller's order, so nobody is mailed twice.
+    seen_ids, ordered_ids = set(), []
+    for cid in cycle_ids:
+        cid = str(cid)
+        if cid not in seen_ids:
+            seen_ids.add(cid)
+            ordered_ids.append(cid)
+    if len(ordered_ids) > _PAYSLIP_BULK_LIMIT:
+        return jsonify({
+            'success': False,
+            'error': f'Too many payslips in one request (max {_PAYSLIP_BULK_LIMIT})',
+        }), 400
+
+    client = ClientEntry.query.filter_by(client_id=client_id).first()
+
+    results = []       # one entry per requested cycle, in request order
+    messages = []      # only the ones we could actually build
+    message_index = {}  # position in `messages` -> position in `results`
+
+    for cid in ordered_ids:
+        row = db.session.execute(
+            text("SELECT * FROM salary_cycles WHERE cycle_id = :cid AND client_id = :client"),
+            {'cid': cid, 'client': client_id}
+        ).fetchone()
+        cycle = _row_to_dict(row) if row else None
+        if not cycle:
+            results.append({'cycle_id': cid, 'employee_name': None, 'sent': False,
+                            'error': 'Salary cycle not found'})
+            continue
+
+        emp = _get_employee_any(cycle['employee_id'], client_id)
+        if not emp:
+            results.append({'cycle_id': cid, 'employee_name': None, 'sent': False,
+                            'error': 'Employee not found'})
+            continue
+
+        try:
+            to_email = _validate_email(emp.get('email'))
+        except ValueError:
+            to_email = None
+        if not to_email:
+            results.append({'cycle_id': cid, 'employee_name': emp['name'], 'sent': False,
+                            'error': 'No valid email address on file'})
+            continue
+
+        try:
+            message = _payslip_email_message(emp, cycle, client, to_email)
+        except Exception as e:
+            logger.error('[Payslip email] Failed to render payslip for cycle %s: %s', cid, e)
+            results.append({'cycle_id': cid, 'employee_name': emp['name'], 'sent': False,
+                            'error': 'Could not generate the payslip PDF'})
+            continue
+
+        message_index[len(messages)] = len(results)
+        messages.append(message)
+        results.append({'cycle_id': cid, 'employee_name': emp['name'], 'email': to_email,
+                        'sent': False, 'error': None})
+
+    for i, outcome in enumerate(send_emails_with_attachment(messages)):
+        slot = results[message_index[i]]
+        slot['sent'] = outcome['sent']
+        slot['error'] = outcome['error']
+
+    sent_count = sum(1 for r in results if r['sent'])
+    failed_count = len(results) - sent_count
+    return jsonify({
+        'success': True,
+        'sent': sent_count,
+        'failed': failed_count,
+        'results': results,
+        'message': (
+            f"{sent_count} payslip{'' if sent_count == 1 else 's'} emailed"
+            + (f", {failed_count} failed" if failed_count else '')
+        ),
+    }), 200
 
 
 @employees_bp.route('/payroll-timeseries', methods=['GET'])

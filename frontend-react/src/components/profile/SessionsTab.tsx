@@ -1,5 +1,6 @@
 import React, { useEffect, useState } from 'react'
 import api from '@/lib/api'
+import { confirmDialog } from '@/components/ConfirmDialog'
 
 interface Session {
   id: string
@@ -54,7 +55,12 @@ export default function SessionsTab() {
   }
 
   const revokeAll = async () => {
-    if (!confirm('Sign out all other devices? You will stay logged in on this device.')) return
+    if (!(await confirmDialog({
+      title: 'Sign out other devices?',
+      message: 'Sign out all other devices? You will stay logged in on this device.',
+      confirmText: 'Sign out',
+      tone: 'danger',
+    }))) return
     setError('')
     setSuccess('')
     try {

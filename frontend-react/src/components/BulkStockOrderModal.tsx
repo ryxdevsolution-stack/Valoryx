@@ -9,6 +9,7 @@ import { useMobileDetect } from '@/hooks/useMobileDetect'
 import { toast } from '@/utils/toast'
 import { getAddedByLabel, setAddedByLabel } from '@/utils/addedByLabel'
 import { useCurrency } from '@/lib/useCurrency'
+import { confirmDialog } from '@/components/ConfirmDialog'
 
 interface OrderItem {
   item_id?: string
@@ -418,7 +419,12 @@ export default function BulkStockOrderModal({ isOpen, onClose, onSuccess, existi
   }
 
   const handleDeleteOrder = async (orderId: string) => {
-    if (!confirm('Delete this order?')) return
+    if (!(await confirmDialog({
+      title: 'Delete order?',
+      message: 'Delete this order?',
+      confirmText: 'Delete',
+      tone: 'danger',
+    }))) return
     try {
       await api.delete(`/bulk-orders/${orderId}`)
       fetchOrders()

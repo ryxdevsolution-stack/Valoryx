@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 44
+CURRENT_SCHEMA_VERSION = 48
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -58,6 +58,39 @@ def _normalize_col_def(definition: str, dialect: str) -> str:
         d = re.sub(r'(BOOLEAN\b.*?DEFAULT\s+)1\b', r'\1TRUE', d, flags=re.IGNORECASE)
         return d
     return definition  # SQLite: pass through unchanged
+
+
+def _uuid_col(dialect: str) -> str:
+    """Column type for a UUID, per dialect.
+
+    Models use FlexibleUUID, which resolves to a NATIVE `uuid` on Postgres and
+    TEXT on SQLite. A migration that hardcodes VARCHAR(36) therefore builds a
+    column the ORM cannot query on Postgres: it binds the parameter as ::UUID
+    and the comparison dies with `operator does not exist: character varying =
+    uuid`. Raw-SQL-only tables (work_groups, payroll_invoices …) are unaffected
+    because they bind plain strings — this matters only where a db.Model with
+    FlexibleUUID columns backs the table.
+    """
+    return 'UUID' if dialect == 'postgresql' else 'VARCHAR(36)'
+
+
+def _normalize_ddl(sql: str, dialect: str) -> str:
+    """Same translation as _normalize_col_def, for a whole CREATE TABLE body.
+
+    _normalize_col_def only ever sees one column definition, so raw CREATE TABLE
+    statements bypassed it entirely and shipped SQLite spellings straight to
+    Postgres — which rejects `BOOLEAN DEFAULT 1` with "column is of type boolean
+    but default expression is of type integer". That went unnoticed because every
+    such CREATE is guarded by `if table not in tables`, and those tables already
+    existed on the cloud from the original SQL scripts. The first genuinely new
+    table (work_groups, v44) hit it immediately.
+
+    The substitutions are line-scoped (`.` doesn't cross newlines), so running
+    them over a multi-line statement translates each column on its own.
+    """
+    if dialect != 'postgresql':
+        return sql
+    return '\n'.join(_normalize_col_def(line, dialect) for line in sql.split('\n'))
 
 
 # ── Migration functions (add new ones at the bottom, never reorder) ──────────
@@ -129,7 +162,7 @@ def _m001_core_columns(db):
     tables = inspector.get_table_names()
 
     if 'webhook_endpoints' not in tables:
-        db.session.execute(text("""
+        db.session.execute(text(_normalize_ddl("""
             CREATE TABLE IF NOT EXISTS webhook_endpoints (
                 endpoint_id VARCHAR(36) PRIMARY KEY,
                 client_id   VARCHAR(36) NOT NULL
@@ -141,7 +174,7 @@ def _m001_core_columns(db):
                 is_active   BOOLEAN NOT NULL DEFAULT 1,
                 created_at  TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """))
+        """, db.engine.dialect.name)))
         db.session.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_webhook_ep_client "
             "ON webhook_endpoints (client_id)"
@@ -482,7 +515,7 @@ def _m008_supplier_tables(db):
     tables = inspector.get_table_names()
 
     if 'suppliers' not in tables:
-        db.session.execute(text("""
+        db.session.execute(text(_normalize_ddl("""
             CREATE TABLE IF NOT EXISTS suppliers (
                 supplier_id    VARCHAR(36) PRIMARY KEY,
                 client_id      VARCHAR(36) NOT NULL
@@ -500,13 +533,13 @@ def _m008_supplier_tables(db):
                 created_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
                 updated_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
             )
-        """))
+        """, db.engine.dialect.name)))
         db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_suppliers_client ON suppliers (client_id)"))
         db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_suppliers_client_active ON suppliers (client_id, is_active)"))
         logging.info("[Migration] v8: suppliers table created")
 
     if 'supplier_deliveries' not in tables:
-        db.session.execute(text("""
+        db.session.execute(text(_normalize_ddl("""
             CREATE TABLE IF NOT EXISTS supplier_deliveries (
                 delivery_id             VARCHAR(36) PRIMARY KEY,
                 client_id               VARCHAR(36) NOT NULL
@@ -530,7 +563,7 @@ def _m008_supplier_tables(db):
                 created_at              TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
                 updated_at              TIMESTAMP    DEFAULT CURRENT_TIMESTAMP
             )
-        """))
+        """, db.engine.dialect.name)))
         db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_sdel_client ON supplier_deliveries (client_id)"))
         db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_sdel_supplier ON supplier_deliveries (supplier_id)"))
         db.session.execute(text("CREATE INDEX IF NOT EXISTS idx_sdel_client_status ON supplier_deliveries (client_id, status)"))
@@ -820,7 +853,7 @@ def _m014_employee_salary_tables(db):
     tables = inspector.get_table_names()
 
     if 'employees' not in tables:
-        db.session.execute(text("""
+        db.session.execute(text(_normalize_ddl("""
             CREATE TABLE IF NOT EXISTS employees (
                 employee_id  TEXT PRIMARY KEY,
                 client_id    TEXT NOT NULL,
@@ -834,7 +867,7 @@ def _m014_employee_salary_tables(db):
                 created_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at   TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
-        """))
+        """, db.engine.dialect.name)))
         db.session.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_emp_client "
             "ON employees (client_id)"
@@ -2364,8 +2397,10 @@ def _m044_payroll_invoicing(db):
     # ── 1. Work groups ──────────────────────────────────────────────────────
     tables = inspector.get_table_names()
 
+    dialect = db.engine.dialect.name
+
     if 'work_groups' not in tables:
-        db.session.execute(text("""
+        db.session.execute(text(_normalize_ddl("""
             CREATE TABLE IF NOT EXISTS work_groups (
                 group_id               VARCHAR(36) PRIMARY KEY,
                 client_id              VARCHAR(36)  NOT NULL,
@@ -2380,7 +2415,7 @@ def _m044_payroll_invoicing(db):
                 updated_at             TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
                 synced_at              TIMESTAMP    NULL
             )
-        """))
+        """, dialect)))
         db.session.execute(text(
             "CREATE INDEX IF NOT EXISTS idx_workgroup_client "
             "ON work_groups (client_id, is_active)"))
@@ -2516,6 +2551,256 @@ def _m044_payroll_invoicing(db):
     logging.info("[Migration] v44: payroll invoicing schema ready")
 
 
+def _m045_weekly_off_rule(db):
+    """v45: Recurring weekly off — e.g. every Sunday and every 2nd Saturday paid.
+
+    Pay is driven entirely by rows in employee_attendance: a date with NO row
+    pays zero. Rather than generating rows for every employee × every Sunday
+    (a data explosion that also wouldn't apply retroactively), the salary
+    calculation SYNTHESISES a 'weekly_off' day for dates the rule covers that
+    have no row of their own. An explicit row therefore always wins — which is
+    exactly the per-day override the user asked for ("someone actually worked
+    that Sunday").
+
+    Shipped DISABLED (weekly_off_enabled defaults to false). Enabling it raises
+    the gross of every OPEN cycle the moment it takes effect, so it has to be a
+    deliberate act by the business owner, not a side effect of upgrading.
+    """
+    inspector = sa_inspect(db.engine)
+
+    def _add_col(table, col, definition):
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', table) or \
+           not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: table={table!r}, col={col!r}")
+        try:
+            cols = [c['name'] for c in inspector.get_columns(table)]
+        except Exception:
+            return
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] {table}.{col} added")
+
+    for col, definition in [
+        # Off by default — see the docstring; enabling changes live payouts.
+        ('weekly_off_enabled',   'BOOLEAN DEFAULT 0'),
+        # Python date.weekday(): Monday=0 … Sunday=6. 6 = Sunday.
+        ('weekly_off_weekday',   'INTEGER NULL'),
+        # Which Saturdays of the month are also off, as a comma list of
+        # ordinals — '2' = 2nd Saturday only, '2,4' = 2nd and 4th, '' = none.
+        ('weekly_off_saturdays', 'VARCHAR(20) NULL'),
+    ]:
+        _add_col('client_entry', col, definition)
+
+    db.session.commit()
+    logging.info('[Migration] v45: weekly-off rule columns ready')
+
+
+def _m046_bill_payments_missing_columns(db):
+    """v46: Heal a bill_payments table that predates (or diverges from) v42.
+
+    Same class of bug as v43, one table over: v42 creates bill_payments inside
+    `if 'bill_payments' not in tables`. On a database that already had a table
+    by that name — a cloud DB built from the older hand-run SQL scripts — the
+    CREATE is skipped, no ALTER was ever written, and the table stays short a
+    column forever. Observed in the wild on Supabase: bill_payments with no
+    `client_id` at all, so recording any partial payment died with
+    `column "client_id" of relation "bill_payments" does not exist`.
+
+    Every column is added NULLable even where the model says nullable=False:
+    ALTER ADD COLUMN NOT NULL cannot succeed on a table that already has rows,
+    and the application always supplies these values anyway. The point is that
+    the column EXISTS so the INSERT parses.
+    """
+    inspector = sa_inspect(db.engine)
+
+    if 'bill_payments' not in inspector.get_table_names():
+        return  # v42 will create it complete
+
+    existing = {c['name'] for c in inspector.get_columns('bill_payments')}
+
+    expected = [
+        ('client_id',      'VARCHAR(36) NULL'),
+        ('bill_id',        'VARCHAR(36) NULL'),
+        ('bill_kind',      'VARCHAR(10) NULL'),
+        ('amount',         'NUMERIC(10,2) NULL'),
+        ('payment_method', 'VARCHAR(50) NULL'),
+        ('payment_date',   'TIMESTAMP NULL'),
+        ('notes',          'TEXT NULL'),
+        ('recorded_by',    'VARCHAR(36) NULL'),
+        ('created_at',     'TIMESTAMP NULL'),
+        ('updated_at',     'TIMESTAMP NULL'),
+        ('synced_at',      'TIMESTAMP NULL'),
+    ]
+
+    added = []
+    for col, definition in expected:
+        if col in existing:
+            continue
+        if not re.match(r'^[a-zA-Z_][a-zA-Z0-9_]*$', col):
+            raise ValueError(f"Invalid identifier: {col!r}")
+        norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+        db.session.execute(text(
+            f"ALTER TABLE bill_payments ADD COLUMN {col} {norm_def}"))
+        added.append(col)
+
+    db.session.commit()
+
+    # The indexes are created alongside the table in v42, so they are missing on
+    # exactly the databases this migration is here to repair.
+    if added:
+        for stmt in (
+            "CREATE INDEX IF NOT EXISTS idx_billpay_client_bill "
+            "ON bill_payments (client_id, bill_id)",
+            "CREATE INDEX IF NOT EXISTS idx_billpay_client_date "
+            "ON bill_payments (client_id, payment_date)",
+        ):
+            try:
+                db.session.execute(text(stmt))
+                db.session.commit()
+            except Exception as e:
+                db.session.rollback()
+                logging.warning(f"[Migration] v46: index skipped: {e}")
+        logging.info(f"[Migration] v46: bill_payments columns added: {', '.join(added)}")
+    else:
+        logging.info("[Migration] v46: bill_payments already complete")
+
+
+def _m047_replace_legacy_bill_payments(db):
+    """v47: Replace a legacy bill_payments table with the v42 shape.
+
+    Some cloud databases carry an OLDER table of the same name, built by hand
+    from the early SQL scripts, with different column names for the same ideas:
+    `bill_type` (not `bill_kind`), `payment_type` (not `payment_method`),
+    `payment_date` as a NOT NULL DATE, and no `client_id` at all.
+
+    v42 skipped it (`if 'bill_payments' not in tables`) and v46 could only add
+    what was MISSING. The reverse problem remained: `bill_type` is NOT NULL with
+    no default and the application has never heard of it, so every insert died
+    with NotNullViolation.
+
+    Because v42 is already stamped it will never re-run, so this migration
+    recreates the table itself rather than delegating.
+
+    Two guards, both required before anything is dropped:
+      1. `bill_type` present   — proves this is the legacy shape, not v42's
+      2. zero rows             — proves no payment history would be lost
+    If rows exist the table is KEPT and the blocking NOT NULL constraints are
+    relaxed instead: never destroy a ledger to fix a schema.
+    """
+    inspector = sa_inspect(db.engine)
+
+    if 'bill_payments' not in inspector.get_table_names():
+        return  # nothing to replace
+
+    cols = {c['name'] for c in inspector.get_columns('bill_payments')}
+    if 'bill_type' not in cols:
+        return  # already the v42 shape
+
+    row_count = db.session.execute(text("SELECT COUNT(*) FROM bill_payments")).scalar() or 0
+
+    if row_count > 0:
+        # Populated legacy table — relax rather than drop. Only touch columns the
+        # application never writes, so an insert can succeed without them.
+        logging.warning(
+            f"[Migration] v47: legacy bill_payments has {row_count} row(s) — "
+            f"keeping it and relaxing NOT NULL instead of replacing."
+        )
+        if db.engine.dialect.name == 'postgresql':
+            for col in ('bill_type', 'payment_type', 'payment_date'):
+                if col not in cols:
+                    continue
+                try:
+                    db.session.execute(text(
+                        f"ALTER TABLE bill_payments ALTER COLUMN {col} DROP NOT NULL"))
+                    db.session.commit()
+                except Exception as e:
+                    db.session.rollback()
+                    logging.warning(f"[Migration] v47: could not relax {col}: {e}")
+        return
+
+    db.session.execute(text("DROP TABLE bill_payments"))
+    db.session.commit()
+    logging.info("[Migration] v47: empty legacy bill_payments dropped")
+
+    # BillPayment is a db.Model whose id columns are FlexibleUUID, so on Postgres
+    # they must be native uuid — VARCHAR(36) here would build a table the ORM
+    # cannot query. See _uuid_col().
+    _uuid = _uuid_col(db.engine.dialect.name)
+    db.session.execute(text(_normalize_ddl(f"""
+        CREATE TABLE IF NOT EXISTS bill_payments (
+            payment_id     {_uuid} PRIMARY KEY,
+            client_id      {_uuid} NOT NULL,
+            bill_id        {_uuid} NOT NULL,
+            bill_kind      VARCHAR(10) NOT NULL,
+            amount         NUMERIC(10,2) NOT NULL,
+            payment_method VARCHAR(50)  NULL,
+            payment_date   TIMESTAMP    NULL,
+            notes          TEXT         NULL,
+            recorded_by    {_uuid}      NULL,
+            created_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+            updated_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+            synced_at      TIMESTAMP    NULL
+        )
+    """, db.engine.dialect.name)))
+    db.session.execute(text(
+        "CREATE INDEX IF NOT EXISTS idx_billpay_client_bill "
+        "ON bill_payments (client_id, bill_id)"))
+    db.session.execute(text(
+        "CREATE INDEX IF NOT EXISTS idx_billpay_client_date "
+        "ON bill_payments (client_id, payment_date)"))
+    db.session.commit()
+    logging.info("[Migration] v47: bill_payments recreated in the v42 shape")
+
+
+def _m048_bill_payments_uuid_types(db):
+    """v48: Give bill_payments' id columns the native uuid type on Postgres.
+
+    BillPayment is a db.Model and its id columns are FlexibleUUID, which becomes
+    a native `uuid` on Postgres. Both v42's and v47's CREATE hardcoded
+    VARCHAR(36), which is right for SQLite and wrong for Postgres: the ORM binds
+    every id parameter as ::UUID, so the very first read after a successful
+    write failed with
+
+        operator does not exist: character varying = uuid
+
+    Every other cloud table (gst_billing, client_entry, supplier_delivery_
+    payments …) already uses native uuid — bill_payments was the odd one out.
+
+    Postgres only. SQLite has no uuid type and stores these as TEXT, which is
+    what FlexibleUUID expects there.
+
+    USING col::uuid converts any rows already present; the cast fails loudly
+    rather than silently truncating if a value isn't a well-formed UUID.
+    """
+    if db.engine.dialect.name != 'postgresql':
+        return
+
+    inspector = sa_inspect(db.engine)
+    if 'bill_payments' not in inspector.get_table_names():
+        return
+
+    types = {c['name']: str(c['type']).lower() for c in inspector.get_columns('bill_payments')}
+
+    converted = []
+    for col in ('payment_id', 'client_id', 'bill_id', 'recorded_by'):
+        if col not in types or 'uuid' in types[col]:
+            continue
+        try:
+            db.session.execute(text(
+                f"ALTER TABLE bill_payments ALTER COLUMN {col} TYPE uuid USING {col}::uuid"))
+            db.session.commit()
+            converted.append(col)
+        except Exception as e:
+            db.session.rollback()
+            logging.warning(f"[Migration] v48: could not convert {col} to uuid: {e}")
+
+    if converted:
+        logging.info(f"[Migration] v48: bill_payments columns now uuid: {', '.join(converted)}")
+    else:
+        logging.info("[Migration] v48: bill_payments id columns already uuid")
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -2562,6 +2847,10 @@ MIGRATIONS = [
     (42, _m042_partial_bill_payments),
     (43, _m043_supplier_delivery_missing_columns),
     (44, _m044_payroll_invoicing),
+    (45, _m045_weekly_off_rule),
+    (46, _m046_bill_payments_missing_columns),
+    (47, _m047_replace_legacy_bill_payments),
+    (48, _m048_bill_payments_uuid_types),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

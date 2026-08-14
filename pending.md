@@ -1,5 +1,10 @@
 # Pending Work — Valoryx
 
+> **Update 2026-08-04 (later session) — §1A, §1B, §1C, §4e and the `confirm()` issue in §4f
+> are now BUILT and verified. Uncommitted on `main`.** See "§5 Completed" at the bottom for
+> what changed and what is genuinely left. The rest of this file is kept as the original
+> handoff record; where it conflicts with §5, §5 is current.
+>
 > Handoff note for a Claude session on another machine. Written 2026-08-04. Branch: `main`.
 >
 > **Status correction (updated 2026-08-04, later session):** the work in §1 and §2 below
@@ -393,3 +398,120 @@ which Saturdays) alongside the 9 added by v44.
 - **`window.confirm()` throws in the Electron renderer.** The partial-payment confirmation is
   now an in-app modal in `CreateBill.tsx`. ⚠️ **`Exchange.tsx:360` still calls `confirm()`**
   and will fail the same way — flagged to the user, not fixed.
+  → **DONE in §5.** It was 11 call sites, not one.
+
+---
+
+## 5. Completed 2026-08-04 (later session) — uncommitted on `main`
+
+> Verified with `npx tsc --noEmit` (clean), `npx vitest run`, `python -m py_compile`, and a
+> scripted migration + salary run against a scratch SQLite DB. **Not committed** — house rule.
+
+### 5a. `confirm()` → in-app modal — DONE (§4f follow-up)
+
+The note above flagged one file. There were **11**, all of which throw in the packaged app.
+
+New `frontend-react/src/components/ConfirmDialog.tsx` exports a promise-based
+`confirmDialog()` plus a `<ConfirmHost />` mounted once in `App.tsx`. Call sites went from
+`if (!confirm(msg))` to `if (!(await confirmDialog({...})))`.
+
+Converted: `billing/Exchange.tsx`, `Stock.tsx`, `Reports.tsx`, `Suppliers.tsx`,
+`profile/SessionsTab.tsx`, `profile/WebhooksTab.tsx`, `NotesModal.tsx`, `admin/EditUser.tsx`,
+`BulkStockOrderList.tsx`, `BulkStockOrderModal.tsx`, `DraftBillNotification.tsx`.
+
+Module-level channel (not a context hook) deliberately, so a call site only needs an import.
+Unmounting resolves any in-flight promise `false` rather than hanging the caller's handler.
+
+### 5b. Cloud schema now auto-migrates on startup — DONE (§1C)
+
+`_ensure_remote_sync_columns()` in `sync_service.py` already ran at boot for v30–v42; it now
+also carries **v43** (the supplier_deliveries column heal) and **v44** (all five payroll
+tables, the 9 `client_entry` fields, `employees.work_group_id`) and **v45**. So the cloud
+schema no longer depends on anyone running SQL by hand.
+
+`migration/ADD_PAYROLL_INVOICING_V44.sql` added as the documented schema of record, matching
+the v42 file's role. Running it is now optional, not required.
+
+### 5c. Payroll tables sync to cloud — DONE (§1B)
+
+All five registered in `_OWNER_SYNC_TABLES`, parents first (`work_groups`,
+`payroll_invoices`, then the three children). All carry `client_id`, so all use
+`'scope': 'client_id'`.
+
+⚠️ **Found and fixed en route:** `_sync_employees` used a hardcoded column list that never
+included `email` (v40) **or** `work_group_id` (v44). Both were silently lost on restore to a
+new device — `email` had been broken since v40. Added to the INSERT, the `ON CONFLICT DO
+UPDATE` and the download column list.
+
+### 5d. Payroll invoicing frontend — DONE (§1A)
+
+New tab **“Payroll Invoices”** on the Salary page (`mainTab` state in `Salary.tsx`), with four
+sub-views under `components/salary/payroll/`:
+
+| File | What |
+|---|---|
+| `payrollApi.ts` | typed client for every `/api/payroll` endpoint |
+| `WorkGroupsView.tsx` | create/edit/remove groups, assign workers |
+| `InvoiceBuilder.tsx` | period + company → preview → editable lines → save |
+| `InvoiceListView.tsx` | balances, status chips, PDF download, record payment |
+| `InvoiceSettingsView.tsx` | the 9 `client_entry` invoice fields |
+| `WeeklyOffSettings.tsx` | the §4e rule (below) |
+
+Service charge % is **user-entered everywhere** — per group, overridable per invoice line, with
+a business-wide fallback. Nothing is hardcoded. Blank means "use the fallback", not 0%.
+
+Totals always come from the backend preview; the UI never computes money.
+
+⚠️ **Found and fixed:** `payroll_invoice.py` used SQLite-only `is_active = 1` / `= 0` in 7
+places. On Postgres that is `operator does not exist: boolean = integer`, so **the entire
+work-groups feature would have 500'd in online mode** — it had only ever been exercised
+against local SQLite. Changed to `TRUE`/`FALSE`, matching `employees.py`.
+
+Also: the 9 `client_entry` columns existed only as raw SQL. Added to the `ClientEntry` model,
+`to_dict()`, and the `PUT /api/clients/<id>` handler, which previously ignored them.
+
+**Still open from §1D:** what service charge % the client actually uses. The UI no longer
+needs the answer — they type it in — but the "Bill To" question resolved to a searchable
+customer picker with free-text fallback.
+
+**Not built:** signature *upload*. `InvoiceSettingsView` takes a URL; wiring it through
+Supabase Storage like `upload_logo` is still to do.
+
+### 5e. Sundays + 2nd Saturdays as paid holidays — DONE (§4e)
+
+Migration **v45** (`CURRENT_SCHEMA_VERSION = 45`) adds three `client_entry` columns:
+`weekly_off_enabled`, `weekly_off_weekday` (Mon=0…Sun=6), `weekly_off_saturdays` (`'2'` or
+`'2,4'`).
+
+`_calculate_cycle_amounts` **synthesises** a paid `weekly_off` day for dates the rule covers
+that have no attendance row — the approach §4e identified as cleaner. No row generation, works
+retroactively, and an explicit row always wins.
+
+Two safety decisions worth keeping:
+- **Ships disabled.** §4e warned that enabling re-prices every open cycle. Making that happen
+  on upgrade would silently change real payouts, so it is an explicit toggle with a warning
+  on the settings card. **The user must switch it on.**
+- **Never applied to a `paid` cycle** — those figures were frozen at payment, and re-rendering
+  an old payslip must not restate them.
+
+`weekly_off_enabled` is **nullable** on purpose: `db.Column(default=...)` is a Python-side ORM
+default that emits no DDL default, so `NOT NULL` broke raw inserts that omit the column (the
+sync downloader does exactly that). NULL reads as disabled.
+
+Verified against a scratch DB: rule off → unchanged; rule on over Aug 2026 → 6 paid days
+(5 Sundays + Sat 8th) = ₹3000 at ₹500/day; working Sun 2 Aug → that day counts as `present`,
+not double-paid; `status='paid'` → synthesis skipped.
+
+### 5f. Still genuinely pending
+
+1. **Signature upload** through Supabase Storage (5d).
+2. **`file_url=None` TODO** at `routes/report.py:144` — custom reports save no CSV/PDF.
+3. **Auth middleware's bare `try/except Exception`** still reports every unhandled error as
+   401 "Authentication failed" (§4b). Unchanged, still costing debugging time.
+4. **Two failing tests, pre-existing, unrelated to the above:**
+   `PricingSinglePlan.test.tsx` and `TrialExpired.test.tsx` both fail on "limits object is
+   empty". `PricingCards.tsx:408` now *hides* the limits row when both values are null, but
+   both tests still assert a `"— users"` placeholder renders. The component and the tests
+   disagree; someone changed one without the other. Decide which behaviour is wanted.
+5. **The v8/v9 latent migration risk** (§4b) is unchanged — other tables still guard columns
+   inside a `CREATE TABLE` that existing installs never re-run.

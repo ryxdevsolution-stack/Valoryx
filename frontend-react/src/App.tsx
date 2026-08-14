@@ -15,6 +15,7 @@ import UpdateNotification from '@/components/UpdateNotification'
 import { InstallBanner } from '@/components/pwa/InstallBanner'
 import { ApiPerformanceBar } from '@/components/ApiPerformanceBar'
 import ToastContainer from '@/components/ToastContainer'
+import { ConfirmHost } from '@/components/ConfirmDialog'
 
 const SESSION_HEARTBEAT_MS = 30_000
 
@@ -118,6 +119,7 @@ export default function App() {
                 </Suspense>
                 <ApiPerformanceBar />
                 <ToastContainer />
+                <ConfirmHost />
               </DataProvider>
             </ClientProvider>
           </LoadingInitializer>

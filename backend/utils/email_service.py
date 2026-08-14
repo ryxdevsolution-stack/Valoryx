@@ -110,6 +110,91 @@ def send_email_with_attachment(
         return False
 
 
+def _build_attachment_message(
+    to_email: str,
+    subject: str,
+    html_body: str,
+    attachment_bytes: bytes,
+    attachment_filename: str,
+    attachment_mime: str = 'application/pdf',
+) -> MIMEMultipart:
+    """Assemble one HTML + single-attachment message (no sending)."""
+    msg = MIMEMultipart('mixed')
+    msg['From'] = f"{Config.SMTP_FROM_NAME} <{Config.SMTP_FROM_EMAIL or Config.SMTP_USER}>"
+    msg['To'] = to_email
+    msg['Subject'] = subject
+
+    alt = MIMEMultipart('alternative')
+    alt.attach(MIMEText(html_body, 'html'))
+    msg.attach(alt)
+
+    mime_parts = attachment_mime.split('/', 1)
+    if len(mime_parts) != 2:
+        raise ValueError(f"attachment_mime must be 'type/subtype', got: {attachment_mime!r}")
+    part = MIMEBase(*mime_parts)
+    part.set_payload(attachment_bytes)
+    encoders.encode_base64(part)
+    part.add_header('Content-Disposition', 'attachment', filename=attachment_filename)
+    msg.attach(part)
+    return msg
+
+
+def send_emails_with_attachment(messages: list[dict]) -> list[dict]:
+    """Send many attachment emails over ONE SMTP connection, synchronously.
+
+    Each item: {to_email, subject, html_body, attachment_bytes,
+    attachment_filename, attachment_mime?}. Returns one
+    {'to_email', 'sent', 'error'} per input item, in the same order.
+
+    Synchronous and single-connection on purpose. Bulk payslips need a truthful
+    per-recipient result to report back ("3 sent, 1 bounced"), which
+    fire-and-forget threads cannot give; and logging in once instead of once
+    per employee is the difference between a snappy send and a request that
+    ties up the worker for a minute on a 40-person payroll.
+    """
+    results = [{'to_email': m.get('to_email'), 'sent': False, 'error': None} for m in messages]
+    if not messages:
+        return results
+    if not _is_configured():
+        logger.warning('[EMAIL] SMTP not configured — dropping %d attachment email(s)', len(messages))
+        for r in results:
+            r['error'] = 'Email is not configured on this server'
+        return results
+
+    try:
+        with smtplib.SMTP(Config.SMTP_HOST, Config.SMTP_PORT, timeout=30) as server:
+            server.starttls()
+            server.login(Config.SMTP_USER, Config.SMTP_PASSWORD)
+            for i, m in enumerate(messages):
+                try:
+                    server.send_message(_build_attachment_message(
+                        to_email=m['to_email'],
+                        subject=m['subject'],
+                        html_body=m['html_body'],
+                        attachment_bytes=m['attachment_bytes'],
+                        attachment_filename=m['attachment_filename'],
+                        attachment_mime=m.get('attachment_mime', 'application/pdf'),
+                    ))
+                    results[i]['sent'] = True
+                    logger.info('[EMAIL] Sent with attachment to %s: %s', m['to_email'], m['subject'])
+                except Exception as e:
+                    # One bad address must not abandon the rest of the batch.
+                    results[i]['error'] = str(e)
+                    logger.error('[EMAIL] Failed to send to %s: %s', m.get('to_email'), e)
+    except smtplib.SMTPAuthenticationError:
+        logger.error('[EMAIL] SMTP authentication failed — check credentials')
+        for r in results:
+            if not r['sent']:
+                r['error'] = 'Email server rejected our credentials'
+    except Exception as e:
+        logger.error('[EMAIL] SMTP batch failed: %s', e)
+        for r in results:
+            if not r['sent']:
+                r['error'] = str(e)
+
+    return results
+
+
 def _send_async_with_attachment(
     to_email: str,
     subject: str,
@@ -727,6 +812,76 @@ def send_audit_report_email(
         attachment_bytes=pdf_bytes,
         attachment_filename=filename,
         attachment_mime='application/pdf',
+    )
+
+
+# ---------------------------------------------------------------------------
+# Payslip email (PDF attachment)
+# ---------------------------------------------------------------------------
+
+def build_payslip_email(
+    employee_name: str,
+    business_name: str,
+    period_label: str,
+    period_range: str,
+    net_display: str,
+    is_paid: bool,
+) -> tuple[str, str]:
+    """Return (subject, html_body) for a payslip email.
+
+    Built rather than sent so the caller can batch many of these onto one SMTP
+    connection and report a per-employee outcome.
+    """
+    from html import escape
+    safe_employee = escape(employee_name)
+    safe_business = escape(business_name)
+    safe_period = escape(period_label)
+    safe_range = escape(period_range)
+
+    subject = f"Payslip for {period_label} — {business_name}"
+
+    if is_paid:
+        lede = (
+            f'Hi <strong>{safe_employee}</strong>, your payslip for '
+            f'<strong>{safe_period}</strong> is attached to this email.'
+        )
+        note = ''
+    else:
+        lede = (
+            f'Hi <strong>{safe_employee}</strong>, here is a preview of your pay for '
+            f'<strong>{safe_period}</strong>.'
+        )
+        # An open cycle is a running total. Saying so in the email as well as on
+        # the PDF stops a preview from being read as the final settlement.
+        note = _alert_box(
+            'This pay period is still open, so the figures are a running total '
+            'and may change before payment is made.',
+            kind='info',
+        )
+
+    body = f"""
+        <h2 style="margin:0 0 6px 0;font-size:22px;font-weight:700;color:#111111;">Your payslip is attached.</h2>
+        <p style="margin:0 0 20px 0;color:#555555;">{lede}</p>
+
+        {_info_table(
+            _info_row('Employee', safe_employee, first=True) +
+            _info_row('Employer', safe_business) +
+            _info_row('Pay period', safe_range) +
+            _info_row('Net pay', escape(net_display))
+        )}
+
+        {note}
+
+        <p style="font-size:13px;color:#888888;margin-top:24px;">
+            The attached PDF is your full payslip — earnings, deductions and net pay.
+            If anything looks wrong, contact {safe_business} directly; replies to this
+            address are not monitored by your employer.
+        </p>
+    """
+
+    return subject, _base_layout(
+        preheader=f"Payslip for {period_label} — net pay {net_display}.",
+        body_html=body,
     )
 
 

@@ -76,10 +76,10 @@ function MiniCalendar({
   ]
 
   return (
-    // lg:flex-1 + min-h-0 — the calendar claims all height the day list doesn't
-    // use, so the tiles grow into what used to be dead space instead of the grid
-    // scrolling inside a 280px box.
-    <div className="flex flex-col border-t border-gray-100 dark:border-gray-800 px-3 py-3 bg-gray-50/60 dark:bg-gray-800/20 lg:flex-1 lg:min-h-0">
+    // lg:flex-1 + min-h-0 — the calendar claims the height the day list doesn't
+    // use. overflow-y-auto so a short viewport scrolls the grid here rather than
+    // letting the panel's overflow-hidden silently clip the last weeks.
+    <div className="flex flex-col border-t border-gray-100 dark:border-gray-800 px-3 py-3 bg-gray-50/60 dark:bg-gray-800/20 lg:flex-1 lg:min-h-0 overflow-y-auto">
       <div className="flex items-center justify-between gap-2 mb-2 flex-wrap">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-gray-500 dark:text-gray-400">
           Monthly overview
@@ -91,16 +91,17 @@ function MiniCalendar({
           <span className="flex items-center gap-1"><span className="w-2 h-2 rounded-sm border border-red-300 dark:border-red-700 bg-white dark:bg-gray-900" />No cycle</span>
         </div>
       </div>
-      {/* Weekday header lives in its own grid — inside the cell grid the
-          auto-rows-fr below would stretch these labels to full tile height.
-          max-w below lg: when the panel is full-width (stacked layout) the
-          square tiles would otherwise blow up to ~95px each. */}
-      <div className="grid grid-cols-7 gap-1 lg:gap-1.5 text-center flex-none mb-1 w-full max-w-[420px] lg:max-w-none mx-auto">
+      {/* Weekday header lives in its own grid so the labels aren't sized like
+          day tiles. Both grids share the same width cap: the tiles are square,
+          so an uncapped 7-column grid in a wide panel produces enormous cells
+          (~180px each) that then overflow the panel. Capped and centered, a
+          tile tops out around 68px no matter how wide the panel gets. */}
+      <div className="grid grid-cols-7 gap-1 lg:gap-1.5 text-center flex-none mb-1 w-full max-w-[420px] lg:max-w-[520px] mx-auto">
         {['S', 'M', 'T', 'W', 'T', 'F', 'S'].map((d, i) => (
           <div key={i} className="text-[9px] lg:text-[10px] font-medium text-gray-400">{d}</div>
         ))}
       </div>
-      <div className="grid grid-cols-7 gap-1 lg:gap-1.5 text-center w-full max-w-[420px] lg:max-w-none mx-auto lg:flex-1 lg:auto-rows-fr lg:min-h-0">
+      <div className="grid grid-cols-7 gap-1 lg:gap-1.5 text-center flex-none w-full max-w-[420px] lg:max-w-[520px] mx-auto">
         {cells.map((cell, i) => {
           if (!cell) return <div key={`pad-${i}`} />
           const status = dayStatusMap.get(cell.date)
@@ -162,9 +163,10 @@ function MiniCalendar({
               disabled={!canClick && !noCycle && !cycleSealed}
               title={tooltip}
               className={[
-                // Square tiles on small screens (keeps a ≥44px touch target in a
-                // 7-column grid); at lg they stretch to fill the taller grid rows.
-                'aspect-square lg:aspect-auto lg:h-full w-full min-h-[30px] flex items-center justify-center',
+                // Square tiles at every width. The grid that holds them is
+                // width-capped, so "square" can never balloon into 180px blocks
+                // when the panel is wide (e.g. side panels collapsed).
+                'aspect-square w-full min-h-[30px] flex items-center justify-center',
                 'rounded-md text-[10px] lg:text-xs font-semibold transition-colors relative',
                 isPresent
                   ? 'bg-green-500 text-white hover:bg-green-600 cursor-pointer'
@@ -503,6 +505,20 @@ export default function AttendancePanel({
                           {dayStatus.replace('_', ' ')}
                         </span>
                       ) : (
+                        <></>
+                      )}
+                      {day.is_rule_generated && (
+                        /* No attendance row behind this one — it comes from the
+                           weekly-off rule, so say so rather than letting it look
+                           like someone recorded it. */
+                        <span
+                          className="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-100 dark:bg-gray-700 text-gray-500 dark:text-gray-400 uppercase"
+                          title="Added automatically by the weekly off rule. Mark attendance on this day to override it."
+                        >
+                          auto
+                        </span>
+                      )}
+                      {!isDayOff && (
                         <span className="text-xs text-gray-400 dark:text-gray-500">
                           {day.punches.length} punch{day.punches.length !== 1 ? 'es' : ''}
                         </span>

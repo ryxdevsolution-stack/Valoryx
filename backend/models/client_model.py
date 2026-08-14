@@ -63,6 +63,31 @@ class ClientEntry(db.Model):
     label_care_phone = db.Column(db.String(20), nullable=True)
     label_care_email = db.Column(db.String(120), nullable=True)
 
+    # Payroll invoice identity / footer (v44). state_code is what decides
+    # CGST+SGST vs IGST on a payroll invoice — without it every invoice silently
+    # falls back to intra-state. service_charge_percent is the fallback margin
+    # used when a work group doesn't set its own.
+    state_code = db.Column(db.String(10), nullable=True)
+    website = db.Column(db.String(255), nullable=True)
+    bank_name = db.Column(db.String(120), nullable=True)
+    bank_account_no = db.Column(db.String(40), nullable=True)
+    bank_ifsc = db.Column(db.String(20), nullable=True)
+    bank_account_holder = db.Column(db.String(120), nullable=True)
+    signature_url = db.Column(db.String(500), nullable=True)
+    invoice_terms = db.Column(db.Text, nullable=True)
+    service_charge_percent = db.Column(FlexibleNumeric(5, 2), nullable=True)
+
+    # Recurring weekly off (v45) — e.g. every Sunday + every 2nd Saturday paid.
+    # Disabled by default: enabling raises the gross of every open cycle, so it
+    # must be a deliberate choice rather than an upgrade side effect.
+    # Nullable on purpose: db.Column(default=...) is a Python-side ORM default
+    # and emits no DDL default, so NOT NULL here would break any raw INSERT that
+    # omits the column (the sync downloader does exactly that). NULL reads as
+    # "disabled" everywhere, which is the safe interpretation anyway.
+    weekly_off_enabled = db.Column(db.Boolean, default=False, nullable=True)
+    weekly_off_weekday = db.Column(db.Integer, nullable=True)      # Mon=0 … Sun=6
+    weekly_off_saturdays = db.Column(db.String(20), nullable=True)  # e.g. '2' or '2,4'
+
     # Email verification
     email_verified = db.Column(db.Boolean, default=False, nullable=False)
     email_verification_token = db.Column(db.String(64), nullable=True, index=True)
@@ -145,6 +170,21 @@ class ClientEntry(db.Model):
             'tax_config': self.tax_config or DEFAULT_GST_CONFIG,
             'setup_completed_at': self.setup_completed_at.isoformat() if self.setup_completed_at else None,
             'setup_completed': self.setup_completed_at is not None,
+            'weekly_off_enabled': bool(self.weekly_off_enabled),
+            'weekly_off_weekday': self.weekly_off_weekday,
+            'weekly_off_saturdays': self.weekly_off_saturdays,
+            'state_code': self.state_code,
+            'website': self.website,
+            'bank_name': self.bank_name,
+            'bank_account_no': self.bank_account_no,
+            'bank_ifsc': self.bank_ifsc,
+            'bank_account_holder': self.bank_account_holder,
+            'signature_url': self.signature_url,
+            'invoice_terms': self.invoice_terms,
+            'service_charge_percent': (
+                float(self.service_charge_percent)
+                if self.service_charge_percent is not None else None
+            ),
             'label_importer_name': self.label_importer_name,
             'label_importer_address': self.label_importer_address,
             'label_origin_country': self.label_origin_country,

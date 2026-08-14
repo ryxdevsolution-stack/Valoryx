@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback } from 'react'
 import api from '@/lib/api'
 import { toast } from '@/utils/toast'
 import { useCurrency } from '@/lib/useCurrency'
+import { confirmDialog } from '@/components/ConfirmDialog'
 
 interface OrderItem {
   item_id: string
@@ -63,7 +64,12 @@ export default function BulkStockOrderList({ isOpen, onClose, onReceive }: Props
   }, [isOpen, fetchOrders])
 
   const handleDelete = async (orderId: string) => {
-    if (!confirm('Are you sure you want to delete this order?')) return
+    if (!(await confirmDialog({
+      title: 'Delete order?',
+      message: 'Are you sure you want to delete this order?',
+      confirmText: 'Delete',
+      tone: 'danger',
+    }))) return
 
     try {
       await api.delete(`/bulk-orders/${orderId}`)

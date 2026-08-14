@@ -12,6 +12,7 @@ import { generateSupplierStatementPDF } from '@/lib/supplierPdfService'
 import { generateDeliveryTaxInvoicePDF } from '@/lib/deliveryInvoicePdfService'
 import { encodeDeliveryNotes, decodeDeliveryNotes } from '@/lib/deliveryNotesEncoding'
 import { getShopSettings } from '@/services/shopSettingsService'
+import { confirmDialog } from '@/components/ConfirmDialog'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -748,7 +749,12 @@ export default function SuppliersPage() {
 
   async function deletePayment(payment_id: string) {
     if (!activeDelivery) return
-    if (!window.confirm('Remove this payment? The balance due will increase.')) return
+    if (!(await confirmDialog({
+      title: 'Remove payment?',
+      message: 'Remove this payment? The balance due will increase.',
+      confirmText: 'Remove',
+      tone: 'danger',
+    }))) return
     try {
       await api.delete(`/suppliers/deliveries/${activeDelivery.delivery_id}/payments/${payment_id}`)
       showToast('Payment removed')

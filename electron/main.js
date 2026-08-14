@@ -359,6 +359,11 @@ function createWindow() {
     webPreferences: {
       nodeIntegration: false,
       contextIsolation: true,
+      // Enables Chromium's built-in PDF viewer, which is what renders an
+      // in-app PDF preview in an <iframe>. It defaults to false in Electron,
+      // and without it a PDF iframe shows a blank frame instead. This is the
+      // bundled viewer, not the old NPAPI plugin support.
+      plugins: true,
       preload: path.join(__dirname, 'preload.js')
     },
     show: false,

@@ -3,6 +3,7 @@
 import { useState, useEffect } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import api from '@/lib/api'
+import { confirmDialog } from '@/components/ConfirmDialog'
 
 interface Note {
   note_id: string
@@ -105,7 +106,12 @@ export default function NotesModal({ isOpen, onClose }: NotesModalProps) {
   }
 
   const handleDeleteNote = async (noteId: string) => {
-    if (!confirm('Are you sure you want to delete this note?')) return
+    if (!(await confirmDialog({
+      title: 'Delete note?',
+      message: 'Are you sure you want to delete this note?',
+      confirmText: 'Delete',
+      tone: 'danger',
+    }))) return
 
     try {
       setLoading(true)

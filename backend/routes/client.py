@@ -8,7 +8,7 @@ from models.user_model import User
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_super_admin
 from utils.audit_logger import log_action
-from utils.supabase_storage import delete_logo, replace_logo
+from utils.supabase_storage import delete_logo, replace_logo, upload_signature
 from utils.email_service import (
     send_account_deletion_scheduled_email,
     send_deletion_cancelled_email,
@@ -134,6 +134,54 @@ def update_client(client_id):
         if 'telegram_chat_id' in data:
             client.telegram_chat_id = data['telegram_chat_id'] or None
 
+        # Payroll invoice identity / footer (v44). Plain nullable text, so blank
+        # is stored as NULL rather than '' — the PDF checks for absence.
+        for _field in ('state_code', 'website', 'bank_name', 'bank_account_no',
+                       'bank_ifsc', 'bank_account_holder', 'signature_url',
+                       'invoice_terms'):
+            if _field in data:
+                value = data[_field]
+                setattr(client, _field, (str(value).strip() or None) if value is not None else None)
+
+        # Recurring weekly off (v45). Turning this on re-prices every OPEN cycle
+        # immediately (that is the point), so it is only ever set explicitly.
+        if 'weekly_off_enabled' in data:
+            client.weekly_off_enabled = bool(data['weekly_off_enabled'])
+        if 'weekly_off_weekday' in data:
+            raw = data['weekly_off_weekday']
+            if raw in (None, ''):
+                client.weekly_off_weekday = None
+            else:
+                try:
+                    wd = int(raw)
+                except (TypeError, ValueError):
+                    return jsonify({'error': 'weekly_off_weekday must be 0 (Monday) to 6 (Sunday)'}), 400
+                if not 0 <= wd <= 6:
+                    return jsonify({'error': 'weekly_off_weekday must be 0 (Monday) to 6 (Sunday)'}), 400
+                client.weekly_off_weekday = wd
+        if 'weekly_off_saturdays' in data:
+            raw = data['weekly_off_saturdays']
+            if raw in (None, ''):
+                client.weekly_off_saturdays = None
+            else:
+                parts = [p.strip() for p in str(raw).split(',') if p.strip()]
+                if not all(p.isdigit() and 1 <= int(p) <= 5 for p in parts):
+                    return jsonify({'error': 'weekly_off_saturdays must be a comma list of 1-5'}), 400
+                client.weekly_off_saturdays = ','.join(sorted(set(parts))) or None
+
+        if 'service_charge_percent' in data:
+            raw = data['service_charge_percent']
+            if raw in (None, ''):
+                client.service_charge_percent = None
+            else:
+                try:
+                    pct = float(raw)
+                except (TypeError, ValueError):
+                    return jsonify({'error': 'service_charge_percent must be a number'}), 400
+                if not 0 <= pct <= 100:
+                    return jsonify({'error': 'service_charge_percent must be between 0 and 100'}), 400
+                client.service_charge_percent = pct
+
         # Region/currency are immutable after setup for regular users so amounts
         # never need converting — only a super admin may change them here. Tax
         # (tax_config) stays editable for everyone. (complete_setup is exempt:
@@ -166,6 +214,85 @@ def update_client(client_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': 'Failed to update client', 'message': str(e)}), 500
+
+
+@client_bp.route('/<client_id>/signature', methods=['POST'])
+@authenticate
+def upload_client_signature(client_id):
+    """Upload the authorised-signature image used on payroll invoices.
+
+    Multipart form field: `file`.
+
+    The image has to live on the project's own Supabase storage host — the
+    invoice PDF renderer refuses to fetch images from anywhere else (an
+    arbitrary URL would turn "download my invoice" into server-side request
+    forgery), so it would otherwise be accepted here and silently omitted from
+    the PDF.
+    """
+    try:
+        if client_id != g.user['client_id']:
+            return jsonify({'error': 'Access denied'}), 403
+
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+
+        file = request.files.get('file')
+        if not file:
+            return jsonify({'error': 'No file uploaded'}), 400
+
+        ok, public_url, error = upload_signature(file, client_id)
+        if not ok:
+            return jsonify({'error': error or 'Upload failed'}), 400
+
+        old_url = client.signature_url
+        client.signature_url = public_url
+        db.session.commit()
+
+        from utils.cache_helper import get_cache_manager
+        get_cache_manager().delete(f"client:detail:{client_id}")
+        log_action('UPDATE', 'client_entry', client_id,
+                   {'signature_url': old_url}, {'signature_url': public_url})
+
+        return jsonify({'success': True, 'signature_url': public_url,
+                        'message': 'Signature uploaded'}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to upload signature', 'message': str(e)}), 500
+
+
+@client_bp.route('/<client_id>/signature', methods=['DELETE'])
+@authenticate
+def delete_client_signature(client_id):
+    """Clear the signature so the invoice falls back to a blank signing space.
+
+    The stored object is left in the bucket rather than deleted: uploads are
+    timestamped so nothing is overwritten, and an invoice PDF generated earlier
+    should still render exactly as it was issued.
+    """
+    try:
+        if client_id != g.user['client_id']:
+            return jsonify({'error': 'Access denied'}), 403
+
+        client = ClientEntry.query.filter_by(client_id=client_id).first()
+        if not client:
+            return jsonify({'error': 'Client not found'}), 404
+
+        old_url = client.signature_url
+        client.signature_url = None
+        db.session.commit()
+
+        from utils.cache_helper import get_cache_manager
+        get_cache_manager().delete(f"client:detail:{client_id}")
+        log_action('UPDATE', 'client_entry', client_id,
+                   {'signature_url': old_url}, {'signature_url': None})
+
+        return jsonify({'success': True, 'message': 'Signature removed'}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to remove signature', 'message': str(e)}), 500
 
 
 def _validate_tax_config(cfg):

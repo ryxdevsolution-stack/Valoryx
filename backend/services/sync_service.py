@@ -109,6 +109,15 @@ _OWNER_SYNC_TABLES = [
     # parent bill lives in one of TWO tables (gst/non_gst), which the
     # ('via', parent, fk) scope cannot express.
     {'table': 'bill_payments',           'pk': 'payment_id',      'scope': 'client_id'},
+    # v44: payroll invoicing. Listed parents-first (work_groups and
+    # payroll_invoices before the three child tables) because Postgres enforces
+    # FK order on the upload. Every child carries client_id directly, so all
+    # five use the simple scope rather than ('via', parent, fk).
+    {'table': 'work_groups',               'pk': 'group_id',   'scope': 'client_id'},
+    {'table': 'payroll_invoices',          'pk': 'invoice_id', 'scope': 'client_id'},
+    {'table': 'payroll_invoice_lines',     'pk': 'line_id',    'scope': 'client_id'},
+    {'table': 'payroll_invoice_employees', 'pk': 'id',         'scope': 'client_id'},
+    {'table': 'payroll_invoice_payments',  'pk': 'payment_id', 'scope': 'client_id'},
 ]
 
 
@@ -244,15 +253,218 @@ class SyncService:
                 updated_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
                 synced_at      TIMESTAMP    NULL
             )""")
+        # …and heal one that already existed in a different shape. CREATE TABLE
+        # IF NOT EXISTS above is a no-op against a cloud DB whose bill_payments
+        # came from the older hand-run SQL, which could be missing client_id
+        # entirely — the upload then fails on every partial payment. Same repair
+        # as migration v46.
+        for col, definition in [
+            ('client_id',      'VARCHAR(36)'),
+            ('bill_id',        'VARCHAR(36)'),
+            ('bill_kind',      'VARCHAR(10)'),
+            ('amount',         'NUMERIC(10,2)'),
+            ('payment_method', 'VARCHAR(50)'),
+            ('payment_date',   'TIMESTAMP'),
+            ('notes',          'TEXT'),
+            ('recorded_by',    'VARCHAR(36)'),
+            ('created_at',     'TIMESTAMP'),
+            ('updated_at',     'TIMESTAMP'),
+            ('synced_at',      'TIMESTAMP'),
+        ]:
+            statements.append(
+                f"ALTER TABLE bill_payments ADD COLUMN IF NOT EXISTS {col} {definition} NULL")
         statements.append(
             "CREATE INDEX IF NOT EXISTS idx_billpay_client_bill ON bill_payments (client_id, bill_id)")
+
+        # v43: columns that only ever existed inside v8's CREATE TABLE block, so
+        # any cloud DB whose supplier_deliveries predates them is short a column
+        # and every delivery upload fails on it. Same heal as the local v43.
+        for col, definition in [
+            ('branch_id',              'VARCHAR(36) NULL'),
+            ('invoice_number',         'VARCHAR(100) NULL'),
+            ('delivery_date',          'DATE NULL'),
+            ('transport_fee',          'NUMERIC DEFAULT 0'),
+            ('notes',                  'TEXT NULL'),
+            ('products_confirmed',     'BOOLEAN NOT NULL DEFAULT FALSE'),
+            ('confirmed_by',           'VARCHAR(36) NULL'),
+            ('confirmed_at',           'TIMESTAMP NULL'),
+            ('delivery_note_filename', 'VARCHAR(255) NULL'),
+            ('delivery_note_path',     'VARCHAR(500) NULL'),
+            ('delivery_note_type',     'VARCHAR(10) NULL'),
+            ('completed_by',           'VARCHAR(36) NULL'),
+            ('completed_at',           'TIMESTAMP NULL'),
+            ('added_by_label',         'VARCHAR(120) NULL'),
+            ('updated_at',             'TIMESTAMP NULL'),
+        ]:
+            statements.append(
+                f"ALTER TABLE supplier_deliveries ADD COLUMN IF NOT EXISTS {col} {definition}")
+
+        # v44: payroll invoicing. Mirrors _m044_payroll_invoicing so the five new
+        # tables and the client_entry footer fields exist on the cloud before the
+        # generic owner-sync below ever references them. Postgres spellings only
+        # differ where SQLite accepts 1/0 for booleans.
+        for col, definition in [
+            ('state_code',             'VARCHAR(10) NULL'),
+            ('website',                'VARCHAR(255) NULL'),
+            ('bank_name',              'VARCHAR(120) NULL'),
+            ('bank_account_no',        'VARCHAR(40) NULL'),
+            ('bank_ifsc',              'VARCHAR(20) NULL'),
+            ('bank_account_holder',    'VARCHAR(120) NULL'),
+            ('signature_url',          'VARCHAR(500) NULL'),
+            ('invoice_terms',          'TEXT NULL'),
+            ('service_charge_percent', 'NUMERIC(5,2) NULL'),
+        ]:
+            statements.append(
+                f"ALTER TABLE client_entry ADD COLUMN IF NOT EXISTS {col} {definition}")
+        statements.append(
+            "ALTER TABLE employees ADD COLUMN IF NOT EXISTS work_group_id VARCHAR(36) NULL")
+
+        # v45: recurring weekly-off rule (Sundays / nth Saturdays).
+        statements.append(
+            "ALTER TABLE client_entry ADD COLUMN IF NOT EXISTS "
+            "weekly_off_enabled BOOLEAN DEFAULT FALSE")
+        statements.append(
+            "ALTER TABLE client_entry ADD COLUMN IF NOT EXISTS weekly_off_weekday INTEGER NULL")
+        statements.append(
+            "ALTER TABLE client_entry ADD COLUMN IF NOT EXISTS weekly_off_saturdays VARCHAR(20) NULL")
+
+        statements.append("""
+            CREATE TABLE IF NOT EXISTS work_groups (
+                group_id               VARCHAR(36) PRIMARY KEY,
+                client_id              VARCHAR(36)  NOT NULL,
+                name                   VARCHAR(150) NOT NULL,
+                description            VARCHAR(255) NULL,
+                hsn_code               VARCHAR(20)  NULL,
+                service_charge_percent NUMERIC(5,2) NULL,
+                display_order          INTEGER      DEFAULT 0,
+                is_active              BOOLEAN      DEFAULT TRUE,
+                created_by             VARCHAR(36)  NULL,
+                created_at             TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at             TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at              TIMESTAMP    NULL
+            )""")
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS idx_workgroup_client ON work_groups (client_id, is_active)")
+
+        statements.append("""
+            CREATE TABLE IF NOT EXISTS payroll_invoices (
+                invoice_id       VARCHAR(36) PRIMARY KEY,
+                client_id        VARCHAR(36)  NOT NULL,
+                invoice_number   VARCHAR(50)  NOT NULL,
+                invoice_date     DATE         NOT NULL,
+                period_start     DATE         NOT NULL,
+                period_end       DATE         NOT NULL,
+                customer_id      VARCHAR(36)  NULL,
+                customer_name    VARCHAR(200) NOT NULL,
+                customer_address TEXT         NULL,
+                customer_gstin   VARCHAR(20)  NULL,
+                customer_state   VARCHAR(100) NULL,
+                customer_phone   VARCHAR(30)  NULL,
+                ship_to          TEXT         NULL,
+                place_of_supply  VARCHAR(100) NULL,
+                tax_mode         VARCHAR(10)  NULL,
+                gst_rate         NUMERIC(5,2) NULL,
+                salary_total     NUMERIC(12,2) DEFAULT 0,
+                service_total    NUMERIC(12,2) DEFAULT 0,
+                taxable_total    NUMERIC(12,2) DEFAULT 0,
+                cgst_total       NUMERIC(12,2) DEFAULT 0,
+                sgst_total       NUMERIC(12,2) DEFAULT 0,
+                igst_total       NUMERIC(12,2) DEFAULT 0,
+                tax_total        NUMERIC(12,2) DEFAULT 0,
+                grand_total      NUMERIC(12,2) DEFAULT 0,
+                received_amount  NUMERIC(12,2) DEFAULT 0,
+                status           VARCHAR(20)  DEFAULT 'draft',
+                notes            TEXT         NULL,
+                terms            TEXT         NULL,
+                created_by       VARCHAR(36)  NULL,
+                created_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at       TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at        TIMESTAMP    NULL
+            )""")
+        statements.append(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_payinv_client_number "
+            "ON payroll_invoices (client_id, invoice_number)")
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS idx_payinv_client_period "
+            "ON payroll_invoices (client_id, period_start, period_end)")
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS idx_payinv_client_status "
+            "ON payroll_invoices (client_id, status)")
+
+        statements.append("""
+            CREATE TABLE IF NOT EXISTS payroll_invoice_lines (
+                line_id                VARCHAR(36) PRIMARY KEY,
+                client_id              VARCHAR(36)  NOT NULL,
+                invoice_id             VARCHAR(36)  NOT NULL,
+                group_id               VARCHAR(36)  NULL,
+                description            VARCHAR(255) NOT NULL,
+                hsn_code               VARCHAR(20)  NULL,
+                headcount              INTEGER      DEFAULT 0,
+                salary_amount          NUMERIC(12,2) DEFAULT 0,
+                service_charge_percent NUMERIC(5,2)  DEFAULT 0,
+                service_charge_amount  NUMERIC(12,2) DEFAULT 0,
+                taxable_amount         NUMERIC(12,2) DEFAULT 0,
+                gst_rate               NUMERIC(5,2)  DEFAULT 0,
+                cgst_amount            NUMERIC(12,2) DEFAULT 0,
+                sgst_amount            NUMERIC(12,2) DEFAULT 0,
+                igst_amount            NUMERIC(12,2) DEFAULT 0,
+                line_total             NUMERIC(12,2) DEFAULT 0,
+                sort_order             INTEGER      DEFAULT 0,
+                created_at             TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at             TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at              TIMESTAMP    NULL
+            )""")
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS idx_payinvline_invoice "
+            "ON payroll_invoice_lines (client_id, invoice_id)")
+
+        statements.append("""
+            CREATE TABLE IF NOT EXISTS payroll_invoice_employees (
+                id            VARCHAR(36) PRIMARY KEY,
+                client_id     VARCHAR(36)  NOT NULL,
+                invoice_id    VARCHAR(36)  NOT NULL,
+                line_id       VARCHAR(36)  NULL,
+                employee_id   VARCHAR(36)  NOT NULL,
+                employee_name VARCHAR(150) NULL,
+                cycle_id      VARCHAR(36)  NULL,
+                gross_salary  NUMERIC(12,2) DEFAULT 0,
+                created_at    TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at     TIMESTAMP    NULL
+            )""")
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS idx_payinvemp_invoice "
+            "ON payroll_invoice_employees (client_id, invoice_id)")
+
+        statements.append("""
+            CREATE TABLE IF NOT EXISTS payroll_invoice_payments (
+                payment_id     VARCHAR(36) PRIMARY KEY,
+                client_id      VARCHAR(36)  NOT NULL,
+                invoice_id     VARCHAR(36)  NOT NULL,
+                amount         NUMERIC(12,2) NOT NULL,
+                payment_method VARCHAR(50)  NULL,
+                reference_no   VARCHAR(100) NULL,
+                payment_date   TIMESTAMP    NULL,
+                notes          TEXT         NULL,
+                recorded_by    VARCHAR(36)  NULL,
+                created_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                updated_at     TIMESTAMP    DEFAULT CURRENT_TIMESTAMP,
+                synced_at      TIMESTAMP    NULL
+            )""")
+        statements.append(
+            "CREATE INDEX IF NOT EXISTS idx_payinvpay_invoice "
+            "ON payroll_invoice_payments (client_id, invoice_id)")
+
         for stmt in statements:
             try:
                 with self.postgres_engine.connect() as conn:
                     conn.execute(text(stmt))
                     conn.commit()
             except Exception as e:
-                logger.warning(f"[SyncService] ensure-remote-column skipped ({stmt.split('ADD COLUMN')[0].strip()}): {e}")
+                # Statements now include multi-line CREATE TABLEs, so log a short
+                # identifying prefix rather than splitting on 'ADD COLUMN' (which
+                # would dump the whole table body for anything else).
+                label = ' '.join(stmt.split())[:80]
+                logger.warning(f"[SyncService] ensure-remote-schema skipped ({label}…): {e}")
 
     def sync_all(self, client_id=None):
         """
@@ -1212,22 +1424,27 @@ class SyncService:
 
     def _sync_employees(self, client_id=None):
         """Owner-scoped, batched employee upload."""
+        # email (v40) and work_group_id (v44) were added to the table but never to
+        # this list, so neither ever reached the cloud — an employee's e-mail and
+        # their work-group assignment were silently lost on restore to a new device.
         insert_sql = """
             INSERT INTO employees (
-                employee_id, client_id, branch_id, name, phone, pay_type, rate,
-                is_active, ot_multiplier, created_by, created_at, updated_at
+                employee_id, client_id, branch_id, name, phone, email, pay_type, rate,
+                is_active, ot_multiplier, work_group_id, created_by, created_at, updated_at
             ) VALUES (
-                :employee_id, :client_id, :branch_id, :name, :phone, :pay_type, :rate,
-                :is_active, :ot_multiplier, :created_by, :created_at, :updated_at
+                :employee_id, :client_id, :branch_id, :name, :phone, :email, :pay_type, :rate,
+                :is_active, :ot_multiplier, :work_group_id, :created_by, :created_at, :updated_at
             )
             ON CONFLICT (employee_id) DO UPDATE SET
                 branch_id = EXCLUDED.branch_id,
                 name = EXCLUDED.name,
                 phone = EXCLUDED.phone,
+                email = EXCLUDED.email,
                 pay_type = EXCLUDED.pay_type,
                 rate = EXCLUDED.rate,
                 is_active = EXCLUDED.is_active,
                 ot_multiplier = EXCLUDED.ot_multiplier,
+                work_group_id = EXCLUDED.work_group_id,
                 updated_at = EXCLUDED.updated_at,
                 synced_at = CURRENT_TIMESTAMP
         """
@@ -2272,8 +2489,9 @@ class SyncService:
         converted_records = [
             TypeConverter.convert_dict_to_sqlite(r, EMPLOYEE_COLUMN_TYPES) for r in records
         ]
-        columns = ['employee_id', 'client_id', 'branch_id', 'name', 'phone', 'pay_type', 'rate',
-                   'is_active', 'ot_multiplier', 'created_by', 'created_at', 'updated_at', 'synced_at']
+        columns = ['employee_id', 'client_id', 'branch_id', 'name', 'phone', 'email', 'pay_type',
+                   'rate', 'is_active', 'ot_multiplier', 'work_group_id', 'created_by',
+                   'created_at', 'updated_at', 'synced_at']
 
         return self._upsert_to_sqlite('employees', self._stamp_synced(converted_records), 'employee_id', columns)
 

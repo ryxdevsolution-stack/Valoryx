@@ -6,12 +6,13 @@ import api from '@/lib/api'
 import { Link, useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import { focusRowById } from '@/utils/focusRow'
 import { CustomerCardSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
-import { X, User, Phone, Mail, MapPin, ShoppingBag, TrendingUp, Clock, ChevronDown, ChevronUp, Package, Pencil, CreditCard } from 'lucide-react'
+import { X, User, Phone, Mail, MapPin, ShoppingBag, TrendingUp, Clock, ChevronDown, ChevronUp, Package, Pencil, CreditCard, Download, CheckCircle } from 'lucide-react'
 import { toast } from '@/utils/toast'
 import { useClient } from '@/contexts/ClientContext'
 import { useCurrency } from '@/lib/useCurrency'
 import membershipService, { getMembershipError } from '@/services/membership'
 import type { CardLookupResult } from '@/types/membership'
+import { generateCustomerStatementPDF } from '@/lib/customerPdfService'
 
 interface Customer {
   customer_id?: string
@@ -66,6 +67,10 @@ export default function CustomersPage() {
   const [filterStatus, setFilterStatus] = useState<'all' | 'Active' | 'Inactive'>('all')
   const [selectedCustomer, setSelectedCustomer] = useState<Customer | null>(null)
   const [customerBills, setCustomerBills] = useState<any[]>([])
+  const [receiveBill, setReceiveBill] = useState<any | null>(null)
+  const [receiveAmount, setReceiveAmount] = useState('')
+  const [receiveMethod, setReceiveMethod] = useState('Cash')
+  const [receiving, setReceiving] = useState(false)
   const [customerStats, setCustomerStats] = useState<any>(null)
   const [loadingHistory, setLoadingHistory] = useState(false)
   const [expandedBillId, setExpandedBillId] = useState<string | null>(null)
@@ -87,7 +92,7 @@ export default function CustomersPage() {
   })
   const [savingEdit, setSavingEdit] = useState(false)
   const [lookingUpCard, setLookingUpCard] = useState(false)
-  const { user } = useClient()
+  const { user, client } = useClient()
   const isOwner = user?.role === 'owner' || !!user?.is_super_admin
 
   // Membership card summary shown inside the customer drawer (auto-fetched by phone).
@@ -265,7 +270,95 @@ export default function CustomersPage() {
     setCustomerBills([])
     setCustomerStats(null)
     setExpandedBillId(null)
+    setReceiveBill(null)
   }, [])
+
+  /** Outstanding balance of a bill — backend sends balance_due; fall back to total − paid. */
+  const billBalance = (bill: any): number => {
+    if (bill.balance_due != null) return Number(bill.balance_due)
+    const paid = bill.paid_amount ?? (bill.payment_status === 'pending' ? 0 : bill.amount)
+    return Math.max((bill.amount || 0) - (paid || 0), 0)
+  }
+
+  const openReceivePayment = (bill: any) => {
+    setReceiveBill(bill)
+    setReceiveAmount(billBalance(bill).toFixed(2))
+    setReceiveMethod('Cash')
+  }
+
+  const submitReceivePayment = async () => {
+    if (!receiveBill || receiving) return
+    const amount = parseFloat(receiveAmount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.warning('Enter a valid amount')
+      return
+    }
+    setReceiving(true)
+    try {
+      const res = await api.post(`/billing/${receiveBill.bill_id}/payments`, {
+        amount,
+        payment_method: receiveMethod,
+      })
+      const updated = res.data?.bill
+      const newPayment = res.data?.payment
+      const patch: any = updated
+        ? { payment_status: updated.payment_status, paid_amount: updated.paid_amount, balance_due: updated.balance_due }
+        : { payment_status: 'paid' }
+      setCustomerBills(prev => prev.map(b => b.bill_id === receiveBill.bill_id
+        ? { ...b, ...patch, payments: newPayment ? [...(b.payments || []), newPayment] : b.payments }
+        : b))
+      toast.success(patch.payment_status === 'paid'
+        ? `Bill #${receiveBill.bill_number} fully paid`
+        : `Payment recorded — balance ${cur}${Number(patch.balance_due ?? 0).toFixed(2)}`)
+      setReceiveBill(null)
+    } catch (err: any) {
+      toast.error(err.response?.data?.error || 'Failed to record payment')
+    } finally {
+      setReceiving(false)
+    }
+  }
+
+  function downloadCustomerStatement() {
+    if (!selectedCustomer) return
+    const activeBills = customerBills.filter(b => (b.status || 'final') === 'final')
+    const totalAmount = activeBills.reduce((sum, b) => sum + (b.amount || 0), 0)
+    const paidAmount = activeBills.reduce((sum, b) => sum + (b.paid_amount ?? b.amount ?? 0), 0)
+    const balanceDue = Math.max(totalAmount - paidAmount, 0)
+    generateCustomerStatementPDF({
+      client: {
+        client_name: client?.client_name || 'Business',
+        address: client?.address,
+        phone: client?.phone,
+        email: client?.email,
+        gstin: client?.gstin,
+      },
+      customer: {
+        name: selectedCustomer.customer_name,
+        phone: selectedCustomer.customer_phone,
+        email: selectedCustomer.customer_email,
+        address: selectedCustomer.customer_address,
+        city: selectedCustomer.customer_city,
+        state: selectedCustomer.customer_state,
+        gstin: selectedCustomer.customer_gstin,
+      },
+      bills: activeBills.map(b => {
+        const paid = b.paid_amount ?? b.amount ?? 0
+        return {
+          bill_id: b.bill_id,
+          bill_number: b.bill_number,
+          type: b.type,
+          created_at: b.created_at,
+          total: b.amount || 0,
+          paid,
+          balance: Math.max((b.amount || 0) - paid, 0),
+          payments: b.payments || [],
+        }
+      }),
+      totalAmount,
+      paidAmount,
+      balanceDue,
+    })
+  }
 
   // Membership-card-number search: a query like "VLX-000123" isn't in the customer
   // list data, so resolve it via the membership lookup to the holder's phone.
@@ -613,6 +706,18 @@ export default function CustomersPage() {
                 </div>
               </div>
               <div className="flex items-center gap-1">
+                {!selectedCustomer.is_walkin && selectedCustomer.customer_phone && (
+                  <button
+                    type="button"
+                    onClick={downloadCustomerStatement}
+                    disabled={loadingHistory || customerBills.length === 0}
+                    className="p-1.5 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-700 text-gray-500 dark:text-gray-400 transition-colors disabled:opacity-50"
+                    title="Download PDF statement"
+                    aria-label="Download PDF statement"
+                  >
+                    <Download className="w-4 h-4" />
+                  </button>
+                )}
                 {isOwner && !selectedCustomer.is_walkin && selectedCustomer.customer_phone && (
                   <button
                     type="button"
@@ -758,6 +863,7 @@ export default function CustomersPage() {
                     const isCancelled = bill.status === 'cancelled'
                     const billItems = Array.isArray(bill.items) ? bill.items : []
                     const isExpanded = expandedBillId === bill.bill_id
+                    const isUnsettled = !isCancelled && (bill.payment_status === 'pending' || bill.payment_status === 'partial')
 
                     return (
                       <div
@@ -789,6 +895,15 @@ export default function CustomersPage() {
                               {isCancelled && (
                                 <span className="text-[9px] px-1.5 py-0.5 rounded-full font-bold bg-red-100 text-red-600 dark:bg-red-900/30 dark:text-red-400">
                                   Cancelled
+                                </span>
+                              )}
+                              {isUnsettled && (
+                                <span className={`text-[9px] px-1.5 py-0.5 rounded-full font-bold ${
+                                  bill.payment_status === 'partial'
+                                    ? 'bg-blue-100 text-blue-700 dark:bg-blue-900/40 dark:text-blue-300'
+                                    : 'bg-amber-100 text-amber-700 dark:bg-amber-900/40 dark:text-amber-300'
+                                }`}>
+                                  {bill.payment_status === 'partial' ? 'Partial' : 'Pending'}
                                 </span>
                               )}
                             </div>
@@ -836,6 +951,49 @@ export default function CustomersPage() {
                             ) : (
                               <p className="text-xs text-gray-400 dark:text-gray-500 italic py-2">Item details not available</p>
                             )}
+
+                            {/* Payment history — every instalment recorded against this bill */}
+                            {Array.isArray(bill.payments) && bill.payments.length > 0 && (
+                              <div className="mt-2 p-2 bg-gray-50 dark:bg-gray-900/40 rounded-lg border border-gray-200 dark:border-gray-700">
+                                <p className="text-[10px] font-semibold text-gray-500 dark:text-gray-400 uppercase mb-1">Payment History</p>
+                                {bill.payments.map((p: any, i: number) => (
+                                  <div key={p.payment_id || i} className="flex justify-between text-[11px] text-gray-700 dark:text-gray-300 py-0.5">
+                                    <span>
+                                      {p.payment_date ? new Date(p.payment_date).toLocaleDateString('en-IN', { day: '2-digit', month: 'short' }) : '—'}
+                                      {p.notes ? ` · ${p.notes}` : ''}
+                                    </span>
+                                    <span className="font-medium">{formatCurrency(Number(p.amount))}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+
+                            {/* Payment status row — receive an instalment or settle the balance */}
+                            {isUnsettled && (
+                              <div className={`mt-2 flex items-center justify-between p-2 rounded-lg border ${
+                                bill.payment_status === 'partial'
+                                  ? 'bg-blue-50 dark:bg-blue-900/20 border-blue-200 dark:border-blue-700'
+                                  : 'bg-amber-50 dark:bg-amber-900/20 border-amber-200 dark:border-amber-700'
+                              }`}>
+                                <span className={`text-xs font-semibold ${
+                                  bill.payment_status === 'partial'
+                                    ? 'text-blue-700 dark:text-blue-400'
+                                    : 'text-amber-700 dark:text-amber-400'
+                                }`}>
+                                  {bill.payment_status === 'partial'
+                                    ? `Balance due: ${formatCurrency(billBalance(bill))}`
+                                    : 'Payment Pending'}
+                                </span>
+                                <button
+                                  type="button"
+                                  onClick={() => openReceivePayment(bill)}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 text-[11px] font-bold text-white bg-green-600 hover:bg-green-700 rounded-lg transition"
+                                >
+                                  <CheckCircle className="w-3.5 h-3.5" />
+                                  Receive
+                                </button>
+                              </div>
+                            )}
                           </div>
                         )}
                       </div>
@@ -854,6 +1012,72 @@ export default function CustomersPage() {
                 </div>
               </div>
             )}
+          </div>
+        </div>
+      )}
+
+      {/* Receive Payment Modal — settle a pending/partial bill's balance */}
+      {receiveBill && (
+        <div className="fixed inset-0 z-[60] flex items-center justify-center" onClick={() => !receiving && setReceiveBill(null)}>
+          <div className="absolute inset-0 bg-black/50 backdrop-blur-sm" />
+          <div
+            className="relative bg-white dark:bg-gray-800 rounded-xl shadow-2xl p-6 max-w-sm w-full mx-4 border border-gray-200 dark:border-gray-700"
+            onClick={e => e.stopPropagation()}
+          >
+            <div className="flex items-center gap-3 mb-4">
+              <div className="w-10 h-10 rounded-full bg-green-100 dark:bg-green-900/30 flex items-center justify-center flex-shrink-0">
+                <CheckCircle className="w-5 h-5 text-green-600 dark:text-green-400" />
+              </div>
+              <div>
+                <h3 className="text-base font-semibold text-gray-900 dark:text-white">Receive Payment — Bill #{receiveBill.bill_number}</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mt-0.5">
+                  Balance due: {formatCurrency(billBalance(receiveBill))}
+                </p>
+              </div>
+            </div>
+
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Amount received now</label>
+            <input
+              type="number"
+              min="0.01"
+              step="0.01"
+              max={billBalance(receiveBill)}
+              value={receiveAmount}
+              onChange={e => setReceiveAmount(e.target.value)}
+              autoFocus
+              className="w-full px-3 py-2 mb-3 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-green-500 focus:border-green-500"
+            />
+            <p className="-mt-2 mb-3 text-[11px] text-gray-400 dark:text-gray-500">
+              A smaller amount records another instalment; the full balance settles the bill.
+            </p>
+
+            <label className="block text-xs font-medium text-gray-600 dark:text-gray-300 mb-1">Payment method</label>
+            <select
+              value={receiveMethod}
+              onChange={e => setReceiveMethod(e.target.value)}
+              className="w-full px-3 py-2 mb-4 text-sm border border-gray-300 dark:border-gray-600 rounded-lg bg-white dark:bg-gray-700 text-gray-900 dark:text-white focus:ring-2 focus:ring-green-500"
+            >
+              {['Cash', 'UPI', 'Card'].map(name => <option key={name} value={name}>{name}</option>)}
+            </select>
+
+            <div className="flex gap-2">
+              <button
+                type="button"
+                disabled={receiving}
+                onClick={() => setReceiveBill(null)}
+                className="flex-1 px-4 py-2.5 text-sm font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 rounded-lg hover:bg-gray-200 dark:hover:bg-gray-600 transition disabled:opacity-50"
+              >
+                Cancel
+              </button>
+              <button
+                type="button"
+                disabled={receiving}
+                onClick={submitReceivePayment}
+                className="flex-1 px-4 py-2.5 text-sm font-bold text-white bg-green-600 rounded-lg hover:bg-green-700 transition disabled:opacity-60"
+              >
+                {receiving ? 'Recording…' : 'Record Payment'}
+              </button>
+            </div>
           </div>
         </div>
       )}

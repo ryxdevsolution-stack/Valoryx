@@ -9,6 +9,7 @@ import { useClient } from '@/contexts/ClientContext'
 import { useCurrency } from '@/lib/useCurrency'
 import { RefreshCw, ArrowRight, CheckCircle2, XCircle, AlertCircle } from 'lucide-react'
 import { toast } from '@/utils/toast'
+import { confirmDialog } from '@/components/ConfirmDialog'
 
 interface Product {
   product_id: string
@@ -357,7 +358,11 @@ export default function ExchangeBillPage() {
       return
     }
 
-    if (!confirm('Are you sure you want to process this exchange?')) {
+    if (!(await confirmDialog({
+      title: 'Process exchange?',
+      message: 'Are you sure you want to process this exchange?',
+      confirmText: 'Process',
+    }))) {
       return
     }
 

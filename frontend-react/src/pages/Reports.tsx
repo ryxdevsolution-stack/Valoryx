@@ -9,6 +9,7 @@ import { toast } from '@/utils/toast'
 import { useClient } from '@/contexts/ClientContext'
 import { useCurrency } from '@/lib/useCurrency'
 import { generateReportPDF } from '@/lib/reportPdfService'
+import { confirmDialog } from '@/components/ConfirmDialog'
 
 interface Bill {
   bill_id: string
@@ -425,7 +426,12 @@ export default function ReportsPage() {
   }
 
   const handleDeleteExpense = async (expenseId: string) => {
-    if (!confirm('Are you sure you want to delete this expense?')) return
+    if (!(await confirmDialog({
+      title: 'Delete expense?',
+      message: 'Are you sure you want to delete this expense?',
+      confirmText: 'Delete',
+      tone: 'danger',
+    }))) return
 
     try {
       setLoading(true)

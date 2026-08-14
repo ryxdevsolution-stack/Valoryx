@@ -89,7 +89,8 @@ def get_customer_details(phone):
         gst_cols = db.session.query(
             GSTBilling.bill_id, GSTBilling.bill_number, GSTBilling.customer_name,
             GSTBilling.customer_phone, GSTBilling.final_amount, GSTBilling.created_at,
-            GSTBilling.payment_type, GSTBilling.status, GSTBilling.items
+            GSTBilling.payment_type, GSTBilling.status, GSTBilling.items,
+            GSTBilling.paid_amount, GSTBilling.payment_status
         ).filter(
             GSTBilling.client_id == client_id,
             GSTBilling.customer_phone == phone,
@@ -99,7 +100,8 @@ def get_customer_details(phone):
         nongst_cols = db.session.query(
             NonGSTBilling.bill_id, NonGSTBilling.bill_number, NonGSTBilling.customer_name,
             NonGSTBilling.customer_phone, NonGSTBilling.total_amount, NonGSTBilling.created_at,
-            NonGSTBilling.payment_type, NonGSTBilling.status, NonGSTBilling.items
+            NonGSTBilling.payment_type, NonGSTBilling.status, NonGSTBilling.items,
+            NonGSTBilling.paid_amount, NonGSTBilling.payment_status
         ).filter(
             NonGSTBilling.client_id == client_id,
             NonGSTBilling.customer_phone == phone,
@@ -119,21 +121,54 @@ def get_customer_details(phone):
             'customer_gstin': ''
         }
 
+        # Batch-fetch individual payments for every bill in one query (avoid N+1) —
+        # mirrors suppliers.py's SupplierDeliveryPayment batching for list_deliveries.
+        from models.billing_model import BillPayment
+        needed_bill_ids = [b.bill_id for b in gst_cols] + [b.bill_id for b in nongst_cols]
+        payments_map: dict = {}
+        if needed_bill_ids:
+            for p in BillPayment.query.filter(
+                BillPayment.client_id == client_id,
+                BillPayment.bill_id.in_(needed_bill_ids)
+            ).order_by(BillPayment.payment_date.asc(), BillPayment.created_at.asc()).all():
+                payments_map.setdefault(p.bill_id, []).append({
+                    'amount': float(p.amount),
+                    'payment_date': p.payment_date.isoformat() if p.payment_date else None,
+                    'notes': p.notes,
+                })
+
+        def _paid_amount(b, amount):
+            if b.paid_amount is not None:
+                return float(b.paid_amount)
+            return 0.0 if (b.payment_status or 'paid') == 'pending' else amount
+
         # Build bill list
         all_bills = []
         for b in gst_cols:
+            amount = float(b.final_amount)
+            paid = _paid_amount(b, amount)
             all_bills.append({
                 'bill_id': b.bill_id, 'bill_number': b.bill_number, 'type': 'GST',
-                'amount': float(b.final_amount), 'created_at': b.created_at.isoformat(),
+                'amount': amount, 'created_at': b.created_at.isoformat(),
                 'payment_type': b.payment_type, 'status': b.status or 'final',
-                'items': b.items or []
+                'items': b.items or [],
+                'payment_status': b.payment_status or 'paid',
+                'paid_amount': paid,
+                'balance_due': round(max(amount - paid, 0), 2),
+                'payments': payments_map.get(b.bill_id, []),
             })
         for b in nongst_cols:
+            amount = float(b.total_amount)
+            paid = _paid_amount(b, amount)
             all_bills.append({
                 'bill_id': b.bill_id, 'bill_number': b.bill_number, 'type': 'Non-GST',
-                'amount': float(b.total_amount), 'created_at': b.created_at.isoformat(),
+                'amount': amount, 'created_at': b.created_at.isoformat(),
                 'payment_type': b.payment_type, 'status': b.status or 'final',
-                'items': b.items or []
+                'items': b.items or [],
+                'payment_status': b.payment_status or 'paid',
+                'paid_amount': paid,
+                'balance_due': round(max(amount - paid, 0), 2),
+                'payments': payments_map.get(b.bill_id, []),
             })
 
         all_bills.sort(key=lambda x: x['created_at'], reverse=True)

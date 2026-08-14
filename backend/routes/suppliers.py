@@ -223,21 +223,21 @@ def list_deliveries():
         Supplier.client_id == client_id
     ).all()} if needed_sids else {}
 
-    # Batch paid_amount per delivery in one grouped query (avoid N+1)
+    # Batch payments per delivery in one query (avoid N+1), then derive paid_amount
     needed_dids = [d.delivery_id for d in deliveries]
-    paid_map = dict(
-        db.session.query(
-            SupplierDeliveryPayment.delivery_id,
-            db.func.sum(SupplierDeliveryPayment.amount)
-        ).filter(SupplierDeliveryPayment.delivery_id.in_(needed_dids))
-         .group_by(SupplierDeliveryPayment.delivery_id).all()
-    ) if needed_dids else {}
+    payments = SupplierDeliveryPayment.query.filter(
+        SupplierDeliveryPayment.delivery_id.in_(needed_dids)
+    ).order_by(SupplierDeliveryPayment.payment_date.asc()).all() if needed_dids else []
+    payments_map: dict = {}
+    for p in payments:
+        payments_map.setdefault(p.delivery_id, []).append(p.to_dict())
 
     data = []
     for d in deliveries:
         row = d.to_dict()
         row['supplier_name'] = supplier_map.get(d.supplier_id, '')
-        row['paid_amount'] = float(paid_map.get(d.delivery_id) or 0)
+        row['payments'] = payments_map.get(d.delivery_id, [])
+        row['paid_amount'] = sum(p['amount'] for p in row['payments'])
         data.append(row)
 
     return jsonify({'success': True, 'data': data, 'total': len(data)}), 200

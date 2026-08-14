@@ -4,7 +4,7 @@ import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useClient } from '@/contexts/ClientContext'
-import { Users2 } from 'lucide-react'
+import { Users2, ChevronLeft, ChevronRight } from 'lucide-react'
 import { focusRowById } from '@/utils/focusRow'
 import EmployeePanel from '@/components/salary/EmployeePanel'
 import AttendancePanel from '@/components/salary/AttendancePanel'
@@ -26,6 +26,8 @@ import {
   type BulkResult,
 } from '@/components/salary/SalaryModals'
 import EmployeeHistory from '@/components/salary/EmployeeHistory'
+import EmailPayslipsModal from '@/components/salary/EmailPayslipsModal'
+import PayrollInvoicePanel from '@/components/salary/payroll/PayrollInvoicePanel'
 
 // ─── Types (exported so sub-components can import them) ───────────────────────
 
@@ -39,6 +41,8 @@ export interface Employee {
   ot_multiplier: number | null
   branch_id: string | null
   is_active: boolean
+  /** v44 — which work group this worker bills under. Null = ungrouped. */
+  work_group_id?: string | null
 }
 
 // Day-off status values — must match backend _DAY_OFF_STATUSES.
@@ -72,6 +76,12 @@ export interface AttendanceDay {
   day_hours: number
   day_status?: AttendanceStatus
   day_reason?: string | null
+  /**
+   * v45 — this day exists only because of the recurring weekly-off rule; there
+   * is no attendance row behind it, so it has no punches to edit or delete.
+   * Marking attendance on the date creates a real row, which overrides it.
+   */
+  is_rule_generated?: boolean
 }
 
 export interface DailyBreakdown {
@@ -132,6 +142,7 @@ type ActiveModal =
   | { type: 'bulk-checkin' }
   | { type: 'bulk-checkout' }
   | { type: 'bulk-manual-hours' }
+  | { type: 'email-payslips'; employees: Employee[] }
   | null
 
 // ─── Toast ────────────────────────────────────────────────────────────────────
@@ -158,6 +169,23 @@ export default function SalaryPage() {
   const [toast, setToast] = useState<Toast | null>(null)
   const [cycleRefresh, setCycleRefresh] = useState(0)
   const [attendanceRefresh, setAttendanceRefresh] = useState(0)
+  const [mainTab, setMainTab] = useState<'attendance' | 'payroll'>('attendance')
+  // Side panels collapse to a thin rail so the attendance calendar (the
+  // data-dense panel) can use the full width. Persisted — a supervisor who
+  // works mostly in the calendar shouldn't re-collapse on every visit.
+  const [leftCollapsed, setLeftCollapsed] = useState(
+    () => localStorage.getItem('salary_left_collapsed') === '1'
+  )
+  const [rightCollapsed, setRightCollapsed] = useState(
+    () => localStorage.getItem('salary_right_collapsed') === '1'
+  )
+
+  useEffect(() => {
+    localStorage.setItem('salary_left_collapsed', leftCollapsed ? '1' : '0')
+  }, [leftCollapsed])
+  useEffect(() => {
+    localStorage.setItem('salary_right_collapsed', rightCollapsed ? '1' : '0')
+  }, [rightCollapsed])
 
   const hasManagerAccess =
     user?.role === 'owner' ||
@@ -369,6 +397,38 @@ export default function SalaryPage() {
         </div>
       </div>
 
+      {/* Top-level tabs. Attendance & payroll cycles are the daily job; payroll
+          invoicing is the monthly one (bill the principal company for supplied
+          labour), so it gets its own tab rather than competing for panel space. */}
+      <div className="flex gap-1 p-1 mb-4 bg-gray-100 dark:bg-gray-800 rounded-xl w-fit">
+        {([
+          { id: 'attendance' as const, label: 'Attendance & Salary' },
+          { id: 'payroll' as const, label: 'Payroll Invoices' },
+        ]).map(t => (
+          <button
+            key={t.id}
+            type="button"
+            onClick={() => setMainTab(t.id)}
+            className={`px-4 py-2 text-sm font-medium rounded-lg transition cursor-pointer ${
+              mainTab === t.id
+                ? 'bg-white dark:bg-gray-900 text-gray-900 dark:text-white shadow-sm'
+                : 'text-gray-600 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white'
+            }`}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {mainTab === 'payroll' ? (
+        <PayrollInvoicePanel
+          employees={employees}
+          canManage={hasManagerAccess}
+          onToast={showToast}
+          onEmployeesChanged={fetchEmployees}
+        />
+      ) : (
+      <>
       {/* Responsive panel layout.
           Mobile (<md):  single column, panels stack and the page scrolls naturally.
           Tablet (md):   employees + attendance side by side, salary spans the full
@@ -379,23 +439,46 @@ export default function SalaryPage() {
                          to the attendance calendar, which is the data-dense panel.
           Fixed viewport height only kicks in at lg, where all 3 panels are side by
           side; below that the grid is auto-height so nothing gets squashed. */}
-      <div className="grid grid-cols-1 gap-4 md:grid-cols-[240px_minmax(0,1fr)] lg:grid-cols-[240px_minmax(0,1fr)_minmax(300px,340px)] lg:h-[calc(100vh-200px)] lg:min-h-[520px]">
+      <div className={`grid grid-cols-1 gap-4 lg:h-[calc(100vh-200px)] lg:min-h-[520px] ${
+        leftCollapsed ? 'md:grid-cols-[52px_minmax(0,1fr)]' : 'md:grid-cols-[240px_minmax(0,1fr)]'
+      } ${
+        leftCollapsed
+          ? rightCollapsed
+            ? 'lg:grid-cols-[52px_minmax(0,1fr)_52px]'
+            : 'lg:grid-cols-[52px_minmax(0,1fr)_minmax(300px,340px)]'
+          : rightCollapsed
+            ? 'lg:grid-cols-[240px_minmax(0,1fr)_52px]'
+            : 'lg:grid-cols-[240px_minmax(0,1fr)_minmax(300px,340px)]'
+      }`}>
         {/* Left: Employees */}
-        <EmployeePanel
-          employees={employees}
-          loading={empLoading}
-          selectedId={selected?.employee_id ?? null}
-          onSelect={setSelected}
-          onAdd={() => setModal({ type: 'add-employee' })}
-          onHistory={(emp) => setModal({ type: 'history', employee: emp })}
-          onEdit={(emp) => setModal({ type: 'edit-employee', employee: emp })}
-          selectedIds={selectedIds}
-          onToggleSelect={handleToggleSelect}
-          onSelectAllToggle={handleSelectAllToggle}
-          onBulkCheckIn={() => setModal({ type: 'bulk-checkin' })}
-          onBulkCheckOut={() => setModal({ type: 'bulk-checkout' })}
-          onBulkManualHours={() => setModal({ type: 'bulk-manual-hours' })}
-        />
+        {leftCollapsed ? (
+          <CollapsedRail
+            label="Employees"
+            side="left"
+            onExpand={() => setLeftCollapsed(false)}
+          />
+        ) : (
+          <EmployeePanel
+            employees={employees}
+            loading={empLoading}
+            selectedId={selected?.employee_id ?? null}
+            onSelect={setSelected}
+            onAdd={() => setModal({ type: 'add-employee' })}
+            onHistory={(emp) => setModal({ type: 'history', employee: emp })}
+            onEdit={(emp) => setModal({ type: 'edit-employee', employee: emp })}
+            onCollapse={() => setLeftCollapsed(true)}
+            selectedIds={selectedIds}
+            onToggleSelect={handleToggleSelect}
+            onSelectAllToggle={handleSelectAllToggle}
+            onBulkCheckIn={() => setModal({ type: 'bulk-checkin' })}
+            onBulkCheckOut={() => setModal({ type: 'bulk-checkout' })}
+            onBulkManualHours={() => setModal({ type: 'bulk-manual-hours' })}
+            onBulkEmailPayslips={() => setModal({
+              type: 'email-payslips',
+              employees: employees.filter(e => selectedIds.includes(e.employee_id)),
+            })}
+          />
+        )}
 
         {/* Center: Attendance */}
         {selected ? (
@@ -414,8 +497,14 @@ export default function SalaryPage() {
         )}
 
         {/* Right: Salary — full width under the other two at md, own column at lg */}
-        <div className="md:col-span-2 lg:col-span-1 min-w-0 min-h-0">
-          {selected ? (
+        <div className="min-w-0 min-h-0 md:col-span-2 lg:col-span-1">
+          {rightCollapsed ? (
+            <CollapsedRail
+              label="Salary Cycles"
+              side="right"
+              onExpand={() => setRightCollapsed(false)}
+            />
+          ) : selected ? (
             <SalaryPanel
               employee={selected}
               onNewCycle={() => setModal({ type: 'new-cycle' })}
@@ -423,7 +512,9 @@ export default function SalaryPage() {
               onAddAdvance={(cycles) => setModal({ type: 'add-advance', cycles })}
               refreshSignal={cycleRefresh}
               canManage={hasManagerAccess}
+              onCollapse={() => setRightCollapsed(true)}
               onCyclesChanged={() => setAttendanceRefresh(n => n + 1)}
+              onToast={showToast}
             />
           ) : (
             <EmptySlate message="Select an employee to view salary" />
@@ -441,7 +532,17 @@ export default function SalaryPage() {
         </div>
       )}
 
+      </>
+      )}
+
       {/* Modals */}
+      {modal?.type === 'email-payslips' && (
+        <EmailPayslipsModal
+          employees={modal.employees}
+          onClose={() => setModal(null)}
+          onToast={showToast}
+        />
+      )}
       {modal?.type === 'add-employee' && (
         <AddEmployeeModal
           onClose={() => setModal(null)}
@@ -537,14 +638,60 @@ export default function SalaryPage() {
   )
 }
 
+// ─── Collapsed side panel rail ────────────────────────────────────────────────
+
+/**
+ * Stand-in for a collapsed side panel. At lg (3-column layout) it's a 52px
+ * vertical rail with rotated label; below that the grid is stacked, so it
+ * renders as a slim full-width bar instead.
+ */
+function CollapsedRail({
+  label,
+  side,
+  onExpand,
+}: {
+  label: string
+  side: 'left' | 'right'
+  onExpand: () => void
+}) {
+  // Expand arrow points outward, toward where the panel will reappear.
+  const Icon = side === 'left' ? ChevronRight : ChevronLeft
+  return (
+    <button
+      type="button"
+      onClick={onExpand}
+      title={`Show ${label}`}
+      aria-label={`Show ${label}`}
+      className="group w-full lg:h-full flex lg:flex-col items-center justify-center gap-2 lg:gap-0 px-3 py-2.5 lg:px-0 lg:py-3 bg-gray-50 dark:bg-gray-800/40 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-2xl border border-gray-200 dark:border-gray-700 text-gray-500 dark:text-gray-400 hover:text-gray-900 dark:hover:text-white transition-colors cursor-pointer"
+    >
+      {/* Chevron sits in its own chip so the rail reads as a control, not an
+          empty card with a stray arrow floating at the top. */}
+      <span className="flex items-center justify-center w-7 h-7 flex-shrink-0 rounded-full bg-white dark:bg-gray-900 border border-gray-200 dark:border-gray-700 group-hover:border-gray-300 dark:group-hover:border-gray-600 transition-colors">
+        <Icon className="w-3.5 h-3.5" />
+      </span>
+      {/* Vertical label centred in the rail's leftover height (my-auto), so it
+          doesn't cling to the top of a 500px column. Rotated 180° with the
+          writing mode so it reads bottom-to-top, the usual direction for a
+          vertical side rail. */}
+      <span className="text-[11px] font-semibold uppercase tracking-widest whitespace-nowrap lg:my-auto lg:[writing-mode:vertical-rl] lg:rotate-180">
+        {label}
+      </span>
+    </button>
+  )
+}
+
 // ─── Empty state placeholder ──────────────────────────────────────────────────
 
 function EmptySlate({ message }: { message: string }) {
-  // min-h on mobile so the placeholder has visible body even without a parent height;
-  // on desktop it still stretches via the grid row.
+  // h-full: the salary slate sits inside a wrapper div rather than being a direct
+  // grid child, so without it the panel collapses to a thin strip at the top of a
+  // full-height column. min-h keeps it visible in the stacked mobile layout.
   return (
-    <div className="flex items-center justify-center min-h-[120px] md:min-h-0 bg-white dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 py-8 md:py-0">
-      <p className="text-sm text-gray-400 dark:text-gray-600 text-center px-6">{message}</p>
+    <div className="h-full flex flex-col items-center justify-center gap-3 min-h-[160px] bg-white dark:bg-gray-900 rounded-2xl border border-dashed border-gray-200 dark:border-gray-700 px-6 py-10">
+      <div className="w-10 h-10 rounded-full bg-gray-50 dark:bg-gray-800 flex items-center justify-center">
+        <Users2 className="w-5 h-5 text-gray-300 dark:text-gray-600" />
+      </div>
+      <p className="text-sm text-gray-400 dark:text-gray-500 text-center max-w-[220px]">{message}</p>
     </div>
   )
 }
