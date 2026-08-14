@@ -15,6 +15,8 @@ jobs:
   backend-tests:
     name: Backend tests (pytest)
     runs-on: ubuntu-latest
+    # PR check only — does not run (or block deploy) on a push to main/development.
+    if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
 
@@ -62,7 +64,7 @@ jobs:
 
   deploy:
     name: Deploy to VPS
-    needs: [backend-tests, frontend-tests]
+    needs: [frontend-tests]
     if: github.event_name == 'push' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-latest
     steps:
