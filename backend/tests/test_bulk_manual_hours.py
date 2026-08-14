@@ -60,16 +60,20 @@ def seeded(app, sample_client, sample_user):
              's': str(TODAY - timedelta(days=30)), 'en': str(TODAY + timedelta(days=1)),
              'now': str(TODAY)})
         db.session.commit()
-        yield {'employee_id': emp_id, 'client_id': cid}
+        yield {'employee_id': emp_id, 'client_id': cid, 'user_id': sample_user.user_id}
 
 
 def _mark_day(db, emp_id, cid, work_date, status):
+    # SQLite keeps employee_attendance.check_in NOT NULL — day-off rows use a
+    # work_date-midnight sentinel there, same as _upsert_manual_hours does.
+    dialect = db.engine.dialect.name
+    check_in_val = None if dialect == 'postgresql' else f"{work_date} 00:00:00"
     db.session.execute(text(
         "INSERT INTO employee_attendance (attendance_id, employee_id, client_id, work_date,"
-        " total_minutes, status, reason, is_active, created_at, updated_at)"
-        " VALUES (:a, :e, :c, :wd, 0, :st, 'family function', TRUE, :now, :now)"),
+        " check_in, total_minutes, status, reason, is_active, created_at, updated_at)"
+        " VALUES (:a, :e, :c, :wd, :ci, 0, :st, 'family function', TRUE, :now, :now)"),
         {'a': str(uuid.uuid4()), 'e': emp_id, 'c': cid, 'wd': str(work_date),
-         'st': status, 'now': str(TODAY)})
+         'ci': check_in_val, 'st': status, 'now': str(TODAY)})
     db.session.commit()
 
 
@@ -122,10 +126,14 @@ def test_manual_hours_still_updates_an_ordinary_present_day(app, seeded):
 
 def test_manual_hours_creates_a_row_for_an_untouched_day(app, seeded):
     """A date with no record at all is a normal backfill — still works."""
+    from flask import g
     from extensions import db
     from routes.employees import _upsert_manual_hours
 
     with app.app_context():
+        # _upsert_manual_hours reads g.user['user_id'] for marked_by on a new
+        # row — normally set by @authenticate; called directly here, so set it.
+        g.user = {'user_id': seeded['user_id']}
         emp, cid = seeded['employee_id'], seeded['client_id']
         target = TODAY - timedelta(days=3)
 
@@ -140,10 +148,14 @@ def test_manual_hours_creates_a_row_for_an_untouched_day(app, seeded):
 def test_a_range_applies_hours_around_the_leave_day(app, seeded):
     """End-to-end shape of the fix: hours land on working days, the leave day
     is left exactly as it was, and it is reported as skipped rather than failed."""
+    from flask import g
     from extensions import db
     from routes.employees import _upsert_manual_hours, _expand_date_range
 
     with app.app_context():
+        # See note in test_manual_hours_creates_a_row_for_an_untouched_day —
+        # new-row inserts in this range need g.user set.
+        g.user = {'user_id': seeded['user_id']}
         emp, cid = seeded['employee_id'], seeded['client_id']
         leave_day = TODAY - timedelta(days=5)
         _mark_day(db, emp, cid, leave_day, 'paid_leave')
