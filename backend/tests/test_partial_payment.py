@@ -243,7 +243,6 @@ def test_daily_summary_splits_a_partial_bill_between_revenue_and_pending(app, sa
     """The money bug this guards: before v42 a 'partial' bill counted its FULL
     amount as revenue (it simply wasn't 'pending'), overstating takings by the
     outstanding balance. Revenue + pending must always equal what was billed."""
-    from datetime import date
     from extensions import db
     from models.billing_model import GSTBilling
     from services.daily_summary_service import compute_daily_summary
@@ -259,7 +258,11 @@ def test_daily_summary_splits_a_partial_bill_between_revenue_and_pending(app, sa
         ))
         db.session.commit()
 
-        summary = compute_daily_summary(cid, date.today())
+        # No date arg — bills are stamped in IST (get_current_time()); on a UTC
+        # CI runner, passing date.today() can land on the wrong calendar day
+        # during IST's post-midnight hours and miss the bill entirely. Let the
+        # function use its own IST-aware default, same as every real caller.
+        summary = compute_daily_summary(cid)
 
         assert summary['total_revenue'] == 3000.0, "only the money received is revenue"
         assert summary['pending_amount'] == 2000.0, "the balance is outstanding, not revenue"
@@ -269,7 +272,6 @@ def test_daily_summary_splits_a_partial_bill_between_revenue_and_pending(app, sa
 def test_daily_summary_still_handles_legacy_rows_without_paid_amount(app, sample_client):
     """Pre-v42 rows have paid_amount NULL — they must keep the old binary
     behaviour rather than reading as fully unpaid."""
-    from datetime import date
     from extensions import db
     from models.billing_model import GSTBilling
     from services.daily_summary_service import compute_daily_summary
@@ -285,6 +287,7 @@ def test_daily_summary_still_handles_legacy_rows_without_paid_amount(app, sample
         ))
         db.session.commit()
 
-        summary = compute_daily_summary(cid, date.today())
+        # See note above — use the function's own IST-aware default.
+        summary = compute_daily_summary(cid)
         assert summary['total_revenue'] == 800.0
         assert summary['pending_amount'] == 0.0
