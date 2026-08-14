@@ -69,10 +69,10 @@ describe('TrialExpired', () => {
     // The page must survive — previously formatLimit(undefined) threw here and
     // took the whole tree down, leaving a blank screen.
     expect(await screen.findByText(/your subscription has expired/i)).toBeInTheDocument()
-    await waitFor(() => expect(screen.getByText(/users/)).toBeInTheDocument())
-    // Missing limits degrade to a placeholder, not an exception.
-    expect(screen.getByText(/— users/)).toBeInTheDocument()
-    expect(screen.getByText(/— bills\/mo/)).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByText('Starter')).toBeInTheDocument())
+    // A plan with no caps set shows no limit badges at all — not a "—" placeholder.
+    expect(screen.queryByText(/users/)).toBeNull()
+    expect(screen.queryByText(/bills\/mo/)).toBeNull()
     // ErrorBoundary must NOT have engaged.
     expect(screen.queryByText(/something went wrong/i)).toBeNull()
   })

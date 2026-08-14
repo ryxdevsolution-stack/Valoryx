@@ -151,7 +151,9 @@ describe('Landing PricingSection', () => {
     )
 
     expect(await screen.findByText('Business')).toBeInTheDocument()
-    expect(screen.getByText(/— users/)).toBeInTheDocument()
+    // A plan with no caps set shows no limit badges at all — not a "—" placeholder.
+    expect(screen.queryByText(/users/)).toBeNull()
+    expect(screen.queryByText(/bills\/mo/)).toBeNull()
     expect(screen.queryByText(/something went wrong/i)).toBeNull()
   })
 })
