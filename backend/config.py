@@ -293,20 +293,23 @@ class OptimizedConfig:
     @classmethod
     def get_frontend_url(cls) -> str:
         """
-        Return the frontend base URL for use in emails.
-        Prefers the Origin header from the current request so the link
-        automatically matches whatever host/port the admin is on
-        (localhost:3000, :3001, :3002, or production) — no hardcoding needed.
-        Falls back to FRONTEND_URL env var when called outside a request context.
+        Return the frontend base URL for links in emails (reset, verify, invite, 2FA…).
+
+        The request's Origin is used ONLY when it is a known site (FRONTEND_URL or
+        CORS_ORIGINS) — so dev on localhost:3000 still gets localhost links. Any other
+        Origin falls back to FRONTEND_URL: trusting it would let an attacker request a
+        reset for someone else's email with Origin: https://evil.example and receive
+        the victim's reset token ("reset-link poisoning"). The desktop app's Origin is
+        not in the list either, so its emails link to the real website.
         """
+        default = cls.FRONTEND_URL.rstrip('/')
         try:
             from flask import request as _req
             origin = (_req.headers.get('Origin') or '').rstrip('/')
-            if origin:
-                return origin
         except RuntimeError:
-            pass  # Outside request context (e.g. scheduler)
-        return cls.FRONTEND_URL.rstrip('/')
+            return default  # outside a request (e.g. scheduler)
+        allowed = {default} | {o.strip().rstrip('/') for o in cls.CORS_ORIGINS if o.strip()}
+        return origin if origin and origin in allowed else default
 
     # -------------------------------
     # Telegram Bot (optional — scheduler disabled when token is absent)

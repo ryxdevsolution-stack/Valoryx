@@ -31,6 +31,7 @@ from utils.email_service import (
 )
 from config import Config
 from utils.login_pin import PIN_RE, PIN_MAX_FAILURES, PIN_LOCK_SECONDS, PIN_DISABLE_AFTER, pin_eligible
+from services.desktop_user_provision import is_desktop_install, provision_cloud_user, refresh_password_from_cloud
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -87,6 +88,18 @@ def _is_pin_attempt(secret: str, user, identifier: str) -> bool:
         and pin_eligible(user)
         and (user.email or '').strip().lower() == identifier.strip().lower()
     )
+
+
+def _cloud_password_ok(user, password: str) -> bool:
+    """Desktop only: accept the cloud's (newer) password after a change on the website."""
+    if not is_desktop_install():
+        return False
+    try:
+        return refresh_password_from_cloud(user, password)
+    except Exception as exc:  # offline / cloud unreachable
+        db.session.rollback()
+        _logging.warning(f"[AUTH] Desktop cloud password check failed: {exc}")
+        return False
 
 
 def _login_keys(ip: str, email: str):
@@ -173,6 +186,20 @@ def login():
             User.is_super_admin.desc(), User.created_at.asc()
         ).first()
 
+        if not result and '@' in identifier and is_desktop_install():
+            # Desktop: the user may exist only in the cloud (added after this device was
+            # set up — sync doesn't run automatically). Copy them down if the cloud
+            # confirms this password and they belong to a shop already on this device.
+            try:
+                if provision_cloud_user(identifier, password=password):
+                    result = db.session.query(User, ClientEntry, Branch).join(
+                        ClientEntry, User.client_id == ClientEntry.client_id
+                    ).outerjoin(Branch, User.branch_id == Branch.branch_id).filter(
+                        func.lower(User.email) == identifier.lower()).first()
+            except Exception as exc:  # offline / cloud unreachable — normal failure below
+                db.session.rollback()
+                _logging.warning(f"[AUTH] Desktop cloud lookup failed: {exc}")
+
         if not result:
             # Burn the same bcrypt time as a real check so response timing
             # does not reveal whether the account exists
@@ -216,7 +243,8 @@ def login():
                 _logging.warning(f"[AUTH] Wrong PIN for user {user.user_id} ({fails}/{PIN_MAX_FAILURES})")
                 return jsonify({'error': LOGIN_GENERIC_ERROR}), 401
             user.pin_failed_attempts, user.pin_locked_until = 0, None
-        elif not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
+        elif not (bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8'))
+                  or _cloud_password_ok(user, password)):
             _record_login_failure(ip_key, email_key)
             return jsonify({'error': LOGIN_GENERIC_ERROR}), 401
         elif user.pin_failed_attempts or user.pin_locked_until:
@@ -907,8 +935,12 @@ def forgot_password():
         db.session.commit()
 
         reset_link = f"{Config.get_frontend_url()}/reset-password?token={token}"
-        if _email_enabled('email_on_password_changed'):
+        # The reset link is the only way back into the account — it must not depend on
+        # the optional "password changed" notification switch, only on email being on.
+        if _email_enabled('email_enabled'):
             send_password_reset_email(email, client_name, reset_link)
+        else:
+            _logging.warning('[AUTH] Password reset requested but email is switched off in admin settings')
 
         return jsonify({'success': True, 'message': 'If that email exists, a reset link has been sent.'}), 200
 

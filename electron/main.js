@@ -747,6 +747,14 @@ ipcMain.handle('oauth-google-open', () => {
   return { success: true };
 });
 
+// IPC: "Forgot password?" — reset on the WEBSITE (the cloud is the source of truth for
+// passwords; a reset token created by the local backend would only exist on this PC and the
+// emailed link could never work). Fixed URL: the renderer cannot choose what gets opened.
+ipcMain.handle('open-forgot-password', () => {
+  shell.openExternal(`${WEB_APP_URL}/auth/forgot-password`);
+  return { success: true };
+});
+
 // IPC: manual fallback for when the valoryx:// deep link never reaches us —
 // no scheme handler registered (Linux without a .desktop entry, or Windows
 // before the installer has run once), or the browser's "open this app?" prompt

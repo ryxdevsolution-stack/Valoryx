@@ -18,12 +18,15 @@ import os
 import uuid
 from datetime import datetime
 
+import bcrypt
+
 from sqlalchemy import create_engine, text as sa_text
 
 from extensions import db
 from models.client_model import ClientEntry
 from models.permission_model import Permission, UserPermission
 from models.user_model import User
+from config import Config
 
 logger = logging.getLogger(__name__)
 
@@ -37,21 +40,71 @@ def _plain(value):
     return str(value) if isinstance(value, uuid.UUID) else value
 
 
-def provision_cloud_user(email: str, google_id: str = ''):
-    """Copy a verified cloud user of a shop already on this device. Returns the local User or None."""
+def is_desktop_install() -> bool:
+    """Offline desktop backend that can still reach the cloud database."""
+    return str(getattr(Config, 'DB_MODE', '')).lower() == 'offline' and bool(os.environ.get('DB_URL'))
+
+
+def _password_matches(password: str, password_hash) -> bool:
+    try:
+        return bool(password and password_hash) and bcrypt.checkpw(
+            password.encode('utf-8'), str(password_hash).encode('utf-8'))
+    except ValueError:  # malformed / empty hash (e.g. Google-only account)
+        return False
+
+
+def _engine():
+    db_url = os.environ.get('DB_URL')
+    # connect_timeout is a Postgres (Supabase) option; other drivers reject it.
+    connect_args = {'connect_timeout': 15} if db_url.startswith('postgres') else {}
+    return create_engine(db_url, pool_pre_ping=True, connect_args=connect_args)
+
+
+def refresh_password_from_cloud(user, password: str) -> bool:
+    """Desktop: the typed password failed locally — accept it if it is the CLOUD password.
+
+    Happens after a password change / reset on the website: the cloud has the new hash,
+    this device still has the old one (sync doesn't run automatically). On a match the
+    local hash is replaced so later offline logins work too.
+    """
+    if not is_desktop_install() or not user or not password:
+        return False
+    engine = _engine()
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(sa_text(
+                "SELECT password_hash FROM users WHERE user_id = :uid AND is_active = TRUE "
+                "AND deleted_at IS NULL"), {'uid': str(user.user_id)}).first()
+    finally:
+        engine.dispose()
+    if not row or not _password_matches(password, row[0]):
+        return False
+    user.password_hash = row[0]
+    user.synced_at = datetime.utcnow()  # now identical to the cloud — nothing to upload
+    db.session.commit()
+    logger.info('Desktop login: password for %s refreshed from the cloud', user.email)
+    return True
+
+
+def provision_cloud_user(email: str, google_id: str = '', password: str = None):
+    """Copy a verified cloud user of a shop already on this device. Returns the local User or None.
+
+    Identity must already be proven: by a cloud-signed Google assertion (google_id), or by
+    `password`, which must match the cloud user's password hash.
+    """
     db_url = os.environ.get('DB_URL')
     if not db_url or not email:
         return None
 
-    # connect_timeout is a Postgres (Supabase) option; other drivers reject it.
-    connect_args = {'connect_timeout': 15} if db_url.startswith('postgres') else {}
-    engine = create_engine(db_url, pool_pre_ping=True, connect_args=connect_args)
+    engine = _engine()
     try:
         with engine.connect() as conn:
             row = conn.execute(sa_text(
                 "SELECT * FROM users WHERE lower(email) = :email AND is_active = TRUE "
                 "AND deleted_at IS NULL LIMIT 1"), {'email': email.lower()}).mappings().first()
             if not row:
+                return None
+            if password is not None and not _password_matches(password, row.get('password_hash')):
                 return None
             if google_id and row.get('google_id') and row['google_id'] != google_id:
                 logger.warning('Desktop provision: google_id mismatch for %s', email)

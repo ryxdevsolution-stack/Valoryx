@@ -34,6 +34,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Desktop Google OAuth: open the cloud web login in the system browser, and
   // receive the signed assertion that comes back via the valoryx:// deep link.
   loginWithGoogle: () => ipcRenderer.invoke('oauth-google-open'),
+  openForgotPassword: () => ipcRenderer.invoke('open-forgot-password'),
   onDesktopOAuth: (callback) =>
     ipcRenderer.on('desktop-oauth', (_event, handoff) => callback(handoff)),
   removeDesktopOAuth: () =>

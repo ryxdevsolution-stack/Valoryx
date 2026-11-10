@@ -552,12 +552,24 @@ export default function LoginPage() {
                 </div>
 
                 <div className="flex justify-end -mt-1">
-                  <Link
-                    to="/auth/forgot-password"
-                    className="text-sm text-slate-400 hover:text-white font-medium transition-colors"
-                  >
-                    Forgot password?
-                  </Link>
+                  {isElectron && (window as any).electronAPI?.openForgotPassword ? (
+                    // Desktop: reset on the website — then the desktop accepts the new
+                    // password (it checks the cloud when the local copy is out of date).
+                    <button
+                      type="button"
+                      onClick={() => (window as any).electronAPI.openForgotPassword()}
+                      className="text-sm text-slate-400 hover:text-white font-medium transition-colors"
+                    >
+                      Forgot password?
+                    </button>
+                  ) : (
+                    <Link
+                      to="/auth/forgot-password"
+                      className="text-sm text-slate-400 hover:text-white font-medium transition-colors"
+                    >
+                      Forgot password?
+                    </Link>
+                  )}
                 </div>
 
                 <button

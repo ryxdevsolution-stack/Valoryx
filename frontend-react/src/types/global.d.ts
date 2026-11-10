@@ -64,6 +64,8 @@ interface ElectronAPI {
   redeemOAuthCode?: (code: string) => Promise<DesktopOAuthHandoff | null>;
   installUpdate?: () => Promise<void>;
   checkForUpdates?: () => Promise<{ success: boolean; version?: string; error?: string }>;
+  /** Desktop: open the website's forgot-password page in the system browser. */
+  openForgotPassword?: () => Promise<{ success: boolean }>;
   getAppVersion?: () => Promise<string>;
 
   // Platform info (not functions, static values)
