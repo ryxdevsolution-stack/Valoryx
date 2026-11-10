@@ -145,6 +145,7 @@ def create_test_app():
             ('select_customer', 'Select and assign customers to bills'),
             ('add_products', 'Add products to bills'),
             ('set_tax_rate', 'Override the tax/GST rate on individual bills at checkout'),
+            ('use_membership', 'Apply membership cards and redeem points on bills'),
             # Manage Bills
             ('view_all_bills', 'View bills created by every user'),
             ('view_own_bills', 'View only bills this user personally created'),
@@ -279,6 +280,8 @@ def create_test_app():
             ("routes.oauth",        "/api/oauth"),
             ("routes.subscription", "/api/subscription"),
             ("routes.membership",   "/api/membership"),
+            ("routes.shop_settings", "/api/shop-settings"),
+            ("routes.profile",      "/api/profile"),
             ("routes.electron", None),  # routes carry full /api/electron/* paths
         ]:
             try:
@@ -495,6 +498,7 @@ def app_ctx(app, test_mode):
                 ('select_customer', 'Select and assign customers to bills'),
                 ('add_products', 'Add products to bills'),
                 ('set_tax_rate', 'Override the tax/GST rate on individual bills at checkout'),
+                ('use_membership', 'Apply membership cards and redeem points on bills'),
                 ('view_all_bills', 'View bills created by every user'),
                 ('view_own_bills', 'View only bills this user personally created'),
                 ('edit_bill_details', 'Edit bill information and details'),

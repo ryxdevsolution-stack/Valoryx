@@ -31,6 +31,7 @@ from utils.rate_limiter import rate_limit
 from routes.invite import INVITE_EXPIRY_HOURS
 from config import Config
 from utils.cache_helper import get_cache_manager
+from utils.login_pin import pin_eligible, validate_new_pin, apply_pin, clear_pin
 from sqlalchemy import or_
 from datetime import datetime, timedelta
 import bcrypt
@@ -52,7 +53,7 @@ ROLE_HIERARCHY = {'staff': 0, 'manager': 1, 'owner': 2}
 _ALL_PERMISSIONS = [
     # Create Bill
     'gst_billing', 'non_gst_billing', 'apply_discount', 'add_payment',
-    'select_customer', 'add_products', 'set_tax_rate',
+    'select_customer', 'add_products', 'set_tax_rate', 'use_membership',
     # Manage Bills
     'view_all_bills', 'view_own_bills', 'edit_bill_details', 'delete_bills',
     'print_bills', 'download_pdf', 'send_email', 'mark_paid', 'mark_cancelled',
@@ -112,7 +113,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
     'manager': [
         # Create Bill
         'gst_billing', 'non_gst_billing', 'apply_discount', 'add_payment',
-        'select_customer', 'add_products', 'set_tax_rate',
+        'select_customer', 'add_products', 'set_tax_rate', 'use_membership',
         # Manage Bills
         'view_all_bills', 'view_own_bills', 'print_bills', 'download_pdf',
         'send_email', 'mark_paid', 'mark_cancelled', 'duplicate_bill', 'search_bills',
@@ -151,6 +152,7 @@ DEFAULT_ROLE_PERMISSIONS: dict[str, list[str]] = {
     'staff': [
         # Create Bill
         'gst_billing', 'non_gst_billing', 'add_payment', 'select_customer', 'add_products',
+        'use_membership',
         # Manage Bills
         'view_own_bills', 'print_bills', 'duplicate_bill', 'search_bills',
         # Customer Management
@@ -336,6 +338,7 @@ def list_team_members():
             d = u.to_dict()
             # Never expose password hashes
             d.pop('password_hash', None)
+            d['has_pin'] = bool(u.pin_hash)  # the PIN itself is never returned
             d['branch'] = branch_map.get(str(u.branch_id)) if u.branch_id else None
             d['permissions'] = perm_map.get(str(u.user_id), [])
             result.append(d)
@@ -1044,6 +1047,68 @@ def reset_team_member_password(user_id):
         db.session.rollback()
         logger.error("reset_team_member_password error: %s", exc)
         return jsonify({'success': False, 'error': 'Failed to reset password'}), 500
+
+
+# ---------------------------------------------------------------------------
+# 6b. PUT / DELETE /api/team/<user_id>/pin -- Quick-login PIN (owner only)
+# ---------------------------------------------------------------------------
+
+
+def _pin_target(user_id):
+    """Load a same-tenant staff/manager the owner may set a PIN for, or return an error response."""
+    user = User.query.filter_by(user_id=user_id, client_id=g.user['client_id']).filter(
+        User.deleted_at.is_(None)).first()
+    if not user:
+        return None, (jsonify({'success': False, 'error': 'Team member not found'}), 404)
+    if not pin_eligible(user):
+        return None, (jsonify({'success': False,
+                               'error': 'PIN login is only for staff and managers — owners use their password'}), 400)
+    return user, None
+
+
+@team_bp.route('/<user_id>/pin', methods=['PUT'])
+@authenticate
+@rate_limit(max_requests=20, window_seconds=60, key_func=lambda: g.user['user_id'], error_message='Too many PIN changes. Please wait.')
+@require_role(['owner'])
+def set_team_member_pin(user_id):
+    """Set or replace a staff/manager's 4-digit login PIN. Body: {pin: "1234"}."""
+    try:
+        user, err = _pin_target(user_id)
+        if err:
+            return err
+        pin = str((request.get_json() or {}).get('pin') or '').strip()
+        error = validate_new_pin(pin)
+        if error:
+            return jsonify({'success': False, 'error': error}), 400
+        apply_pin(user, pin, g.user['user_id'])  # hashes + clears any wrong-PIN lock
+        _log_team_action(action_type='team_member_pin_set', record_id=user_id,
+                         new_data={'set_by': g.user['user_id']})
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'PIN set'}), 200
+    except Exception as exc:
+        db.session.rollback()
+        logger.error("set_team_member_pin error: %s", exc)
+        return jsonify({'success': False, 'error': 'Failed to set PIN'}), 500
+
+
+@team_bp.route('/<user_id>/pin', methods=['DELETE'])
+@authenticate
+@require_role(['owner'])
+def remove_team_member_pin(user_id):
+    """Remove a staff/manager's PIN — they must use their password again."""
+    try:
+        user, err = _pin_target(user_id)
+        if err:
+            return err
+        clear_pin(user, g.user['user_id'])
+        _log_team_action(action_type='team_member_pin_removed', record_id=user_id,
+                         new_data={'removed_by': g.user['user_id']})
+        db.session.commit()
+        return jsonify({'success': True, 'message': 'PIN removed'}), 200
+    except Exception as exc:
+        db.session.rollback()
+        logger.error("remove_team_member_pin error: %s", exc)
+        return jsonify({'success': False, 'error': 'Failed to remove PIN'}), 500
 
 
 # ---------------------------------------------------------------------------

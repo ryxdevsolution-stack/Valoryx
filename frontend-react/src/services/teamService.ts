@@ -15,6 +15,8 @@ export interface TeamMember {
   branch_name: string | null
   last_login: string | null
   created_at: string | null
+  /** Staff/manager has a 4-digit login PIN (the PIN itself is never returned). */
+  has_pin?: boolean
 }
 
 export interface TeamListResponse {
@@ -119,6 +121,14 @@ const teamService = {
 
   resetPassword: (userId: string, password?: string) =>
     api.post(`/team/${userId}/reset-password`, password ? { password } : {}),
+
+  /** Owner only: set / replace a staff or manager's 4-digit login PIN. */
+  setPin: (userId: string, pin: string) =>
+    api.put(`/team/${userId}/pin`, { pin }),
+
+  /** Owner only: remove the PIN — they log in with their password again. */
+  removePin: (userId: string) =>
+    api.delete(`/team/${userId}/pin`),
 
   getPermissions: (userId: string) =>
     api.get<{ success: boolean; data: PermissionSection[] }>(`/team/${userId}/permissions`),

@@ -71,7 +71,9 @@ interface PaymentType {
 export default function AllBillsPage() {
   const navigate = useNavigate()
   const location = useLocation()
-  const { client } = useClient()
+  const { client, hasPermission } = useClient()
+  // Exchange edits the saved bill — same permission the server enforces.
+  const canExchange = hasPermission('edit_bill_details')
   const { symbol: cur, taxLabel } = useCurrency()
   const [bills, setBills] = useState<Bill[]>([])
   const [paymentTypes, setPaymentTypes] = useState<PaymentType[]>([])
@@ -549,9 +551,11 @@ export default function AllBillsPage() {
       const freshBill = response.data.bill
       // Merge fresh data into selected bill (keep display fields from list)
       setSelectedBill(prev => prev && prev.bill_id === bill.bill_id ? { ...prev, ...freshBill } : prev)
-      // Also update the bill in the list so it stays fresh
+      // Also update the bill in the list so it stays fresh. Keep the list's payment_type:
+      // /billing/list sends a label ("Cash+UPI") while /billing/<id> sends the raw JSON
+      // splits — overwriting it would regroup the bill under a duplicate payment card.
       setBills(prevBills =>
-        prevBills.map(b => b.bill_id === bill.bill_id ? { ...b, ...freshBill } : b)
+        prevBills.map(b => b.bill_id === bill.bill_id ? { ...b, ...freshBill, payment_type: b.payment_type } : b)
       )
     } catch (error) {
       console.error('Failed to fetch fresh bill details:', error)
@@ -560,7 +564,7 @@ export default function AllBillsPage() {
   }
 
   const handleExchangeBill = (billId: string) => {
-    navigate(`/billing/exchange/${billId}`)
+    navigate(`/billing/create?exchange=${encodeURIComponent(billId)}`)
   }
 
   const handleCancelBill = async (billId: string, billNumber: number) => {
@@ -1104,7 +1108,7 @@ export default function AllBillsPage() {
                                   Receive
                                 </button>
                               )}
-                              <button
+                              {canExchange && <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); handleExchangeBill(bill.bill_id) }}
                                 className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-gray-700 dark:text-gray-200 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded transition-all"
@@ -1112,7 +1116,7 @@ export default function AllBillsPage() {
                               >
                                 <RefreshCw className="w-3 h-3" />
                                 Exchange
-                              </button>
+                              </button>}
                               <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); handlePrintBill(bill.bill_id) }}
@@ -1425,7 +1429,8 @@ export default function AllBillsPage() {
               )}
               <div className="flex justify-between text-base font-bold text-gray-900 dark:text-white pt-2 border-t border-gray-200 dark:border-gray-700">
                 <span>Total</span>
-                <span>{cur}{((selectedBill.final_amount ?? selectedBill.total_amount) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2 })}</span>
+                {/* Amounts can arrive as strings ("80.0") — Number() so toLocaleString formats them. */}
+                <span>{cur}{Number((selectedBill.final_amount ?? selectedBill.total_amount) || 0).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
               </div>
 
               {/* Paid / Balance rows — only interesting when something is owed */}

@@ -110,6 +110,7 @@ def create_app():
                     ('select_customer', 'Select and assign customers to bills'),
                     ('add_products', 'Add products to bills'),
                     ('set_tax_rate', 'Override the tax/GST rate on individual bills at checkout'),
+                    ('use_membership', 'Apply membership cards and redeem points on bills'),
                     # Manage Bills
                     ('view_all_bills', 'View bills created by every user'),
                     ('view_own_bills', 'View only bills this user personally created'),
@@ -1641,6 +1642,7 @@ if __name__ == '__main__':
                 ('select_customer', 'Select and assign customers to bills'),
                 ('add_products', 'Add products to bills'),
                 ('set_tax_rate', 'Override the tax/GST rate on individual bills at checkout'),
+                ('use_membership', 'Apply membership cards and redeem points on bills'),
                 # Manage Bills
                 ('view_all_bills', 'View bills created by every user'),
                 ('view_own_bills', 'View only bills this user personally created'),

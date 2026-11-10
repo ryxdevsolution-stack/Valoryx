@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useCallback, useMemo } from 'react'
 import { AlertCircle } from 'lucide-react'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
-import { useNavigate } from 'react-router-dom'
+import { useNavigate, useSearchParams } from 'react-router-dom'
 import { useData } from '@/contexts/DataContext'
 import { useClient } from '@/contexts/ClientContext'
 import { SystemNotification } from '@/utils/notifications'
@@ -12,6 +12,8 @@ import ProductCardGrid from '@/components/billing/ProductCardGrid'
 import ProfitSummaryBar from '@/components/billing/ProfitSummaryBar'
 import MobileCartList from '@/components/billing/MobileCartList'
 import MembershipBillingPanel from '@/components/billing/MembershipBillingPanel'
+import ExchangeBanner from '@/components/billing/ExchangeBanner'
+import { loadBillForExchange, submitExchange, exchangeDifference, type ExchangeInfo } from '@/lib/billExchange'
 import type { CardLookupResult } from '@/types/membership'
 import { useMobileDetect } from '@/hooks/useMobileDetect'
 import BarcodeScannerModal from '@/components/billing/BarcodeScannerModal'
@@ -107,7 +109,14 @@ interface BillTab {
   // ₹ value per point for the attached card's tier — used to convert redeemed
   // points into a money-off amount on this bill (backend re-computes authoritatively).
   membershipRedemptionRate?: number
+  // Set when this tab is an exchange of a saved bill (opened from Bills → Exchange).
+  exchange?: ExchangeInfo
 }
+
+/** YYYY-MM-DD in the browser's local timezone (toISOString() would give the UTC date,
+ *  which is "yesterday" between midnight and 05:30 IST). */
+const toLocalDateInput = (d: Date): string =>
+  `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
 
 export default function UnifiedBillingPage() {
   const navigate = useNavigate()
@@ -121,8 +130,12 @@ export default function UnifiedBillingPage() {
   const hasGstPermission = hasPermission('gst_billing')
   const hasNonGstPermission = hasPermission('non_gst_billing')
   const hasBothPermissions = hasGstPermission && hasNonGstPermission
-  const gstOnly = hasGstPermission && !hasNonGstPermission
-  const nonGstOnly = !hasGstPermission && hasNonGstPermission
+  // Shop Settings → "GST on Create Bill" off: the whole screen runs in non-GST mode
+  // (no GSTIN, GST%, GST columns or GST total; products added at 0%). Undefined → on.
+  const shopGstOff = client?.bill_show_gst === false
+  const gstOnly = !shopGstOff && hasGstPermission && !hasNonGstPermission
+  const permissionNonGstOnly = shopGstOff || (!hasGstPermission && hasNonGstPermission)
+  const canUseMembership = hasPermission('use_membership') && client?.bill_show_membership !== false
   const barcodeInputRef = useRef<HTMLInputElement>(null)
   const productSearchRef = useRef<HTMLInputElement>(null)
   const quantityInputRef = useRef<HTMLInputElement>(null)
@@ -222,7 +235,8 @@ export default function UnifiedBillingPage() {
   })
 
   const [billDate, setBillDate] = useState(new Date())
-  const [nextBillNumber, setNextBillNumber] = useState<number | null>(null)
+  // Next number per sequence — GST and non-GST bills are numbered separately.
+  const [nextBillNumbers, setNextBillNumbers] = useState<{ gst: number; nonGst: number } | null>(null)
 
   // Product selection state
   const [barcodeInput, setBarcodeInput] = useState('')
@@ -295,6 +309,90 @@ export default function UnifiedBillingPage() {
 
   // Get current active tab
   const activeTab = billTabs.find((tab) => tab.id === activeTabId) || billTabs[0]
+  const activeExchange = activeTab.exchange
+  // An exchange keeps the bill's type: exchanging a non-GST bill adds new items at 0% GST,
+  // matching the server (which forces GST to 0 on non-GST bills).
+  const nonGstOnly = permissionNonGstOnly || (!!activeExchange && !activeExchange.isGst)
+  // Customer GSTIN only makes sense on a tax invoice — hidden with the other GST fields.
+  const showCustomerGstin = !nonGstOnly
+  // Membership points are not re-earned/redeemed on an exchange — hide the panel there.
+  const showMembershipPanel = canUseMembership && !activeExchange
+  // Customer row is a 12-col grid; widen the remaining fields so hidden ones leave no gap.
+  // Literal class strings so Tailwind's scanner keeps them.
+  const customerFieldSpan = showMembershipPanel ? 'md:col-span-2' : showCustomerGstin ? 'md:col-span-3' : 'md:col-span-4'
+  const customerGstinSpan = showMembershipPanel ? 'md:col-span-2' : 'md:col-span-3'
+  const membershipSpan = showCustomerGstin ? 'md:col-span-4' : 'md:col-span-6'
+
+  // Bills → Exchange opens /billing/create?exchange=<billId>: load that bill into its own tab.
+  const [searchParams, setSearchParams] = useSearchParams()
+  const exchangeParam = searchParams.get('exchange')
+  useEffect(() => {
+    if (!exchangeParam) return
+    if (!hasPermission('edit_bill_details')) {
+      toast.error('You do not have permission to exchange bills')
+      setSearchParams({}, { replace: true })
+      return
+    }
+    let cancelled = false
+    ;(async () => {
+      try {
+        const loaded = await loadBillForExchange(exchangeParam)
+        if (cancelled) return
+        const tabId = `exchange-${loaded.exchange.billId}`  // deterministic → no duplicate tabs
+        setBillTabs((prev) => {
+          const tab: BillTab = {
+            id: tabId,
+            customer_code: '',
+            customer_name: loaded.customer_name,
+            customer_phone: loaded.customer_phone,
+            customer_gstin: loaded.customer_gstin,
+            payment_splits: [],
+            items: loaded.items,
+            discountPercentage: loaded.discountPercentage,
+            negotiableAmount: loaded.negotiableAmount,
+            useNegotiablePrice: loaded.negotiableAmount > 0,
+            amountReceived: 0,
+            exchange: loaded.exchange,
+          }
+          // Re-opening the same bill replaces its tab with fresh data (a stale tab would be
+          // refused by the server's version check anyway).
+          if (prev.some((t) => t.id === tabId)) return prev.map((t) => (t.id === tabId ? tab : t))
+          // Replace a single untouched tab instead of stacking an empty one beside it.
+          const onlyEmpty = prev.length === 1 && prev[0].items.length === 0 && !prev[0].exchange
+          return onlyEmpty ? [tab] : [...prev, tab]
+        })
+        setActiveTabId(tabId)
+      } catch (err: unknown) {
+        const e = err as { response?: { data?: { error?: string } }; message?: string }
+        if (!cancelled) toast.error(e.response?.data?.error || e.message || 'Could not open the bill for exchange')
+      } finally {
+        if (!cancelled) setSearchParams({}, { replace: true })
+      }
+    })()
+    return () => { cancelled = true }
+  }, [exchangeParam, setSearchParams, hasPermission])
+
+  // Show the number from the sequence this bill will actually be saved in — mirrors the
+  // server: non-GST mode → non-GST; GST-only → GST; both → GST only if an item carries GST.
+  const willSaveAsGst = !nonGstOnly && (gstOnly || activeTab.items.some((i) => Number(i.gst_percentage) > 0))
+  const nextBillNumber = nextBillNumbers ? (willSaveAsGst ? nextBillNumbers.gst : nextBillNumbers.nonGst) : null
+
+  /** After a save, move only the sequence that was just used (server says GST / Non-GST). */
+  const advanceBillNumber = (data: { bill_type?: string }, savedNumber?: number) => {
+    if (!savedNumber) return
+    const savedAsGst = (data.bill_type || '').toUpperCase() === 'GST'
+    setNextBillNumbers((prev) => {
+      const base = prev ?? { gst: 1, nonGst: 1 }
+      return savedAsGst
+        ? { ...base, gst: Math.max(base.gst, savedNumber + 1) }
+        : { ...base, nonGst: Math.max(base.nonGst, savedNumber + 1) }
+    })
+  }
+
+  // The initial load can finish after the page has unmounted (navigating away quickly,
+  // or a test tearing down) — skip state updates then instead of touching a dead tree.
+  const isMountedRef = useRef(true)
+  useEffect(() => () => { isMountedRef.current = false }, [])
 
   const loadInitialData = useCallback(async () => {
     try {
@@ -305,14 +403,18 @@ export default function UnifiedBillingPage() {
         api.get('/billing/next-number'),
         api.get('/customer/all').catch(() => ({ data: { customers: [] } })),
       ])
+      if (!isMountedRef.current) return
       setProducts(productsData)
-      setNextBillNumber(billNumberResponse.data.next_bill_number || 1)
+      const nb = billNumberResponse.data
+      const legacy = nb.next_bill_number || 1  // older backend: one shared preview number
+      setNextBillNumbers({ gst: nb.next_gst_bill_number ?? legacy, nonGst: nb.next_non_gst_bill_number ?? legacy })
       setAllCustomers(customersResponse.data.customers || [])
     } catch (error) {
+      if (!isMountedRef.current) return
       console.error('Failed to load initial data:', error)
-      setNextBillNumber(1)
+      setNextBillNumbers({ gst: 1, nonGst: 1 })
     } finally {
-      setProductsLoading(false)
+      if (isMountedRef.current) setProductsLoading(false)
     }
   }, [fetchProducts])
 
@@ -859,9 +961,11 @@ export default function UnifiedBillingPage() {
       const existingItem = updatedItems[existingItemIndex]
       const availableQty = Number(product.quantity || product.available_quantity || 999999)
       const newQuantity = existingItem.quantity + qty
+      // Exchange: the original quantity is already out of stock — only the extra must be available.
+      const alreadyTaken = activeTab.exchange?.originalQty[existingItem.product_id] || 0
 
       // Check stock availability
-      if (newQuantity > availableQty) {
+      if (newQuantity - alreadyTaken > availableQty) {
         toast.warning(`Stock limit reached! Only ${availableQty} available for ${existingItem.product_name}`)
         return
       }
@@ -1180,6 +1284,24 @@ export default function UnifiedBillingPage() {
     updateActiveTab({ items: updatedItems })
   }
 
+  // Edit a line's selling rate for THIS bill only (stock price is untouched); recomputes the line.
+  const updateItemRate = (index: number, newRate: number) => {
+    const updatedItems = [...activeTab.items]
+    const item = updatedItems[index]
+    const safeRate = Math.max(Number(newRate) || 0, 0)
+    const { gstAmt, amount } = computeLineAmounts(item.quantity, safeRate, item.gst_percentage, item.discount_percentage)
+    updatedItems[index] = { ...item, rate: safeRate, gst_amount: gstAmt, amount }
+    updateActiveTab({ items: updatedItems })
+  }
+
+  // Edit a line's MRP for THIS bill only (display/print value — does not change the total).
+  const updateItemMrp = (index: number, newMrp: number) => {
+    const updatedItems = [...activeTab.items]
+    const mrp = Number(newMrp)
+    updatedItems[index] = { ...updatedItems[index], mrp: Number.isFinite(mrp) && mrp > 0 ? mrp : undefined }
+    updateActiveTab({ items: updatedItems })
+  }
+
   // Edit the per-line customer discount %; recomputes the line off the rate, before GST.
   const updateItemDiscount = (index: number, newDiscount: number) => {
     const updatedItems = [...activeTab.items]
@@ -1221,7 +1343,11 @@ export default function UnifiedBillingPage() {
     // ₹ value authoritatively; this mirrors it so the payable total + splits match).
     const redeemValue = Math.min(
       preRedeemTotal,
-      (activeTab.membershipRedeemPoints || 0) * (activeTab.membershipRedemptionRate || 0)
+      // A card restored from a draft is ignored when the user lacks use_membership
+      // (the panel is hidden, so they couldn't remove it).
+      activeTab.exchange
+        ? activeTab.exchange.redeemedValue  // points already spent on the original bill
+        : canUseMembership ? (activeTab.membershipRedeemPoints || 0) * (activeTab.membershipRedemptionRate || 0) : 0
     )
     const grandTotal = Math.max(0, preRedeemTotal - redeemValue)
 
@@ -1246,7 +1372,8 @@ export default function UnifiedBillingPage() {
     }
   }, [activeTab.items, activeTab.discountPercentage, activeTab.negotiableAmount,
       activeTab.useNegotiablePrice, activeTab.amountReceived, activeTab.payment_splits,
-      activeTab.membershipRedeemPoints, activeTab.membershipRedemptionRate])
+      activeTab.membershipRedeemPoints, activeTab.membershipRedemptionRate, canUseMembership,
+      activeTab.exchange])
 
   // Determine if GST columns should be shown in the table
   const showGstColumns = () => {
@@ -1291,8 +1418,47 @@ export default function UnifiedBillingPage() {
     setShowCustomerDropdown(false)
   }
 
+  // Exchange tab: send the bill as it should end up; the server does stock, totals and payments.
+  const handleExchangeSave = async () => {
+    const ex = activeTab.exchange
+    if (!ex || loading) return  // Enter / double-click while saving must not collect twice
+    if (activeTab.items.length === 0) {
+      toast.warning('The exchanged bill must keep at least one item')
+      return
+    }
+    const diff = exchangeDifference(billTotals.grandTotal, ex.alreadyPaid)
+    // Payment splits only mean "money collected now" when the customer owes more.
+    const payments = diff > 0
+      ? activeTab.payment_splits.map((p) => ({ payment_type: p.payment_type, amount: Number(p.amount) || 0 }))
+      : []
+    setLoading(true)
+    try {
+      const r = await submitExchange(ex, activeTab.items, payments, {
+        percentage: activeTab.useNegotiablePrice ? 0 : activeTab.discountPercentage,
+        negotiable: activeTab.useNegotiablePrice ? activeTab.negotiableAmount : 0,
+      })
+      const money = r.refunded > 0 ? `refund ${cur}${r.refunded.toFixed(2)}`
+        : r.collected > 0 ? `collected ${cur}${r.collected.toFixed(2)}` : 'no difference'
+      const due = r.balance_due > 0 ? ` · ${cur}${r.balance_due.toFixed(2)} still due` : ''
+      toast.success(`Bill #${ex.billLabel} exchanged — ${money}${due}`)
+      invalidateDataCache('products')
+      clearDraftFromStorage(activeTabId)
+      closeTabWithoutReload(activeTabId)
+    } catch (err: unknown) {
+      const e = err as { response?: { data?: { error?: string } } }
+      toast.error(e.response?.data?.error || 'Exchange failed. Please try again.')
+    } finally {
+      setLoading(false)
+    }
+  }
+
   const handleSubmit = async (e: React.FormEvent, isPending = false, skipPrint = false, confirmedPartial = false) => {
     e.preventDefault()
+
+    if (activeTab.exchange) {
+      await handleExchangeSave()
+      return
+    }
 
     if (activeTab.items.length === 0) {
       toast.warning('Please add at least one item')
@@ -1390,9 +1556,10 @@ export default function UnifiedBillingPage() {
         negotiable_amount: activeTab.useNegotiablePrice ? activeTab.negotiableAmount : null,
         // Membership: attached card + points redeemed now. The backend enforces the
         // monthly negotiable budget and recomputes the redemption ₹ value server-side.
-        membership_card_id: activeTab.membershipCardId || null,
-        membership_redeem_points: activeTab.membershipRedeemPoints || 0,
-        membership_negotiate_amount: activeTab.membershipCardId && activeTab.useNegotiablePrice
+        // Stale draft cards are dropped for users without use_membership (backend would 403).
+        membership_card_id: (canUseMembership && activeTab.membershipCardId) || null,
+        membership_redeem_points: canUseMembership ? (activeTab.membershipRedeemPoints || 0) : 0,
+        membership_negotiate_amount: canUseMembership && activeTab.membershipCardId && activeTab.useNegotiablePrice
           ? activeTab.negotiableAmount : null,
         bill_date: billDate.toISOString(),
         // The backend derives the real status from paid_amount vs total — this
@@ -1443,7 +1610,7 @@ export default function UnifiedBillingPage() {
           body: `Bill #${billNum} saved. Payment is pending.`,
         }).catch(() => {/* optional notification */})
         invalidateDataCache('products')
-        if (billNum) setNextBillNumber(billNum + 1)
+        advanceBillNumber(response.data, billNum)
         clearDraftFromStorage(activeTabId)
         closeTabWithoutReload(activeTabId)
         setLoading(false)
@@ -1460,7 +1627,7 @@ export default function UnifiedBillingPage() {
         api.get('/customer/all').then(res => {
           if (res.data.customers) setAllCustomers(res.data.customers)
         }).catch(() => {})
-        if (billNum) setNextBillNumber(billNum + 1)
+        advanceBillNumber(response.data, billNum)
         clearDraftFromStorage(activeTabId)
         closeTabWithoutReload(activeTabId)
         setLoading(false)
@@ -1537,9 +1704,7 @@ export default function UnifiedBillingPage() {
 
       // Set next bill number directly from response (avoid extra API call)
       const createdBillNumber = response.data.bill?.bill_number || response.data.bill_number
-      if (createdBillNumber) {
-        setNextBillNumber(createdBillNumber + 1)
-      }
+      advanceBillNumber(response.data, createdBillNumber)
 
       // Clear the completed tab from storage and remove it (skip loadInitialData since we already have next number)
       clearDraftFromStorage(activeTabId)
@@ -1592,7 +1757,7 @@ export default function UnifiedBillingPage() {
                 onClick={() => setActiveTabId(tab.id)}
               >
                 <span className="text-xs font-semibold whitespace-nowrap">
-                  Bill #{index + 1} {tab.customer_name && `- ${tab.customer_name}`}
+                  {tab.exchange ? `Exchange #${tab.exchange.billLabel}` : `Bill #${index + 1}`} {tab.customer_name && `- ${tab.customer_name}`}
                 </span>
                 {billTabs.length > 1 && (
                   <button
@@ -1633,10 +1798,10 @@ export default function UnifiedBillingPage() {
             <div className="grid grid-cols-[auto_1fr_auto] items-center gap-3 px-3 py-2 border-b border-gray-200 dark:border-gray-700">
               <div className="flex flex-col">
                 <span className="text-xs text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wide">
-                  Bill Number
+                  {activeExchange ? 'Exchanging Bill' : 'Bill Number'}
                 </span>
                 <span className="text-lg font-bold text-gray-900 dark:text-white">
-                  #{nextBillNumber || '...'}
+                  #{activeExchange ? activeExchange.billLabel : (nextBillNumber || '...')}
                 </span>
               </div>
 
@@ -1679,11 +1844,13 @@ export default function UnifiedBillingPage() {
                 <span className="text-xs text-gray-500 dark:text-gray-400 font-medium uppercase tracking-wide">Date</span>
                 <input
                   type="date"
-                  value={billDate.toISOString().split('T')[0]}
-                  max={new Date().toISOString().split('T')[0]}
+                  value={toLocalDateInput(billDate)}
+                  max={toLocalDateInput(new Date())}
                   onChange={(e) => {
                     if (e.target.value) {
-                      const newDate = new Date(e.target.value)
+                      // Parse YYYY-MM-DD as a LOCAL date (new Date('YYYY-MM-DD') would be UTC midnight)
+                      const [y, m, d] = e.target.value.split('-').map(Number)
+                      const newDate = new Date(y, m - 1, d)
                       // Preserve current time
                       newDate.setHours(billDate.getHours(), billDate.getMinutes(), billDate.getSeconds())
                       setBillDate(newDate)
@@ -1693,6 +1860,18 @@ export default function UnifiedBillingPage() {
                 />
               </div>
             </div>
+
+            {activeExchange && (
+              <ExchangeBanner
+                exchange={activeExchange}
+                newTotal={billTotals.grandTotal}
+                paymentsTotal={activeTab.payment_splits.reduce((sum, p) => sum + (Number(p.amount) || 0), 0)}
+                paymentTypes={paymentTypes}
+                currency={cur}
+                onRefundMethodChange={(method) => updateActiveTab({ exchange: { ...activeExchange, refundMethod: method } })}
+                onCancel={() => closeTab(activeTab.id)}
+              />
+            )}
 
             {/* Barcode Scanner - HIDDEN BUT FUNCTIONAL */}
             <div className="hidden">
@@ -1710,7 +1889,7 @@ export default function UnifiedBillingPage() {
             {/* Customer Info */}
             <div className="grid grid-cols-1 md:grid-cols-12 gap-2 p-2 relative">
               {/* Customer No */}
-              <div className="md:col-span-2 relative customer-search-container">
+              <div className={`${customerFieldSpan} relative customer-search-container`}>
                 <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
                   Customer No
                 </label>
@@ -1776,7 +1955,7 @@ export default function UnifiedBillingPage() {
               </div>
 
               {/* Customer Name */}
-              <div className="md:col-span-2 relative customer-search-container">
+              <div className={`${customerFieldSpan} relative customer-search-container`}>
                 <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
                   Customer Name
                 </label>
@@ -1825,7 +2004,7 @@ export default function UnifiedBillingPage() {
               </div>
 
               {/* Phone */}
-              <div className="md:col-span-2 relative customer-search-container">
+              <div className={`${customerFieldSpan} relative customer-search-container`}>
                 <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
                   Phone {activeTab.customer_name?.trim() && <span className="text-red-500">*</span>}
                 </label>
@@ -1839,7 +2018,7 @@ export default function UnifiedBillingPage() {
                   onBlur={handleCustomerBlur}
                   onKeyDown={(e) => {
                     if (!handleCustomerKeyDown(e, 'phone')) {
-                      handleEnterNavigation(e, customerGstinRef)
+                      handleEnterNavigation(e, showCustomerGstin ? customerGstinRef : productSearchRef)
                     }
                   }}
                   className="w-full p-2 text-xs border-2 border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
@@ -1873,8 +2052,9 @@ export default function UnifiedBillingPage() {
                 )}
               </div>
 
-              {/* Customer tax registration number (GSTIN for India, VAT/Tax No. elsewhere) */}
-              <div className="md:col-span-2">
+              {/* Customer tax registration number (GSTIN for India, VAT/Tax No. elsewhere) — hidden for non-GST-only roles */}
+              {showCustomerGstin && (
+              <div className={customerGstinSpan}>
                 <label className="block text-base font-bold text-gray-700 dark:text-gray-300 mb-1">
                   {taxLabel === 'GST' ? 'Customer GSTIN' : `Customer ${taxLabel} No.`}
                 </label>
@@ -1888,9 +2068,11 @@ export default function UnifiedBillingPage() {
                   className="w-full p-2 text-xs border-2 border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700"
                 />
               </div>
+              )}
 
-              {/* Membership card — lookup, tier discount, point redemption */}
-              <div className="md:col-span-4">
+              {/* Membership card — lookup, tier discount, point redemption (use_membership permission) */}
+              {showMembershipPanel && (
+              <div className={membershipSpan}>
               <MembershipBillingPanel
                 customerPhone={activeTab.customer_phone || ''}
                 customerName={activeTab.customer_name || ''}
@@ -1915,6 +2097,7 @@ export default function UnifiedBillingPage() {
                 })}
               />
               </div>
+              )}
             </div>
 
             {viewMode === 'list' ? (
@@ -2080,6 +2263,27 @@ export default function UnifiedBillingPage() {
                     }`}
                   />
                 </div>
+                {/* MRP — pre-filled from the product, editable for quick/new items. Not in the
+                    Enter-key chain (Qty → Rate) so it never slows the cashier down. */}
+                <div className="w-28">
+                  <label htmlFor="entry-mrp" className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
+                    MRP
+                  </label>
+                  <input
+                    id="entry-mrp"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="0.00"
+                    value={currentItem.mrp ?? ''}
+                    onChange={(e) => {
+                      const v = parseFloat(e.target.value)
+                      setCurrentItem({ ...currentItem, mrp: Number.isFinite(v) && v > 0 ? v : undefined })
+                    }}
+                    className="w-full px-3 py-2.5 text-base border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium"
+                    title="Maximum retail price"
+                  />
+                </div>
                 <div className="w-28">
                   <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
                     Rate
@@ -2212,45 +2416,48 @@ export default function UnifiedBillingPage() {
           {/* Items Table */}
           <div className="bg-white dark:bg-gray-800 rounded shadow-sm border border-gray-200 dark:border-gray-700">
             <div className="overflow-x-auto max-h-64 overflow-y-auto">
-              <table className="w-full border-collapse min-w-[900px]">
+              <table className="w-full table-fixed border-collapse min-w-[900px]">
                 <thead className="bg-gray-50 dark:bg-gray-900 sticky top-0 z-10 border-b border-gray-300 dark:border-gray-600">
                   <tr>
-                    <th className="px-1 py-1 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-8">
+                    <th className="px-2 py-2.5 text-left text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-12">
                       #
                     </th>
-                    <th className="px-1 py-1 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-20">
+                    <th className="px-2 py-2.5 text-left text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-28">
                       Code
                     </th>
-                    <th className="px-1 py-1 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700">
+                    <th className="px-2 py-2.5 text-left text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700">
                       Product Name
                     </th>
-                    <th className="px-1 py-1 text-left text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-12">
+                    <th className="px-2 py-2.5 text-left text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-16">
                       Unit
                     </th>
-                    <th className="px-1 py-1 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-16">
+                    <th className="px-2 py-2.5 text-center text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-24">
                       Qty
                     </th>
-                    <th className="px-1 py-1 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-20">
+                    <th className="px-2 py-2.5 text-right text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-28" title="Maximum retail price">
+                      MRP
+                    </th>
+                    <th className="px-2 py-2.5 text-right text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-28">
                       Rate
                     </th>
-                    <th className="px-1 py-1 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-16" title="Customer discount % — off the rate, before GST">
+                    <th className="px-2 py-2.5 text-center text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-24" title="Customer discount % — off the rate, before GST">
                       Disc %
                     </th>
                     {showGstColumns() && (
                       <>
-                        <th className="px-1 py-1 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-14">
+                        <th className="px-2 py-2.5 text-center text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-20">
                           {taxLabel}%
                         </th>
-                        <th className="px-1 py-1 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-20">
+                        <th className="px-2 py-2.5 text-right text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-28">
                           {taxLabel}
                         </th>
                       </>
                     )}
-                    <th className="px-1 py-1 text-right text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-24">
+                    <th className="px-2 py-2.5 text-right text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase border-r border-gray-200 dark:border-gray-700 w-32">
                       Total
                     </th>
                     {/* Save column removed - quick products are not saved to stock */}
-                    <th className="px-1 py-1 text-center text-xs font-semibold text-gray-700 dark:text-gray-300 uppercase w-10">
+                    <th className="px-2 py-2.5 text-center text-sm font-semibold text-gray-700 dark:text-gray-300 uppercase w-16">
                       Action
                     </th>
                   </tr>
@@ -2259,7 +2466,7 @@ export default function UnifiedBillingPage() {
                   {activeTab.items.length === 0 ? (
                     <tr>
                       <td
-                        colSpan={showGstColumns() ? 11 : 9}
+                        colSpan={showGstColumns() ? 12 : 10}
                         className="px-2 py-12 text-center text-gray-400 dark:text-gray-500 border-b border-gray-200 dark:border-gray-700"
                       >
                         <div className="flex flex-col items-center gap-1">
@@ -2291,13 +2498,13 @@ export default function UnifiedBillingPage() {
                         key={index}
                         className="hover:bg-gray-50 dark:hover:bg-gray-700 transition-colors border-b border-gray-200 dark:border-gray-700"
                       >
-                        <td className="px-1 py-0.5 text-xs text-gray-700 dark:text-gray-300 border-r border-gray-200 dark:border-gray-600 font-medium text-center">
+                        <td className="px-2 py-3 text-base text-gray-700 dark:text-gray-300 border-r border-gray-200 dark:border-gray-600 font-medium text-center">
                           {index + 1}
                         </td>
-                        <td className="px-1 py-0.5 text-xs text-gray-600 dark:text-gray-400 border-r border-gray-200 dark:border-gray-600 font-mono">
+                        <td className="px-2 py-3 text-base text-gray-600 dark:text-gray-400 border-r border-gray-200 dark:border-gray-600 font-mono">
                           {item.item_code || '-'}
                         </td>
-                        <td className="px-1 py-0.5 text-xs border-r border-gray-200 dark:border-gray-700 overflow-visible">
+                        <td className="px-2 py-3 text-base border-r border-gray-200 dark:border-gray-700 overflow-visible">
                           <div className="flex items-center gap-1 relative">
                             <span
                               className="cost-tooltip-trigger font-bold text-gray-900 dark:text-white cursor-pointer hover:text-blue-600 dark:hover:text-blue-400 transition-colors relative"
@@ -2353,21 +2560,21 @@ export default function UnifiedBillingPage() {
                               )}
                             </span>
                             {item.product_id === 'new-product-temp' && (
-                              <span className="inline-flex items-center px-1 py-0.5 rounded text-xs font-semibold bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400 border border-green-300 dark:border-green-700">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-sm font-semibold bg-green-100 dark:bg-green-900/30 text-green-800 dark:text-green-400 border border-green-300 dark:border-green-700">
                                 NEW
                               </span>
                             )}
                             {item.limitedByStock && (
-                              <span className="inline-flex items-center px-1 py-0.5 rounded text-xs font-semibold bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-400 border border-orange-300 dark:border-orange-700">
+                              <span className="inline-flex items-center px-2 py-0.5 rounded text-sm font-semibold bg-orange-100 dark:bg-orange-900/30 text-orange-800 dark:text-orange-400 border border-orange-300 dark:border-orange-700">
                                 Limited
                               </span>
                             )}
                           </div>
                         </td>
-                        <td className="px-1 py-0.5 text-xs text-gray-600 dark:text-gray-400 border-r border-gray-200 dark:border-gray-700 text-center">
+                        <td className="px-2 py-3 text-base text-gray-600 dark:text-gray-400 border-r border-gray-200 dark:border-gray-700 text-center">
                           {item.unit || 'pcs'}
                         </td>
-                        <td className="px-1 py-0.5 text-xs border-r border-gray-200 dark:border-gray-700">
+                        <td className="px-2 py-3 text-base border-r border-gray-200 dark:border-gray-700">
                           <input
                             type="number"
                             min="1"
@@ -2390,13 +2597,36 @@ export default function UnifiedBillingPage() {
                                 }
                               }
                             }}
-                            className="w-full px-1 py-0.5 text-center border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium text-xs"
+                            className="w-full px-2 py-2 text-center border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium text-base"
                           />
                         </td>
-                        <td className="px-1 py-0.5 text-xs text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 text-right font-semibold">
-                          {cur}{Number(item.rate).toFixed(2)}
+                        {/* MRP + Rate are editable per bill line only — stock prices are not changed. */}
+                        <td className="px-2 py-3 text-base border-r border-gray-200 dark:border-gray-700">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            title="MRP (this bill only)"
+                            aria-label={`MRP for ${item.product_name}`}
+                            value={item.mrp ?? ''}
+                            placeholder="—"
+                            onChange={(e) => updateItemMrp(index, parseFloat(e.target.value))}
+                            className="w-full px-2 py-2 text-right border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium text-base text-gray-500 dark:text-gray-400"
+                          />
                         </td>
-                        <td className="px-1 py-0.5 text-xs border-r border-gray-200 dark:border-gray-700">
+                        <td className="px-2 py-3 text-base border-r border-gray-200 dark:border-gray-700">
+                          <input
+                            type="number"
+                            min="0"
+                            step="0.01"
+                            title="Rate (this bill only)"
+                            aria-label={`Rate for ${item.product_name}`}
+                            value={item.rate}
+                            onChange={(e) => updateItemRate(index, parseFloat(e.target.value))}
+                            className="w-full px-2 py-2 text-right border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium text-base font-semibold"
+                          />
+                        </td>
+                        <td className="px-2 py-3 text-base border-r border-gray-200 dark:border-gray-700">
                           <input
                             type="number"
                             min="0"
@@ -2408,14 +2638,14 @@ export default function UnifiedBillingPage() {
                             onChange={(e) =>
                               updateItemDiscount(index, parseFloat(e.target.value) || 0)
                             }
-                            className="w-full px-1 py-0.5 text-center border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium text-xs"
+                            className="w-full px-2 py-2 text-center border border-gray-300 dark:border-gray-600 rounded focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium text-base"
                           />
                         </td>
                         {showGstColumns() && (
                           <>
-                            <td className="px-1 py-0.5 text-xs border-r border-gray-200 dark:border-gray-700 text-center">
+                            <td className="px-2 py-3 text-base border-r border-gray-200 dark:border-gray-700 text-center">
                               <span
-                                className={`inline-block px-1 py-0.5 rounded text-xs font-semibold ${
+                                className={`inline-block px-2 py-0.5 rounded text-sm font-semibold ${
                                   item.gst_percentage > 0
                                     ? 'bg-blue-100 dark:bg-blue-900 text-blue-800 dark:text-blue-300'
                                     : 'bg-gray-100 dark:bg-gray-700 text-gray-600 dark:text-gray-400'
@@ -2424,23 +2654,23 @@ export default function UnifiedBillingPage() {
                                 {item.gst_percentage}%
                               </span>
                             </td>
-                            <td className="px-1 py-0.5 text-xs text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 text-right font-medium">
+                            <td className="px-2 py-3 text-base text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 text-right font-medium">
                               {cur}{item.gst_amount.toFixed(2)}
                             </td>
                           </>
                         )}
-                        <td className="px-1 py-0.5 text-xs text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 text-right font-bold">
+                        <td className="px-2 py-3 text-base text-gray-900 dark:text-white border-r border-gray-200 dark:border-gray-700 text-right font-bold">
                           {cur}{item.amount.toFixed(2)}
                         </td>
                         {/* Save checkbox removed - quick products are not saved to stock */}
-                        <td className="px-1 py-0.5 text-xs text-center">
+                        <td className="px-2 py-3 text-base text-center">
                           <button
                             type="button"
                             onClick={() => removeItem(index)}
-                            className="text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 p-0.5 rounded transition"
+                            className="text-gray-400 dark:text-gray-500 hover:text-red-600 dark:hover:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 p-2 rounded transition"
                             title="Delete"
                           >
-                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                               <path
                                 strokeLinecap="round"
                                 strokeLinejoin="round"
@@ -2819,8 +3049,9 @@ export default function UnifiedBillingPage() {
                 title="Save the bill without printing"
                 className="px-2 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:opacity-50 text-white text-xs font-semibold rounded-lg transition-colors shadow-sm whitespace-nowrap"
               >
-                {loading ? '...' : 'Save'}
+                {loading ? '...' : activeExchange ? 'Save Exchange' : 'Save'}
               </button>
+              {!activeExchange && (
               <button
                 type="button"
                 disabled={loading}
@@ -2830,6 +3061,7 @@ export default function UnifiedBillingPage() {
               >
                 Pending
               </button>
+              )}
               <button
                 type="button"
                 onClick={handleClearBill}
@@ -2963,6 +3195,16 @@ export default function UnifiedBillingPage() {
 
               {/* Actions - Right Side */}
               <div className="lg:col-span-4 flex flex-row flex-nowrap items-center gap-2">
+                {activeExchange ? (
+                  <button
+                    type="button"
+                    disabled={loading}
+                    onClick={handleExchangeSave}
+                    className="flex-1 min-w-0 whitespace-nowrap px-3 py-2 bg-amber-600 dark:bg-amber-700 text-white rounded hover:bg-amber-700 dark:hover:bg-amber-800 transition disabled:bg-gray-400 dark:disabled:bg-gray-600 font-bold text-sm shadow-md hover:shadow-lg focus:ring-2 focus:ring-amber-500 focus:outline-none"
+                  >
+                    {loading ? '...' : 'Save Exchange'}
+                  </button>
+                ) : (<>
                 <button
                   ref={printButtonRef}
                   type="submit"
@@ -2997,6 +3239,7 @@ export default function UnifiedBillingPage() {
                 >
                   {loading ? '...' : 'Pending'}
                 </button>
+                </>)}
                 {isMobile && supportsWebBluetooth && (
                   <button
                     type="button"
@@ -3022,7 +3265,7 @@ export default function UnifiedBillingPage() {
                         address2: shopSettings?.address2 || '',
                         phone: shopSettings?.phone || client?.phone || '',
                         gstNumber: shopSettings?.gst_number || client?.gstin || '',
-                        billNumber: String(nextBillNumber || ''),
+                        billNumber: activeExchange ? activeExchange.billLabel : String(nextBillNumber || ''),
                         date: new Date().toLocaleDateString('en-IN'),
                         time: new Date().toLocaleTimeString('en-IN', { hour12: true }),
                         paymentMethod: activeTab.payment_splits[0]?.payment_type || 'Cash',

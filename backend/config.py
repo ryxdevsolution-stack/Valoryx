@@ -224,7 +224,11 @@ class OptimizedConfig:
             "Then add it to your .env file: JWT_SECRET=<generated-secret>"
         )
     JWT_ALGORITHM = "HS256"
-    JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "2"))  # Web/online mode (default 2h)
+    # Session length. Tokens are renewed by /auth/session-check while the app is in use, so an
+    # active user is never logged out; this is only the safety limit for an unused / lost device.
+    JWT_EXPIRATION_HOURS = int(os.getenv("JWT_EXPIRATION_HOURS", "720"))  # 30 days
+    # Renew once the token is older than this (keeps renewals to ~1/day per device).
+    JWT_RENEW_AFTER_HOURS = int(os.getenv("JWT_RENEW_AFTER_HOURS", "24"))
     JWT_DESKTOP_EXPIRATION_HOURS = 168  # 7 days for desktop/offline mode (Phase 2)
 
     # -------------------------------

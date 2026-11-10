@@ -21,6 +21,7 @@ export const permissionMeta: Record<string, PermissionMeta> = {
   select_customer:          { icon: '🙋', example: 'Search a saved customer and attach them to the bill.' },
   add_products:             { icon: '📦', example: 'Scan or pick products from the catalog into the cart.' },
   set_tax_rate:             { icon: '⚙️', example: 'Override the GST % on a single bill (e.g. 5% for one line item).' },
+  use_membership:           { icon: '💳', example: 'Look up a customer\'s membership card at checkout and redeem their points.' },
 
   // Manage Bills
   view_all_bills:           { icon: '🗂️', example: 'See bills created by every user, not just this user.' },

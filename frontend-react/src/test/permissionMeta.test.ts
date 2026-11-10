@@ -9,7 +9,7 @@ import { permissionMeta } from '@/data/permissionMeta'
 const SEEDED_PERMISSION_NAMES = [
   'view_dashboard',
   'gst_billing', 'non_gst_billing', 'apply_discount', 'add_payment',
-  'select_customer', 'add_products', 'set_tax_rate',
+  'select_customer', 'add_products', 'set_tax_rate', 'use_membership',
   'view_all_bills', 'view_own_bills', 'edit_bill_details', 'edit_bill_price_audit',
   'delete_bills', 'print_bills', 'download_pdf', 'send_email', 'mark_paid',
   'mark_cancelled', 'duplicate_bill', 'search_bills', 'show_no_exchange',

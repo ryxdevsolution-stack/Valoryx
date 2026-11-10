@@ -14,6 +14,7 @@ from models.customer_model import Customer
 from models.client_model import ClientEntry
 from utils.auth_middleware import authenticate, readonly_guard
 from utils.permission_middleware import require_permission, require_any_permission
+from models.permission_model import has_permission
 from utils.audit_logger import log_action
 from utils.helpers import calculate_gst_amount, calculate_final_amount, validate_items, title_case, build_tax_breakdown
 from services.membership_service import MembershipError
@@ -109,6 +110,31 @@ def _record_bill_payments(client_id, bill_id, bill_kind, paid_amount, payment_ty
 
 
 # Helper function to get current time in Asia/Kolkata timezone
+def _invalidate_next_number(client_id):
+    """Drop the cached /next-number preview (invalidate_billing_cache is a no-op stub)."""
+    get_cache_manager().delete(f"billing:next_number:{client_id}")
+
+
+def _resolve_bill_date(requested, now):
+    """Normalise the client's bill_date to shop time (IST, like every other stored timestamp).
+
+    The browser sends a UTC ISO string captured when Create Bill was opened, so storing
+    it as-is wrote UTC wall-clock into IST columns (bills showed 5h30 early) and gave every
+    bill made on that page the same timestamp. Rules:
+      - today            → the actual save time (`now`)
+      - an earlier date  → that date, kept as the user picked it (back-dated bill)
+      - a future date    → None (caller rejects)
+    """
+    # get_current_time() here returns NAIVE IST, so convert the request to naive IST too.
+    if requested.tzinfo:
+        requested = requested.astimezone(pytz.timezone('Asia/Kolkata')).replace(tzinfo=None)
+    if requested.date() > now.date():
+        return None
+    if requested.date() == now.date():
+        return now
+    return requested
+
+
 def get_current_time():
     """Returns current datetime in Asia/Kolkata timezone as naive datetime"""
     kolkata_tz = pytz.timezone('Asia/Kolkata')
@@ -271,6 +297,19 @@ def _reverse_membership_on_cancel(client_id, bill_id):
     return membership_service.reverse_bill_ledger(client_id, card, bill_id)
 
 
+def _can_use_membership():
+    """True when the current user may attach a membership card / redeem points.
+
+    Token first, DB fallback — same as @require_permission — so a grant added
+    after login (e.g. by migration v49) works without forcing a re-login.
+    """
+    if g.user.get('is_super_admin', False):
+        return True
+    if 'use_membership' in g.user.get('permissions', []):
+        return True
+    return has_permission(g.user['user_id'], 'use_membership')
+
+
 def _membership_redeem_value(client_id, data):
     """Server-side ₹ value of the points the customer is redeeming on this bill.
 
@@ -316,6 +355,10 @@ def create_gst_bill():
     try:
         data = request.get_json()
         client_id = g.user['client_id']
+
+        shop_gst = ClientEntry.query.with_entities(ClientEntry.bill_show_gst).filter_by(client_id=client_id).first()
+        if shop_gst and shop_gst.bill_show_gst is False:
+            return jsonify({'error': 'GST billing is turned off for this shop'}), 400
 
         # Validate required fields
         required_fields = ['customer_name', 'items', 'subtotal', 'gst_percentage', 'payment_type']
@@ -398,6 +441,7 @@ def create_gst_bill():
 
         # Invalidate cache for this client's billing data
         _invalidate_billing(client_id)
+        _invalidate_next_number(client_id)
         _invalidate_stock(client_id)
 
         # Log action
@@ -517,6 +561,7 @@ def create_non_gst_bill():
 
         # Invalidate cache for this client's billing data
         _invalidate_billing(client_id)
+        _invalidate_next_number(client_id)
         _invalidate_stock(client_id)
 
         # Log action
@@ -566,7 +611,11 @@ def get_next_bill_number_route():
         if cached_num is not None:
             return jsonify(cached_num), 200
 
-        from sqlalchemy import func
+        # Preview with the SAME rule get_next_bill_number() uses when saving:
+        # per type, max(stored counter, highest existing bill_number) + 1.
+        # GST and non-GST bills have separate sequences, so the UI picks the one
+        # matching the bill it is about to save.
+        from sqlalchemy import func, text as sa_text
 
         gst_max = db.session.query(func.max(GSTBilling.bill_number)).filter(
             GSTBilling.client_id == client_id
@@ -576,9 +625,23 @@ def get_next_bill_number_route():
             NonGSTBilling.client_id == client_id
         ).scalar() or 0
 
-        next_number = max(gst_max, non_gst_max) + 1
-        response = {'success': True, 'next_bill_number': next_number}
-        _rc.set(_nk, response, 30)  # 30s — a busy shop creates bills quickly
+        counters = db.session.execute(sa_text(
+            "SELECT current_gst_bill_number, current_non_gst_bill_number "
+            "FROM bill_number_counters WHERE client_id = :cid"
+        ), {'cid': str(client_id)}).fetchone()
+        gst_counter = (counters[0] or 0) if counters else 0
+        non_gst_counter = (counters[1] or 0) if counters else 0
+
+        next_gst = max(gst_max, gst_counter) + 1
+        next_non_gst = max(non_gst_max, non_gst_counter) + 1
+        response = {
+            'success': True,
+            'next_gst_bill_number': next_gst,
+            'next_non_gst_bill_number': next_non_gst,
+            # Legacy field kept for older desktop builds.
+            'next_bill_number': max(gst_max, non_gst_max) + 1,
+        }
+        _rc.set(_nk, response, 30)  # 30s — invalidated on every bill create (_invalidate_next_number)
 
         return jsonify(response), 200
 
@@ -833,21 +896,16 @@ def get_bill_details(bill_id):
     try:
         client_id = g.user['client_id']
 
-        # Try GST billing first
-        gst_bill = GSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
-        if gst_bill:
-            return jsonify({
-                'success': True,
-                'bill': gst_bill.to_dict()
-            }), 200
-
-        # Try Non-GST billing
-        non_gst_bill = NonGSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
-        if non_gst_bill:
-            return jsonify({
-                'success': True,
-                'bill': non_gst_bill.to_dict()
-            }), 200
+        bill = (GSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first()
+                or NonGSTBilling.query.filter_by(bill_id=bill_id, client_id=client_id).first())
+        if bill:
+            payload = bill.to_dict()
+            # ?exchange=1 (Create Bill exchange tab): add what the exchange screen needs.
+            if request.args.get('exchange'):
+                from services.bill_exchange_service import redeemed_value, version_of
+                payload['membership_redeemed'] = redeemed_value(client_id, bill.bill_id)
+                payload['version'] = version_of(bill)
+            return jsonify({'success': True, 'bill': payload}), 200
 
         return jsonify({'error': 'Bill not found'}), 404
 
@@ -898,7 +956,8 @@ def create_unified_bill():
         # Regional snapshot for this client — currency + tax config frozen onto the bill
         # so receipts stay correct even if the client later changes these settings.
         _client_region = ClientEntry.query.with_entities(
-            ClientEntry.currency_code, ClientEntry.tax_config
+            ClientEntry.currency_code, ClientEntry.tax_config, ClientEntry.bill_show_membership,
+            ClientEntry.bill_show_gst,
         ).filter_by(client_id=client_id).first()
         bill_currency_code = (_client_region.currency_code if _client_region else None) or 'INR'
         bill_tax_config = (_client_region.tax_config if _client_region else None)
@@ -907,13 +966,11 @@ def create_unified_bill():
         bill_date = get_current_time()
         if data.get('bill_date'):
             try:
-                bill_date = date_parser.parse(data['bill_date'])
-                # Prevent future dates
-                if bill_date.date() > get_current_time().date():
-                    return jsonify({'error': 'Bill date cannot be in the future'}), 400
-            except (ValueError, TypeError):
-                # If parsing fails, return error to user
+                bill_date = _resolve_bill_date(date_parser.parse(data['bill_date']), bill_date)
+            except (ValueError, TypeError, OverflowError):
                 return jsonify({'error': 'Invalid bill date format'}), 400
+            if bill_date is None:
+                return jsonify({'error': 'Bill date cannot be in the future'}), 400
 
         # Check user permissions for billing
         user_permissions = g.user.get('permissions', [])
@@ -925,6 +982,9 @@ def create_unified_bill():
         # Determine billing mode based on permissions
         gst_only = has_gst_permission and not has_non_gst_permission
         non_gst_only = not has_gst_permission and has_non_gst_permission
+        # Shop Settings "GST on Create Bill" off → every bill is non-GST (matches the UI).
+        if _client_region and _client_region.bill_show_gst is False:
+            gst_only, non_gst_only = False, True
         # has_both_permissions = has_gst_permission and has_non_gst_permission (smart detection)
 
         # Validate required fields - customer_name is now optional
@@ -935,6 +995,15 @@ def create_unified_bill():
 
         if not data['items'] or len(data['items']) == 0:
             return jsonify({'error': 'At least one item is required'}), 400
+
+        if data.get('membership_card_id') and _client_region and _client_region.bill_show_membership is False:
+            return jsonify({'error': 'Membership cards are turned off for this shop'}), 400
+
+        if data.get('membership_card_id') and not _can_use_membership():
+            return jsonify({
+                'error': 'Access denied',
+                'message': 'Permission "use_membership" required to apply a membership card',
+            }), 403
 
         # OPTIMIZED: Batch fetch all existing products in single query (fixes N+1)
         existing_product_ids = [
@@ -1205,6 +1274,7 @@ def create_unified_bill():
 
             # Invalidate caches after bill creation — use CacheManager (real cache), not legacy SimpleCache
             _invalidate_billing(client_id)
+            _invalidate_next_number(client_id)
             _invalidate_stock(client_id)
 
             # Tax breakdown driven by the client's tax_config (frozen on the bill above).
@@ -1344,6 +1414,7 @@ def create_unified_bill():
 
             # Invalidate caches after bill creation — use CacheManager (real cache), not legacy SimpleCache
             _invalidate_billing(client_id)
+            _invalidate_next_number(client_id)
             _invalidate_stock(client_id)
 
             # Return complete bill data for direct printing (no need for additional fetch)
@@ -1484,6 +1555,8 @@ def receive_bill_payment(bill_id):
         db.session.commit()
 
         _invalidate_billing(client_id)
+
+        _invalidate_next_number(client_id)
         return jsonify({'success': True,
                         'message': 'Payment recorded',
                         'payment': payment.to_dict(),
@@ -1545,6 +1618,8 @@ def mark_bill_paid(bill_id):
         db.session.commit()
 
         _invalidate_billing(client_id)
+
+        _invalidate_next_number(client_id)
         return jsonify({'success': True, 'message': 'Bill marked as paid'}), 200
     except Exception as e:
         db.session.rollback()
@@ -1611,6 +1686,8 @@ def update_bill(bill_id):
 
         _invalidate_billing(client_id)
 
+        _invalidate_next_number(client_id)
+
         log_action('UPDATE',
                    'gst_billing' if is_gst else 'non_gst_billing',
                    bill_id,
@@ -1656,6 +1733,36 @@ def exchange_bill(bill_id):
         # Cannot exchange cancelled bills
         if bill.status == 'cancelled':
             return jsonify({'error': 'Cannot exchange a cancelled bill'}), 400
+
+        # Create Bill exchange tab: the client sends the bill as it should end up.
+        # Legacy returned_items/new_items mode below stays for older desktop builds.
+        if 'final_items' in data:
+            from services.bill_exchange_service import exchange_with_final_items, ExchangeError, version_of
+            # Lock the row (no-op on SQLite, which serialises writers) so two cashiers can't
+            # both apply stock deltas computed from the same original items.
+            model = GSTBilling if is_gst else NonGSTBilling
+            bill = model.query.filter_by(bill_id=bill_id, client_id=client_id).with_for_update().first()
+            expected = data.get('expected_version')
+            if expected is not None and expected != version_of(bill):
+                db.session.rollback()
+                return jsonify({'error': 'This bill was changed after you opened it. '
+                                         'Open the exchange again to load the latest version.',
+                                'code': 'BILL_CHANGED'}), 409
+            old_bill_data = bill.to_dict()
+            try:
+                summary = exchange_with_final_items(
+                    bill, is_gst, client_id, data, g.user['user_id'], get_current_time())
+            except ExchangeError as ex:
+                db.session.rollback()
+                return jsonify({'error': str(ex)}), 400
+            log_action('EXCHANGE', 'gst_billing' if is_gst else 'non_gst_billing',
+                       bill_id, old_bill_data, bill.to_dict())
+            db.session.commit()
+            _invalidate_billing(client_id)
+            _invalidate_stock(client_id)
+            return jsonify({'success': True, 'message': 'Bill exchanged', 'bill_id': bill_id,
+                            'bill_number': bill.bill_number, **summary,
+                            'version': version_of(bill), 'bill': bill.to_dict()}), 200
 
         returned_items = data.get('returned_items', [])
         new_items = data.get('new_items', [])
@@ -1789,6 +1896,7 @@ def exchange_bill(bill_id):
 
         # Invalidate caches after bill exchange - for real-time data consistency
         _invalidate_billing(client_id)
+        _invalidate_next_number(client_id)
         _invalidate_stock(client_id)
 
         # Log the exchange
@@ -1888,6 +1996,7 @@ def cancel_bill(bill_id):
             # Invalidate caches after bill cancellation - for real-time data consistency
             # Use Redis-backed cache helpers (not legacy SimpleCache)
             _invalidate_billing(client_id)
+            _invalidate_next_number(client_id)
             _invalidate_stock(client_id)
 
             # Log the cancellation

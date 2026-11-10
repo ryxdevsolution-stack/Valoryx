@@ -7,6 +7,7 @@ import teamService, {
   type PlanInfo,
   type PermissionPreset,
 } from '@/services/teamService'
+import LoginPinSection from './LoginPinSection'
 import {
   X,
   Save,
@@ -90,6 +91,8 @@ export default function TeamMemberModal({
   totpActionToken,
 }: TeamMemberModalProps) {
   const { user: currentUser } = useClient()
+  // Local copy so the PIN status updates immediately after Set / Remove.
+  const [pinSet, setPinSet] = useState<boolean | null>(null)
 
   // Form state
   const [form, setForm] = useState<FormState>(INITIAL_FORM)
@@ -721,6 +724,18 @@ export default function TeamMemberModal({
                 )}
               </div>
             </div>
+          )}
+
+          {/* Login PIN — owner only, for staff / managers (owners always use their password) */}
+          {isEditMode && editingUser && currentUser?.role === 'owner'
+            && ['staff', 'manager'].includes((editingUser.role || '').toLowerCase()) && (
+            <LoginPinSection
+              userId={editingUser.user_id}
+              userName={editingUser.full_name || editingUser.email}
+              hasPin={pinSet ?? !!editingUser.has_pin}
+              onMessage={onMessage}
+              onChanged={setPinSet}
+            />
           )}
 
           {/* Phone */}

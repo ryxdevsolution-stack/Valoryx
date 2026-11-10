@@ -18,6 +18,7 @@ requests leave the test process.
 """
 
 import json
+import uuid
 import os
 
 import pytest
@@ -339,3 +340,64 @@ def test_authorize_without_redirect_still_returns_json(http, monkeypatch):
     resp = http.get("/api/oauth/google/authorize", headers={"Origin": _TEST_ORIGIN})
     assert resp.status_code == 200
     assert resp.get_json()["auth_url"].startswith("https://accounts.google.com/")
+
+
+# ── New users: fetched from the cloud on their first desktop Google login ────
+
+def _fake_cloud(tmp_path, client_id, *, email, google_id, active=True, perms=('gst_billing',)):
+    """A throwaway SQLite file standing in for Supabase (DB_URL)."""
+    import sqlite3
+    path = tmp_path / "cloud.db"
+    c = sqlite3.connect(path)
+    c.executescript("""
+        CREATE TABLE users (user_id TEXT, client_id TEXT, email TEXT, password_hash TEXT, role TEXT,
+            full_name TEXT, is_active BOOLEAN, is_super_admin BOOLEAN, deleted_at TEXT, google_id TEXT,
+            invite_accepted BOOLEAN, totp_secret TEXT);
+        CREATE TABLE permissions (permission_id TEXT, permission_name TEXT);
+        CREATE TABLE user_permissions (id TEXT, user_id TEXT, permission_id TEXT);
+    """)
+    uid = str(uuid.uuid4())
+    c.execute("INSERT INTO users VALUES (?,?,?,?,?,?,?,?,?,?,?,?)",
+              (uid, client_id, email, "$2b$12$cloudhashcloudhashcloudhashcloudhashcloudhashclo", "staff",
+               "New Staff", 1 if active else 0, 0, None, google_id, 1, "CLOUD-TOTP-SECRET"))
+    for name in perms:
+        pid = str(uuid.uuid4())
+        c.execute("INSERT INTO permissions VALUES (?,?)", (pid, name))
+        c.execute("INSERT INTO user_permissions VALUES (?,?,?)", (str(uuid.uuid4()), uid, pid))
+    c.commit()
+    c.close()
+    return uid, f"sqlite:///{path}"
+
+
+def test_desktop_login_fetches_new_shop_user_from_cloud(http, monkeypatch, tmp_path, sample_client):
+    from models.user_model import User
+    from models.permission_model import get_user_permissions
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
+    email = f"newstaff-{uuid.uuid4().hex[:6]}@valoryx-test.invalid"
+    uid, url = _fake_cloud(tmp_path, str(sample_client.client_id), email=email, google_id="g-new-1")
+    monkeypatch.setenv("DB_URL", url)
+
+    resp = _desktop_login(http, _assertion(email, "g-new-1"))
+    assert resp.status_code == 200, resp.get_json()
+    assert resp.get_json().get("token")
+
+    local = User.query.filter_by(email=email).first()
+    assert local is not None and str(local.user_id) == uid and local.role == "staff"
+    assert local.totp_secret is None              # secrets are never copied down
+    assert "gst_billing" in get_user_permissions(uid)
+
+
+def test_desktop_login_refuses_user_from_another_shop(http, monkeypatch, tmp_path, sample_client):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
+    email = f"other-{uuid.uuid4().hex[:6]}@valoryx-test.invalid"
+    _, url = _fake_cloud(tmp_path, str(uuid.uuid4()), email=email, google_id="g-other")  # shop not on device
+    monkeypatch.setenv("DB_URL", url)
+    assert _desktop_login(http, _assertion(email, "g-other")).status_code == 403
+
+
+def test_desktop_login_refuses_inactive_cloud_user(http, monkeypatch, tmp_path, sample_client):
+    monkeypatch.setattr(oauth_mod.Config, "DESKTOP_OAUTH_SECRET", "test-desktop-secret")
+    email = f"gone-{uuid.uuid4().hex[:6]}@valoryx-test.invalid"
+    _, url = _fake_cloud(tmp_path, str(sample_client.client_id), email=email, google_id="g-gone", active=False)
+    monkeypatch.setenv("DB_URL", url)
+    assert _desktop_login(http, _assertion(email, "g-gone")).status_code == 403

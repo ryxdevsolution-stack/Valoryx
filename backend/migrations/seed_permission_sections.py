@@ -13,7 +13,7 @@ import uuid
 
 SECTIONS = [
     ('Create Bill',           ['gst_billing', 'non_gst_billing', 'apply_discount', 'add_payment',
-                               'select_customer', 'add_products', 'set_tax_rate']),
+                               'select_customer', 'add_products', 'set_tax_rate', 'use_membership']),
     ('Manage Bills',          ['view_all_bills', 'view_own_bills', 'edit_bill_details', 'delete_bills',
                                'print_bills', 'download_pdf', 'send_email', 'mark_paid',
                                'mark_cancelled', 'duplicate_bill', 'search_bills', 'show_no_exchange']),

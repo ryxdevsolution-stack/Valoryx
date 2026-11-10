@@ -41,6 +41,8 @@ export default function VerifyEmailSuccessPage() {
           phone: user.phone,
           department: user.department,
           totp_enabled: user.totp_enabled ?? false,
+          pin_eligible: user.pin_eligible ?? false,
+          has_pin: user.has_pin ?? false,
           must_change_password: user.must_change_password ?? false,
         }
 
@@ -62,6 +64,8 @@ export default function VerifyEmailSuccessPage() {
           currency_symbol: data.currency_symbol,
           locale: data.locale,
           tax_config: data.tax_config,
+          bill_show_gst: data.bill_show_gst,
+          bill_show_membership: data.bill_show_membership,
           setup_completed: data.setup_completed,
         }
 

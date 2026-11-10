@@ -667,13 +667,21 @@ def desktop_login():
     email = (payload.get('email') or '').lower().strip()
     google_id = (payload.get('google_id') or '').strip()
 
-    # The user must already exist on this device (synced from the cloud).
     user = User.query.filter_by(email=email, is_active=True).first()
+    if not user:
+        # Not on this device yet (sync doesn't run automatically on desktop): fetch this
+        # one user from the cloud if they belong to a shop already on this device.
+        try:
+            from services.desktop_user_provision import provision_cloud_user
+            user = provision_cloud_user(email, google_id)
+        except Exception as exc:  # offline / cloud unreachable — fall through to the 403
+            db.session.rollback()
+            logger.warning('Desktop provision failed for %s: %s', email, exc)
     if not user:
         return jsonify({
             'success': False,
-            'error': 'This Google account is not set up on this device yet. '
-                     'Sign in once online to sync, or contact your administrator.',
+            'error': 'This Google account is not part of this shop on this device. '
+                     'Ask the owner to add you, then try again while online.',
         }), 403
 
     # If the local record is already linked to a Google account, it must match.

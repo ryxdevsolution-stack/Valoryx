@@ -328,6 +328,11 @@ class SyncService:
         statements.append(
             "ALTER TABLE client_entry ADD COLUMN IF NOT EXISTS weekly_off_saturdays VARCHAR(20) NULL")
 
+        # v50: Create Bill visibility switches (shown by default).
+        for col in ('bill_show_gst', 'bill_show_membership'):
+            statements.append(
+                f"ALTER TABLE client_entry ADD COLUMN IF NOT EXISTS {col} BOOLEAN DEFAULT TRUE")
+
         statements.append("""
             CREATE TABLE IF NOT EXISTS work_groups (
                 group_id               VARCHAR(36) PRIMARY KEY,

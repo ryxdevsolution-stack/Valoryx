@@ -16,6 +16,7 @@ from models.session_model import UserSession
 from utils.auth_middleware import authenticate
 from utils.audit_logger import log_action
 from utils.cache_helper import get_cache_manager
+from utils.login_pin import pin_eligible, validate_new_pin, apply_pin, clear_pin
 
 profile_bp = Blueprint('profile', __name__)
 
@@ -64,6 +65,8 @@ def get_profile():
             'report_email_frequency': user.report_email_frequency,
             'must_change_password': user.must_change_password,
             'totp_enabled': user.totp_enabled,
+            'pin_eligible': pin_eligible(user),
+            'has_pin': bool(user.pin_hash),
             'permissions': permissions,
             'client': {
                 'client_id': client.client_id,
@@ -145,6 +148,79 @@ def update_profile():
     except Exception as e:
         db.session.rollback()
         return jsonify({'error': str(e)}), 500
+
+
+# Setting a PIN without re-typing the password is only allowed right after login,
+# when the user has just proven it (the post-login "set your PIN" prompt).
+FRESH_LOGIN_MINUTES = 10
+
+
+def _fresh_login(user_id) -> bool:
+    session_id = g.user.get('session_id')
+    if not session_id:
+        return False
+    s = UserSession.query.filter_by(session_id=session_id, user_id=str(user_id), is_active=True).first()
+    return bool(s and s.created_at and (datetime.utcnow() - s.created_at).total_seconds() < FRESH_LOGIN_MINUTES * 60)
+
+
+@profile_bp.route('/pin', methods=['PUT'])
+@authenticate
+def set_own_pin():
+    """Staff/manager sets or changes their own 4-digit login PIN.
+
+    Body: {pin, current_password?}. The current password is required — except for a
+    first PIN set within FRESH_LOGIN_MINUTES of a password login (the login prompt).
+    """
+    try:
+        user = User.query.filter_by(user_id=g.user['user_id']).first()
+        if not user:
+            return jsonify({'error': 'User not found'}), 404
+        if not pin_eligible(user):
+            return jsonify({'error': 'PIN login is only for staff and managers — owners use their password'}), 403
+
+        data = request.get_json() or {}
+        pin = str(data.get('pin') or '').strip()
+        error = validate_new_pin(pin)
+        if error:
+            return jsonify({'error': error}), 400
+
+        current_password = data.get('current_password') or ''
+        if current_password:
+            if not bcrypt.checkpw(current_password.encode('utf-8'), user.password_hash.encode('utf-8')):
+                return jsonify({'error': 'Current password is incorrect'}), 401
+        elif user.pin_hash or not _fresh_login(user.user_id):
+            return jsonify({'error': 'Enter your current password to change your PIN',
+                            'code': 'PASSWORD_REQUIRED'}), 401
+
+        apply_pin(user, pin, user.user_id)
+        log_action('UPDATE', 'users', user.user_id, {'has_pin': bool(user.pin_hash)}, {'pin_changed_by': 'self'})
+        db.session.commit()
+        get_cache_manager().delete(f"profile:{user.user_id}")
+        return jsonify({'success': True, 'message': 'PIN saved'}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to save PIN', 'message': str(e)}), 500
+
+
+@profile_bp.route('/pin', methods=['DELETE'])
+@authenticate
+def remove_own_pin():
+    """Remove your own PIN (requires current password). Body: {current_password}."""
+    try:
+        user = User.query.filter_by(user_id=g.user['user_id']).first()
+        if not user or not pin_eligible(user):
+            return jsonify({'error': 'Not allowed'}), 403
+        current_password = (request.get_json(silent=True) or {}).get('current_password') or ''
+        if not current_password or not bcrypt.checkpw(current_password.encode('utf-8'),
+                                                      user.password_hash.encode('utf-8')):
+            return jsonify({'error': 'Current password is incorrect'}), 401
+        clear_pin(user, user.user_id)
+        db.session.commit()
+        get_cache_manager().delete(f"profile:{user.user_id}")
+        return jsonify({'success': True, 'message': 'PIN removed'}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({'error': 'Failed to remove PIN', 'message': str(e)}), 500
 
 
 @profile_bp.route('/password', methods=['POST'])

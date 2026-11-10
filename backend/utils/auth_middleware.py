@@ -126,6 +126,7 @@ def _authenticate_inner(f, allow_expired, *args, **kwargs):
             'is_super_admin': decoded.get('is_super_admin', False),
             'permissions': decoded.get('permissions', []),
             'is_readonly': decoded.get('is_readonly', False),
+            'session_id': decoded.get('session_id'),
             'is_impersonation': decoded.get('is_impersonation', False),
             'impersonating_admin_id': decoded.get('impersonating_admin_id'),
         }

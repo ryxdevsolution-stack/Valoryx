@@ -34,6 +34,9 @@ interface FormState {
   label_origin_country: string
   label_care_phone: string
   label_care_email: string
+  // Create Bill visibility switches
+  bill_show_gst: boolean
+  bill_show_membership: boolean
 }
 
 const EMPTY_FORM: FormState = {
@@ -50,6 +53,8 @@ const EMPTY_FORM: FormState = {
   label_origin_country: 'India',
   label_care_phone: '',
   label_care_email: '',
+  bill_show_gst: true,
+  bill_show_membership: true,
 }
 
 function settingsToForm(s: ShopSettings): FormState {
@@ -67,6 +72,8 @@ function settingsToForm(s: ShopSettings): FormState {
     label_origin_country: s.label_origin_country || 'India',
     label_care_phone: s.label_care_phone || '',
     label_care_email: s.label_care_email || '',
+    bill_show_gst: s.bill_show_gst !== false,
+    bill_show_membership: s.bill_show_membership !== false,
   }
 }
 
@@ -200,7 +207,7 @@ function ReceiptPreview({ form }: { form: FormState }) {
 // ─── Main Page ──────────────────────────────────────────────────────
 
 export default function ShopSettingsPage() {
-  const { user } = useClient()
+  const { user, refreshClientData } = useClient()
   const { symbol: cur, taxLabel } = useCurrency()
 
   const { isMobile, supportsWebBluetooth } = useMobileDetect()
@@ -289,8 +296,12 @@ export default function ShopSettingsPage() {
         label_origin_country: form.label_origin_country.trim() || 'India',
         label_care_phone: form.label_care_phone.trim(),
         label_care_email: form.label_care_email.trim(),
+        bill_show_gst: form.bill_show_gst,
+        bill_show_membership: form.bill_show_membership,
       })
       setForm(settingsToForm(updated))
+      // Create Bill reads the switches from the client context; refresh it so they apply now.
+      refreshClientData().catch(() => {})
       setMessage({ type: 'success', text: 'Shop settings saved successfully' })
     } catch (err: any) {
       setMessage({ type: 'error', text: err.response?.data?.error || 'Failed to save shop settings' })
@@ -623,6 +634,46 @@ export default function ShopSettingsPage() {
                         : 'Set to 0 to disable loyalty points'}
                     </p>
                   </div>
+                </div>
+              </div>
+
+              {/* Create Bill field visibility (shop-wide) */}
+              <div className="mt-6 pt-6 border-t border-gray-200 dark:border-gray-700">
+                <h3 className="text-sm font-bold text-gray-900 dark:text-white mb-1">Create Bill Fields</h3>
+                <p className="text-xs text-gray-500 dark:text-gray-400 mb-2">Turn off fields your shop does not use. Applies to everyone in this shop.</p>
+                <div className="divide-y divide-gray-100 dark:divide-gray-700">
+                  <label htmlFor="bill_show_gst" className="flex items-start justify-between gap-4 py-2 cursor-pointer">
+                    <span>
+                      <span className="block text-sm font-medium text-gray-700 dark:text-gray-300">GST on Create Bill</span>
+                      <span className="block text-xs text-gray-500 dark:text-gray-400">When off, Create Bill hides everything GST: Customer GSTIN, GST %, GST columns and GST total. Bills are saved as non-GST.</span>
+                    </span>
+                    <input
+                      id="bill_show_gst"
+                      type="checkbox"
+                      role="switch"
+                      aria-checked={form.bill_show_gst}
+                      checked={form.bill_show_gst}
+                      onChange={(e) => setForm((prev) => ({ ...prev, bill_show_gst: e.target.checked }))}
+                      disabled={!canEdit}
+                      className="mt-1 h-5 w-5 shrink-0 rounded accent-gray-900 dark:accent-white disabled:cursor-not-allowed"
+                    />
+                  </label>
+                  <label htmlFor="bill_show_membership" className="flex items-start justify-between gap-4 py-2 cursor-pointer">
+                    <span>
+                      <span className="block text-sm font-medium text-gray-700 dark:text-gray-300">Show Membership Card</span>
+                      <span className="block text-xs text-gray-500 dark:text-gray-400">Membership card lookup and point redemption on Create Bill. Also requires the membership permission on the role.</span>
+                    </span>
+                    <input
+                      id="bill_show_membership"
+                      type="checkbox"
+                      role="switch"
+                      aria-checked={form.bill_show_membership}
+                      checked={form.bill_show_membership}
+                      onChange={(e) => setForm((prev) => ({ ...prev, bill_show_membership: e.target.checked }))}
+                      disabled={!canEdit}
+                      className="mt-1 h-5 w-5 shrink-0 rounded accent-gray-900 dark:accent-white disabled:cursor-not-allowed"
+                    />
+                  </label>
                 </div>
               </div>
 

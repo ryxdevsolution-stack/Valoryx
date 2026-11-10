@@ -10,7 +10,7 @@ from utils.dt import is_past
 from flask import Blueprint, request, jsonify, g
 from extensions import db
 from models.user_model import User
-from models.client_model import ClientEntry, DEFAULT_GST_CONFIG
+from models.client_model import ClientEntry, DEFAULT_GST_CONFIG, bill_field_flags
 from models.branch_model import Branch
 from models.permission_model import get_user_permissions, Permission, UserPermission
 from models.session_model import UserSession
@@ -30,6 +30,7 @@ from utils.email_service import (
     send_verification_email,
 )
 from config import Config
+from utils.login_pin import PIN_RE, PIN_MAX_FAILURES, PIN_LOCK_SECONDS, PIN_DISABLE_AFTER, pin_eligible
 
 auth_bp = Blueprint('auth', __name__)
 
@@ -73,6 +74,19 @@ LOGIN_GENERIC_ERROR = 'Invalid email or password'
 _DUMMY_PASSWORD_HASH = _bcrypt_mod.hashpw(
     b'valoryx-timing-equalizer', _bcrypt_mod.gensalt()
 )
+
+
+# ── Quick-login PIN (staff / managers) — rules live in utils/login_pin.py ─────
+
+
+def _is_pin_attempt(secret: str, user, identifier: str) -> bool:
+    """A 4-digit secret from a staff/manager account that has a PIN, logging in by email."""
+    return bool(
+        secret and PIN_RE.match(secret)
+        and user.pin_hash
+        and pin_eligible(user)
+        and (user.email or '').strip().lower() == identifier.strip().lower()
+    )
 
 
 def _login_keys(ip: str, email: str):
@@ -178,10 +192,36 @@ def login():
             _record_login_failure(ip_key, email_key)
             return jsonify({'error': LOGIN_GENERIC_ERROR}), 401
 
-        # Verify password
-        if not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
+        # Verify the password — or, for staff/managers who have one, their 4-digit PIN.
+        if _is_pin_attempt(password, user, identifier):
+            # Lock state is stored on the user row (the app cache is a no-op), so it
+            # holds across gunicorn workers and restarts.
+            now_utc = datetime.utcnow()
+            if (user.pin_failed_attempts or 0) >= PIN_DISABLE_AFTER:
+                return jsonify({'error': 'PIN login is turned off after too many wrong PINs. '
+                                         'Log in with your password, or ask the owner to set a new PIN.',
+                                'code': 'PIN_DISABLED'}), 403
+            if user.pin_locked_until and user.pin_locked_until > now_utc:
+                return jsonify({'error': 'Too many wrong PINs. Try again in 15 minutes, '
+                                         'or ask the owner to reset your PIN.',
+                                'code': 'PIN_LOCKED'}), 429
+            if not bcrypt.checkpw(password.encode('utf-8'), user.pin_hash.encode('utf-8')):
+                # Cumulative until a successful login — expiry of a lock does not reset it.
+                fails = (user.pin_failed_attempts or 0) + 1
+                user.pin_failed_attempts = fails
+                if fails % PIN_MAX_FAILURES == 0:
+                    user.pin_locked_until = now_utc + timedelta(seconds=PIN_LOCK_SECONDS)
+                db.session.commit()
+                _record_login_failure(ip_key, email_key)
+                _logging.warning(f"[AUTH] Wrong PIN for user {user.user_id} ({fails}/{PIN_MAX_FAILURES})")
+                return jsonify({'error': LOGIN_GENERIC_ERROR}), 401
+            user.pin_failed_attempts, user.pin_locked_until = 0, None
+        elif not bcrypt.checkpw(password.encode('utf-8'), user.password_hash.encode('utf-8')):
             _record_login_failure(ip_key, email_key)
             return jsonify({'error': LOGIN_GENERIC_ERROR}), 401
+        elif user.pin_failed_attempts or user.pin_locked_until:
+            # A correct PASSWORD proves the account holder: re-enable PIN login.
+            user.pin_failed_attempts, user.pin_locked_until = 0, None
 
         # Clear the per-account counter on successful auth. The per-IP counter
         # is left to expire naturally — clearing it would let an attacker who
@@ -376,6 +416,9 @@ def login():
             'branch_name': branch.name if branch else None,
             'must_change_password': user.must_change_password,
             'totp_enabled': user.totp_enabled,
+            # Quick-login PIN: the app offers to set one when eligible and none is set.
+            'pin_eligible': pin_eligible(user),
+            'has_pin': bool(user.pin_hash),
         }
 
         # Prepare client data for caching
@@ -388,6 +431,7 @@ def login():
             'email': client.email,
             'gstin': client.gst_number,
             'points_per_100': getattr(client, 'points_per_100', 0) or 0,
+            **bill_field_flags(client),
             'subscription_status': client.subscription_status,
             'trial_end_date': client.trial_end_date.isoformat() if client.trial_end_date else None,
             'trial_days_remaining': client.trial_days_remaining,
@@ -504,6 +548,7 @@ def login():
             'locale': getattr(client, 'locale', None) or 'en-IN',
             'tax_config': getattr(client, 'tax_config', None) or DEFAULT_GST_CONFIG,
             'setup_completed': getattr(client, 'setup_completed_at', None) is not None,
+            **bill_field_flags(client),
         }
         if new_device_token:
             login_response['device_token'] = new_device_token
@@ -519,8 +564,45 @@ def login():
 def session_check():
     """Lightweight authenticated ping for the client heartbeat. Returns 200 while
     the session is valid; auth_middleware returns 401 SESSION_REVOKED once the
-    session has been revoked by a takeover login."""
-    return jsonify({'success': True}), 200
+    session has been revoked by a takeover login.
+
+    Sliding session: once the token is older than JWT_RENEW_AFTER_HOURS, a fresh
+    token (same claims + session, new expiry) is returned so an active user is
+    never logged out. Only a device left unused for JWT_EXPIRATION_HOURS expires.
+    """
+    try:
+        raw = (request.headers.get('Authorization') or '').split(' ', 1)[-1]
+        claims = jwt.decode(raw, Config.JWT_SECRET, algorithms=[Config.JWT_ALGORITHM])
+    except jwt.InvalidTokenError:
+        return jsonify({'success': True}), 200  # @authenticate already accepted it
+
+    lifetime = Config.JWT_EXPIRATION_HOURS * 3600
+    age = lifetime - (int(claims.get('exp', 0)) - int(datetime.utcnow().timestamp()))
+    # Only real login sessions renew (not impersonation / sessionless tokens).
+    if (age < Config.JWT_RENEW_AFTER_HOURS * 3600 or claims.get('is_impersonation')
+            or not claims.get('session_id')):
+        return jsonify({'success': True}), 200
+
+    # @authenticate already rejected inactive users / clients and revoked sessions.
+    # Rebuild privilege claims from CURRENT DB state so a renewed token never carries
+    # a role or permission the owner has since taken away.
+    user = User.query.filter_by(user_id=claims.get('user_id'), is_active=True).first()
+    if not user:
+        return jsonify({'success': True}), 200
+    claims['role'] = user.role
+    claims['is_super_admin'] = bool(user.is_super_admin)
+    claims['permissions'] = get_user_permissions(str(user.user_id))
+    new_exp = datetime.utcnow() + timedelta(hours=Config.JWT_EXPIRATION_HOURS)
+    claims['exp'] = new_exp
+    token = jwt.encode(claims, Config.JWT_SECRET, algorithm=Config.JWT_ALGORITHM)
+    if claims.get('session_id'):
+        try:
+            UserSession.query.filter_by(session_id=claims['session_id'], is_active=True).update(
+                {'expires_at': new_exp})
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+    return jsonify({'success': True, 'token': token}), 200
 
 
 @auth_bp.route('/register', methods=['POST'])

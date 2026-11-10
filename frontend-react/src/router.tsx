@@ -1,5 +1,5 @@
 import React, { Suspense } from 'react'
-import { Routes, Route, Navigate } from 'react-router-dom'
+import { Routes, Route, Navigate, useParams } from 'react-router-dom'
 import AdminLayout from '@/components/AdminLayout'
 import ProtectedRoute from '@/components/ProtectedRoute'
 import LoadingScreen from '@/components/LoadingScreen'
@@ -17,7 +17,11 @@ const DeveloperDocs = React.lazy(() => import('@/pages/developers/DeveloperDocs'
 const Dashboard = React.lazy(() => import('@/pages/Dashboard'))
 const BillingList = React.lazy(() => import('@/pages/billing/BillingList'))
 const CreateBill = React.lazy(() => import('@/pages/billing/CreateBill'))
-const Exchange = React.lazy(() => import('@/pages/billing/Exchange'))
+// Exchange now happens in a Create Bill tab; keep the old URL working (bookmarks, desktop builds).
+function ExchangeRedirect() {
+  const { billId } = useParams()
+  return <Navigate to={`/billing/create?exchange=${encodeURIComponent(billId ?? '')}`} replace />
+}
 const RestoreBills = React.lazy(() => import('@/pages/billing/RestoreBills'))
 const Stock = React.lazy(() => import('@/pages/Stock'))
 const Customers = React.lazy(() => import('@/pages/Customers'))
@@ -199,7 +203,7 @@ export function AppRoutes() {
         <Route path="/dashboard" element={<ProtectedRoute permission="view_dashboard"><Dashboard /></ProtectedRoute>} />
         <Route path="/billing" element={<ProtectedRoute><BillingList /></ProtectedRoute>} />
         <Route path="/billing/create" element={<ProtectedRoute><CreateBill /></ProtectedRoute>} />
-        <Route path="/billing/exchange/:billId" element={<ProtectedRoute><Exchange /></ProtectedRoute>} />
+        <Route path="/billing/exchange/:billId" element={<ProtectedRoute><ExchangeRedirect /></ProtectedRoute>} />
         <Route path="/billing/restore" element={<ProtectedRoute><RestoreBills /></ProtectedRoute>} />
         <Route path="/stock" element={<ProtectedRoute><Stock /></ProtectedRoute>} />
         <Route path="/suppliers" element={<ProtectedRoute><Suppliers /></ProtectedRoute>} />

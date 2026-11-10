@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 48
+CURRENT_SCHEMA_VERSION = 51
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -2801,6 +2801,125 @@ def _m048_bill_payments_uuid_types(db):
         logging.info("[Migration] v48: bill_payments id columns already uuid")
 
 
+USE_MEMBERSHIP_PERMISSION = 'use_membership'
+USE_MEMBERSHIP_DESCRIPTION = 'Apply membership cards and redeem points on bills'
+_BILLING_PERMISSIONS = ('gst_billing', 'non_gst_billing')
+
+
+def _m049_use_membership_permission(db):
+    """v49: Add the `use_membership` permission and backfill it for every billing user.
+
+    Before v49 the Create Bill membership panel had no permission gate — anyone who
+    could bill could attach a card and redeem points. Gating it behind a new
+    permission would silently strip that from every existing user, so this grants
+    it once to each user who currently holds gst_billing or non_gst_billing.
+
+    One-time on purpose (not a startup hook): an owner who later revokes it from a
+    role must not have it re-granted on the next restart.
+
+    Must create the permission row itself — migrations run BEFORE app.py's
+    default-permission seed. Idempotent: check-before-insert throughout.
+    New user_permissions rows carry synced_at = NULL so sync uploads them.
+    """
+    import uuid as _uuid
+
+    tables = sa_inspect(db.engine).get_table_names()
+    if not {'permissions', 'user_permissions'}.issubset(tables):
+        logging.info("[Migration] v49: permission tables missing — skipping (fresh install seeds at startup)")
+        return
+
+    with db.engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT permission_id FROM permissions WHERE permission_name = :n"),
+            {'n': USE_MEMBERSHIP_PERMISSION},
+        ).fetchone()
+        if row:
+            perm_id = str(row[0])
+        else:
+            # Place it in the Create Bill section, after the existing billing perms.
+            section = conn.execute(
+                text("SELECT section_id FROM permission_sections WHERE section_name = 'Create Bill'")
+            ).fetchone() if 'permission_sections' in tables else None
+            section_id = str(section[0]) if section else None
+            next_order = 0
+            if section_id:
+                max_order = conn.execute(
+                    text("SELECT MAX(display_order) FROM permissions WHERE section_id = :sid"),
+                    {'sid': section_id},
+                ).scalar()
+                next_order = (max_order or 0) + 1
+            perm_id = str(_uuid.uuid4())
+            conn.execute(
+                text("INSERT INTO permissions "
+                     "(permission_id, permission_name, description, section_id, display_order) "
+                     "VALUES (:id, :name, :desc, :sid, :order)"),
+                {'id': perm_id, 'name': USE_MEMBERSHIP_PERMISSION,
+                 'desc': USE_MEMBERSHIP_DESCRIPTION, 'sid': section_id, 'order': next_order},
+            )
+
+        # Every user who can bill today, minus those who already have the grant.
+        user_ids = [str(r[0]) for r in conn.execute(
+            text("""
+                SELECT DISTINCT up.user_id
+                FROM user_permissions up
+                JOIN permissions p ON p.permission_id = up.permission_id
+                WHERE p.permission_name IN (:p0, :p1)
+                  AND up.user_id NOT IN (
+                      SELECT user_id FROM user_permissions WHERE permission_id = :pid
+                  )
+            """),
+            {'p0': _BILLING_PERMISSIONS[0], 'p1': _BILLING_PERMISSIONS[1], 'pid': perm_id},
+        ).fetchall()]
+
+        for uid in user_ids:
+            conn.execute(
+                text("INSERT INTO user_permissions "
+                     "(id, user_id, permission_id, granted_at, updated_at) "
+                     "VALUES (:id, :uid, :pid, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)"),
+                {'id': str(_uuid.uuid4()), 'uid': uid, 'pid': perm_id},
+            )
+        conn.commit()
+
+    logging.info(f"[Migration] v49: {USE_MEMBERSHIP_PERMISSION} granted to {len(user_ids)} billing user(s)")
+
+
+def _m050_bill_field_visibility(db):
+    """v50: Shop-wide switches to hide Customer GSTIN / Membership Card on Create Bill.
+
+    Default TRUE (shown) so upgrading changes nothing until the owner turns one off.
+    """
+    try:
+        cols = [c['name'] for c in sa_inspect(db.engine).get_columns('client_entry')]
+    except Exception:
+        logging.info("[Migration] v50: client_entry missing — skipping")
+        return
+    for col in ('bill_show_gst', 'bill_show_membership'):
+        if col not in cols:
+            norm_def = _normalize_col_def('BOOLEAN DEFAULT 1', db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE client_entry ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] client_entry.{col} added")
+    db.session.commit()
+    logging.info('[Migration] v50: Create Bill visibility switches ready')
+
+
+def _m051_user_login_pin(db):
+    """v51: users.pin_hash / pin_set_at — 4-digit quick-login PIN for staff and managers."""
+    try:
+        cols = [c['name'] for c in sa_inspect(db.engine).get_columns('users')]
+    except Exception:
+        logging.info("[Migration] v51: users table missing — skipping")
+        return
+    for col, definition in (('pin_hash', 'VARCHAR(100) NULL'), ('pin_set_at', 'DATETIME NULL'),
+                            ('pin_failed_attempts', 'INTEGER NOT NULL DEFAULT 0'),
+                            ('pin_locked_until', 'DATETIME NULL')):
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE users ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] users.{col} added")
+    db.session.commit()
+    logging.info('[Migration] v51: login PIN columns ready')
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -2851,6 +2970,9 @@ MIGRATIONS = [
     (46, _m046_bill_payments_missing_columns),
     (47, _m047_replace_legacy_bill_payments),
     (48, _m048_bill_payments_uuid_types),
+    (49, _m049_use_membership_permission),
+    (50, _m050_bill_field_visibility),
+    (51, _m051_user_login_pin),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────

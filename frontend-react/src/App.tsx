@@ -89,7 +89,14 @@ export default function App() {
     const ping = () => {
       if (document.visibilityState !== 'visible') return
       if (!localStorage.getItem('token')) return
-      api.get('/auth/session-check').catch(() => {})
+      // Sliding session: the server returns a fresh token once the current one is a day old,
+      // so a user who keeps using the app is never logged out.
+      api.get('/auth/session-check')
+        .then((res) => {
+          const fresh = res.data?.token
+          if (typeof fresh === 'string' && fresh) localStorage.setItem('token', fresh)
+        })
+        .catch(() => {})
     }
     const id = window.setInterval(ping, SESSION_HEARTBEAT_MS)
     return () => window.clearInterval(id)

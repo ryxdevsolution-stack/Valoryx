@@ -58,6 +58,8 @@ export default function LoginPage() {
       is_super_admin: user.is_super_admin,
       permissions: user.permissions,
       totp_enabled: user.totp_enabled ?? false,
+      pin_eligible: user.pin_eligible ?? false,
+      has_pin: user.has_pin ?? false,
       must_change_password: user.must_change_password ?? false,
     }
 
@@ -75,6 +77,8 @@ export default function LoginPage() {
       currency_symbol: data.currency_symbol,
       locale: data.locale,
       tax_config: data.tax_config,
+      bill_show_gst: data.bill_show_gst,
+      bill_show_membership: data.bill_show_membership,
       setup_completed: data.setup_completed,
     }
 
@@ -516,7 +520,7 @@ export default function LoginPage() {
 
                 <div className="relative">
                   <label htmlFor="password" className="block text-sm font-semibold text-slate-300 mb-2">
-                    Password
+                    Password or PIN
                   </label>
                   <div className="relative">
                     <input
@@ -525,7 +529,7 @@ export default function LoginPage() {
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       className={`${INPUT_CLASS} pr-12`}
-                      placeholder="Enter your password"
+                      placeholder="Password, or your 4-digit PIN"
                     />
                     <button
                       type="button"

@@ -21,6 +21,9 @@ interface User {
   must_change_password?: boolean
   totp_enabled?: boolean
   avatar_url?: string | null
+  /** Staff/manager may use a 4-digit login PIN; has_pin = one is set. */
+  pin_eligible?: boolean
+  has_pin?: boolean
 }
 
 export interface TaxComponent {
@@ -57,6 +60,9 @@ interface Client {
   locale?: string
   tax_config?: TaxConfig
   setup_completed?: boolean
+  // Create Bill shop-wide visibility switches (undefined → shown)
+  bill_show_gst?: boolean
+  bill_show_membership?: boolean
 }
 
 interface ClientContextType {
@@ -129,6 +135,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
                 locale: fresh.locale ?? clientData.locale,
                 tax_config: fresh.tax_config ?? clientData.tax_config,
                 setup_completed: fresh.setup_completed ?? clientData.setup_completed,
+                bill_show_gst: fresh.bill_show_gst ?? clientData.bill_show_gst,
+                bill_show_membership: fresh.bill_show_membership ?? clientData.bill_show_membership,
               }
               setClient(updated)
               localStorage.setItem('client', JSON.stringify(updated))
@@ -155,6 +163,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
                 telegram_chat_id: profile.telegram_chat_id,
                 report_email_frequency: profile.report_email_frequency ?? 'off',
                 totp_enabled: profile.totp_enabled ?? false,
+                pin_eligible: profile.pin_eligible ?? false,
+                has_pin: profile.has_pin ?? false,
               }
               setUser(updatedUser)
               localStorage.setItem('user', JSON.stringify(updatedUser))
@@ -198,6 +208,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         report_email_frequency: user.report_email_frequency ?? 'off',
         must_change_password: user.must_change_password ?? false,
         totp_enabled: user.totp_enabled ?? false,
+        pin_eligible: user.pin_eligible ?? false,
+        has_pin: user.has_pin ?? false,
       }
 
       const clientData: Client = {
@@ -219,6 +231,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
         locale: response.data.locale,
         tax_config: response.data.tax_config,
         setup_completed: response.data.setup_completed,
+        bill_show_gst: response.data.bill_show_gst,
+        bill_show_membership: response.data.bill_show_membership,
       }
 
       // Store in state
@@ -341,6 +355,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           locale: freshClient.locale,
           tax_config: freshClient.tax_config,
           setup_completed: freshClient.setup_completed,
+          bill_show_gst: freshClient.bill_show_gst,
+          bill_show_membership: freshClient.bill_show_membership,
         }
         setClient(updatedClient)
         localStorage.setItem('client', JSON.stringify(updatedClient))
@@ -387,6 +403,8 @@ export function ClientProvider({ children }: { children: ReactNode }) {
           last_login: profile.last_login ?? null,
           must_change_password: profile.must_change_password ?? false,
           totp_enabled: profile.totp_enabled ?? false,
+          pin_eligible: profile.pin_eligible ?? false,
+          has_pin: profile.has_pin ?? false,
         }
         setUser(updatedUser)
         localStorage.setItem('user', JSON.stringify(updatedUser))

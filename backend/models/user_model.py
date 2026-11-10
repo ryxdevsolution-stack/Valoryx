@@ -61,6 +61,14 @@ class User(db.Model):
     # Backup codes: JSON list of SHA-256 hashed codes. Shown once on setup, stored hashed.
     totp_backup_codes = db.Column(db.Text, nullable=True)
 
+    # Quick-login PIN (v51) — staff/managers only, set by the owner. bcrypt hash, never plain.
+    # Local to this database (not synced), like totp_secret.
+    pin_hash = db.Column(db.String(100), nullable=True)
+    pin_set_at = db.Column(db.DateTime, nullable=True)
+    # Wrong-PIN lock lives in the DB (the app cache is a no-op stub), so it holds across workers.
+    pin_failed_attempts = db.Column(db.Integer, nullable=False, default=0, server_default='0')
+    pin_locked_until = db.Column(db.DateTime, nullable=True)
+
     # OAuth / SSO
     google_id = db.Column(db.String(128), nullable=True, unique=True, index=True)
     avatar_url = db.Column(db.String(512), nullable=True)

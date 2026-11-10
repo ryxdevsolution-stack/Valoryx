@@ -16,6 +16,9 @@ import {
   MessageCircle,
 } from 'lucide-react'
 
+import MyPinCard from './MyPinCard'
+import { toast } from '@/utils/toast'
+
 interface AccountTabProps {
   profile: {
     user_id: string
@@ -450,6 +453,9 @@ export default function AccountTab({
             </div>
           </div>
         )}
+
+        {/* Own login PIN — shown only to staff / managers */}
+        <MyPinCard onMessage={(m) => (m.type === 'success' ? toast.success(m.text) : toast.error(m.text))} />
       </div>
 
       {/* Telegram Notifications — hidden in Electron */}

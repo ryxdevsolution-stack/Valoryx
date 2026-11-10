@@ -17,6 +17,14 @@ DEFAULT_GST_CONFIG = {
     ],
 }
 
+def bill_field_flags(client):
+    """Create Bill visibility switches as plain bools (NULL / missing column → shown)."""
+    return {
+        'bill_show_gst': getattr(client, 'bill_show_gst', None) is not False,
+        'bill_show_membership': getattr(client, 'bill_show_membership', None) is not False,
+    }
+
+
 class ClientEntry(db.Model):
     """Master client registration table"""
     __tablename__ = 'client_entry'
@@ -47,6 +55,10 @@ class ClientEntry(db.Model):
     upi_id = db.Column(db.String(100), nullable=True)      # e.g. shop@upi
     receipt_footer = db.Column(db.Text, nullable=True)      # custom footer text on receipts
     points_per_100 = db.Column(db.Integer, nullable=True, default=0)  # loyalty points earned per ₹100 spent
+    # Create Bill field visibility (v50) — shop-wide switches, ANDed with the role permissions.
+    # NULL is treated as shown (see bill_field_flags) so pre-v50 rows behave as before.
+    bill_show_gst = db.Column(db.Boolean, nullable=True, default=True)
+    bill_show_membership = db.Column(db.Boolean, nullable=True, default=True)
 
     # Regional customization (country / currency / tax) — collected in first-login setup wizard
     country = db.Column(db.String(2), nullable=True, default='IN')          # ISO-3166 alpha-2, e.g. 'IN', 'AE', 'US'
@@ -163,6 +175,7 @@ class ClientEntry(db.Model):
             'upi_id': self.upi_id,
             'receipt_footer': self.receipt_footer,
             'points_per_100': self.points_per_100 or 0,
+            **bill_field_flags(self),
             'country': self.country or 'IN',
             'currency_code': self.currency_code or 'INR',
             'currency_symbol': self.currency_symbol or '₹',

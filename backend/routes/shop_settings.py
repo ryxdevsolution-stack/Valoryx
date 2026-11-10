@@ -1,7 +1,7 @@
 import logging
 from flask import Blueprint, request, jsonify, g
 from extensions import db
-from models.client_model import ClientEntry
+from models.client_model import ClientEntry, bill_field_flags
 from utils.auth_middleware import authenticate
 from utils.permission_middleware import require_permission
 from utils.audit_logger import log_action
@@ -38,6 +38,10 @@ _SETTINGS_FIELDS = {
     'label_care_email': 'label_care_email',
 }
 
+# Boolean switches (v50) — handled separately: the string sanitising below would
+# turn False into None. Missing/NULL reads as True (shown).
+_BOOL_FIELDS = ('bill_show_gst', 'bill_show_membership')
+
 # Fields that are read-only (returned in GET but cannot be set via PUT)
 _READ_ONLY_FIELDS = {'logo_url'}
 
@@ -67,6 +71,7 @@ def get_shop_settings():
         data = {}
         for api_field, col_attr in _SETTINGS_FIELDS.items():
             data[api_field] = getattr(client, col_attr, None) or ''
+        data.update(bill_field_flags(client))
 
         response = {'success': True, 'data': data}
         cache.set(cache_key, response, _SHOP_SETTINGS_TTL)
@@ -113,6 +118,13 @@ def update_shop_settings():
                     value = value.strip()
                 setattr(client, col_attr, value or None)
                 updated_fields.append(api_field)
+        for field in _BOOL_FIELDS:
+            if field in body:
+                if not isinstance(body[field], bool):
+                    return jsonify({'success': False, 'error': f'{field} must be true or false'}), 400
+                old_data[field] = getattr(client, field, None) is not False
+                setattr(client, field, body[field])
+                updated_fields.append(field)
 
         if not updated_fields:
             return jsonify({'success': False, 'error': 'No valid fields to update'}), 400
@@ -124,6 +136,7 @@ def update_shop_settings():
         new_data = {}
         for api_field, col_attr in _SETTINGS_FIELDS.items():
             new_data[api_field] = getattr(client, col_attr, None) or ''
+        new_data.update(bill_field_flags(client))
 
         log_action('UPDATE', 'shop_settings', client_id, old_data, new_data)
 

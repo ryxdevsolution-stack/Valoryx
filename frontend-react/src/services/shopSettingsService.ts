@@ -18,6 +18,9 @@ export interface ShopSettings {
   label_origin_country?: string
   label_care_phone?: string
   label_care_email?: string
+  // Create Bill visibility switches (shop-wide, default shown)
+  bill_show_gst?: boolean
+  bill_show_membership?: boolean
 }
 
 export interface ShopSettingsResponse {
@@ -39,6 +42,8 @@ export interface ShopSettingsUpdatePayload {
   label_origin_country?: string
   label_care_phone?: string
   label_care_email?: string
+  bill_show_gst?: boolean
+  bill_show_membership?: boolean
 }
 
 export interface ShopSettingsUpdateResponse {

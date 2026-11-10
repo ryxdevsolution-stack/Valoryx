@@ -4,6 +4,7 @@ import BottomNav from './BottomNav'
 import ProtectedRoute from './ProtectedRoute'
 import TrialBanner from './TrialBanner'
 import SubscriptionWarningBanner from './SubscriptionWarningBanner'
+import SetPinPrompt from './SetPinPrompt'
 
 export default function DashboardLayout({ children }: { children: ReactNode }) {
   return (
@@ -13,6 +14,8 @@ export default function DashboardLayout({ children }: { children: ReactNode }) {
         <SubscriptionWarningBanner />
         <Sidebar />
         <BottomNav />
+        {/* Staff / managers without a PIN are offered one after logging in */}
+        <SetPinPrompt />
         {/* Mobile: pb-16 clears bottom nav. Desktop: pl-20 clears left pill sidebar */}
         <div className="pb-16 md:pb-0 md:pl-20 flex flex-col flex-1 transition-all duration-300">
           <main className="flex-1 min-h-full overflow-y-auto">
