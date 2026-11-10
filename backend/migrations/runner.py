@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 51
+CURRENT_SCHEMA_VERSION = 52
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -2920,6 +2920,37 @@ def _m051_user_login_pin(db):
     logging.info('[Migration] v51: login PIN columns ready')
 
 
+def _m052_heal_v50_v51_columns(db):
+    """v52: Re-ensure every column added by v50 and v51.
+
+    Early drafts of v50 (column then named bill_show_customer_gstin) and v51 (only
+    pin_hash / pin_set_at) were applied to the live database during development and
+    recorded as done, so the final versions never ran there — and every User query
+    failed on the missing pin_failed_attempts. Idempotent: adds only what is missing.
+    """
+    inspector = sa_inspect(db.engine)
+    wanted = {
+        'client_entry': [('bill_show_gst', 'BOOLEAN DEFAULT 1'),
+                         ('bill_show_membership', 'BOOLEAN DEFAULT 1')],
+        'users': [('pin_hash', 'VARCHAR(100) NULL'),
+                  ('pin_set_at', 'DATETIME NULL'),
+                  ('pin_failed_attempts', 'INTEGER NOT NULL DEFAULT 0'),
+                  ('pin_locked_until', 'DATETIME NULL')],
+    }
+    for table, cols in wanted.items():
+        try:
+            existing = {c['name'] for c in inspector.get_columns(table)}
+        except Exception:
+            continue
+        for col, definition in cols:
+            if col not in existing:
+                norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+                db.session.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {norm_def}"))
+                logging.info(f"[Migration] v52: {table}.{col} added")
+    db.session.commit()
+    logging.info('[Migration] v52: v50/v51 columns verified')
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -2973,6 +3004,7 @@ MIGRATIONS = [
     (49, _m049_use_membership_permission),
     (50, _m050_bill_field_visibility),
     (51, _m051_user_login_pin),
+    (52, _m052_heal_v50_v51_columns),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────
