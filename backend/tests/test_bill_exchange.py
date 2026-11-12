@@ -172,3 +172,15 @@ def test_discount_changed_on_the_tab_is_applied(http, hdr, sample_client):
     assert data['new_total'] == 90 and data['refunded'] == 10
     neg = _exchange(http, hdr, bill_id, [_line(a, 1)], discount_percentage=10, negotiable_amount=25).get_json()
     assert neg['new_total'] == 75  # negotiated amount wins over %, like create
+
+
+def test_exchange_ignores_customer_and_payment_type_fields(http, hdr, sample_client):
+    """Exchange = items and money only; details belong to Edit (PATCH /details)."""
+    a = _product(sample_client.client_id, 'Apple', 10)
+    bill_id = _create_bill(http, hdr, [_line(a, 1)], cash=10)
+    r = _exchange(http, hdr, bill_id, [_line(a, 1)], customer_name='someone else',
+                  paid_splits=[{'payment_type': 'UPI', 'amount': 10}])
+    bill = r.get_json()['bill']
+    assert bill['customer_name'] == 'X'
+    assert json.loads(bill['payment_type']) == [{'payment_type': 'Cash', 'amount': 10.0}]
+

@@ -2,6 +2,7 @@ import uuid
 import re
 import math
 import json
+import logging
 from datetime import datetime
 import pytz
 from dateutil import parser as date_parser
@@ -1704,6 +1705,54 @@ def update_bill(bill_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({'success': False, 'error': 'Failed to save audit correction', 'message': str(e)}), 500
+
+
+@billing_bp.route('/<bill_id>/details', methods=['PATCH'])
+@authenticate
+@readonly_guard
+@require_permission('edit_bill_details')
+def edit_bill_details_route(bill_id):
+    """Bills → Edit: customer name/phone/GSTIN and the payment TYPE of earlier payments.
+
+    Never changes items, quantities, prices, totals or stock (that is Exchange).
+    Body: {customer_name?, customer_phone?, customer_gstin?, paid_splits?, expected_version?}
+    """
+    from services.bill_details_edit import edit_bill_details, BillEditError
+    from services.bill_exchange_service import version_of
+    try:
+        client_id = g.user['client_id']
+        data = request.get_json() or {}
+        bill, is_gst = None, False
+        for model, gst in ((GSTBilling, True), (NonGSTBilling, False)):
+            bill = model.query.filter_by(bill_id=bill_id, client_id=client_id).with_for_update().first()
+            if bill:
+                is_gst = gst
+                break
+        if not bill:
+            return jsonify({'error': 'Bill not found'}), 404
+        if bill.status == 'cancelled':
+            return jsonify({'error': 'A cancelled bill cannot be edited'}), 400
+        expected = data.get('expected_version')
+        if expected is not None and expected != version_of(bill):
+            db.session.rollback()
+            return jsonify({'error': 'This bill was changed after you opened it. Open it again.',
+                            'code': 'BILL_CHANGED'}), 409
+
+        old_bill_data = bill.to_dict()
+        try:
+            changed = edit_bill_details(bill, client_id, data, get_current_time())
+        except BillEditError as ex:
+            db.session.rollback()
+            return jsonify({'error': str(ex)}), 400
+        log_action('UPDATE', 'gst_billing' if is_gst else 'non_gst_billing', bill_id, old_bill_data, bill.to_dict())
+        db.session.commit()
+        _invalidate_billing(client_id)
+        return jsonify({'success': True, 'message': 'Bill updated', 'changed': changed,
+                        'version': version_of(bill), 'bill': bill.to_dict()}), 200
+    except Exception as e:
+        db.session.rollback()
+        logging.exception('edit_bill_details failed')
+        return jsonify({'error': 'Failed to update bill'}), 500
 
 
 @billing_bp.route('/exchange/<bill_id>', methods=['POST'])

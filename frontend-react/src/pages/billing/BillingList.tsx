@@ -7,7 +7,8 @@ import { formatBillNo } from '@/lib/billNumber'
 import { TableSkeleton, CardSkeleton } from '@/components/SkeletonLoader'
 import { useClient } from '@/contexts/ClientContext'
 import { useCurrency } from '@/lib/useCurrency'
-import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle, Calendar, X, Package, User, Clock, Hash, CheckCircle, RotateCcw } from 'lucide-react'
+import EditBillDialog from '@/components/billing/EditBillDialog'
+import { Wallet, CreditCard, Smartphone, Building2, FileText, Banknote, DollarSign, RefreshCw, XCircle, Calendar, X, Package, User, Clock, Hash, CheckCircle, RotateCcw, Pencil } from 'lucide-react'
 import { useNavigate, useLocation, Link } from 'react-router-dom'
 import { generateBillPDF } from '@/lib/pdfService'
 import { getShopSettings } from '@/services/shopSettingsService'
@@ -563,6 +564,10 @@ export default function AllBillsPage() {
     }
   }
 
+  // Edit = customer details + payment type only (Exchange handles items/stock/money).
+  const [editingBillId, setEditingBillId] = useState<string | null>(null)
+  const handleEditBill = (billId: string) => setEditingBillId(billId)
+
   const handleExchangeBill = (billId: string) => {
     navigate(`/billing/create?exchange=${encodeURIComponent(billId)}`)
   }
@@ -1108,6 +1113,15 @@ export default function AllBillsPage() {
                                   Receive
                                 </button>
                               )}
+                              {canExchange && bill.status !== 'cancelled' && <button
+                                type="button"
+                                onClick={(e) => { e.stopPropagation(); handleEditBill(bill.bill_id) }}
+                                className="inline-flex items-center gap-0.5 px-1.5 py-1 text-[10px] font-medium text-blue-700 dark:text-blue-300 bg-blue-50 dark:bg-blue-900/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 rounded transition-all"
+                                title="Edit Bill"
+                              >
+                                <Pencil className="w-3 h-3" aria-hidden="true" />
+                                Edit
+                              </button>}
                               {canExchange && <button
                                 type="button"
                                 onClick={(e) => { e.stopPropagation(); handleExchangeBill(bill.bill_id) }}
@@ -1611,6 +1625,18 @@ export default function AllBillsPage() {
             </div>
           </div>
         </div>
+      )}
+      {editingBillId && (
+        <EditBillDialog
+          billId={editingBillId}
+          currency={cur}
+          onClose={() => setEditingBillId(null)}
+          onSaved={(message) => {
+            setEditingBillId(null)
+            toast.success(message)
+            fetchData()
+          }}
+        />
       )}
     </DashboardLayout>
   )

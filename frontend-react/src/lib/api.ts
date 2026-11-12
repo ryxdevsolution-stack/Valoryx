@@ -249,6 +249,14 @@ api.interceptors.response.use(
       }
     }
 
+    // Any successful change (create / edit / exchange / cancel / stock update…) can make
+    // cached reads stale — e.g. the Bills list showed the old customer for up to 4 min
+    // after an edit. Changes are rare next to reads, so drop the whole read cache.
+    const method = (response.config.method || 'get').toLowerCase()
+    if (method !== 'get' && method !== 'head' && method !== 'options') {
+      invalidateCache()
+    }
+
     // Cache successful GET responses
     if (response.config.method === 'get' && response.config.url) {
       const url = response.config.url

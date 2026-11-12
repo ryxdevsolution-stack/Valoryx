@@ -141,7 +141,14 @@ export default function UnifiedBillingPage() {
   const quantityInputRef = useRef<HTMLInputElement>(null)
   const gstInputRef = useRef<HTMLInputElement>(null)
   const rateInputRef = useRef<HTMLInputElement>(null)
+  const mrpInputRef = useRef<HTMLInputElement>(null)
   const lineDiscountInputRef = useRef<HTMLInputElement>(null)
+  // Entry-row discount can be typed as ₹ off each unit (default) or as %, like the
+  // bill-level discount switch. Stored on the line as a % either way (what the server uses).
+  const [lineDiscMode, setLineDiscMode] = useState<'amount' | 'percent'>(() => {
+    try { return localStorage.getItem('line_disc_mode') === 'percent' ? 'percent' : 'amount' } catch { return 'amount' }
+  })
+  const [lineDiscAmount, setLineDiscAmount] = useState<number>(0)
   const customerCodeRef = useRef<HTMLInputElement>(null)
   const customerNameRef = useRef<HTMLInputElement>(null)
   const customerPhoneRef = useRef<HTMLInputElement>(null)
@@ -882,6 +889,7 @@ export default function UnifiedBillingPage() {
       mrp: product.mrp ? Number(product.mrp) : undefined,
       discount_percentage: Number(product.selling_discount_percentage || 0),
     })
+    setLineDiscAmount(Math.round(defaultRate * Number(product.selling_discount_percentage || 0)) / 100)
     setProductSearch(product.product_name)
     setShowProductDropdown(false)
 
@@ -895,6 +903,7 @@ export default function UnifiedBillingPage() {
     if (!newProductName.trim()) return
 
     setIsNewProduct(true)
+    setLineDiscAmount(0)
     setCurrentItem({
       product_id: 'new-product-temp',
       product_name: newProductName.trim(),
@@ -1075,6 +1084,25 @@ export default function UnifiedBillingPage() {
     setHasUsedArrowKeys(false)
   }
 
+  /** The entry row's discount as a % of the rate — converted from ₹ in amount mode. */
+  const entryDiscountPct = (): number => {
+    if (lineDiscMode === 'percent') return currentItem.discount_percentage || 0
+    if (!(currentItem.rate > 0) || !(lineDiscAmount > 0)) return 0
+    return Math.min((lineDiscAmount / currentItem.rate) * 100, 100)
+  }
+
+  const switchLineDiscMode = () => {
+    const next = lineDiscMode === 'amount' ? 'percent' : 'amount'
+    // Carry the current discount across so switching never loses what was typed.
+    if (next === 'percent') {
+      setCurrentItem({ ...currentItem, discount_percentage: Math.round(entryDiscountPct() * 100) / 100 })
+    } else {
+      setLineDiscAmount(Math.round(currentItem.rate * (currentItem.discount_percentage || 0)) / 100)
+    }
+    setLineDiscMode(next)
+    try { localStorage.setItem('line_disc_mode', next) } catch { /* private mode */ }
+  }
+
   const addItem = () => {
     // If user typed in search but didn't select a product, use search text as new product
     let productNameToUse = currentItem.product_name
@@ -1136,7 +1164,8 @@ export default function UnifiedBillingPage() {
 
       updateActiveTab({ items: updatedItems })
     } else {
-      const { gstAmt, amount } = computeLineAmounts(actualQuantity, currentItem.rate, currentItem.gst_percentage, currentItem.discount_percentage)
+      const linePct = entryDiscountPct()
+      const { gstAmt, amount } = computeLineAmounts(actualQuantity, currentItem.rate, currentItem.gst_percentage, linePct)
 
       // For new products, always use nosave- prefix (no stock saving)
       // For existing stock products, keep the original UUID
@@ -1146,6 +1175,7 @@ export default function UnifiedBillingPage() {
 
       const newItem: BillItem = {
         ...currentItem,
+        discount_percentage: linePct,
         product_id: productId,
         product_name: productNameToUse,
         quantity: actualQuantity,
@@ -1159,6 +1189,7 @@ export default function UnifiedBillingPage() {
       updateActiveTab({ items: [...activeTab.items, newItem] })
     }
 
+    setLineDiscAmount(0)
     setCurrentItem({
       product_id: '',
       product_name: '',
@@ -1243,7 +1274,11 @@ export default function UnifiedBillingPage() {
     if (e.key === 'Enter') {
       e.preventDefault()
 
+      // Enter walks the entry row: Qty → MRP → Rate → GST% (if shown) → Disc → Add
       if (field === 'quantity') {
+        mrpInputRef.current?.focus()
+        mrpInputRef.current?.select()
+      } else if (field === 'mrp') {
         rateInputRef.current?.focus()
         rateInputRef.current?.select()
       } else if (field === 'rate') {
@@ -1375,6 +1410,12 @@ export default function UnifiedBillingPage() {
       activeTab.membershipRedeemPoints, activeTab.membershipRedemptionRate, canUseMembership,
       activeTab.exchange])
 
+  // What the payment splits should cover NOW: the whole bill normally; on an edit/exchange
+  // tab only the extra owed (the customer already paid the rest), never negative.
+  const amountDueNow = activeExchange
+    ? Math.max(exchangeDifference(billTotals.grandTotal, activeExchange.alreadyPaid), 0)
+    : billTotals.grandTotal
+
   // Determine if GST columns should be shown in the table
   const showGstColumns = () => {
     // Non-GST only: Never show GST columns
@@ -1399,6 +1440,7 @@ export default function UnifiedBillingPage() {
       membershipRedeemPoints: 0,
       membershipRedemptionRate: undefined,
     })
+    setLineDiscAmount(0)
     setCurrentItem({
       product_id: '',
       product_name: '',
@@ -2263,14 +2305,16 @@ export default function UnifiedBillingPage() {
                     }`}
                   />
                 </div>
-                {/* MRP — pre-filled from the product, editable for quick/new items. Not in the
-                    Enter-key chain (Qty → Rate) so it never slows the cashier down. */}
+                {/* MRP — pre-filled from the product, editable for quick/new items.
+                    Enter moves Qty → MRP → Rate. */}
                 <div className="w-28">
                   <label htmlFor="entry-mrp" className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1">
                     MRP
                   </label>
                   <input
                     id="entry-mrp"
+                    ref={mrpInputRef}
+                    onKeyDown={(e) => handleKeyPress(e, 'mrp')}
                     type="number"
                     min="0"
                     step="0.01"
@@ -2329,31 +2373,44 @@ export default function UnifiedBillingPage() {
                     />
                   </div>
                 )}
-                <div className="w-20">
-                  <label className="block text-sm font-semibold text-gray-700 dark:text-gray-300 mb-1" title="Customer discount % — off the rate, before GST. Pre-fills from the product.">
-                    Disc %
-                  </label>
+                <div className="w-28">
+                  <div className="flex items-center justify-between mb-1">
+                    <label htmlFor="entry-line-disc" className="block text-sm font-semibold text-gray-700 dark:text-gray-300"
+                      title={lineDiscMode === 'amount' ? `Discount in ${cur} off each unit's rate, before GST` : 'Discount % off the rate, before GST'}>
+                      Disc {lineDiscMode === 'amount' ? cur : '%'}
+                    </label>
+                    <button
+                      type="button"
+                      onClick={switchLineDiscMode}
+                      className="px-1.5 py-0.5 text-xs font-semibold text-blue-600 dark:text-blue-400 bg-blue-50 dark:bg-blue-900/30 rounded hover:bg-blue-100 dark:hover:bg-blue-900/50"
+                      title={lineDiscMode === 'amount' ? 'Switch to Discount %' : `Switch to discount in ${cur}`}
+                      aria-label={lineDiscMode === 'amount' ? 'Switch to discount percentage' : 'Switch to discount amount'}
+                    >
+                      {lineDiscMode === 'amount' ? '%' : cur}
+                    </button>
+                  </div>
                   <input
+                    id="entry-line-disc"
                     ref={lineDiscountInputRef}
                     type="number"
                     min="0"
-                    max="100"
+                    max={lineDiscMode === 'percent' ? 100 : undefined}
                     step="0.01"
                     placeholder="0"
-                    value={currentItem.discount_percentage || ''}
-                    onChange={(e) =>
-                      setCurrentItem({
-                        ...currentItem,
-                        discount_percentage: Math.min(Math.max(parseFloat(e.target.value) || 0, 0), 100),
-                      })
-                    }
+                    value={lineDiscMode === 'amount' ? (lineDiscAmount || '') : (currentItem.discount_percentage || '')}
+                    onChange={(e) => {
+                      const v = Math.max(parseFloat(e.target.value) || 0, 0)
+                      if (lineDiscMode === 'amount') setLineDiscAmount(v)
+                      else setCurrentItem({ ...currentItem, discount_percentage: Math.min(v, 100) })
+                    }}
                     onKeyDown={(e) => handleKeyPress(e, 'discount')}
                     className="w-full px-3 py-2.5 text-base border-2 border-gray-300 dark:border-gray-600 rounded-lg focus:ring-2 focus:ring-blue-500 text-gray-900 dark:text-white bg-white dark:bg-gray-700 font-medium"
-                    title="Customer discount %"
+                    title={lineDiscMode === 'amount' ? `Discount ${cur} per unit` : 'Customer discount %'}
                   />
-                  {(currentItem.discount_percentage || 0) > 0 && currentItem.rate > 0 && (
+                  {entryDiscountPct() > 0 && currentItem.rate > 0 && (
                     <p className="mt-1 text-xs text-gray-500 dark:text-gray-400 tabular-nums">
-                      Net {cur}{(currentItem.rate * (1 - (currentItem.discount_percentage || 0) / 100)).toFixed(2)}
+                      Net {cur}{(currentItem.rate * (1 - entryDiscountPct() / 100)).toFixed(2)}
+                      {lineDiscMode === 'amount' && ` · ${entryDiscountPct().toFixed(1)}%`}
                     </p>
                   )}
                 </div>
@@ -2633,7 +2690,7 @@ export default function UnifiedBillingPage() {
                             max="100"
                             step="0.01"
                             title="Customer discount % (off rate, before GST)"
-                            value={item.discount_percentage || ''}
+                            value={item.discount_percentage ? Number(Number(item.discount_percentage).toFixed(2)) : ''}  /* shown to 2 dp; exact % kept for the maths */
                             placeholder="0"
                             onChange={(e) =>
                               updateItemDiscount(index, parseFloat(e.target.value) || 0)
@@ -3001,7 +3058,7 @@ export default function UnifiedBillingPage() {
                     <span className="text-gray-700 dark:text-gray-300">Total Payment Splits:</span>
                     <span
                       className={`${
-                        Math.abs(getTotalPaymentSplits() - billTotals.grandTotal) < 0.01
+                        Math.abs(getTotalPaymentSplits() - amountDueNow) < 0.01
                           ? 'text-green-600 dark:text-green-400'
                           : 'text-red-600 dark:text-red-400'
                       }`}
@@ -3010,13 +3067,13 @@ export default function UnifiedBillingPage() {
                     </span>
                   </div>
                   {/* Balance to Collect or Change to Give */}
-                  {getTotalPaymentSplits() > 0 && Math.abs(getTotalPaymentSplits() - billTotals.grandTotal) >= 0.01 && (
+                  {getTotalPaymentSplits() > 0 && Math.abs(getTotalPaymentSplits() - amountDueNow) >= 0.01 && (
                     <div className="flex justify-between text-xs font-bold mt-1 py-1 px-2 rounded bg-orange-50 dark:bg-orange-900/20">
-                      <span className={getTotalPaymentSplits() < billTotals.grandTotal ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
-                        {getTotalPaymentSplits() < billTotals.grandTotal ? '⚠️ Balance to Collect:' : '💰 Change to Give:'}
+                      <span className={getTotalPaymentSplits() < amountDueNow ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
+                        {getTotalPaymentSplits() < amountDueNow ? '⚠️ Balance to Collect:' : '💰 Change to Give:'}
                       </span>
-                      <span className={getTotalPaymentSplits() < billTotals.grandTotal ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
-                        {cur}{Math.abs(billTotals.grandTotal - getTotalPaymentSplits()).toFixed(2)}
+                      <span className={getTotalPaymentSplits() < amountDueNow ? 'text-red-600 dark:text-red-400' : 'text-green-600 dark:text-green-400'}>
+                        {cur}{Math.abs(amountDueNow - getTotalPaymentSplits()).toFixed(2)}
                       </span>
                     </div>
                   )}

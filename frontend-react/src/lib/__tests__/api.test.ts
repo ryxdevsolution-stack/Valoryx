@@ -314,3 +314,41 @@ describe('loading spinner', () => {
     expect(hideLoading).toHaveBeenCalledTimes(1)
   })
 })
+
+// ── Any successful change clears cached reads (Bills list went stale after Edit) ──
+describe('mutation clears the read cache', () => {
+  it('re-fetches /billing/list after a PATCH succeeds', async () => {
+    let listCalls = 0
+    server.use(
+      http.get(`${BASE}/billing/list`, () => {
+        listCalls++
+        return HttpResponse.json({ bills: [] })
+      }),
+      http.patch(`${BASE}/billing/b1/details`, () => HttpResponse.json({ success: true })),
+    )
+
+    await cachedGet('/billing/list')
+    await cachedGet('/billing/list')
+    expect(listCalls).toBe(1) // second read served from cache
+
+    await api.patch('/billing/b1/details', { customer_name: 'x' })
+
+    await cachedGet('/billing/list')
+    expect(listCalls).toBe(2) // cache dropped by the change
+  })
+
+  it('a failed change keeps the cache', async () => {
+    let listCalls = 0
+    server.use(
+      http.get(`${BASE}/billing/list`, () => {
+        listCalls++
+        return HttpResponse.json({ bills: [] })
+      }),
+      http.patch(`${BASE}/billing/b1/details`, () => HttpResponse.json({ error: 'nope' }, { status: 400 })),
+    )
+    await cachedGet('/billing/list')
+    await api.patch('/billing/b1/details', {}).catch(() => {})
+    await cachedGet('/billing/list')
+    expect(listCalls).toBe(1)
+  })
+})
