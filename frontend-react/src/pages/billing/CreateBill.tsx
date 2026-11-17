@@ -835,6 +835,14 @@ export default function UnifiedBillingPage() {
   }
 
   // Barcode scanning
+  // A scanned product goes into the ENTRY ROW (List view) so the cashier can set Qty /
+  // MRP / Rate / Disc before "+ Add" — same as picking it from the search list. Cards view
+  // has no entry row, so there a scan still adds the item straight to the bill.
+  const handleScannedProduct = (product: any) => {
+    if (viewMode === 'list') handleProductSelect(product)
+    else addProductToItems(product)
+  }
+
   const handleBarcodeScanned = async (e: React.KeyboardEvent<HTMLInputElement>) => {
     if (e.key === 'Enter') {
       e.preventDefault()
@@ -851,9 +859,10 @@ export default function UnifiedBillingPage() {
         const cleanedBarcode = barcodeInput.trim().replace(/\s+/g, '')
         const response = await api.get(`/stock/lookup/${encodeURIComponent(cleanedBarcode)}`)
         const product = response.data.product
-        addProductToItems(product)
         setBarcodeInput('')
-        barcodeInputRef.current?.focus()
+        handleScannedProduct(product)
+        // List view: focus moves to Qty (handleProductSelect). Cards: stay ready for the next scan.
+        if (viewMode !== 'list') barcodeInputRef.current?.focus()
       } catch (error: any) {
         toast.error(error.response?.data?.error || 'Product not found')
         setBarcodeInput('')
@@ -1050,14 +1059,17 @@ export default function UnifiedBillingPage() {
           try {
             const response = await api.get(`/stock/lookup/${encodeURIComponent(scannedCode)}`)
             const product = response.data.product
-            addProductToItems(product)
-            setProductSearch('')
             searchInputBuffer.current = ''
             setShowProductDropdown(false)
             // Reset timestamp for next scan
             searchInputTimestamp.current = 0
-            // Keep focus on search for next scan
-            productSearchRef.current?.focus()
+            if (viewMode === 'list') {
+              handleProductSelect(product)  // fills the row (name in search box), focuses Qty
+            } else {
+              addProductToItems(product)
+              setProductSearch('')
+              productSearchRef.current?.focus()  // Cards: ready for the next scan
+            }
           } catch (error: any) {
             // Product not found - let it stay in search field for manual handling
             setShowProductDropdown(true)
@@ -3447,7 +3459,7 @@ export default function UnifiedBillingPage() {
               const cleanedBarcode = barcode.trim().replace(/\s+/g, '')
               const response = await api.get(`/stock/lookup/${encodeURIComponent(cleanedBarcode)}`)
               const product = response.data.product
-              addProductToItems(product)
+              handleScannedProduct(product)
             } catch (error: any) {
               toast.error(error.response?.data?.error || 'Product not found for scanned barcode')
             }
