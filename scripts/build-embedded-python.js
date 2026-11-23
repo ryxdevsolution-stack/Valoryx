@@ -13,7 +13,7 @@ const https = require('https');
 const fs = require('fs');
 const path = require('path');
 const os = require('os');
-const { execSync, spawnSync } = require('child_process');
+const { spawnSync } = require('child_process');
 
 const PYTHON_VERSION = '3.11.9';
 const PYTHON_MAJOR_MINOR = '311';
@@ -56,10 +56,20 @@ function downloadFile(url, dest, redirects = 0) {
 function extractZip(zipPath, destDir) {
   fs.mkdirSync(destDir, { recursive: true });
   if (process.platform === 'win32') {
-    execSync(
-      `powershell -NoProfile -Command "Expand-Archive -LiteralPath '${zipPath}' -DestinationPath '${destDir}' -Force"`,
-      { stdio: 'inherit' }
-    );
+    // Not Expand-Archive: on the 2026-11 windows-latest runner image the PowerShell
+    // Archive module calls a .NET overload that no longer exists, prints an error
+    // and still exits 0 — the zip was never extracted and the build failed later.
+    // Windows' own bsdtar (System32, full path so Git's GNU tar — which can't read
+    // zips — never shadows it) extracts zips directly; .NET's ZipFile is the fallback.
+    const sysTar = path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe');
+    let r = spawnSync(sysTar, ['-xf', zipPath, '-C', destDir], { stdio: 'inherit' });
+    if (r.status !== 0) {
+      r = spawnSync('powershell', ['-NoProfile', '-Command',
+        `Add-Type -AssemblyName System.IO.Compression.FileSystem; ` +
+        `[System.IO.Compression.ZipFile]::ExtractToDirectory('${zipPath}', '${destDir}')`],
+      { stdio: 'inherit' });
+    }
+    if (r.status !== 0) fail('Could not extract the Python zip (tar.exe and .NET ZipFile both failed).');
   } else {
     const r = spawnSync('unzip', ['-oq', zipPath, '-d', destDir], { stdio: 'inherit' });
     if (r.status !== 0) fail('unzip failed. Install `unzip` package on your build machine.');
