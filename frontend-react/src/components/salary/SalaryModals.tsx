@@ -2,7 +2,7 @@ import { useState, useEffect } from 'react'
 import { X } from 'lucide-react'
 import { useCurrency } from '@/lib/useCurrency'
 import type { AttendanceStatus, AttendancePunch, Employee, SalaryCycle } from '@/pages/Salary'
-import { formatMinutes } from '@/utils/salary'
+import { formatMinutes, localIsoDate } from '@/utils/salary'
 import { DurationPicker } from '@/components/salary/DurationPicker'
 
 // ─── Shared Modal Shell ───────────────────────────────────────────────────────
@@ -242,9 +242,11 @@ interface EditEmployeeModalProps {
   employee: Employee
   onClose: () => void
   onSave: (employeeId: string, data: Partial<Omit<Employee, 'employee_id' | 'branch_id' | 'is_active'>>) => Promise<void>
+  /** Opens the "employee has left" flow. Omitted when the user may not remove employees. */
+  onMarkLeft?: () => void
 }
 
-export function EditEmployeeModal({ employee, onClose, onSave }: EditEmployeeModalProps) {
+export function EditEmployeeModal({ employee, onClose, onSave, onMarkLeft }: EditEmployeeModalProps) {
   const { symbol: cur } = useCurrency()
   const [form, setForm] = useState<EditEmployeeForm>({
     name: employee.name,
@@ -361,6 +363,15 @@ export function EditEmployeeModal({ employee, onClose, onSave }: EditEmployeeMod
           />
         </InputField>
         <div className="flex justify-end gap-2 pt-2">
+          {onMarkLeft && (
+            <button
+              type="button"
+              onClick={onMarkLeft}
+              className="mr-auto px-3 py-2 text-sm font-medium text-red-600 dark:text-red-400 hover:bg-red-50 dark:hover:bg-red-900/20 rounded-lg transition-colors"
+            >
+              Employee has left…
+            </button>
+          )}
           <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
             Cancel
           </button>
@@ -765,6 +776,15 @@ export const DEDUCTION_CATEGORIES: { value: DeductionCategory; label: string }[]
   { value: 'other', label: 'Other' },
 ]
 
+/** System-made deduction: advance a paid cycle's salary didn't cover, moved to the next cycle. */
+export const CARRY_FORWARD = 'carry_forward' as const
+
+/** Label for every deduction category, including the system carry-forward (never offered in the form). */
+export const DEDUCTION_LABEL: Record<string, string> = {
+  ...Object.fromEntries(DEDUCTION_CATEGORIES.map(c => [c.value, c.label])),
+  [CARRY_FORWARD]: 'Previous Advance Balance',
+}
+
 interface AddAdvanceModalProps {
   employee: Employee
   openCycles: SalaryCycle[]
@@ -786,9 +806,17 @@ function fmtCycleDate(d: string): string {
   }
 }
 
+/** Open cycle covering `day` (YYYY-MM-DD), else the most recent open cycle, else ''. */
+function cycleForDate(cycles: SalaryCycle[], day: string): string {
+  const covering = cycles.find(c => String(c.start_date).slice(0, 10) <= day && day <= String(c.end_date).slice(0, 10))
+  if (covering) return covering.cycle_id
+  const latest = [...cycles].sort((a, b) => String(b.start_date).localeCompare(String(a.start_date)))[0]
+  return latest?.cycle_id ?? ''
+}
+
 export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAdvanceModalProps) {
   const { symbol: cur } = useCurrency()
-  const todayIso = new Date().toISOString().split('T')[0]
+  const todayIso = localIsoDate()
   const [amount, setAmount] = useState('')
   const [category, setCategory] = useState<DeductionCategory>('cash_advance')
   const [date, setDate] = useState(todayIso)
@@ -796,11 +824,14 @@ export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAd
 
   // Sticky cycle selection: remember the last cycle the admin linked an advance to
   // for this employee, and pre-select it on subsequent opens — until they change it.
+  // A deduction must belong to a cycle (the server requires it). Default: the last cycle
+  // used for this employee if still open, else the open cycle covering today, else the latest.
   const [cycleId, setCycleId] = useState<string>(() => {
     const stored = localStorage.getItem(STICKY_CYCLE_KEY(employee.employee_id)) ?? ''
-    // Only honor the stored value if that cycle is still in the open list
-    return openCycles.some(c => c.cycle_id === stored) ? stored : ''
+    if (openCycles.some(c => c.cycle_id === stored)) return stored
+    return cycleForDate(openCycles, localIsoDate())
   })
+  const noOpenCycle = openCycles.length === 0
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
 
@@ -808,6 +839,10 @@ export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAd
     e.preventDefault()
     if (!amount || isNaN(Number(amount)) || Number(amount) <= 0) {
       setError('Valid amount is required')
+      return
+    }
+    if (noOpenCycle) {
+      setError('Start a salary cycle for this employee first — a deduction is taken from a cycle.')
       return
     }
     setSaving(true)
@@ -872,7 +907,11 @@ export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAd
           <input
             type="date"
             value={date}
-            onChange={e => setDate(e.target.value)}
+            onChange={e => {
+              setDate(e.target.value)
+              // Keep the cycle in step with the date (the advance belongs to that period).
+              if (e.target.value) setCycleId(cycleForDate(openCycles, e.target.value) || cycleId)
+            }}
             max={todayIso}
             className={inputClass}
           />
@@ -886,14 +925,17 @@ export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAd
             className={inputClass}
           />
         </InputField>
-        {openCycles.length > 0 && (
-          <InputField label="Link to Cycle (optional)">
+        {noOpenCycle ? (
+          <p role="alert" className="text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg">
+            {employee.name} has no open salary cycle. Start a cycle first — the deduction is taken from it.
+          </p>
+        ) : (
+          <InputField label="Salary cycle" required>
             <select
               value={cycleId}
               onChange={e => setCycleId(e.target.value)}
               className={inputClass}
             >
-              <option value="">— Not linked —</option>
               {openCycles.map(c => (
                 <option key={c.cycle_id} value={c.cycle_id}>
                   {fmtCycleDate(c.start_date)} – {fmtCycleDate(c.end_date)}
@@ -908,7 +950,7 @@ export function AddAdvanceModal({ employee, openCycles, onClose, onSave }: AddAd
           </button>
           <button
             type="submit"
-            disabled={saving}
+            disabled={saving || noOpenCycle}
             className="px-4 py-2 text-sm font-medium bg-orange-600 text-white rounded-lg hover:bg-orange-700 disabled:opacity-50 transition-colors"
           >
             {saving ? 'Saving...' : 'Add Deduction'}
@@ -1221,7 +1263,7 @@ interface ManualHoursModalProps {
 }
 
 export function ManualHoursModal({ employee, workDate, onClose, onSave }: ManualHoursModalProps) {
-  const todayIso = new Date().toISOString().split('T')[0]
+  const todayIso = localIsoDate()
   const [date, setDate] = useState(workDate ?? todayIso)
   const [toDate, setToDate] = useState(workDate ?? todayIso)
   const [isRange, setIsRange] = useState(false)
@@ -1345,7 +1387,7 @@ interface BulkManualHoursModalProps {
 }
 
 export function BulkManualHoursModal({ employeeNames, selectedIds, onClose, onSave }: BulkManualHoursModalProps) {
-  const todayIso = new Date().toISOString().split('T')[0]
+  const todayIso = localIsoDate()
   const [date, setDate] = useState(todayIso)
   const [toDate, setToDate] = useState(todayIso)
   const [isRange, setIsRange] = useState(false)
@@ -1611,6 +1653,83 @@ export function AdjustHoursModal({ employeeName, punch, onClose, onSave }: Adjus
           </button>
         </div>
       </form>
+    </ModalShell>
+  )
+}
+
+// ─── Mark Employee as Left ────────────────────────────────────────────────────
+
+interface OpenCycleRefusal { code: 'OPEN_CYCLE'; owed: number; error: string }
+
+interface MarkLeftModalProps {
+  employee: Employee
+  onClose: () => void
+  /** Resolves on success; rejects with the API error (OPEN_CYCLE → offer "leave anyway"). */
+  onConfirm: (leftOn: string, force: boolean) => Promise<void>
+}
+
+/**
+ * "Employee has left": nothing is deleted. Attendance, salary cycles, advances and
+ * payslips stay on record under Ex-employees; the person just leaves every picker.
+ */
+export function MarkLeftModal({ employee, onClose, onConfirm }: MarkLeftModalProps) {
+  const { symbol: cur } = useCurrency()
+  const today = localIsoDate()
+  const [leftOn, setLeftOn] = useState(today)
+  const [owed, setOwed] = useState<number | null>(null)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState('')
+
+  async function submit(force: boolean) {
+    if (!leftOn) { setError('Pick the leaving date'); return }
+    setSaving(true)
+    setError('')
+    try {
+      await onConfirm(leftOn, force)
+      onClose()
+    } catch (err: unknown) {
+      const data = (err as { response?: { data?: Partial<OpenCycleRefusal> } })?.response?.data
+      if (data?.code === 'OPEN_CYCLE') setOwed(Number(data.owed ?? 0))
+      else setError(data?.error ?? 'Could not update the employee')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <ModalShell title={`${employee.name} has left`} onClose={onClose}>
+      <div className="space-y-4">
+        <p className="text-sm text-gray-600 dark:text-gray-300">
+          Nothing is deleted — attendance, salary cycles, advances and payslips stay on record under
+          <strong> Ex-employees</strong>. {employee.name} will no longer appear in attendance, bulk actions
+          or other lists. Use <strong>Rejoin</strong> to bring them back.
+        </p>
+        <InputField label="Leaving date" required>
+          <input type="date" aria-label="Leaving date" value={leftOn} max={today} onChange={e => setLeftOn(e.target.value)} className={inputClass} />
+        </InputField>
+        {owed !== null && (
+          <p role="alert" className="text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg">
+            {employee.name} still has <strong>{cur}{owed.toFixed(2)}</strong> unpaid salary in an open cycle.
+            Pay it first (Mark as Paid), or continue — the cycle stays open and can still be paid later from Ex-employees.
+          </p>
+        )}
+        {error && (
+          <p role="alert" className="text-xs text-red-600 dark:text-red-400 bg-red-50 dark:bg-red-900/20 px-3 py-2 rounded-lg">{error}</p>
+        )}
+        <div className="flex justify-end gap-2 pt-2">
+          <button type="button" onClick={onClose} className="px-4 py-2 text-sm text-gray-600 dark:text-gray-400 hover:bg-gray-100 dark:hover:bg-gray-800 rounded-lg transition-colors">
+            Cancel
+          </button>
+          <button
+            type="button"
+            disabled={saving}
+            onClick={() => submit(owed !== null)}
+            className="px-4 py-2 text-sm font-medium bg-red-600 text-white rounded-lg hover:bg-red-700 disabled:opacity-50 transition-colors"
+          >
+            {saving ? 'Saving...' : owed !== null ? 'Mark as left anyway' : 'Mark as left'}
+          </button>
+        </div>
+      </div>
     </ModalShell>
   )
 }

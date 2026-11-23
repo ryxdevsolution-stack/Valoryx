@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import { useSearchParams, useNavigate, useLocation } from 'react-router-dom'
 import DashboardLayout from '@/components/DashboardLayout'
 import api from '@/lib/api'
+import { confirmDialog } from '@/components/ConfirmDialog'
 import { usePermissions } from '@/hooks/usePermissions'
 import { useClient } from '@/contexts/ClientContext'
 import { Users2, ChevronLeft, ChevronRight } from 'lucide-react'
@@ -22,6 +23,7 @@ import {
   BulkManualHoursModal,
   AdjustHoursModal,
   EditEmployeeModal,
+  MarkLeftModal,
   type DeductionCategory,
   type BulkResult,
 } from '@/components/salary/SalaryModals'
@@ -41,6 +43,8 @@ export interface Employee {
   ot_multiplier: number | null
   branch_id: string | null
   is_active: boolean
+  /** v54 — set when the employee has left (is_active false). */
+  left_on?: string | null
   /** v44 — which work group this worker bills under. Null = ungrouped. */
   work_group_id?: string | null
 }
@@ -103,9 +107,11 @@ export interface OTSummary {
 export interface SalaryAdvance {
   advance_id: string
   amount: number
-  category?: DeductionCategory
+  category?: DeductionCategory | 'carry_forward'
   advance_date: string
   notes: string | null
+  /** Set on a carry_forward row: the paid cycle whose uncovered advance it continues. */
+  carried_from_cycle_id?: string | null
 }
 
 export interface SalaryCycle {
@@ -131,6 +137,7 @@ export interface SalaryCycle {
 type ActiveModal =
   | { type: 'add-employee' }
   | { type: 'edit-employee'; employee: Employee }
+  | { type: 'mark-left'; employee: Employee }
   | { type: 'mark-attendance'; prefillDate?: string }
   | { type: 'mark-day-off'; workDate: string }
   | { type: 'manual-hours'; workDate?: string }
@@ -162,6 +169,8 @@ export default function SalaryPage() {
   const location = useLocation()
 
   const [employees, setEmployees] = useState<Employee[]>([])
+  // Ex-employees: kept on record, shown only in their own collapsible list.
+  const [exEmployees, setExEmployees] = useState<Employee[]>([])
   const [empLoading, setEmpLoading] = useState(false)
   const [selected, setSelected] = useState<Employee | null>(null)
   const [selectedIds, setSelectedIds] = useState<string[]>([])
@@ -187,6 +196,9 @@ export default function SalaryPage() {
     localStorage.setItem('salary_right_collapsed', rightCollapsed ? '1' : '0')
   }, [rightCollapsed])
 
+  // Same permission the API enforces for DELETE /employees/<id>.
+  const canRemoveEmployees = user?.role === 'owner' || hasPermission('delete_employee')
+
   const hasManagerAccess =
     user?.role === 'owner' ||
     user?.role === 'manager' ||
@@ -200,8 +212,12 @@ export default function SalaryPage() {
   const fetchEmployees = useCallback(async () => {
     setEmpLoading(true)
     try {
-      const res = await api.get('/employees')
+      const [res, left] = await Promise.all([
+        api.get('/employees'),
+        api.get('/employees', { params: { status: 'left' } }).catch(() => ({ data: { data: [] } })),
+      ])
       setEmployees(res.data.data ?? [])
+      setExEmployees(left.data.data ?? [])
     } catch {
       showToast('Failed to load employees', 'error')
     } finally {
@@ -232,6 +248,31 @@ export default function SalaryPage() {
     await api.post('/employees', data)
     showToast('Employee added')
     fetchEmployees()
+  }
+
+  async function handleMarkLeft(employee: Employee, leftOn: string, force: boolean) {
+    await api.delete(`/employees/${employee.employee_id}`, { data: { left_on: leftOn, force } })
+    showToast(`${employee.name} moved to Ex-employees — records kept`)
+    setSelected(sel => (sel?.employee_id === employee.employee_id ? null : sel))
+    setSelectedIds(ids => ids.filter(id => id !== employee.employee_id))
+    fetchEmployees()
+  }
+
+  async function handleRejoin(employee: Employee) {
+    const ok = await confirmDialog({
+      title: `Rejoin ${employee.name}?`,
+      message: `${employee.name} will be active again and appear in attendance and payroll lists. Past records are unchanged.`,
+      confirmText: 'Rejoin',
+    })
+    if (!ok) return
+    try {
+      await api.post(`/employees/${employee.employee_id}/rejoin`)
+      showToast(`${employee.name} is active again`)
+      fetchEmployees()
+    } catch (err: unknown) {
+      showToast((err as { response?: { data?: { error?: string } } })?.response?.data?.error
+        ?? 'Could not rejoin the employee', 'error')
+    }
   }
 
   async function handleEditEmployee(
@@ -466,6 +507,8 @@ export default function SalaryPage() {
             onAdd={() => setModal({ type: 'add-employee' })}
             onHistory={(emp) => setModal({ type: 'history', employee: emp })}
             onEdit={(emp) => setModal({ type: 'edit-employee', employee: emp })}
+            exEmployees={exEmployees}
+            onRejoin={hasPermission('edit_employee') || user?.role === 'owner' ? handleRejoin : undefined}
             onCollapse={() => setLeftCollapsed(true)}
             selectedIds={selectedIds}
             onToggleSelect={handleToggleSelect}
@@ -489,7 +532,8 @@ export default function SalaryPage() {
             onManualHours={(workDate) => setModal({ type: 'manual-hours', workDate })}
             onAdjustHours={(punch) => setModal({ type: 'adjust-hours', punch })}
             onCreateCycle={() => setModal({ type: 'new-cycle' })}
-            hasManagerAccess={hasManagerAccess}
+            // An ex-employee's attendance is a closed record: view only.
+            hasManagerAccess={hasManagerAccess && !!selected.is_active}
             refreshSignal={attendanceRefresh}
           />
         ) : (
@@ -554,6 +598,16 @@ export default function SalaryPage() {
           employee={modal.employee}
           onClose={() => setModal(null)}
           onSave={handleEditEmployee}
+          onMarkLeft={canRemoveEmployees
+            ? () => setModal({ type: 'mark-left', employee: modal.employee })
+            : undefined}
+        />
+      )}
+      {modal?.type === 'mark-left' && (
+        <MarkLeftModal
+          employee={modal.employee}
+          onClose={() => setModal(null)}
+          onConfirm={(leftOn, force) => handleMarkLeft(modal.employee, leftOn, force)}
         />
       )}
       {modal?.type === 'mark-attendance' && selected && (

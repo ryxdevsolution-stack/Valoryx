@@ -366,6 +366,7 @@ EMPLOYEE_COLUMN_TYPES = {
     'rate': 'NUMERIC',
     'ot_multiplier': 'NUMERIC',
     'is_active': 'BOOLEAN',
+    'left_on': 'DATE',
     'created_at': 'TIMESTAMP',
     'updated_at': 'TIMESTAMP',
     'synced_at': 'TIMESTAMP'
@@ -416,7 +417,8 @@ SALARY_ADVANCE_COLUMN_TYPES = {
     'advance_date': 'DATE',
     'created_at': 'TIMESTAMP',
     'updated_at': 'TIMESTAMP',
-    'synced_at': 'TIMESTAMP'
+    'synced_at': 'TIMESTAMP',
+    'deleted_at': 'TIMESTAMP'
 }
 
 # Sync Metadata column types

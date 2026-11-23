@@ -47,6 +47,14 @@ export function isDateCovered(
   return { covered: false, sealed: false }
 }
 
+/**
+ * YYYY-MM-DD of `d` in LOCAL time. `toISOString()` gives the UTC date, which in India
+ * is still yesterday until 05:30 — and turns a local "1 Nov" midnight into "31 Oct".
+ */
+export function localIsoDate(d: Date = new Date()): string {
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
 /** First and last day (YYYY-MM-DD) of the month containing `ref` (defaults to today). */
 export function currentMonthRange(ref: Date = new Date()): { start: string; end: string } {
   const y = ref.getFullYear()

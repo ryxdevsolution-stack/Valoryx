@@ -3,12 +3,9 @@ import { X, Clock, TrendingUp, Banknote, Calendar, ChevronDown, ChevronUp, Check
 import api from '@/lib/api'
 import { useCurrency } from '@/lib/useCurrency'
 import type { Employee } from '@/pages/Salary'
-import { DEDUCTION_CATEGORIES } from '@/components/salary/SalaryModals'
+import { DEDUCTION_LABEL as CATEGORY_LABEL } from '@/components/salary/SalaryModals'
 import { formatMinutes as fmtMins, formatSalaryDate as fmtDate } from '@/utils/salary'
 
-const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
-  DEDUCTION_CATEGORIES.map(c => [c.value, c.label])
-)
 
 interface HistoryAdvance {
   advance_id: string

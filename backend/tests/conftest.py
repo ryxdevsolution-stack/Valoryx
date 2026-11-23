@@ -282,6 +282,8 @@ def create_test_app():
             ("routes.membership",   "/api/membership"),
             ("routes.shop_settings", "/api/shop-settings"),
             ("routes.profile",      "/api/profile"),
+            ("routes.employees",    "/api/employees"),
+            ("routes.payroll_invoice", "/api/payroll"),
             ("routes.electron", None),  # routes carry full /api/electron/* paths
         ]:
             try:

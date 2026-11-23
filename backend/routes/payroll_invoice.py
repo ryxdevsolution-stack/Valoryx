@@ -700,15 +700,26 @@ def _collect_lines(client_id, period_start, period_end, employee_ids, overrides,
 
     rows = db.session.execute(text(f"""
         SELECT e.employee_id, e.name AS employee_name, e.work_group_id,
-               sc.cycle_id, sc.gross_salary
+               sc.*
         FROM salary_cycles sc
         JOIN employees e ON e.employee_id = sc.employee_id
         WHERE sc.client_id = :cid
           AND sc.start_date <= :end
           AND sc.end_date   >= :start
           {emp_filter}
-        ORDER BY e.name
+        ORDER BY e.name, sc.start_date
     """), params).fetchall()
+
+    # A cycle is billed once. Overlap matching means a 28 Apr – 27 May cycle fits both
+    # an April and a May invoice; without this it was charged to the company twice.
+    billed = {}
+    if rows:
+        for b in db.session.execute(text(
+                "SELECT pie.cycle_id, pi.invoice_number FROM payroll_invoice_employees pie "
+                "JOIN payroll_invoices pi ON pi.invoice_id = pie.invoice_id "
+                "WHERE pie.client_id = :cid AND pie.cycle_id IS NOT NULL"), {'cid': client_id}).fetchall():
+            billed[str(b[0])] = b[1]
+    skipped = []
 
     groups = {r['group_id']: r for r in [
         _row_to_dict(x) for x in db.session.execute(text(
@@ -720,17 +731,33 @@ def _collect_lines(client_id, period_start, period_end, employee_ids, overrides,
     default_svc = _num((client or {}).get('service_charge_percent'))
     overrides = overrides or {}
 
+    from routes.employees import _calculate_cycle_amounts
+
     buckets = {}
     for row in rows:
         r = _row_to_dict(row)
+        if str(r['cycle_id']) in billed:
+            skipped.append({'employee_name': r['employee_name'], 'cycle_id': r['cycle_id'],
+                            'invoice_number': billed[str(r['cycle_id'])]})
+            continue
+        # A paid cycle's gross is sealed. An open cycle's stored gross is only as fresh
+        # as its last "Calculate" (₹0 until then), so work it out from attendance now.
+        if (r.get('status') or '').lower() == 'paid':
+            gross = _num(r.get('gross_salary'))
+        else:
+            gross = _calculate_cycle_amounts(r)[0]
+        if gross <= 0:
+            continue  # nothing worked in this cycle — not a billable worker
         gid = r.get('work_group_id') or ''
+        if gid and gid not in groups:
+            gid = ''  # group since removed → bill under the ungrouped line, not a second one
         bucket = buckets.setdefault(gid, {'employees': [], 'salary': 0.0})
-        bucket['salary'] += _num(r.get('gross_salary'))
+        bucket['salary'] += gross
         bucket['employees'].append({
             'employee_id': r['employee_id'],
             'employee_name': r['employee_name'],
             'cycle_id': r.get('cycle_id'),
-            'gross_salary': _money(r.get('gross_salary')),
+            'gross_salary': _money(gross),
         })
 
     lines = []
@@ -749,7 +776,8 @@ def _collect_lines(client_id, period_start, period_end, employee_ids, overrides,
         salary = _money(bucket['salary'])
         service_amount = _money(salary * svc_pct / 100.0)
         taxable = _money(salary + service_amount)
-        headcount = len(bucket['employees'])
+        # People, not cycles: a period spanning two of one worker's cycles is still one worker.
+        headcount = len({e['employee_id'] for e in bucket['employees']})
 
         base_label = (group or {}).get('name') or UNGROUPED_LABEL
         description = ov.get('description') or (
@@ -772,11 +800,14 @@ def _collect_lines(client_id, period_start, period_end, employee_ids, overrides,
 
     # Ungrouped last, everything else by the group's own display order.
     lines.sort(key=lambda ln: (ln['group_id'] is None, ln['sort_order'], ln['description']))
-    return lines
+    return lines, skipped
 
 
 def _apply_tax(lines, tax_mode):
     """Compute per-line tax and the invoice totals from the line values."""
+    people = set()
+    for line in lines:
+        people.update(e['employee_id'] for e in line['employees'])
     totals = {
         'salary_total': 0.0, 'service_total': 0.0, 'taxable_total': 0.0,
         'cgst_total': 0.0, 'sgst_total': 0.0, 'igst_total': 0.0,
@@ -796,13 +827,13 @@ def _apply_tax(lines, tax_mode):
         totals['cgst_total'] += cgst
         totals['sgst_total'] += sgst
         totals['igst_total'] += igst
-        totals['headcount'] += line['headcount']
 
     for key in ('salary_total', 'service_total', 'taxable_total',
                 'cgst_total', 'sgst_total', 'igst_total'):
         totals[key] = _money(totals[key])
     totals['tax_total'] = _money(totals['cgst_total'] + totals['sgst_total'] + totals['igst_total'])
     totals['grand_total'] = _money(totals['taxable_total'] + totals['tax_total'])
+    totals['headcount'] = len(people)
     return totals
 
 
@@ -841,9 +872,9 @@ def preview_invoice():
         if tax_mode not in ('intra', 'inter'):
             return jsonify({'success': False, 'error': "tax_mode must be 'intra' or 'inter'"}), 400
 
-        lines = _collect_lines(client_id, period_start, period_end,
-                               data.get('employee_ids') or [],
-                               data.get('line_overrides') or {}, client)
+        lines, skipped = _collect_lines(client_id, period_start, period_end,
+                                        data.get('employee_ids') or [],
+                                        data.get('line_overrides') or {}, client)
         totals = _apply_tax(lines, tax_mode)
 
         return jsonify({
@@ -856,6 +887,8 @@ def preview_invoice():
                 'customer': customer,
                 'lines': lines,
                 'totals': totals,
+                # Cycles left out because another invoice already billed them.
+                'already_invoiced': skipped,
             }
         }), 200
     except Exception as e:
@@ -889,18 +922,23 @@ def create_invoice():
         customer_state = data.get('customer_state') or (customer or {}).get('customer_state')
         tax_mode = data.get('tax_mode') or _resolve_tax_mode(client, customer_state)
 
-        lines = _collect_lines(client_id, period_start, period_end,
-                               data.get('employee_ids') or [],
-                               data.get('line_overrides') or {}, client)
+        lines, skipped = _collect_lines(client_id, period_start, period_end,
+                                        data.get('employee_ids') or [],
+                                        data.get('line_overrides') or {}, client)
         if not lines:
-            return jsonify({
-                'success': False,
-                'error': 'No salary cycles found for that period — create the pay cycles first.'
-            }), 400
+            msg = ('Every salary cycle in that period is already on another invoice.' if skipped
+                   else 'No salary worked in that period — create the pay cycles and record attendance first.')
+            return jsonify({'success': False, 'error': msg}), 400
         totals = _apply_tax(lines, tax_mode)
 
         invoice_id = str(uuid.uuid4())
         invoice_number = (data.get('invoice_number') or '').strip() or _next_invoice_number(client_id)
+        dup = db.session.execute(text(
+            "SELECT 1 FROM payroll_invoices WHERE client_id = :cid AND invoice_number = :num LIMIT 1"),
+            {'cid': client_id, 'num': invoice_number}).fetchone()
+        if dup:
+            return jsonify({'success': False,
+                            'error': f'Invoice number {invoice_number} is already used — pick another.'}), 409
         invoice_date = _parse_date(data.get('invoice_date')) or date.today()
         now = _now_iso()
 

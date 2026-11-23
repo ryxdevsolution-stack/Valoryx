@@ -44,7 +44,7 @@ import logging
 from datetime import datetime, date, timedelta
 
 from flask import Blueprint, request, jsonify, g
-from sqlalchemy import text
+from sqlalchemy import bindparam, text
 
 from extensions import db
 from utils.auth_middleware import authenticate
@@ -150,6 +150,29 @@ def _find_covering_cycle(employee_id: str, client_id: str, work_date) -> dict | 
         {'eid': employee_id, 'cid': client_id, 'd': date_str}
     ).fetchone()
     return _row_to_dict(row) if row else None
+
+
+def _sealed_cycle_response(employee_id: str, client_id: str, work_date):
+    """409 response when work_date falls in a PAID cycle, else None.
+
+    A paid cycle's payslip is recomputed from attendance, so any edit to a sealed
+    day would silently restate a salary that has already been handed over.
+    """
+    cycle = _find_covering_cycle(employee_id, client_id, work_date) if work_date else None
+    if cycle and (cycle.get('status') or '').lower() != 'open':
+        return jsonify({
+            'success': False,
+            'error': (f"The salary for {work_date} is already paid — its attendance can't be "
+                      "changed. Record any correction in the next cycle."),
+            'code': 'CYCLE_SEALED',
+        }), 409
+    return None
+
+
+def _ot_cap_minutes(attendance: dict, full_day_mins: int) -> int:
+    """Most OT a punch can carry: worked time (after break deductions) beyond a full day."""
+    worked = int(attendance.get('total_minutes') or 0) - int(attendance.get('deduction_minutes') or 0)
+    return max(0, worked - int(full_day_mins or 480))
 
 
 def _get_employee(employee_id: str, client_id: str):
@@ -310,12 +333,17 @@ _DAY_OFF_STATUSES = _DAY_OFF_PAID_STATUSES | _DAY_OFF_UNPAID_STATUSES
 # Fixed deduction categories — covers cash advances plus the common in-kind
 # deductions a shop makes for workers it houses/feeds/transports.
 _DEDUCTION_CATEGORIES = {'cash_advance', 'accommodation', 'food', 'transport', 'other'}
+# System-only category: the part of an advance a paid cycle's salary didn't cover,
+# moved into the next cycle. Never typed in by a user and never counted as new
+# cash paid out (the money left the till once, in the original advance).
+CARRY_FORWARD = 'carry_forward'
 CATEGORY_LABEL_MAP = {
     'cash_advance': 'Cash Advance',
     'accommodation': 'Accommodation',
     'food': 'Food',
     'transport': 'Transport',
     'other': 'Other',
+    CARRY_FORWARD: 'Previous Advance Balance',
 }
 
 
@@ -371,7 +399,7 @@ def _is_weekly_off(day, rule: dict) -> bool:
 def _advance_category_breakdown(advances: list) -> dict:
     """Sum a list of advance/deduction dicts by category, defaulting unset
     categories (pre-migration rows) to 'cash_advance'."""
-    breakdown = {cat: 0.0 for cat in _DEDUCTION_CATEGORIES}
+    breakdown = {cat: 0.0 for cat in _DEDUCTION_CATEGORIES | {CARRY_FORWARD}}
     for a in advances:
         cat = (a.get('category') or 'cash_advance')
         if cat not in breakdown:
@@ -507,13 +535,18 @@ def _calculate_cycle_amounts(cycle: dict):
             ot_mins = 0  # no OT on unpaid day-off
         else:  # 'present' — pay by minutes worked (regular pay capped, OT is extra)
             if pay_type == 'hourly':
-                # Regular: pay all minutes at minute_rate
-                regular_mins = mins
-                amount = hours * rate_snapshot
-                days_counted = hours / 8.0
+                # Every minute is paid at the hourly rate, except approved OT minutes,
+                # which are paid ONLY by the OT line below (rate × multiplier).
+                # Counting them here too paid those minutes twice (10h with 2h OT
+                # came to 10h + 2h×1.5 instead of 8h + 2h×1.5).
+                ot_mins = min(ot_mins, mins)
+                regular_mins = mins - ot_mins
+                amount = (regular_mins / 60.0) * rate_snapshot
+                days_counted = (mins / float(full_day_mins)) if full_day_mins > 0 else 0
             else:  # daily
                 # Cap regular pay at full_day_mins; OT is the excess
                 regular_mins = min(mins, full_day_mins)
+                ot_mins = min(ot_mins, max(0, mins - full_day_mins))
                 day_fraction = min(mins / full_day_mins, 1.0) if full_day_mins > 0 else 0
                 amount = day_fraction * rate_snapshot
                 days_counted = day_fraction
@@ -540,7 +573,7 @@ def _calculate_cycle_amounts(cycle: dict):
     adv_row = db.session.execute(
         text(
             "SELECT COALESCE(SUM(amount), 0) AS total "
-            "FROM salary_advances WHERE cycle_id = :cid"
+            "FROM salary_advances WHERE cycle_id = :cid AND deleted_at IS NULL"
         ),
         {'cid': cycle['cycle_id']}
     ).fetchone()
@@ -561,13 +594,20 @@ def _calculate_cycle_amounts(cycle: dict):
 @authenticate
 @require_permission('view_employees')
 def list_employees():
+    """?status=active (default) | left | all.
+
+    Every picker (attendance, bulk actions, payroll invoices, payslip email) calls
+    this without a status, so ex-employees drop out of them automatically; the
+    Employees panel asks for status=left to show them on demand.
+    """
     client_id = g.user['client_id']
+    status = (request.args.get('status') or 'active').strip().lower()
+    where = {'active': "AND is_active = TRUE", 'left': "AND is_active = FALSE", 'all': ""}.get(status)
+    if where is None:
+        return jsonify({'success': False, 'error': "status must be 'active', 'left' or 'all'"}), 400
+    order = "ORDER BY left_on DESC, name" if status == 'left' else "ORDER BY name"
     rows = db.session.execute(
-        text(
-            "SELECT * FROM employees "
-            "WHERE client_id = :cid AND is_active = TRUE "
-            "ORDER BY name"
-        ),
+        text(f"SELECT * FROM employees WHERE client_id = :cid {where} {order}"),
         {'cid': client_id}
     ).fetchall()
     return jsonify({'success': True, 'data': [_row_to_dict(r) for r in rows]}), 200
@@ -734,20 +774,71 @@ def update_employee(employee_id):
 @authenticate
 @require_permission('delete_employee')
 def delete_employee(employee_id):
+    """Mark an employee as LEFT (ex-employee). Nothing is erased: attendance, cycles,
+    advances and payslips stay on record and remain viewable under Ex-employees.
+
+    Body (optional): { left_on: 'YYYY-MM-DD' (default today), force: bool }.
+    An open cycle that still owes salary is refused with OPEN_CYCLE unless force —
+    settle it first, or confirm leaving it to be paid later from Ex-employees.
+    """
     client_id = g.user['client_id']
     emp = _get_employee(employee_id, client_id)
     if not emp:
         return jsonify({'success': False, 'error': 'Employee not found'}), 404
 
+    body = request.get_json(silent=True) or {}
+    left_on = _parse_date(body.get('left_on')) if body.get('left_on') else date.today()
+    if not left_on:
+        return jsonify({'success': False, 'error': 'left_on must be YYYY-MM-DD'}), 400
+    if left_on > date.today():
+        return jsonify({'success': False, 'error': 'Leaving date cannot be in the future'}), 400
+
+    if not body.get('force'):
+        open_rows = db.session.execute(text(
+            "SELECT * FROM salary_cycles WHERE employee_id = :eid AND client_id = :cid AND status = 'open' "
+            "ORDER BY start_date"), {'eid': employee_id, 'cid': client_id}).fetchall()
+        owed = 0.0
+        for r in open_rows:
+            _g, _a, net, _d, _o = _calculate_cycle_amounts(_row_to_dict(r))
+            owed += max(net, 0)
+        if owed > 0:
+            return jsonify({
+                'success': False,
+                'error': f'{emp["name"]} still has unpaid salary of {owed:,.2f} in an open cycle.',
+                'code': 'OPEN_CYCLE',
+                'owed': round(owed, 2),
+            }), 409
+
     db.session.execute(
         text(
-            "UPDATE employees SET is_active = FALSE, updated_at = :now, synced_at = NULL "
+            "UPDATE employees SET is_active = FALSE, left_on = :left, updated_at = :now, synced_at = NULL "
             "WHERE employee_id = :eid AND client_id = :cid"
         ),
-        {'now': _now_iso(), 'eid': employee_id, 'cid': client_id}
+        {'left': str(left_on), 'now': _now_iso(), 'eid': employee_id, 'cid': client_id}
     )
     db.session.commit()
-    return jsonify({'success': True, 'message': f'Employee "{emp["name"]}" removed'}), 200
+    return jsonify({'success': True, 'data': _get_employee_any(employee_id, client_id),
+                    'message': f'{emp["name"]} marked as left — records kept under Ex-employees'}), 200
+
+
+@employees_bp.route('/<employee_id>/rejoin', methods=['POST'])
+@authenticate
+@require_permission('edit_employee')
+def rejoin_employee(employee_id):
+    """Bring an ex-employee back: active again, leaving date cleared, history intact."""
+    client_id = g.user['client_id']
+    emp = _get_employee_any(employee_id, client_id)
+    if not emp:
+        return jsonify({'success': False, 'error': 'Employee not found'}), 404
+    if emp.get('is_active') in (True, 1):
+        return jsonify({'success': False, 'error': f'{emp["name"]} is already active'}), 409
+    db.session.execute(
+        text("UPDATE employees SET is_active = TRUE, left_on = NULL, updated_at = :now, synced_at = NULL "
+             "WHERE employee_id = :eid AND client_id = :cid"),
+        {'now': _now_iso(), 'eid': employee_id, 'cid': client_id})
+    db.session.commit()
+    return jsonify({'success': True, 'data': _get_employee_any(employee_id, client_id),
+                    'message': f'{emp["name"]} is active again'}), 200
 
 
 # ── Attendance ─────────────────────────────────────────────────────────────────
@@ -1138,12 +1229,19 @@ def _upsert_manual_hours(employee_id: str, client_id: str, work_date, total_minu
     now_iso = _now_iso()
     existing = db.session.execute(
         text(
-            "SELECT attendance_id, status FROM employee_attendance "
+            "SELECT attendance_id, status, deduction_minutes FROM employee_attendance "
             "WHERE employee_id = :eid AND client_id = :cid AND work_date = :wd "
             "  AND is_active = TRUE LIMIT 1"
         ),
         {'eid': employee_id, 'cid': client_id, 'wd': str(work_date)}
     ).fetchone()
+
+    # Hours past the cycle's full day become an OT candidate, exactly as a
+    # check-out does — otherwise OT on manually entered days could never be
+    # approved (the pending list only shows rows with auto_ot_minutes > 0).
+    ot_cap = _ot_cap_minutes(
+        {'total_minutes': total_minutes, 'deduction_minutes': existing[2] if existing else 0},
+        cycle.get('full_day_mins') or 480)
 
     # A day already marked as leave, holiday, weekly-off or absent is a
     # DELIBERATE record — never silently convert it to a worked day. The UPDATE
@@ -1172,11 +1270,13 @@ def _upsert_manual_hours(employee_id: str, client_id: str, work_date, total_minu
             text(
                 "UPDATE employee_attendance "
                 "SET total_minutes = :tm, status = 'present', reason = NULL, "
-                "    is_manual_entry = TRUE, notes = :notes, "
+                "    is_manual_entry = TRUE, notes = :notes, auto_ot_minutes = :aot, "
+                "    approved_ot_minutes = CASE WHEN approved_ot_minutes > :aot THEN :aot "
+                "                               ELSE approved_ot_minutes END, "
                 "    updated_at = :now, synced_at = NULL "
                 "WHERE attendance_id = :aid"
             ),
-            {'tm': total_minutes, 'notes': notes, 'now': now_iso, 'aid': attendance_id}
+            {'tm': total_minutes, 'notes': notes, 'now': now_iso, 'aid': attendance_id, 'aot': ot_cap}
         )
     else:
         attendance_id = str(uuid.uuid4())
@@ -1187,14 +1287,14 @@ def _upsert_manual_hours(employee_id: str, client_id: str, work_date, total_minu
                 "INSERT INTO employee_attendance "
                 "(attendance_id, employee_id, client_id, work_date, check_in, "
                 " check_out, total_minutes, marked_by, notes, status, is_manual_entry, "
-                " created_at, updated_at) "
+                " auto_ot_minutes, created_at, updated_at) "
                 "VALUES (:aid, :eid, :cid, :wd, :ci, NULL, :tm, :marked_by, :notes, "
-                "        'present', TRUE, :now, :now)"
+                "        'present', TRUE, :aot, :now, :now)"
             ),
             {
                 'aid': attendance_id, 'eid': employee_id, 'cid': client_id, 'wd': str(work_date),
                 'ci': check_in_val, 'tm': total_minutes, 'marked_by': g.user['user_id'],
-                'notes': notes, 'now': now_iso,
+                'notes': notes, 'now': now_iso, 'aot': ot_cap,
             }
         )
     return {'employee_id': employee_id, 'work_date': str(work_date), 'success': True, 'attendance_id': attendance_id}
@@ -1597,6 +1697,10 @@ def edit_attendance(attendance_id):
     ).fetchone()
     if not row:
         return jsonify({'success': False, 'error': 'Attendance record not found'}), 404
+    row = _row_to_dict(row)
+    sealed = _sealed_cycle_response(row['employee_id'], client_id, row['work_date'])
+    if sealed:
+        return sealed
 
     body = request.get_json(silent=True) or {}
     updates = {}
@@ -1620,6 +1724,9 @@ def edit_attendance(attendance_id):
         wd = _parse_date(body['work_date'])
         if not wd:
             return jsonify({'success': False, 'error': 'Invalid work_date format'}), 400
+        sealed = _sealed_cycle_response(row['employee_id'], client_id, wd)
+        if sealed:
+            return sealed
         updates['work_date'] = str(wd)
 
     if 'notes' in body:
@@ -1639,10 +1746,21 @@ def edit_attendance(attendance_id):
     elif 'check_out' in updates and updates['check_out'] is None:
         updates['total_minutes'] = None
 
-    if not updates:
-        return jsonify({'success': True, 'data': _row_to_dict(row), 'message': 'Nothing to update'}), 200
+    # New duration → new OT candidate, and an earlier approval can't exceed it
+    # (a corrected 22:00 → 18:00 check-out must not keep paying 4h of OT).
+    if 'total_minutes' in updates:
+        cyc = _find_covering_cycle(row['employee_id'], client_id, updates.get('work_date') or row['work_date'])
+        cap = _ot_cap_minutes({**row, 'total_minutes': updates['total_minutes']},
+                              (cyc or {}).get('full_day_mins') or 480)
+        updates['auto_ot_minutes'] = cap
+        if row.get('approved_ot_minutes') is not None:
+            updates['approved_ot_minutes'] = min(int(row['approved_ot_minutes']), cap)
 
-    _ALLOWED_ATT_FIELDS = {'check_in', 'check_out', 'work_date', 'notes', 'total_minutes'}
+    if not updates:
+        return jsonify({'success': True, 'data': row, 'message': 'Nothing to update'}), 200
+
+    _ALLOWED_ATT_FIELDS = {'check_in', 'check_out', 'work_date', 'notes', 'total_minutes',
+                           'auto_ot_minutes', 'approved_ot_minutes'}
     set_clause = ', '.join(f"{k} = :{k}" for k in updates if k in _ALLOWED_ATT_FIELDS)
     updates['updated_at'] = _now_iso()
     updates['aid'] = attendance_id
@@ -1667,13 +1785,16 @@ def delete_attendance(attendance_id):
     client_id = g.user['client_id']
     row = db.session.execute(
         text(
-            "SELECT attendance_id FROM employee_attendance "
+            "SELECT attendance_id, employee_id, work_date FROM employee_attendance "
             "WHERE attendance_id = :aid AND client_id = :cid AND is_active = TRUE"
         ),
         {'aid': attendance_id, 'cid': client_id}
     ).fetchone()
     if not row:
         return jsonify({'success': False, 'error': 'Attendance record not found'}), 404
+    sealed = _sealed_cycle_response(row[1], client_id, row[2])
+    if sealed:
+        return sealed
 
     db.session.execute(
         text(
@@ -1711,6 +1832,9 @@ def adjust_hours(attendance_id):
         return jsonify({'success': False, 'error': 'Attendance record not found'}), 404
 
     attendance = _row_to_dict(row)
+    sealed = _sealed_cycle_response(attendance['employee_id'], client_id, attendance['work_date'])
+    if sealed:
+        return sealed
     if attendance.get('total_minutes') is None:
         return jsonify({'success': False, 'error': 'Cannot deduct hours from a punch with no recorded duration yet (check out first)'}), 400
 
@@ -1731,14 +1855,23 @@ def adjust_hours(attendance_id):
     if deduction_minutes > 0 and not notes:
         return jsonify({'success': False, 'error': 'notes is required when deducting hours'}), 400
 
+    # A deducted break shortens the day, so it shrinks the OT that day can carry too.
+    _cyc = _find_covering_cycle(attendance['employee_id'], client_id, attendance['work_date'])
+    cap = _ot_cap_minutes({**attendance, 'deduction_minutes': deduction_minutes},
+                          (_cyc or {}).get('full_day_mins') or 480)
+
     db.session.execute(
         text(
             "UPDATE employee_attendance "
             "SET deduction_minutes = :dm, deduction_notes = :notes, "
+            "    auto_ot_minutes = :aot, approved_ot_minutes = :appr, "
             "    updated_at = :now, synced_at = NULL "
             "WHERE attendance_id = :aid AND client_id = :cid"
         ),
-        {'dm': deduction_minutes, 'notes': notes or None, 'now': _now_iso(), 'aid': attendance_id, 'cid': client_id}
+        {'dm': deduction_minutes, 'notes': notes or None, 'now': _now_iso(), 'aid': attendance_id,
+         'cid': client_id, 'aot': cap,
+         'appr': None if attendance.get('approved_ot_minutes') is None
+         else min(int(attendance['approved_ot_minutes']), cap)}
     )
     db.session.commit()
 
@@ -1768,7 +1901,26 @@ def list_cycles(employee_id):
         ),
         {'eid': employee_id, 'cid': client_id}
     ).fetchall()
-    return jsonify({'success': True, 'data': [_row_to_dict(r) for r in rows]}), 200
+    cycles = [_row_to_dict(r) for r in rows]
+
+    # Attach each cycle's live deductions so the panel can list (and remove) them.
+    # One query for all cycles — not one per cycle.
+    advances_by_cycle: dict = {c['cycle_id']: [] for c in cycles}
+    if advances_by_cycle:
+        adv_rows = db.session.execute(
+            text(
+                "SELECT * FROM salary_advances "
+                "WHERE cycle_id IN :ids AND client_id = :cid AND deleted_at IS NULL "
+                "ORDER BY advance_date"
+            ).bindparams(bindparam('ids', expanding=True)),
+            {'ids': list(advances_by_cycle), 'cid': client_id}
+        ).fetchall()
+        for a in adv_rows:
+            ad = _row_to_dict(a)
+            advances_by_cycle.setdefault(ad['cycle_id'], []).append(ad)
+    for c in cycles:
+        c['advances'] = advances_by_cycle.get(c['cycle_id'], [])
+    return jsonify({'success': True, 'data': cycles}), 200
 
 
 @employees_bp.route('/<employee_id>/cycles', methods=['POST'])
@@ -1860,7 +2012,7 @@ def get_cycle_detail(employee_id, cycle_id):
     advances = db.session.execute(
         text(
             "SELECT * FROM salary_advances "
-            "WHERE cycle_id = :cid ORDER BY advance_date"
+            "WHERE cycle_id = :cid AND deleted_at IS NULL ORDER BY advance_date"
         ),
         {'cid': cycle_id}
     ).fetchall()
@@ -1994,6 +2146,77 @@ def calculate_cycle(employee_id, cycle_id):
     }), 200
 
 
+def _next_cycle_range(cycle: dict):
+    """The period right after `cycle`: the next calendar month when `cycle` is a whole
+    month, otherwise the same number of days starting the day after it ends."""
+    start = _parse_date(str(cycle['start_date']))
+    end = _parse_date(str(cycle['end_date']))
+    nstart = end + timedelta(days=1)
+    if start.day == 1 and nstart.day == 1:
+        month_after = (nstart.replace(day=28) + timedelta(days=4)).replace(day=1)
+        return nstart, month_after - timedelta(days=1)
+    return nstart, nstart + (end - start)
+
+
+def _carry_forward_excess(cycle: dict, excess: float, user_id) -> dict:
+    """Move `excess` (advances not covered by this cycle's pay) into the employee's
+    next open cycle — creating that cycle when none exists. Caller commits.
+
+    Returns {amount, cycle_id, start_date, end_date, created} or, when it can't be
+    placed, {amount, cycle_id: None, reason}; the debt then stays visible as the
+    paid cycle's negative net.
+    """
+    eid, cid = cycle['employee_id'], cycle['client_id']
+    period = f"{_fmt_display_date(cycle['start_date'])} – {_fmt_display_date(cycle['end_date'])}"
+    row = db.session.execute(text(
+        "SELECT * FROM salary_cycles WHERE employee_id = :eid AND client_id = :cid "
+        "  AND status = 'open' AND cycle_id <> :me "
+        "ORDER BY CASE WHEN start_date > :end THEN 0 ELSE 1 END, start_date LIMIT 1"),
+        {'eid': eid, 'cid': cid, 'me': cycle['cycle_id'], 'end': str(cycle['end_date'])}).fetchone()
+    target = _row_to_dict(row) if row else None
+    created = False
+
+    if not target:
+        emp = _get_employee(eid, cid)
+        if not emp:
+            return {'amount': excess, 'cycle_id': None, 'reason': 'employee_left'}
+        nstart, nend = _next_cycle_range(cycle)
+        clash = db.session.execute(text(
+            "SELECT 1 FROM salary_cycles WHERE employee_id = :eid AND client_id = :cid "
+            "  AND NOT (end_date < :s OR start_date > :e) LIMIT 1"),
+            {'eid': eid, 'cid': cid, 's': str(nstart), 'e': str(nend)}).fetchone()
+        if clash:
+            return {'amount': excess, 'cycle_id': None, 'reason': 'no_next_cycle'}
+        new_id = str(uuid.uuid4())
+        db.session.execute(text(
+            "INSERT INTO salary_cycles (cycle_id, employee_id, client_id, start_date, end_date, status, "
+            " gross_salary, total_advances, net_salary, rate_snapshot, pay_type_snap, full_day_mins, "
+            " created_at, updated_at) "
+            "VALUES (:cy, :eid, :cid, :s, :e, 'open', 0, 0, 0, :rate, :pt, :fdm, :now, :now)"),
+            {'cy': new_id, 'eid': eid, 'cid': cid, 's': str(nstart), 'e': str(nend),
+             'rate': float(emp['rate']), 'pt': emp['pay_type'],
+             'fdm': int(cycle.get('full_day_mins') or 480), 'now': _now_iso()})
+        target = _get_cycle(new_id, eid, cid)
+        created = True
+
+    now = _now_iso()
+    db.session.execute(text(
+        "INSERT INTO salary_advances (advance_id, employee_id, client_id, cycle_id, amount, category, "
+        " advance_date, notes, recorded_by, carried_from_cycle_id, created_at, updated_at) "
+        "VALUES (:aid, :eid, :cid, :cy, :amt, :cat, :d, :notes, :by, :src, :now, :now)"),
+        {'aid': str(uuid.uuid4()), 'eid': eid, 'cid': cid, 'cy': target['cycle_id'], 'amt': excess,
+         'cat': CARRY_FORWARD, 'd': str(target['start_date'])[:10],
+         'notes': f'Advance balance carried from {period}', 'by': user_id,
+         'src': cycle['cycle_id'], 'now': now})
+    gross, adv, net, _d, _o = _calculate_cycle_amounts(target)
+    db.session.execute(text(
+        "UPDATE salary_cycles SET gross_salary = :g, total_advances = :a, net_salary = :n, "
+        "  updated_at = :now, synced_at = NULL WHERE cycle_id = :cy"),
+        {'g': gross, 'a': adv, 'n': net, 'now': now, 'cy': target['cycle_id']})
+    return {'amount': excess, 'cycle_id': target['cycle_id'], 'start_date': str(target['start_date'])[:10],
+            'end_date': str(target['end_date'])[:10], 'created': created}
+
+
 @employees_bp.route('/<employee_id>/cycles/<cycle_id>/mark-paid', methods=['POST'])
 @authenticate
 @require_permission('mark_salary_paid')
@@ -2029,10 +2252,17 @@ def mark_cycle_paid(employee_id, cycle_id):
             'cid': cycle_id,
         }
     )
-    db.session.commit()
-
     if result.rowcount == 0:
+        db.session.rollback()
         return jsonify({'success': False, 'error': 'Cycle is already paid or was modified concurrently.'}), 409
+
+    # Advances bigger than the salary: the employee still owes the difference, so it
+    # becomes the first deduction of the next cycle instead of being written off.
+    # Same transaction as the seal, so a cycle can never be paid without its carry.
+    carry = None
+    if net < 0:
+        carry = _carry_forward_excess(cycle, round(-net, 2), g.user['user_id'])
+    db.session.commit()
 
     # Suggest next cycle start_date = end_date + 1 day
     from datetime import timedelta
@@ -2044,6 +2274,7 @@ def mark_cycle_paid(employee_id, cycle_id):
         'success': True,
         'data': updated_cycle,
         'next_cycle_start_date': next_start,
+        'carry_forward': carry,
         'message': 'Salary cycle marked as paid',
     }), 200
 
@@ -2070,11 +2301,19 @@ def _build_payslip_pdf(emp: dict, cycle: dict, client):
     gross, total_advances, net, daily_breakdown, ot_summary = _calculate_cycle_amounts(cycle)
 
     advances = db.session.execute(
-        text("SELECT * FROM salary_advances WHERE cycle_id = :cid ORDER BY advance_date"),
+        text("SELECT * FROM salary_advances WHERE cycle_id = :cid AND deleted_at IS NULL ORDER BY advance_date"),
         {'cid': cycle_id}
     ).fetchall()
     advances_out = [_row_to_dict(a) for a in advances]
     deductions_by_category = _advance_category_breakdown(advances_out)
+
+    # Advances this cycle's pay didn't cover and that were moved to the next cycle:
+    # the employee is paid nothing now, so the payslip states 0 payable plus the
+    # carried amount rather than a confusing negative net.
+    carried_out = float(db.session.execute(text(
+        "SELECT COALESCE(SUM(amount), 0) FROM salary_advances "
+        "WHERE carried_from_cycle_id = :cid AND deleted_at IS NULL"), {'cid': cycle_id}).scalar() or 0)
+    net_payable = round(net + carried_out, 2)
 
     currency_code = (client.currency_code if client and client.currency_code else 'INR')
     # Money words line: "Rupees ... only" reads naturally for INR; every other
@@ -2083,6 +2322,10 @@ def _build_payslip_pdf(emp: dict, cycle: dict, client):
     days_present = sum(1 for d in daily_breakdown if d['status'] == 'present' and d['days_counted'] > 0)
     paid_off_days = sum(1 for d in daily_breakdown if d['status'] in _DAY_OFF_PAID_STATUSES)
     leaves_taken = sum(1 for d in daily_breakdown if d['status'] in _DAY_OFF_UNPAID_STATUSES)
+    # Worked days count by the fraction actually paid (a 4h day on an 8h day = 0.5),
+    # so "Days Paid" agrees with Regular Pay instead of rounding half-days up to one.
+    worked_days_paid = sum(min(float(d['days_counted']), 1.0) for d in daily_breakdown if d['status'] == 'present')
+    days_paid = round(worked_days_paid + paid_off_days, 2)
 
     buffer = BytesIO()
     doc = SimpleDocTemplate(
@@ -2170,7 +2413,7 @@ def _build_payslip_pdf(emp: dict, cycle: dict, client):
     # ── Employee particulars ─────────────────────────────────────────────────
     # "Amount / Day", not "Rate" — a payslip states what the person earns per
     # unit worked; "rate" reads like a product's unit price.
-    rate_label = 'Amount / Hour' if emp.get('pay_type') == 'hourly' else 'Amount / Day'
+    rate_label = 'Amount / Hour' if (cycle.get('pay_type_snap') or emp.get('pay_type')) == 'hourly' else 'Amount / Day'
     rate_value = f"{float(cycle.get('rate_snapshot') or 0):,.2f}"
     particulars = [
         ('Employee ID', str(emp['employee_id'])[:8].upper()),
@@ -2178,7 +2421,8 @@ def _build_payslip_pdf(emp: dict, cycle: dict, client):
         ('Email', emp.get('email') or '—'),
         (rate_label, rate_value),
         ('Date of Joining', _fmt_display_date(emp.get('created_at'))),
-        ('Days Paid', f"{days_present + paid_off_days} day/s"),
+        *([('Date of Leaving', _fmt_display_date(emp.get('left_on')))] if emp.get('left_on') else []),
+        ('Days Paid', f"{days_paid:g} day/s"),
         ('Leaves Taken', f"{leaves_taken} day/s"),
         ('Status', 'PAID' if cycle['status'] == 'paid' else 'OPEN — PREVIEW'),
     ]
@@ -2198,9 +2442,12 @@ def _build_payslip_pdf(emp: dict, cycle: dict, client):
 
     # Every category is listed, zero or not — a payslip that names each possible
     # deduction and shows a dash is how the reader confirms nothing was taken.
+    # The system carry-forward line only appears when there is one — it isn't one
+    # of the deductions a shop chooses, so a permanent dash would just be noise.
     deduction_lines = [
         (CATEGORY_LABEL_MAP[cat], deductions_by_category.get(cat, 0))
         for cat in CATEGORY_LABEL_MAP
+        if cat != CARRY_FORWARD or deductions_by_category.get(cat, 0)
     ]
 
     header_style = ParagraphStyle('TblHeader', parent=styles['Normal'], fontSize=8.5, leading=11,
@@ -2241,11 +2488,16 @@ def _build_payslip_pdf(emp: dict, cycle: dict, client):
     table_rows.append([Paragraph('Gross Earnings', cell_style), '', '', Paragraph(_amt(gross), bold_right_style)])
     ded_row = len(table_rows)
     table_rows.append([Paragraph('Total Deductions', cell_style), '', '', Paragraph(_amt(total_advances), bold_right_style)])
+    carry_row = None
+    if carried_out:
+        carry_row = len(table_rows)
+        table_rows.append([Paragraph('Advance balance carried to next cycle', cell_style), '', '',
+                           Paragraph(_amt(carried_out), bold_right_style)])
     net_row = len(table_rows)
-    table_rows.append([Paragraph('Total Net Payable', bold_center_style), '', '', Paragraph(_amt(net), bold_right_style)])
+    table_rows.append([Paragraph('Total Net Payable', bold_center_style), '', '', Paragraph(_amt(net_payable), bold_right_style)])
     words_row = len(table_rows)
     table_rows.append([
-        Paragraph(f'{currency_word} {_fmt_amount_in_words(net)} only', bold_center_style), '', '', ''])
+        Paragraph(f'{currency_word} {_fmt_amount_in_words(net_payable)} only', bold_center_style), '', '', ''])
 
     pay_table = Table(table_rows, colWidths=[5.4 * cm, 3.6 * cm, 5.4 * cm, 3.6 * cm], repeatRows=1)
     pay_table.setStyle(TableStyle([
@@ -2257,6 +2509,7 @@ def _build_payslip_pdf(emp: dict, cycle: dict, client):
         # full width of the form and only the figure sits in its own cell.
         ('SPAN', (0, gross_row), (2, gross_row)),
         ('SPAN', (0, ded_row), (2, ded_row)),
+        *([('SPAN', (0, carry_row), (2, carry_row))] if carry_row is not None else []),
         ('SPAN', (0, net_row), (2, net_row)),
         ('SPAN', (0, words_row), (-1, words_row)),
         ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
@@ -2303,8 +2556,8 @@ def _build_payslip_pdf(emp: dict, cycle: dict, client):
     summary = {
         'period_label': period_label,
         'period_range': f"{_fmt_display_date(cycle['start_date'])} to {_fmt_display_date(cycle['end_date'])}",
-        'net': net,
-        'net_display': f"{currency_word} {net:,.2f}",
+        'net': net_payable,
+        'net_display': f"{currency_word} {net_payable:,.2f}",
         'status': cycle['status'],
     }
     return pdf_bytes, filename, summary
@@ -2622,7 +2875,8 @@ def payroll_timeseries():
             f"SELECT {month_expr_adv} AS month_key, "
             "  COALESCE(SUM(amount), 0) AS advances_paid "
             "FROM salary_advances "
-            "WHERE client_id = :cid "
+            "WHERE client_id = :cid AND deleted_at IS NULL "
+            "  AND category <> 'carry_forward' "  # not new cash — already counted once
             "  AND advance_date >= :from_d "
             f"GROUP BY {month_expr_adv}"
         ),
@@ -2701,22 +2955,22 @@ def payroll_summary():
             "    WHERE client_id = :cid AND status = 'open') AS open_cycles, "
             f"  (SELECT COALESCE(SUM({greatest}(net_salary, 0)), 0) FROM salary_cycles "
             "    WHERE client_id = :cid AND status = 'paid' "
-            "      AND paid_at BETWEEN :from_d AND :to_d_end) AS paid_in_period, "
+            "      AND paid_at >= :from_d AND paid_at < :to_d_next) AS paid_in_period, "
             "  (SELECT COALESCE(SUM(gross_salary), 0) FROM salary_cycles "
             "    WHERE client_id = :cid AND status = 'paid' "
-            "      AND paid_at BETWEEN :from_d AND :to_d_end) AS gross_in_period, "
+            "      AND paid_at >= :from_d AND paid_at < :to_d_next) AS gross_in_period, "
             "  (SELECT COALESCE(SUM(gross_salary), 0) FROM salary_cycles "
             "    WHERE client_id = :cid AND status = 'paid') AS paid_all_time, "
             "  (SELECT COALESCE(SUM(sa.amount), 0) "
             "    FROM salary_advances sa "
             "    JOIN salary_cycles sc ON sc.cycle_id = sa.cycle_id "
-            "    WHERE sa.client_id = :cid AND sc.status = 'open') AS pending_advances, "
+            "    WHERE sa.client_id = :cid AND sa.deleted_at IS NULL AND sc.status = 'open') AS pending_advances, "
             # Advances DATED in the period — used for P&L expense tracking in reports.
             # Different from pending_advances (all-time open-cycle) and works
             # correctly when a cycle started in a prior period.
             "  (SELECT COALESCE(SUM(amount), 0) "
             "    FROM salary_advances "
-            "    WHERE client_id = :cid "
+            "    WHERE client_id = :cid AND deleted_at IS NULL AND category <> 'carry_forward' "
             "      AND advance_date BETWEEN :from_d AND :to_d) AS advances_paid_in_period, "
             "  (SELECT COUNT(*) FROM employee_attendance "
             "    WHERE client_id = :cid "
@@ -2733,8 +2987,10 @@ def payroll_summary():
             'cid': client_id,
             'from_d': str(from_date),
             'to_d': str(to_date),
-            # paid_at is a timestamp, so extend `to_date` to end-of-day for inclusive range
-            'to_d_end': f"{to_date} 23:59:59",
+            # paid_at is a timestamp stored as either 'YYYY-MM-DD HH:MM:SS' or (synced rows)
+            # 'YYYY-MM-DDTHH:MM:SS'. An exclusive next-day bound includes the whole last day
+            # in both forms; '... 23:59:59' dropped 'T' rows, since 'T' sorts after ' '.
+            'to_d_next': str(to_date + timedelta(days=1)),
         }
     ).fetchone()
 
@@ -2766,6 +3022,21 @@ def payroll_summary():
 
 # ── Advances ──────────────────────────────────────────────────────────────────
 
+def _pick_open_cycle_id(employee_id, client_id, on_date):
+    """Open (unpaid) cycle containing on_date, else the latest open cycle, else None."""
+    rows = db.session.execute(
+        text("SELECT cycle_id, start_date, end_date FROM salary_cycles "
+             "WHERE employee_id = :eid AND client_id = :cid AND status <> 'paid' "
+             "ORDER BY start_date DESC"),
+        {'eid': employee_id, 'cid': client_id},
+    ).fetchall()
+    day = str(on_date)
+    for r in rows:
+        if str(r[1])[:10] <= day <= str(r[2])[:10]:
+            return str(r[0])
+    return str(rows[0][0]) if rows else None
+
+
 @employees_bp.route('/<employee_id>/advances', methods=['POST'])
 @authenticate
 @require_permission('record_advance')
@@ -2777,9 +3048,22 @@ def record_advance(employee_id):
 
     body = request.get_json(silent=True) or {}
 
+    advance_date = _parse_date(body.get('advance_date'))
+    if not advance_date:
+        advance_date = date.today()
+
     cycle_id = (body.get('cycle_id') or '').strip()
     if not cycle_id:
-        return jsonify({'success': False, 'error': 'cycle_id is required'}), 400
+        # The form used to say "optional" while this endpoint required it, so every
+        # save without a cycle failed. Pick the open cycle covering the advance date,
+        # otherwise the most recent open one.
+        cycle_id = _pick_open_cycle_id(employee_id, client_id, advance_date)
+        if not cycle_id:
+            return jsonify({
+                'success': False,
+                'error': 'No open salary cycle for this employee. Start a salary cycle first, then add the advance.',
+                'code': 'NO_OPEN_CYCLE',
+            }), 409
 
     # Validate cycle exists and belongs to this employee/client
     cycle = _get_cycle(cycle_id, employee_id, client_id)
@@ -2803,10 +3087,6 @@ def record_advance(employee_id):
             'success': False,
             'error': f'category must be one of: {", ".join(sorted(_DEDUCTION_CATEGORIES))}'
         }), 400
-
-    advance_date = _parse_date(body.get('advance_date'))
-    if not advance_date:
-        advance_date = date.today()
 
     advance_id = str(uuid.uuid4())
     now = _now_iso()
@@ -2861,7 +3141,7 @@ def delete_advance(advance_id):
     """Remove a mis-entered advance/deduction and recalculate its cycle."""
     client_id = g.user['client_id']
     row = db.session.execute(
-        text("SELECT * FROM salary_advances WHERE advance_id = :aid AND client_id = :cid"),
+        text("SELECT * FROM salary_advances WHERE advance_id = :aid AND client_id = :cid AND deleted_at IS NULL"),
         {'aid': advance_id, 'cid': client_id}
     ).fetchone()
     if not row:
@@ -2873,9 +3153,13 @@ def delete_advance(advance_id):
     if cycle and cycle.get('status') == 'paid':
         return jsonify({'success': False, 'error': 'Cannot delete a deduction from a paid cycle'}), 409
 
+    # Soft delete: a hard DELETE never reaches the cloud, so the next sync download
+    # brought the advance back on desktop installs. deleted_at + synced_at=NULL uploads it.
+    now = _now_iso()
     db.session.execute(
-        text("DELETE FROM salary_advances WHERE advance_id = :aid AND client_id = :cid"),
-        {'aid': advance_id, 'cid': client_id}
+        text("UPDATE salary_advances SET deleted_at = :now, updated_at = :now, synced_at = NULL "
+             "WHERE advance_id = :aid AND client_id = :cid"),
+        {'aid': advance_id, 'cid': client_id, 'now': now}
     )
 
     if cycle:
@@ -2887,7 +3171,7 @@ def delete_advance(advance_id):
                 "    updated_at = :now, synced_at = NULL "
                 "WHERE cycle_id = :cid"
             ),
-            {'gross': gross, 'adv': total_advances, 'net': net, 'now': _now_iso(), 'cid': cycle_id}
+            {'gross': gross, 'adv': total_advances, 'net': net, 'now': now, 'cid': cycle_id}
         )
 
     db.session.commit()
@@ -2935,7 +3219,7 @@ def employee_history(employee_id):
         adv_rows = db.session.execute(
             text(
                 "SELECT advance_id, amount, category, advance_date, notes "
-                "FROM salary_advances WHERE cycle_id = :cid ORDER BY advance_date"
+                "FROM salary_advances WHERE cycle_id = :cid AND deleted_at IS NULL ORDER BY advance_date"
             ),
             {'cid': cycle['cycle_id']}
         ).fetchall()
@@ -2953,8 +3237,11 @@ def employee_history(employee_id):
 
         if cycle['status'] == 'paid':
             total_earned += gross
-            total_advances_taken += adv_sum
-            total_net_paid += net
+            # A carried balance is the same money moving on, and a negative net means
+            # nothing was paid (the shortfall was carried) — neither is new cash.
+            total_advances_taken += sum(float(a['amount'] or 0) for a in advances
+                                        if a.get('category') != CARRY_FORWARD)
+            total_net_paid += max(net, 0)
 
     # Attendance totals
     att_totals = db.session.execute(
@@ -3047,6 +3334,20 @@ def approve_ot(attendance_id):
     ).fetchone()
     if not row:
         return jsonify({'success': False, 'error': 'Attendance row not found'}), 404
+    att = _row_to_dict(row)
+    sealed = _sealed_cycle_response(att['employee_id'], client_id, att['work_date'])
+    if sealed:
+        return sealed
+    cyc = _find_covering_cycle(att['employee_id'], client_id, att['work_date'])
+    cap = _ot_cap_minutes(att, (cyc or {}).get('full_day_mins') or 480)
+    if ot_mins_int > cap:
+        return jsonify({
+            'success': False,
+            'error': (f'Only {cap} minute(s) were worked beyond the full day on {att["work_date"]} — '
+                      f'OT can be at most {cap} minutes.'),
+            'code': 'OT_EXCEEDS_WORKED',
+            'max_ot_minutes': cap,
+        }), 400
 
     db.session.execute(
         text(

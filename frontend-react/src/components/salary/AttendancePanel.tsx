@@ -3,7 +3,7 @@ import { ChevronLeft, ChevronRight, LogIn, LogOut, Clock, RefreshCw, PenLine } f
 import api from '@/lib/api'
 import { toast } from '@/utils/toast'
 import type { Employee, AttendanceDay, AttendancePunch, SalaryCycle } from '@/pages/Salary'
-import { formatMinutes, isDateCovered as isCovered } from '@/utils/salary'
+import { formatMinutes, isDateCovered as isCovered, localIsoDate } from '@/utils/salary'
 
 interface AttendancePanelProps {
   employee: Employee
@@ -61,7 +61,7 @@ function MiniCalendar({
 }) {
   const firstDow = new Date(year, month - 1, 1).getDay() // 0=Sun
   const daysInMonth = new Date(year, month, 0).getDate()
-  const todayStr = new Date().toISOString().slice(0, 10)
+  const todayStr = localIsoDate()
   // Map workDate → day_status so we can branch three ways (present / paid off / unpaid off)
   const dayStatusMap = new Map(days.map(d => [d.work_date, d.day_status ?? 'present']))
 
@@ -367,7 +367,7 @@ export default function AttendancePanel({
                 {checkingOut === openPunch.attendance_id ? 'Saving...' : 'Check Out'}
               </button>
             ) : (() => {
-              const todayDateStr = new Date().toISOString().slice(0, 10)
+              const todayDateStr = localIsoDate()
               const todayCoverage = isCovered(todayDateStr, cycles)
               return (
                 <button

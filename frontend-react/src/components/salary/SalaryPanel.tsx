@@ -4,12 +4,9 @@ import api from '@/lib/api'
 import { confirmDialog } from '@/components/ConfirmDialog'
 import { useCurrency } from '@/lib/useCurrency'
 import type { Employee, SalaryCycle, SalaryAdvance } from '@/pages/Salary'
-import { DEDUCTION_CATEGORIES } from '@/components/salary/SalaryModals'
-import { formatMinutes as formatMins, formatSalaryDate as fmtDate, isDateCovered, currentMonthRange } from '@/utils/salary'
+import { DEDUCTION_LABEL as CATEGORY_LABEL, CARRY_FORWARD } from '@/components/salary/SalaryModals'
+import { formatMinutes as formatMins, formatSalaryDate as fmtDate, isDateCovered, currentMonthRange, localIsoDate } from '@/utils/salary'
 
-const CATEGORY_LABEL: Record<string, string> = Object.fromEntries(
-  DEDUCTION_CATEGORIES.map(c => [c.value, c.label])
-)
 
 interface SalaryPanelProps {
   employee: Employee
@@ -47,6 +44,9 @@ export default function SalaryPanel({
   const [cycles, setCycles] = useState<SalaryCycle[]>([])
   const [loading, setLoading] = useState(false)
   const [expandedId, setExpandedId] = useState<string | null>(null)
+  // Per-day pay + OT summary come only from the cycle DETAIL endpoint (the list
+  // doesn't compute them), so the expanded cycle's detail is fetched on demand.
+  const [details, setDetails] = useState<Record<string, Pick<SalaryCycle, 'daily_breakdown' | 'ot_summary' | 'advances'>>>({})
   const [calculating, setCalculating] = useState<string | null>(null)
   const [markingPaid, setMarkingPaid] = useState<string | null>(null)
   const [payNote, setPayNote] = useState('')
@@ -74,9 +74,12 @@ export default function SalaryPanel({
   // Auto-create the current month's cycle when none covers today, so users never
   // have to create cycles by hand each month. Idempotent: the backend rejects
   // overlapping ranges, and we guard with a per-employee attempt set.
+  // An ex-employee gets no new cycles — their record is closed except for settling up.
+  const hasLeft = !employee.is_active
+
   useEffect(() => {
-    if (loading || !canManage) return
-    const todayStr = new Date().toISOString().slice(0, 10)
+    if (loading || !canManage || hasLeft) return
+    const todayStr = localIsoDate()
     if (isDateCovered(todayStr, cycles).covered) return
     if (autoCreatedFor.current.has(employee.employee_id)) return
     autoCreatedFor.current.add(employee.employee_id)
@@ -96,13 +99,34 @@ export default function SalaryPanel({
       .catch(() => {
         // Overlap or permission error — fall back to the manual "Create cycle" button.
       })
-  }, [loading, cycles, canManage, employee.employee_id, fetchCycles, onCyclesChanged])
+  }, [loading, cycles, canManage, hasLeft, employee.employee_id, fetchCycles, onCyclesChanged])
+
+  useEffect(() => {
+    if (!expandedId || !cycles.some(c => c.cycle_id === expandedId)) return
+    let cancelled = false
+    api.get(`/employees/${employee.employee_id}/cycles/${expandedId}`)
+      .then(res => {
+        if (cancelled) return
+        const d = res.data?.data ?? {}
+        setDetails(prev => ({
+          ...prev,
+          [expandedId]: { daily_breakdown: d.daily_breakdown, ot_summary: d.ot_summary, advances: d.advances },
+        }))
+      })
+      .catch(() => { /* header figures still show; the breakdown just stays hidden */ })
+    return () => { cancelled = true }
+  }, [expandedId, cycles, employee.employee_id])
+
+  const apiError = (err: unknown, fallback: string) =>
+    (err as { response?: { data?: { error?: string } } })?.response?.data?.error ?? fallback
 
   async function handleCalculate(cycleId: string) {
     setCalculating(cycleId)
     try {
       await api.post(`/employees/${employee.employee_id}/cycles/${cycleId}/calculate`)
       fetchCycles()
+    } catch (err: unknown) {
+      onToast?.(apiError(err, 'Could not calculate this cycle'), 'error')
     } finally {
       setCalculating(null)
     }
@@ -111,13 +135,32 @@ export default function SalaryPanel({
   async function handleMarkPaid(cycleId: string) {
     setMarkingPaid(cycleId)
     try {
-      await api.post(`/employees/${employee.employee_id}/cycles/${cycleId}/mark-paid`, {
+      const res = await api.post(`/employees/${employee.employee_id}/cycles/${cycleId}/mark-paid`, {
         payment_note: payNote,
       })
       setPayNoteInput(null)
       setPayNote('')
+      // The server recalculates before sealing, so report the figure it actually sealed —
+      // it can differ from the header if attendance changed since the last Calculate.
+      const net = Number(res.data?.data?.net_salary ?? 0)
+      const carry = res.data?.carry_forward as
+        { amount: number; cycle_id: string | null; start_date?: string; end_date?: string } | null
+      if (carry?.cycle_id) {
+        onToast?.(`Cycle closed — ${cur}${carry.amount.toFixed(2)} advance balance moved to the cycle ` +
+          `${fmtDate(carry.start_date ?? '')} – ${fmtDate(carry.end_date ?? '')}`, 'success')
+      } else if (carry) {
+        onToast?.(`Cycle closed — ${employee.name} still owes ${cur}${carry.amount.toFixed(2)}; ` +
+          'no next cycle to carry it into', 'error')
+      } else {
+        onToast?.(net > 0
+          ? `${employee.name}'s salary marked paid — ${cur}${net.toFixed(2)}`
+          : `Cycle closed — advances covered ${employee.name}'s salary`, 'success')
+      }
       fetchCycles()
+      onCyclesChanged?.()
       downloadPayslip(cycleId) // auto-generate the payslip now that it's sealed
+    } catch (err: unknown) {
+      onToast?.(apiError(err, 'Could not mark this cycle as paid'), 'error')
     } finally {
       setMarkingPaid(null)
     }
@@ -125,7 +168,7 @@ export default function SalaryPanel({
 
   const [downloadingPayslip, setDownloadingPayslip] = useState<string | null>(null)
 
-  async function downloadPayslip(cycleId: string) {
+  async function downloadPayslip(cycleId: string, manual = false) {
     setDownloadingPayslip(cycleId)
     try {
       const cycle = cycles.find(c => c.cycle_id === cycleId)
@@ -144,8 +187,9 @@ export default function SalaryPanel({
       document.body.removeChild(a)
       window.URL.revokeObjectURL(url)
     } catch {
-      // Silent — payslip generation failing shouldn't block the pay-cycle flow;
-      // the "Download Payslip" button lets the admin retry manually anytime.
+      // After Mark Paid it stays quiet (the payment itself succeeded and the button
+      // allows a retry); a click on Download Payslip deserves an answer.
+      if (manual) onToast?.('Could not generate the payslip — please try again', 'error')
     } finally {
       setDownloadingPayslip(null)
     }
@@ -190,11 +234,23 @@ export default function SalaryPanel({
 
   const [deletingAdvance, setDeletingAdvance] = useState<string | null>(null)
 
-  async function handleDeleteAdvance(advanceId: string) {
-    setDeletingAdvance(advanceId)
+  async function handleDeleteAdvance(adv: SalaryAdvance) {
+    const label = CATEGORY_LABEL[adv.category ?? 'cash_advance'] ?? 'Cash Advance'
+    const ok = await confirmDialog({
+      title: 'Remove this deduction?',
+      message: `${label} of ${cur}${Number(adv.amount).toFixed(2)}${adv.notes ? ` (${adv.notes})` : ''} will be removed and ${employee.name}'s salary for this cycle recalculated.`,
+      confirmText: 'Remove',
+      tone: 'danger',
+    })
+    if (!ok) return
+    setDeletingAdvance(adv.advance_id)
     try {
-      await api.delete(`/employees/advances/${advanceId}`)
+      await api.delete(`/employees/advances/${adv.advance_id}`)
+      onToast?.(`${label} of ${cur}${Number(adv.amount).toFixed(2)} removed`, 'success')
       fetchCycles()
+    } catch (err: unknown) {
+      const msg = (err as { response?: { data?: { error?: string } } })?.response?.data?.error
+      onToast?.(msg ?? 'Could not remove the deduction', 'error')
     } finally {
       setDeletingAdvance(null)
     }
@@ -235,6 +291,12 @@ export default function SalaryPanel({
             )}
           </div>
         </div>
+        {hasLeft ? (
+          <p className="mt-2.5 text-[11px] text-gray-500 dark:text-gray-400 bg-gray-50 dark:bg-gray-800/50 rounded-lg px-3 py-2">
+            Left{employee.left_on ? ` on ${fmtDate(employee.left_on)}` : ''}. Records are kept — settle any open
+            cycle below (Calculate → Mark as Paid) and download payslips. Rejoin to add new cycles.
+          </p>
+        ) : (
         <div className="flex items-center gap-2 mt-2.5">
           <button
             type="button"
@@ -253,6 +315,7 @@ export default function SalaryPanel({
             New Cycle
           </button>
         </div>
+        )}
       </div>
 
       {/* "No cycle covers today" banner — appears when the most recent cycle
@@ -260,7 +323,7 @@ export default function SalaryPanel({
           of seeing an OPEN cycle from a past month while expecting to record
           today's attendance. */}
       {(() => {
-        const todayStr = new Date().toISOString().slice(0, 10)
+        const todayStr = localIsoDate()
         if (loading || cycles.length === 0 || isDateCovered(todayStr, cycles).covered) return null
         return (
           <div className="px-4 py-3 bg-amber-50 dark:bg-amber-950/30 border-b border-amber-200 dark:border-amber-900/50 flex items-start justify-between gap-3">
@@ -289,7 +352,8 @@ export default function SalaryPanel({
             <p className="text-sm">No salary cycles yet</p>
           </div>
         ) : (
-          cycles.map(cycle => {
+          cycles.map(listed => {
+            const cycle: SalaryCycle = { ...listed, ...(details[listed.cycle_id] ?? {}) }
             const isExpanded = expandedId === cycle.cycle_id
             return (
               <div key={cycle.cycle_id} className="transition-colors">
@@ -308,16 +372,21 @@ export default function SalaryPanel({
                         {cycle.status.toUpperCase()}
                       </span>
                     </div>
-                    <div className="flex items-center gap-3 text-xs text-gray-500 dark:text-gray-400">
+                    <div className="flex flex-wrap items-center gap-x-3 gap-y-0.5 text-xs text-gray-500 dark:text-gray-400 [&>span]:whitespace-nowrap">
                       {cycle.gross_salary !== null && (
                         <span>Gross: <strong className="text-gray-800 dark:text-gray-200">{cur}{Number(cycle.gross_salary).toFixed(2)}</strong></span>
                       )}
                       {Number(cycle.total_advances) > 0 && (
                         <span>Adv: <strong className="text-orange-600 dark:text-orange-400">-{cur}{Number(cycle.total_advances).toFixed(2)}</strong></span>
                       )}
-                      {cycle.net_salary !== null && (
+                      {cycle.net_salary !== null && (Number(cycle.net_salary) < 0 ? (
+                        <span>
+                          {cycle.status === 'paid' ? 'Carried forward' : 'Owes'}:{' '}
+                          <strong className="text-orange-600 dark:text-orange-400">{cur}{Math.abs(Number(cycle.net_salary)).toFixed(2)}</strong>
+                        </span>
+                      ) : (
                         <span>Net: <strong className="text-green-700 dark:text-green-400">{cur}{Number(cycle.net_salary).toFixed(2)}</strong></span>
-                      )}
+                      ))}
                     </div>
                   </div>
                   {isExpanded ? (
@@ -343,7 +412,10 @@ export default function SalaryPanel({
                         {advanceCoversSalary && (
                           <div className="w-full bg-blue-50 dark:bg-blue-900/20 border border-blue-200 dark:border-blue-800 rounded-lg px-3 py-2 mb-1">
                             <p className="text-[11px] text-blue-700 dark:text-blue-300">
-                              <strong>Advance covers salary.</strong> Employee was paid {cur}{adv.toFixed(2)} as advances; they earned {cur}{gross.toFixed(2)} this cycle. No additional payment due — closing this cycle settles the period.
+                              <strong>Advance covers salary.</strong> Employee was paid {cur}{adv.toFixed(2)} as advances; they earned {cur}{gross.toFixed(2)} this cycle. Nothing more to pay now.
+                              {adv > gross && (
+                                <> Closing this cycle moves the extra <strong>{cur}{(adv - gross).toFixed(2)}</strong> into the next cycle as a deduction.</>
+                              )}
                             </p>
                           </div>
                         )}
@@ -480,10 +552,11 @@ export default function SalaryPanel({
                               {cycle.status === 'open' && (
                                 <button
                                   type="button"
-                                  onClick={() => handleDeleteAdvance(adv.advance_id)}
+                                  onClick={() => handleDeleteAdvance(adv)}
                                   disabled={deletingAdvance === adv.advance_id}
                                   className="p-1 rounded-md text-gray-400 hover:text-red-600 hover:bg-red-50 dark:hover:bg-red-900/20 disabled:opacity-50 transition-colors flex-shrink-0"
                                   title="Remove this deduction"
+                                  aria-label={`Remove ${CATEGORY_LABEL[adv.category ?? 'cash_advance'] ?? 'Cash Advance'} of ${cur}${Number(adv.amount).toFixed(2)}`}
                                 >
                                   <Trash2 className="w-3.5 h-3.5" />
                                 </button>
@@ -508,7 +581,7 @@ export default function SalaryPanel({
                         <div className="flex items-center gap-2">
                           <button
                             type="button"
-                            onClick={() => downloadPayslip(cycle.cycle_id)}
+                            onClick={() => downloadPayslip(cycle.cycle_id, true)}
                             disabled={downloadingPayslip === cycle.cycle_id}
                             className="flex-1 flex items-center justify-center gap-1.5 whitespace-nowrap text-xs font-medium px-3 py-2 rounded-lg border border-gray-200 dark:border-gray-700 text-gray-700 dark:text-gray-300 hover:bg-gray-50 dark:hover:bg-gray-800 disabled:opacity-50 transition-colors"
                           >
@@ -556,8 +629,13 @@ function LifetimeStats({ cycles }: { cycles: SalaryCycle[] }) {
   const { symbol: cur } = useCurrency()
   const paidCycles = cycles.filter(c => c.status === 'paid')
   const totalEarned = cycles.reduce((sum, c) => sum + Number(c.gross_salary ?? 0), 0)
-  const totalAdvances = cycles.reduce((sum, c) => sum + Number(c.total_advances ?? 0), 0)
-  const totalNetPaid = paidCycles.reduce((sum, c) => sum + Number(c.net_salary ?? 0), 0)
+  // Cash actually handed over: a carried balance is the same money moving to the next
+  // cycle, so counting it again would double the advances; a negative net means
+  // nothing was paid that cycle (the shortfall was carried), not a refund.
+  const totalAdvances = cycles.reduce((sum, c) => sum + (c.advances ?? [])
+    .filter(a => a.category !== CARRY_FORWARD)
+    .reduce((s, a) => s + Number(a.amount), 0), 0)
+  const totalNetPaid = paidCycles.reduce((sum, c) => sum + Math.max(Number(c.net_salary ?? 0), 0), 0)
 
   // Most recent paid_at across paid cycles
   const lastPaid = paidCycles

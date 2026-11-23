@@ -204,7 +204,7 @@ export default function InvoiceListView({ canManage, onToast, refreshSignal }: P
                       <div className="flex items-center justify-end gap-1">
                         {canManage && inv.balance > 0 && (
                           <button
-                            type="button" title="Record payment"
+                            type="button" title="Record payment" aria-label={`Record payment ${inv.invoice_number}`}
                             onClick={() => setPayFor(inv)}
                             className="p-1.5 rounded-lg text-green-600 hover:bg-green-50 dark:hover:bg-green-900/20 cursor-pointer"
                           >
@@ -212,14 +212,14 @@ export default function InvoiceListView({ canManage, onToast, refreshSignal }: P
                           </button>
                         )}
                         <button
-                          type="button" title="Preview invoice"
+                          type="button" title="Preview invoice" aria-label={`Preview invoice ${inv.invoice_number}`}
                           onClick={() => setPreviewFor(inv)}
                           className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer"
                         >
                           <Eye className="w-3.5 h-3.5" />
                         </button>
                         <button
-                          type="button" title="Download PDF"
+                          type="button" title="Download PDF" aria-label={`Download PDF ${inv.invoice_number}`}
                           onClick={() => handleDownload(inv)}
                           disabled={busyId === inv.invoice_id}
                           className="p-1.5 rounded-lg text-gray-500 hover:bg-gray-100 dark:hover:bg-gray-700 cursor-pointer disabled:opacity-50"
@@ -228,9 +228,11 @@ export default function InvoiceListView({ canManage, onToast, refreshSignal }: P
                             ? <Loader2 className="w-3.5 h-3.5 animate-spin" />
                             : <Download className="w-3.5 h-3.5" />}
                         </button>
-                        {canManage && (
+                        {/* Money received makes it a financial record — the server refuses
+                            to delete it, so don't offer a button that can only fail. */}
+                        {canManage && Number(inv.received_amount ?? 0) <= 0 && (
                           <button
-                            type="button" title="Delete invoice"
+                            type="button" title="Delete invoice" aria-label={`Delete invoice ${inv.invoice_number}`}
                             onClick={() => handleDelete(inv)}
                             className="p-1.5 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-900/20 cursor-pointer"
                           >

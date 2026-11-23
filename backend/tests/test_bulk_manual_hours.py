@@ -70,10 +70,11 @@ def _mark_day(db, emp_id, cid, work_date, status):
     check_in_val = None if dialect == 'postgresql' else f"{work_date} 00:00:00"
     db.session.execute(text(
         "INSERT INTO employee_attendance (attendance_id, employee_id, client_id, work_date,"
-        " check_in, total_minutes, status, reason, is_active, created_at, updated_at)"
-        " VALUES (:a, :e, :c, :wd, :ci, 0, :st, 'family function', TRUE, :now, :now)"),
+        " check_in, total_minutes, status, reason, is_active, marked_by, created_at, updated_at)"
+        " VALUES (:a, :e, :c, :wd, :ci, 0, :st, 'family function', TRUE, :mb, :now, :now)"),
+        # marked_by is NOT NULL on the table; the fixture just needs any user id.
         {'a': str(uuid.uuid4()), 'e': emp_id, 'c': cid, 'wd': str(work_date),
-         'ci': check_in_val, 'st': status, 'now': str(TODAY)})
+         'ci': check_in_val, 'st': status, 'mb': str(uuid.uuid4()), 'now': str(TODAY)})
     db.session.commit()
 
 

@@ -217,6 +217,12 @@ class SyncService:
             "ALTER TABLE employee_attendance ADD COLUMN IF NOT EXISTS synced_at TIMESTAMP NULL",
             "ALTER TABLE salary_advances ADD COLUMN IF NOT EXISTS synced_at TIMESTAMP NULL",
             "ALTER TABLE salary_advances ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP NULL",
+            # v53: soft delete + category travel with the row
+            "ALTER TABLE salary_advances ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
+            "ALTER TABLE salary_advances ADD COLUMN IF NOT EXISTS category VARCHAR(30) DEFAULT 'cash_advance'",
+            # v54: when an ex-employee left
+            "ALTER TABLE employees ADD COLUMN IF NOT EXISTS left_on DATE NULL",
+            "ALTER TABLE salary_advances ADD COLUMN IF NOT EXISTS carried_from_cycle_id VARCHAR(36) NULL",
             "ALTER TABLE employee_attendance ADD COLUMN IF NOT EXISTS is_active BOOLEAN NOT NULL DEFAULT TRUE",
             "ALTER TABLE employee_attendance ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMP NULL",
         ]
@@ -1435,10 +1441,10 @@ class SyncService:
         insert_sql = """
             INSERT INTO employees (
                 employee_id, client_id, branch_id, name, phone, email, pay_type, rate,
-                is_active, ot_multiplier, work_group_id, created_by, created_at, updated_at
+                is_active, left_on, ot_multiplier, work_group_id, created_by, created_at, updated_at
             ) VALUES (
                 :employee_id, :client_id, :branch_id, :name, :phone, :email, :pay_type, :rate,
-                :is_active, :ot_multiplier, :work_group_id, :created_by, :created_at, :updated_at
+                :is_active, :left_on, :ot_multiplier, :work_group_id, :created_by, :created_at, :updated_at
             )
             ON CONFLICT (employee_id) DO UPDATE SET
                 branch_id = EXCLUDED.branch_id,
@@ -1448,6 +1454,7 @@ class SyncService:
                 pay_type = EXCLUDED.pay_type,
                 rate = EXCLUDED.rate,
                 is_active = EXCLUDED.is_active,
+                left_on = EXCLUDED.left_on,
                 ot_multiplier = EXCLUDED.ot_multiplier,
                 work_group_id = EXCLUDED.work_group_id,
                 updated_at = EXCLUDED.updated_at,
@@ -1524,15 +1531,18 @@ class SyncService:
         insert_sql = """
             INSERT INTO salary_advances (
                 advance_id, employee_id, client_id, cycle_id, amount, advance_date,
-                notes, recorded_by, created_at, updated_at
+                notes, recorded_by, created_at, updated_at, category, deleted_at, carried_from_cycle_id
             ) VALUES (
                 :advance_id, :employee_id, :client_id, :cycle_id, :amount, :advance_date,
-                :notes, :recorded_by, :created_at, :updated_at
+                :notes, :recorded_by, :created_at, :updated_at, :category, :deleted_at, :carried_from_cycle_id
             )
             ON CONFLICT (advance_id) DO UPDATE SET
                 amount = EXCLUDED.amount,
                 advance_date = EXCLUDED.advance_date,
                 notes = EXCLUDED.notes,
+                category = EXCLUDED.category,
+                deleted_at = EXCLUDED.deleted_at,
+                carried_from_cycle_id = EXCLUDED.carried_from_cycle_id,
                 updated_at = EXCLUDED.updated_at,
                 synced_at = CURRENT_TIMESTAMP
         """
@@ -2495,7 +2505,7 @@ class SyncService:
             TypeConverter.convert_dict_to_sqlite(r, EMPLOYEE_COLUMN_TYPES) for r in records
         ]
         columns = ['employee_id', 'client_id', 'branch_id', 'name', 'phone', 'email', 'pay_type',
-                   'rate', 'is_active', 'ot_multiplier', 'work_group_id', 'created_by',
+                   'rate', 'is_active', 'left_on', 'ot_multiplier', 'work_group_id', 'created_by',
                    'created_at', 'updated_at', 'synced_at']
 
         return self._upsert_to_sqlite('employees', self._stamp_synced(converted_records), 'employee_id', columns)
@@ -2577,7 +2587,8 @@ class SyncService:
             TypeConverter.convert_dict_to_sqlite(r, SALARY_ADVANCE_COLUMN_TYPES) for r in records
         ]
         columns = ['advance_id', 'employee_id', 'client_id', 'cycle_id', 'amount', 'advance_date',
-                   'notes', 'recorded_by', 'created_at', 'updated_at', 'synced_at']
+                   'notes', 'recorded_by', 'created_at', 'updated_at', 'synced_at', 'category', 'deleted_at',
+                   'carried_from_cycle_id']
 
         return self._upsert_to_sqlite('salary_advances', self._stamp_synced(converted_records), 'advance_id', columns)
 

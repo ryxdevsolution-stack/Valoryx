@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Loader2, RefreshCw, Save, Search, Users } from 'lucide-react'
 import api from '@/lib/api'
 import { useCurrency } from '@/lib/useCurrency'
+import { localIsoDate } from '@/utils/salary'
 import type { Employee } from '@/pages/Salary'
 import {
   apiError,
@@ -47,10 +48,9 @@ const labelCls = 'block text-xs font-medium text-gray-600 dark:text-gray-400 mb-
 
 /** First and last day of the month `d` falls in, as YYYY-MM-DD. */
 function monthBounds(d = new Date()) {
-  const iso = (x: Date) => x.toISOString().slice(0, 10)
   return {
-    start: iso(new Date(d.getFullYear(), d.getMonth(), 1)),
-    end: iso(new Date(d.getFullYear(), d.getMonth() + 1, 0)),
+    start: localIsoDate(new Date(d.getFullYear(), d.getMonth(), 1)),
+    end: localIsoDate(new Date(d.getFullYear(), d.getMonth() + 1, 0)),
   }
 }
 
@@ -60,7 +60,7 @@ export default function InvoiceBuilder({ employees, canManage, onToast, onSaved 
 
   const [periodStart, setPeriodStart] = useState(bounds.start)
   const [periodEnd, setPeriodEnd] = useState(bounds.end)
-  const [invoiceDate, setInvoiceDate] = useState(() => new Date().toISOString().slice(0, 10))
+  const [invoiceDate, setInvoiceDate] = useState(() => localIsoDate())
 
   // Bill To — a searchable picker over saved customers, with free text as the
   // fallback so a one-off company doesn't have to be saved first.
@@ -342,9 +342,17 @@ export default function InvoiceBuilder({ employees, canManage, onToast, onSaved 
             <span className="text-xs text-gray-500 dark:text-gray-400">Nothing is saved yet.</span>
           </div>
 
+          {(preview.already_invoiced?.length ?? 0) > 0 && (
+            <p role="status" className="mx-4 mt-3 text-xs text-amber-800 dark:text-amber-200 bg-amber-50 dark:bg-amber-900/20 px-3 py-2 rounded-lg">
+              Left out — already billed:{' '}
+              {preview.already_invoiced!.map(s => `${s.employee_name} (${s.invoice_number})`).join(', ')}.
+              Each pay cycle is billed only once.
+            </p>
+          )}
+
           {preview.lines.length === 0 ? (
             <p className="px-4 py-8 text-center text-sm text-gray-500 dark:text-gray-400">
-              No salary cycles overlap this period.
+              No unbilled salary was worked in this period.
             </p>
           ) : (
             <>

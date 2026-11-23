@@ -69,6 +69,8 @@ export interface InvoicePreview {
   customer: Record<string, unknown> | null
   lines: InvoiceLine[]
   totals: InvoiceTotals
+  /** Cycles left out because another invoice already billed them (each cycle is billed once). */
+  already_invoiced?: { employee_name: string; cycle_id: string; invoice_number: string }[]
 }
 
 export interface PayrollInvoicePayment {

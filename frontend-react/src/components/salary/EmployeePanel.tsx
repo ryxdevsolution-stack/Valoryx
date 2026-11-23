@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { Plus, Search, Clock, DollarSign, History, LogIn, LogOut, PenLine, Pencil, Mail, PanelLeftClose } from 'lucide-react'
+import { Plus, Search, Clock, DollarSign, History, LogIn, LogOut, PenLine, Pencil, Mail, PanelLeftClose, ChevronDown, ChevronRight, UserCheck } from 'lucide-react'
 import { useCurrency } from '@/lib/useCurrency'
 import type { Employee } from '@/pages/Salary'
+import { formatSalaryDate } from '@/utils/salary'
 
 interface EmployeePanelProps {
   employees: Employee[]
@@ -24,6 +25,10 @@ interface EmployeePanelProps {
   onBulkManualHours: () => void
   /** Opens the bulk payslip-email dialog for the checked employees. */
   onBulkEmailPayslips: () => void
+  /** People who have left — kept on record, listed apart from the active staff. */
+  exEmployees?: Employee[]
+  /** Omitted when the user may not bring an ex-employee back. */
+  onRejoin?: (employee: Employee) => void
 }
 
 export default function EmployeePanel({
@@ -42,11 +47,18 @@ export default function EmployeePanel({
   onBulkCheckOut,
   onBulkManualHours,
   onBulkEmailPayslips,
+  exEmployees = [],
+  onRejoin,
 }: EmployeePanelProps) {
   const [search, setSearch] = useState('')
+  const [showEx, setShowEx] = useState(false)
   const { symbol } = useCurrency()
 
   const filtered = employees.filter(emp =>
+    emp.name.toLowerCase().includes(search.toLowerCase()) ||
+    (emp.phone ?? '').includes(search)
+  )
+  const filteredEx = exEmployees.filter(emp =>
     emp.name.toLowerCase().includes(search.toLowerCase()) ||
     (emp.phone ?? '').includes(search)
   )
@@ -243,6 +255,69 @@ export default function EmployeePanel({
               )
             })}
           </ul>
+        )}
+
+        {/* Ex-employees — collapsed by default so the working list stays short */}
+        {exEmployees.length > 0 && (
+          <div className="border-t border-gray-100 dark:border-gray-800 mt-1">
+            <button
+              type="button"
+              onClick={() => setShowEx(v => !v)}
+              aria-expanded={showEx}
+              className="w-full flex items-center gap-1.5 px-4 py-2.5 text-xs font-medium text-gray-500 dark:text-gray-400 hover:text-gray-800 dark:hover:text-gray-200"
+            >
+              {showEx ? <ChevronDown className="w-3.5 h-3.5" /> : <ChevronRight className="w-3.5 h-3.5" />}
+              Ex-employees ({exEmployees.length})
+            </button>
+            {showEx && (
+              filteredEx.length === 0 ? (
+                <p className="px-4 pb-3 text-xs text-gray-400">No ex-employees match “{search}”</p>
+              ) : (
+                <ul className="pb-2 px-2 space-y-0.5">
+                  {filteredEx.map(emp => (
+                    <li key={emp.employee_id} className={`px-2 py-1.5 rounded-xl ${
+                      selectedId === emp.employee_id ? 'bg-gray-100 dark:bg-gray-800' : 'hover:bg-gray-50 dark:hover:bg-gray-800/50'
+                    }`}>
+                      <button
+                        type="button"
+                        onClick={() => onSelect(emp)}
+                        className="w-full flex items-center gap-2 text-left rounded-lg px-1 py-0.5 focus:outline-none focus-visible:ring-2 focus-visible:ring-gray-900 dark:focus-visible:ring-gray-300"
+                      >
+                        <div className="w-7 h-7 rounded-full flex items-center justify-center flex-shrink-0 text-xs font-bold uppercase bg-gray-100 dark:bg-gray-800 text-gray-400">
+                          {emp.name[0]}
+                        </div>
+                        <span className="flex-1 min-w-0 text-sm text-gray-600 dark:text-gray-300 truncate">{emp.name}</span>
+                      </button>
+                      <div className="flex items-center gap-1 pl-10 pr-1">
+                        <span className="flex-1 text-[11px] text-gray-400 dark:text-gray-500 whitespace-nowrap">
+                          {emp.left_on ? `Left ${formatSalaryDate(emp.left_on)}` : 'Left'}
+                        </span>
+                        <button
+                          type="button"
+                          onClick={() => onHistory(emp)}
+                          title={`View ${emp.name}'s full history`}
+                          aria-label={`View ${emp.name}'s history`}
+                          className="p-1 rounded-md text-gray-400 hover:bg-gray-200 dark:hover:bg-gray-700 hover:text-gray-700 dark:hover:text-gray-200"
+                        >
+                          <History className="w-3.5 h-3.5" />
+                        </button>
+                        {onRejoin && (
+                          <button
+                            type="button"
+                            onClick={() => onRejoin(emp)}
+                            aria-label={`Rejoin ${emp.name}`}
+                            className="flex items-center gap-1 text-[11px] font-medium px-1.5 py-0.5 rounded-md text-gray-600 dark:text-gray-300 hover:bg-gray-200 dark:hover:bg-gray-700"
+                          >
+                            <UserCheck className="w-3 h-3" /> Rejoin
+                          </button>
+                        )}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )
+            )}
+          </div>
         )}
       </div>
     </div>

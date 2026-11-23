@@ -10,7 +10,7 @@ import re
 from sqlalchemy import text, inspect as sa_inspect
 
 # Bump this number ONLY when you add new migrations to the list below.
-CURRENT_SCHEMA_VERSION = 52
+CURRENT_SCHEMA_VERSION = 54
 
 def _get_stored_version(db) -> int:
     """Return the stored schema version, or 0 if table doesn't exist yet."""
@@ -2951,6 +2951,56 @@ def _m052_heal_v50_v51_columns(db):
     logging.info('[Migration] v52: v50/v51 columns verified')
 
 
+def _m053_salary_advance_soft_delete(db):
+    """v53: salary_advances.deleted_at (soft delete, so deletions sync) + ensure category.
+
+    Deleting a mis-entered advance used to hard-DELETE the row; on desktop installs the
+    cloud still had it and the next sync download put it back.
+    """
+    try:
+        cols = [c['name'] for c in sa_inspect(db.engine).get_columns('salary_advances')]
+    except Exception:
+        logging.info("[Migration] v53: salary_advances missing — skipping")
+        return
+    for col, definition in (('deleted_at', 'DATETIME NULL'), ('category', "VARCHAR(30) DEFAULT 'cash_advance'")):
+        if col not in cols:
+            norm_def = _normalize_col_def(definition, db.engine.dialect.name)
+            db.session.execute(text(f"ALTER TABLE salary_advances ADD COLUMN {col} {norm_def}"))
+            logging.info(f"[Migration] v53: salary_advances.{col} added")
+    db.session.commit()
+
+
+def _m054_employee_left_on(db):
+    """v54: employees.left_on (ex-employees) + salary_advances.carried_from_cycle_id (carry-forward).
+
+    employees.left_on — the date an ex-employee stopped working.
+
+    Leaving already flips is_active off (records are kept, the person drops out of
+    every picker); left_on records WHEN, for the ex-employee list and records.
+    """
+    try:
+        cols = [c['name'] for c in sa_inspect(db.engine).get_columns('employees')]
+    except Exception:
+        logging.info("[Migration] v54: employees missing — skipping")
+        return
+    if 'left_on' not in cols:
+        norm_def = _normalize_col_def('DATE NULL', db.engine.dialect.name)
+        db.session.execute(text(f"ALTER TABLE employees ADD COLUMN left_on {norm_def}"))
+        logging.info("[Migration] v54: employees.left_on added")
+
+    # Carry-forward: an advance larger than the salary moves to the next cycle as a
+    # 'carry_forward' deduction; this links it back to the cycle it came from.
+    try:
+        adv_cols = [c['name'] for c in sa_inspect(db.engine).get_columns('salary_advances')]
+    except Exception:
+        adv_cols = None
+    if adv_cols is not None and 'carried_from_cycle_id' not in adv_cols:
+        norm_def = _normalize_col_def('VARCHAR(36) NULL', db.engine.dialect.name)
+        db.session.execute(text(f"ALTER TABLE salary_advances ADD COLUMN carried_from_cycle_id {norm_def}"))
+        logging.info("[Migration] v54: salary_advances.carried_from_cycle_id added")
+    db.session.commit()
+
+
 # ── Migration registry: (version_number, function) ───────────────────────────
 # Add new entries at the BOTTOM only. Never reorder.
 MIGRATIONS = [
@@ -3005,6 +3055,8 @@ MIGRATIONS = [
     (50, _m050_bill_field_visibility),
     (51, _m051_user_login_pin),
     (52, _m052_heal_v50_v51_columns),
+    (53, _m053_salary_advance_soft_delete),
+    (54, _m054_employee_left_on),
 ]
 
 # ── Public API ────────────────────────────────────────────────────────────────
